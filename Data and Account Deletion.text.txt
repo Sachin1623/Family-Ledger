@@ -1,0 +1,33 @@
+﻿1. HOW TO DELETE YOUR ACCOUNT FROM WITHIN THE APP
+
+To request deletion of your Family Ledger account and associated data using the app:
+
+1. Open the Family Ledger app on your device.  
+2. Sign in with the account you want to delete.  
+3. Go to: Profile Delete Account.  
+4. Read the on-screen warning about data deletion.  
+5. Confirm the deletion request.
+
+Once confirmed, your account will be marked for deletion and processed as described in the “Data we delete” section below.
+
+---
+
+2. HOW TO DELETE YOUR USER DATA:
+
+You can do that by going to your expense line and click delete.
+
+---
+
+3. DATA WE MAY RETAIN
+
+- The feed of your actions will remain.
+
+---
+
+4. CONTACT
+
+If you have any questions about account deletion or data handling in Family Ledger, you can contact us at:
+
+sachin.rajputs@gmail.com  
+
+Please mention “Family Ledger – Account & Data Deletion” in the subject line for faster handling.
