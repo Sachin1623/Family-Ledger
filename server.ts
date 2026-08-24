@@ -2426,7 +2426,7 @@ async function startServer() {
         apps: [],
         details: [
           {
-            appID: "B6D93WXCD7.com.familyledger.app",
+            appID: "B6D93WXCD7.com.thirteenapps.familyledger",
             paths: ["*"],
           },
         ],
