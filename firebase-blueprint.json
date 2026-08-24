@@ -1,0 +1,173 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User public profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "verified": { "type": "boolean" },
+        "isVerified": { "type": "boolean" },
+        "emailVerified": { "type": "boolean" }
+      },
+      "required": ["displayName"]
+    },
+    "UserPrivate": {
+      "title": "User Private Info",
+      "description": "Sensitive user information (PII)",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "biometricEnabled": { "type": "boolean" },
+        "notificationsEnabled": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "verified": { "type": "boolean" },
+        "isVerified": { "type": "boolean" },
+        "emailVerified": { "type": "boolean" }
+      },
+      "required": ["email"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "An expense sharing group",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "currency": { "type": "string" },
+        "coverImage": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "totalSpending": { "type": "number" },
+        "memberCount": { "type": "number" },
+        "splitEnabled": { "type": "boolean", "description": "Whether expense splitting is enabled for this group" }
+      },
+      "required": ["name", "currency", "createdBy", "createdAt"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A member's membership in a group",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "groupId": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "admin", "member"] },
+        "canInvite": { "type": "boolean" },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["userId", "groupId", "role", "joinedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "A transaction within a group",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "paidBy": { "type": "string" },
+        "splitInfo": {
+          "type": "object",
+          "properties": {
+            "splitType": { "type": "string", "enum": ["equally", "percentage", "amount"] },
+            "splits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "userId": { "type": "string" },
+                  "amount": { "type": "number" },
+                  "percentage": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "paymentMethod": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "amount", "description", "category", "date", "paidBy", "addedBy", "createdAt"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Activity log for a group",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "data": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "userId", "type", "createdAt"]
+    },
+    "Invite": {
+      "title": "Invite",
+      "description": "Pending invitation to join a group",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "invitedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "invitedBy", "status", "createdAt"]
+    },
+    "GlobalStats": {
+      "title": "Global Stats",
+      "description": "Application-wide aggregate statistics",
+      "type": "object",
+      "properties": {
+        "totalUsers": { "type": "number" },
+        "totalGroups": { "type": "number" },
+        "totalExpenses": { "type": "number" },
+        "totalAmount": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/stats/{statId}": {
+      "schema": "GlobalStats",
+      "description": "Global application aggregates"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Public user profile"
+    },
+    "/users/{userId}/private/info": {
+      "schema": "UserPrivate",
+      "description": "Private user PII and settings"
+    },
+    "/groups/{groupId}": {
+      "schema": "Group",
+      "description": "Primary group documents"
+    },
+    "/groups/{groupId}/invites/{inviteId}": {
+      "schema": "Invite",
+      "description": "Pending invitations for the group"
+    },
+    "/members/{membershipId}": {
+      "schema": "Member",
+      "description": "Membership documents (membershipId is typically userId_groupId)"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Individual expenses"
+    },
+    "/activities/{activityId}": {
+      "schema": "Activity",
+      "description": "Group activity history"
+    }
+  }
+}

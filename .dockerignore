@@ -1,0 +1,13 @@
+node_modules
+dist
+android
+keystore
+resources
+mocks
+.git
+.gitignore
+.env
+.env.local
+*.log
+coverage
+.claude

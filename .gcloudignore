@@ -1,0 +1,10 @@
+.git
+.gitignore
+node_modules/
+dist/
+android/
+resources/
+mocks/
+*.log
+.env
+.env.local

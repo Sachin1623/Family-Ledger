@@ -1,0 +1,71 @@
+{
+  "project_info": {
+    "project_number": "192700919713",
+    "project_id": "familyledgerta",
+    "storage_bucket": "familyledgerta.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:192700919713:android:d768fbe1d1e7f21f0de5e0",
+        "android_client_info": {
+          "package_name": "com.familyledger.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "192700919713-5ng3bghfrm9cukorq617lq18qgq1bn8i.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.familyledger.app",
+            "certificate_hash": "a1544949bca12f12aeb20979f3b2adc901da4da9"
+          }
+        },
+        {
+          "client_id": "192700919713-apn0suknav3s3mgc0fcq2etqs466pugo.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.familyledger.app",
+            "certificate_hash": "cd33b1b5cba6d9a42c7062da7a3da59aa5fb68da"
+          }
+        },
+        {
+          "client_id": "192700919713-qjuuhn3gfb3013v326ahoujdujj6o1kq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.familyledger.app",
+            "certificate_hash": "17aca65622eb62aabc774a91a61a7f6387bff340"
+          }
+        },
+        {
+          "client_id": "192700919713-vsuml6ji4ac8tsuelikrl63gp3476ufl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.familyledger.app",
+            "certificate_hash": "8e1aaa62fe64a7a4b063462ba6acbe2d352ef16d"
+          }
+        },
+        {
+          "client_id": "192700919713-sla0o1vjckftau2ig9p94ona4hm4asg4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyARfKEhy76REbcGX67iizzl8HrrsZpVkkA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "192700919713-sla0o1vjckftau2ig9p94ona4hm4asg4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

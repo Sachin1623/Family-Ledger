@@ -1,0 +1,33 @@
+<svg width="400" height="120" viewBox="0 0 400 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Ledger Icon -->
+  <rect x="10" y="10" width="80" height="100" rx="12" fill="url(#ledger_grad)"/>
+  <path d="M70 40C70 36.6863 72.6863 34 76 34H90V86H76C72.6863 86 70 83.3137 70 80V40Z" fill="#1E3A8A"/>
+  
+  <!-- Family Silhouettes -->
+  <circle cx="35" cy="40" r="8" fill="white" fill-opacity="0.9"/>
+  <path d="M25 50C25 48.8954 25.8954 48 27 48H43C44.1046 48 45 48.8954 45 50V75H25V50Z" fill="white" fill-opacity="0.9"/>
+  
+  <circle cx="55" cy="45" r="7" fill="white" fill-opacity="0.8"/>
+  <path d="M48 52C48 50.8954 48.8954 50 50 50H60C61.1046 50 62 50.8954 62 52V75H48V52Z" fill="white" fill-opacity="0.8"/>
+  
+  <circle cx="45" cy="70" r="5" fill="white" fill-opacity="1"/>
+  <path d="M40 75C40 74.4477 40.4477 74 41 74H49C49.5523 74 50 74.4477 50 75V85H40V75Z" fill="white" fill-opacity="1"/>
+  
+  <circle cx="65" cy="72" r="5" fill="white" fill-opacity="1"/>
+  <path d="M60 77C60 76.4477 60.4477 76 61 76H69C69.5523 76 70 76.4477 70 77V85H60V77Z" fill="white" fill-opacity="1"/>
+
+  <!-- Text -->
+  <text x="110" y="55" fill="#0F172A" font-family="'Work Sans', sans-serif" font-size="44" font-weight="900" letter-spacing="-1">Family</text>
+  <text x="110" y="95" fill="url(#text_grad)" font-family="'Work Sans', sans-serif" font-size="44" font-weight="900" letter-spacing="-1">Ledger</text>
+
+  <defs>
+    <linearGradient id="ledger_grad" x1="10" y1="10" x2="90" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4ADE80"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="text_grad" x1="110" y1="70" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0284C7"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+</svg>

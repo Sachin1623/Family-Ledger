@@ -1,0 +1,1488 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Sachin Super Rule - ABSOLUTE PRIORITY
+    function isSachin() {
+      // sachin.rajputs@gmail.com is the sole primary admin (2026-08-20) — any other admin should
+      // go through the Manage Admins screen (`admins` collection) instead of being hardcoded here.
+      // UID verified current against the live familyledgerta project — the previous values were
+      // stale pre-migration UIDs from the old project that matched no real account (see
+      // server.ts's PRIMARY_ADMIN_UIDS comment for the full story).
+      return request.auth != null && (
+        request.auth.uid == "iTxTkTsrwONnm6mVvwe43cZeX8i1" ||
+        (request.auth.token != null && request.auth.token.keys().hasAll(['email']) && (
+          request.auth.token.email == "sachin.rajputs@gmail.com"
+        ))
+      );
+    }
+
+    match /{document=**} {
+      allow read, write: if isSachin();
+    }
+
+    // 1. Connection Test
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUserVerified() {
+      return isSignedIn();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isMember(groupId) {
+      return exists(/databases/$(database)/documents/members/$(request.auth.uid + '_' + groupId));
+    }
+
+    // `friendships/{id}` is always `[uidA,uidB].sort().join('_')` — same idiom as `directChats` —
+    // so this can compute either party's friendship doc id without a stored participants array.
+    function friendshipIdOf(a, b) {
+      return a < b ? a + '_' + b : b + '_' + a;
+    }
+
+    function isAcceptedFriend(otherUid) {
+      let fid = friendshipIdOf(request.auth.uid, otherUid);
+      return exists(/databases/$(database)/documents/friendships/$(fid)) &&
+        get(/databases/$(database)/documents/friendships/$(fid)).data.status == 'accepted';
+    }
+
+    function getMember(groupId) {
+      return get(/databases/$(database)/documents/members/$(request.auth.uid + '_' + groupId)).data;
+    }
+
+    function isOwner(groupId) {
+      let membershipDoc = /databases/$(database)/documents/members/$(request.auth.uid + '_' + groupId);
+      return isSignedIn() && (
+        (resource != null && resource.data.keys().hasAll(['createdBy']) && resource.data.createdBy == request.auth.uid) ||
+        (exists(membershipDoc) && get(membershipDoc).data.keys().hasAll(['role']) && get(membershipDoc).data.role == 'owner')
+      );
+    }
+
+    function isAdmin(groupId) {
+      let membershipDoc = /databases/$(database)/documents/members/$(request.auth.uid + '_' + groupId);
+      return isOwner(groupId) || (exists(membershipDoc) && get(membershipDoc).data.keys().hasAll(['role']) && get(membershipDoc).data.role == 'admin');
+    }
+
+    function canModifyGroup(groupId) {
+      return isSignedIn() && (isMember(groupId) || isOwner(groupId));
+    }
+
+    // Strictly the original creator of the group — not any 'owner'-role member.
+    // Used to gate group deletion, member removal, and invite management to
+    // exactly one person per group, regardless of who else holds admin/owner roles.
+    function isGroupCreator(groupId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/groups/$(groupId)) &&
+        get(/databases/$(database)/documents/groups/$(groupId)).data.createdBy == request.auth.uid;
+    }
+
+    // --- Users ---
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      // `shopId`/`shopRole` (Shopkeeper mode access) are deliberately excluded from what the
+      // client can ever write to its own user doc — they're only ever set by server.ts's admin
+      // approval / add-staff endpoints (Admin SDK, bypasses these rules entirely). Without this,
+      // any signed-in user could self-grant shopkeeper access by writing those two fields
+      // directly via the client SDK, skipping the approval flow entirely. `shortId` is excluded
+      // for a different reason — it's only ever assigned by /api/ensure-short-id, which checks
+      // uniqueness against every other user before writing; a client-writable shortId could
+      // collide with someone else's and break the invite-search feature it's for.
+      allow create: if isSignedIn() && request.auth.uid == userId && !incoming().keys().hasAny(['shopId', 'shopRole', 'shortId']);
+      allow update: if isSignedIn() && request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['shopId', 'shopRole', 'shortId']);
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+
+      match /private/info {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // --- Groups ---
+    match /groups/{groupId} {
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow create: if isUserVerified() && isValidGroup(incoming()) && incoming().createdBy == request.auth.uid;
+      allow update: if (canModifyGroup(groupId) || existsAfter(/databases/$(database)/documents/members/$(request.auth.uid + '_' + groupId))) && (
+        (isAdmin(groupId) && isValidGroup(incoming())) ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['totalSpending', 'totalIncome', 'memberCount', 'icon', 'coverImage', 'photoURL']))
+      );
+      allow delete: if isSignedIn() && resource.data.keys().hasAll(['createdBy']) && resource.data.createdBy == request.auth.uid;
+
+      function isValidGroup(data) {
+        return data.keys().hasAll(['name']) && data.name is string && data.name.size() <= 100 &&
+               data.keys().hasAll(['currency']) && data.currency is string && data.currency.size() <= 10;
+      }
+
+      // --- Comments on a group (general discussion, not tied to a single expense) ---
+      match /comments/{commentId} {
+        function isValidGroupComment(data) {
+          return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+                 data.userId == request.auth.uid &&
+                 data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
+                 data.createdAt is string;
+        }
+
+        allow read: if isSignedIn() && (isSachin() || canModifyGroup(groupId));
+        allow create: if isSignedIn() && canModifyGroup(groupId) && isValidGroupComment(incoming());
+        // Editing (not just deleting) your own message — author-only, and restricted to just the
+        // text + an `editedAt` marker so `userId`/`createdAt`/etc. can never be tampered with.
+        allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+          incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+        allow delete: if isSignedIn() && (
+          request.auth.uid == existing().userId || isAdmin(groupId)
+        );
+      }
+    }
+
+    // --- Members ---
+    match /members/{membershipId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        (incoming().userId == request.auth.uid && (
+          (incoming().role == 'owner' && isUserVerified()) ||
+          (incoming().role == 'member')
+        ))
+      );
+      allow update: if isSignedIn() && (
+        (request.auth.uid == existing().userId && incoming().diff(existing()).affectedKeys().hasOnly(['photoURL', 'displayName'])) ||
+        (isAdmin(existing().groupId) && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'canInvite']))
+      );
+      allow delete: if isSignedIn() && (
+        request.auth.uid == existing().userId ||
+        isGroupCreator(existing().groupId)
+      );
+    }
+
+    // --- Friendships ---
+    // Creation and accept both go through server.ts's /api/friends/request and /respond (Admin
+    // SDK) — creation needs email-lookup + a check against both parties' blockedUsers + the
+    // silent-merge-into-acceptance logic when the other side already sent a request, and accept
+    // needs to push-notify the requester, neither of which rules can express. Decline/cancel/
+    // unfriend need none of that, so they're plain client `deleteDoc` calls, allowed here for
+    // either participant — being one of the two halves of the id IS the participant check.
+    match /friendships/{friendshipId} {
+      // The path-only check (`friendshipId.split('_')`) is enough for a direct get() of a known
+      // doc, but Friends.tsx's Requests/Friends tabs list via
+      // `where('participants', 'array-contains', myUid)` — Firestore can only treat a `list`
+      // query as provably safe when the rule can be evaluated from the SAME field the query
+      // filters on, not from the document's path/id. Without the `resource.data.participants`
+      // clause here, that list query silently came back empty for the recipient (the requester's
+      // own client showed the friend fine since some code paths route through a fresher read),
+      // even though the underlying doc and its `participants` field were written correctly.
+      allow read: if isSignedIn() && (
+        request.auth.uid in friendshipId.split('_') ||
+        request.auth.uid in resource.data.participants
+      );
+      allow create: if false;
+      allow update: if false;
+      allow delete: if isSignedIn() && request.auth.uid in friendshipId.split('_');
+    }
+
+    // --- Gamification (Phase 1) ---
+    // Every award goes through server.ts's /api/points/claim (or is granted inline by an already
+    // server-mediated endpoint — games, friends, recurring-confirm) so it can be re-verified
+    // against real data via the Admin SDK, which bypasses these rules entirely. Nothing here is
+    // ever client-writable — `pointsLedger`'s doc ID IS the idempotency key the award logic relies
+    // on, and a client that could write it directly could double-claim by writing under a fresh ID.
+    match /userPoints/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /userPoints/{uid}/habitStreaks/{todoId} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /userPoints/{uid}/meta/{docId} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /userPoints/{uid}/badges/{badgeId} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /pointsLedger/{ledgerId} {
+      // Same list-query provability note as `friendships` above — My Progress's recent-activity
+      // list queries `where('uid','==',myUid)`, so the rule must be provable from that same field.
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Permanent, Admin-SDK-only record of a finished game's outcome (winner + minimal player
+    // list), written alongside the game's own finish write so GameRanks/leaderboard stats survive
+    // a player later deleting that finished game from their lobby (see rummyGames/sweepGames/
+    // sequenceGames delete endpoints, which only ever refuse to delete an ACTIVE game). Same
+    // list-query provability pattern as rummyGames' own `playerUids array-contains` rule above.
+    match /gameOutcomes/{gameId} {
+      allow get, list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+      allow write: if false;
+    }
+
+    // --- Families ---
+    // A lightweight, client-direct-write roster (mirrors groups/members' creation pattern in
+    // CreateGroup.tsx) deliberately kept separate from `groups` — a family is just a saved
+    // contact roster for quickly building expense groups, not an expense-group itself, so it
+    // carries none of groups' budget/split/recurring semantics. Only the family's creator can
+    // add/remove members, and only from among their own accepted friends — a family member never
+    // needs to separately consent to being rostered, since the friendship itself already required
+    // mutual consent.
+    match /families/{familyId} {
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && incoming().createdBy == request.auth.uid &&
+        incoming().keys().hasAll(['name']) && incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 100;
+      allow update: if isSignedIn() && existing().createdBy == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name']) &&
+        incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 100;
+      allow delete: if isSignedIn() && existing().createdBy == request.auth.uid;
+    }
+
+    match /familyMembers/{memberId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasAll(['userId', 'familyId', 'role']) && (
+        (incoming().userId == request.auth.uid && incoming().role == 'owner' &&
+         get(/databases/$(database)/documents/families/$(incoming().familyId)).data.createdBy == request.auth.uid) ||
+        (incoming().role == 'member' &&
+         get(/databases/$(database)/documents/families/$(incoming().familyId)).data.createdBy == request.auth.uid &&
+         isAcceptedFriend(incoming().userId))
+      );
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['photoURL', 'displayName']);
+      allow delete: if isSignedIn() && (
+        request.auth.uid == existing().userId ||
+        get(/databases/$(database)/documents/families/$(existing().familyId)).data.createdBy == request.auth.uid
+      );
+    }
+
+    // --- Expenses ---
+    match /expenses/{expenseId} {
+      allow read: if isSignedIn() && (isSachin() || canModifyGroup(resource.data.groupId));
+      allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidExpense(incoming());
+      allow update: if isUserVerified() && canModifyGroup(existing().groupId) && (
+        (
+          (request.auth.uid == existing().addedBy || isAdmin(existing().groupId)) &&
+          isValidExpense(incoming())
+        ) ||
+        // Favoriting is a personal bookmark shared for browsing (see AddExpense.tsx's favorites
+        // picker) — NOT a substantive edit to someone else's financial record, so it's
+        // deliberately not restricted to the original adder/an admin like every other field
+        // change above. Any group member may toggle `favoritedBy`, but ONLY that field, and ONLY
+        // by adding/removing their OWN uid — never touching anyone else's entry in the array.
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['favoritedBy']) &&
+          request.resource.data.favoritedBy.toSet().difference(resource.data.favoritedBy.toSet()).hasOnly([request.auth.uid]) &&
+          resource.data.favoritedBy.toSet().difference(request.resource.data.favoritedBy.toSet()).hasOnly([request.auth.uid])
+        )
+      );
+      allow delete: if isUserVerified() && canModifyGroup(existing().groupId) && (
+        request.auth.uid == existing().addedBy || isAdmin(existing().groupId)
+      );
+
+      function isValidExpense(data) {
+        return data.keys().hasAll(['amount']) && data.amount is number && data.amount >= 0 &&
+               data.keys().hasAll(['description']) && data.description is string && data.description.size() <= 200 &&
+               data.keys().hasAll(['category']) && data.category is string &&
+               (!data.keys().hasAll(['splitInfo']) || (
+                 data.splitInfo.splitType in ['equally', 'percentage', 'amount'] &&
+                 data.splitInfo.splits is list
+               ));
+      }
+
+      // --- Comments on an expense ---
+      match /comments/{commentId} {
+        function parentGroupId() {
+          return get(/databases/$(database)/documents/expenses/$(expenseId)).data.groupId;
+        }
+
+        function isValidComment(data) {
+          return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+                 data.userId == request.auth.uid &&
+                 data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
+                 data.createdAt is string;
+        }
+
+        allow read: if isSignedIn() && (isSachin() || canModifyGroup(parentGroupId()));
+        allow create: if isSignedIn() && canModifyGroup(parentGroupId()) && isValidComment(incoming());
+        allow delete: if isSignedIn() && (
+          request.auth.uid == existing().userId || isAdmin(parentGroupId())
+        );
+      }
+    }
+
+    // --- Activities ---
+    function isValidActivity(data) {
+      let required = ['userId', 'type', 'createdAt'];
+      return data.keys().hasAll(required) &&
+             data.userId == request.auth.uid &&
+             data.type is string &&
+             data.createdAt is string &&
+             // Conditional groupId requirement
+             (data.type == 'new_article' || data.type == 'group_deleted' || (data.keys().hasAll(['groupId']) && isValidId(data.groupId)));
+    }
+
+    function canViewActivity(data) {
+      return isSignedIn() && (
+        resource == null ||
+        isSachin() ||
+        (data != null && data.keys().hasAll(['type']) && data.type == 'new_article') ||
+        (data != null && data.keys().hasAll(['userId']) && data.userId == request.auth.uid) ||
+        (data != null && data.keys().hasAll(['groupId']) && data.groupId != '' && isMember(data.groupId))
+      );
+    }
+
+    match /activities/{activityId} {
+      allow get: if isSignedIn() && canViewActivity(resource.data);
+      allow list: if isSignedIn() && (
+          isSachin() ||
+          (resource.data.keys().hasAll(['type']) && resource.data.type == 'new_article') ||
+          (resource.data.keys().hasAll(['userId']) && resource.data.userId == request.auth.uid) ||
+          (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != "" && isMember(resource.data.groupId))
+      );
+      allow create: if isSignedIn() && isValidActivity(incoming()) && (
+        isSachin() ||
+        incoming().type == 'new_article' ||
+        incoming().type == 'create_group' ||
+        (incoming().type == 'group_deleted' && incoming().userId == request.auth.uid) ||
+        (incoming().keys().hasAll(['groupId']) && incoming().groupId != '' && (isMember(incoming().groupId) || existsAfter(/databases/$(database)/documents/members/$(request.auth.uid + '_' + incoming().groupId))))
+      );
+      allow update, delete: if isSachin();
+    }
+
+    // Weekly per-user recap (games/groups/expenses/chat stats + week/month comparisons) —
+    // computed and written only by /api/cron/send-weekly-summary via the Admin SDK (which bypasses
+    // these rules entirely), so this block only needs to cover client READS. Same personal-doc
+    // shape as `activities`' userId-scoped rule above.
+    match /userWeeklySummaries/{summaryId} {
+      allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // --- Sub-collections under Groups ---
+    match /groups/{groupId}/invites/{inviteId} {
+      // Any member can create/read invites — invite rights are not admin-gated.
+      // Cancelling: only the group creator or the member who sent a given invite.
+      // Accepting: the invitee themself, once they've joined (matched by email on their
+      // own auth token) — lets JoinGroup.tsx mark its own invite accepted after joining.
+      allow read: if canModifyGroup(groupId);
+      allow create: if canModifyGroup(groupId) && isValidInvite(incoming());
+      allow update: if canModifyGroup(groupId) && (
+        isGroupCreator(groupId) ||
+        (resource.data.keys().hasAll(['invitedBy']) && request.auth.uid == resource.data.invitedBy) ||
+        (resource.data.keys().hasAll(['email']) && request.auth.token.email != null &&
+         resource.data.email == request.auth.token.email.lower() &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['status']) && incoming().status == 'accepted')
+      );
+      allow delete: if canModifyGroup(groupId) && (isGroupCreator(groupId) || (resource.data.keys().hasAll(['invitedBy']) && request.auth.uid == resource.data.invitedBy));
+
+      function isValidInvite(data) {
+        return data.keys().hasAll(['email']) && data.email is string && data.email.size() <= 100 &&
+               data.keys().hasAll(['status']) && data.status in ['pending', 'accepted', 'declined'] &&
+               data.keys().hasAll(['invitedBy']) && data.invitedBy == request.auth.uid;
+      }
+    }
+
+    // --- Stats ---
+    match /stats/{statId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // --- App improvement feedback / suggestions / bug reports ---
+    // Any signed-in user can submit and read back their own submissions (so they can see
+    // admin replies and reply back themselves) — full cross-user listing/resolve/delete stays
+    // admin-only, primarily via the backend admin API (bypasses rules), but isAnyAdminRule()
+    // also lets secondary admins read/reply directly through client rules where useful.
+    function isAnyAdminRule() {
+      return isSignedIn() && (isSachin() || exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    match /feedback/{feedbackId} {
+      function isValidFeedback(data) {
+        return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+               data.userId == request.auth.uid &&
+               data.text is string && data.text.size() > 0 && data.text.size() <= 2000 &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['type']) || data.type in ['feedback', 'suggestion', 'bug']) &&
+               (!data.keys().hasAll(['screenshot']) || (data.screenshot is string && data.screenshot.size() <= 1000000));
+      }
+
+      allow create: if isSignedIn() && isValidFeedback(incoming());
+      allow read: if isSignedIn() && (isAnyAdminRule() || resource.data.userId == request.auth.uid);
+      allow update, delete: if isSachin();
+
+      match /comments/{commentId} {
+        function canAccessFeedback() {
+          return isAnyAdminRule() || get(/databases/$(database)/documents/feedback/$(feedbackId)).data.userId == request.auth.uid;
+        }
+        function isValidFeedbackComment(data) {
+          return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+                 data.userId == request.auth.uid &&
+                 data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+                 data.createdAt is string;
+        }
+
+        allow read: if isSignedIn() && canAccessFeedback();
+        allow create: if isSignedIn() && canAccessFeedback() && isValidFeedbackComment(incoming());
+        allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+      }
+    }
+
+    // --- Account deletion tombstones ---
+    // Written by a user right before they delete their own account, so that
+    // /api/merge-account (backend, admin-privileged) can find and restore their data if
+    // they re-register with the same email within the 30-day retention window promised
+    // in the Privacy Policy / Data Deletion pages. Only the backend (admin SDK, bypasses
+    // rules) reads these — client rules here only need to allow the self-write.
+    match /accountDeletions/{uid} {
+      allow create: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // --- Admin roles ---
+    // Secondary admins are granted/revoked exclusively by the backend (/api/admin/manage-admin,
+    // restricted to sachin.rajputs@gmail.com) using the admin SDK, which bypasses these rules.
+    // The only thing a client needs here is to read its own doc, to decide whether to show the
+    // admin nav entry.
+    match /admins/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // --- App version / force-update config ---
+    // Public read so the update-check runs before any group-specific data loads; writes go
+    // through the backend admin API (bypasses rules, supports secondary admins too) — the
+    // direct isSachin() allowance here is just a manual-override safety valve.
+    match /app_config/{docId} {
+      allow read: if true;
+      allow write: if isSachin();
+    }
+
+    // --- Recurring expenses & expense reminders ---
+    // Purely personal — each user only ever sees/manages their own rules. The daily cron
+    // job (server.ts, Admin SDK) does the actual expense-creation/notification work and
+    // advances nextRunDate, bypassing these rules entirely; they only govern the client's
+    // own CRUD on its rules.
+    function isValidFrequency(data) {
+      return data.keys().hasAll(['frequency', 'nextRunDate']) &&
+             data.frequency in ['daily', 'alternate_day', 'weekly', 'monthly', 'quarterly', 'half_yearly', 'annually'] &&
+             data.nextRunDate is string;
+    }
+
+    match /recurringExpenses/{ruleId} {
+      function isValidRecurringExpense(data) {
+        return data.keys().hasAll(['userId', 'groupId', 'category', 'amount', 'active', 'createdAt']) &&
+               data.groupId is string && data.groupId.size() > 0 &&
+               data.category is string &&
+               data.amount is number && data.amount > 0 &&
+               data.active is bool &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['type']) || data.type in ['expense', 'income']) &&
+               isValidFrequency(data);
+      }
+
+      // Any group member can see, create, edit, pause, or delete a group's recurring expenses —
+      // full shared control, matching group budgets/invites. `userId` still records who
+      // originally set a rule up (shown in the UI, and it's who the due-occurrence confirmation
+      // push goes to — see processRecurringExpenses/pendingRecurringExpenses in server.ts), but
+      // it's fixed at creation and can't be reassigned via edit, so an edit by a different
+      // member doesn't redirect that member's own reminders to themselves.
+      //
+      // The first disjunct of `allow read` (self-referential on `userId`) is required so a
+      // `where('userId','==')` list query is provable directly from the query's filter field —
+      // Firestore can only prove a get()/exists()-based clause like canModifyGroup() for a list
+      // query when it references the SAME field the query filters on; otherwise that query shape
+      // is unprovable and Firestore denies the whole list even though every doc would
+      // individually pass — it silently returns nothing instead of erroring (see 2026-08-04 bug
+      // writeup below).
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        canModifyGroup(resource.data.groupId)
+      );
+      allow create: if isSignedIn() && isValidRecurringExpense(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && canModifyGroup(existing().groupId) && isValidRecurringExpense(incoming()) &&
+        incoming().userId == existing().userId && incoming().groupId == existing().groupId;
+      allow delete: if isSignedIn() && canModifyGroup(existing().groupId);
+    }
+
+    match /expenseReminders/{reminderId} {
+      // A one-time reminder (`oneTime: true`) only needs a `nextRunDate` — it fires once and
+      // deactivates (see processExpenseReminders in server.ts), so the recurring-frequency
+      // fields don't apply and isValidFrequency is skipped for it.
+      function isValidReminder(data) {
+        return data.keys().hasAll(['userId', 'active', 'createdAt', 'nextRunDate']) &&
+               data.userId == request.auth.uid &&
+               data.active is bool &&
+               data.createdAt is string &&
+               data.nextRunDate is string &&
+               (data.oneTime == true || isValidFrequency(data));
+      }
+
+      allow read, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidReminder(incoming());
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidReminder(incoming());
+    }
+
+    // --- To-do list ---
+    // Personal by default (only the creator can see/edit); optionally shared to one group,
+    // in which case any group member gets full read/edit/toggle/delete control, matching the
+    // recurring-expenses "any member" model. Reminders (reminderAt) always go only to the
+    // creator (see processTodoReminders in server.ts) regardless of sharing — sharing controls
+    // visibility of the item, not who gets reminded.
+    match /todos/{todoId} {
+      function isValidTodo(data) {
+        return data.keys().hasAll(['userId', 'text', 'done', 'createdAt']) &&
+               data.text is string && data.text.size() > 0 && data.text.size() <= 300 &&
+               data.done is bool &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['reminderAt']) || data.reminderAt == null || data.reminderAt is string) &&
+               (!data.keys().hasAll(['dueDate']) || data.dueDate == null || data.dueDate is string) &&
+               (!data.keys().hasAll(['status']) || data.status in ['pending', 'done', 'na']) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+               (!data.keys().hasAll(['recurring']) || data.recurring is bool) &&
+               (!data.keys().hasAll(['recurringActive']) || data.recurringActive is bool) &&
+               (!data.keys().hasAll(['frequency']) || data.frequency in ['daily', 'alternate_day', 'weekly', 'monthly', 'alternate_month', 'quarterly', 'half_yearly', 'annually']) &&
+               (!data.keys().hasAll(['nextRunDate']) || data.nextRunDate == null || data.nextRunDate is string) &&
+               (!data.keys().hasAll(['timezone']) || data.timezone == null || data.timezone is string) &&
+               (!data.keys().hasAll(['history']) || data.history is map) &&
+               (!data.keys().hasAll(['reminderOffsetMinutes']) || data.reminderOffsetMinutes == null || data.reminderOffsetMinutes is number) &&
+               (!data.keys().hasAll(['habitReminderSent']) || data.habitReminderSent is bool);
+      }
+
+      // Self-referential `userId` disjunct required for the creator's own `where('userId','==')`
+      // list query to be provable — same reasoning as recurringExpenses (see its comment above).
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId))
+      );
+      allow create: if isSignedIn() && isValidTodo(incoming()) && incoming().userId == request.auth.uid &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && isValidTodo(incoming()) && incoming().userId == existing().userId && (
+        existing().userId == request.auth.uid ||
+        (existing().groupId != null && canModifyGroup(existing().groupId))
+      ) && (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        (existing().groupId != null && canModifyGroup(existing().groupId))
+      );
+    }
+
+    // --- Shopping lists ---
+    // Same personal-or-shared-to-one-group model as todos: any group member gets full control
+    // (edit the list itself, add/check/delete items) once a list is shared. Items live in a
+    // subcollection so concurrent contributions from different members don't race on a single
+    // array field.
+    match /shoppingLists/{listId} {
+      function isValidShoppingList(data) {
+        return data.keys().hasAll(['userId', 'title', 'createdAt']) &&
+               data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['scheduledAt']) || data.scheduledAt == null || data.scheduledAt is string);
+      }
+
+      function canAccessList(data) {
+        return data.userId == request.auth.uid || (data.groupId != null && canModifyGroup(data.groupId));
+      }
+
+      // Self-referential `userId` disjunct required for the creator's own `where('userId','==')`
+      // list query to be provable — same reasoning as recurringExpenses/todos above.
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId))
+      );
+      allow create: if isSignedIn() && isValidShoppingList(incoming()) && incoming().userId == request.auth.uid &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && isValidShoppingList(incoming()) && incoming().userId == existing().userId &&
+        canAccessList(existing()) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && canAccessList(existing());
+
+      match /items/{itemId} {
+        function parentList() {
+          return get(/databases/$(database)/documents/shoppingLists/$(listId)).data;
+        }
+        function canAccessParentList() {
+          return parentList().userId == request.auth.uid ||
+            (parentList().groupId != null && canModifyGroup(parentList().groupId));
+        }
+        // `status` replaced the original boolean `checked` field with a tri-state model
+        // (pending/bought/unavailable) — `checked` is still tolerated (not required) so items
+        // created before this change keep validating.
+        function isValidItem(data) {
+          return data.keys().hasAll(['text', 'addedBy', 'createdAt']) &&
+                 data.text is string && data.text.size() > 0 && data.text.size() <= 200 &&
+                 data.addedBy is string &&
+                 data.createdAt is string &&
+                 (!data.keys().hasAll(['status']) || data.status in ['pending', 'bought', 'unavailable']) &&
+                 (!data.keys().hasAll(['checked']) || data.checked is bool) &&
+                 (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+        }
+
+        allow read: if isSignedIn() && canAccessParentList();
+        allow create: if isSignedIn() && canAccessParentList() && isValidItem(incoming()) && incoming().addedBy == request.auth.uid;
+        allow update: if isSignedIn() && canAccessParentList() && isValidItem(incoming()) && incoming().addedBy == existing().addedBy;
+        allow delete: if isSignedIn() && canAccessParentList();
+      }
+    }
+
+    // --- Group monthly budgets ---
+    // Any group member can view/set the budget (matches the "any member can invite" open
+    // collaboration pattern already used elsewhere) — doc ID is `${groupId}_${YYYY-MM}` so
+    // setting a month's budget is a plain upsert, not a query-then-create.
+    match /groupBudgets/{budgetId} {
+      function isValidBudget(data) {
+        return data.keys().hasAll(['groupId', 'month', 'amount', 'createdAt']) &&
+               data.groupId is string && data.groupId.size() > 0 &&
+               data.month is string && data.month.matches('^[0-9]{4}-[0-9]{2}$') &&
+               data.amount is number && data.amount > 0 &&
+               data.createdAt is string;
+      }
+
+      allow read: if isSignedIn() && canModifyGroup(resource.data.groupId);
+      allow create: if isSignedIn() && canModifyGroup(incoming().groupId) && isValidBudget(incoming());
+      allow update: if isSignedIn() && canModifyGroup(existing().groupId) && isValidBudget(incoming());
+      allow delete: if isSignedIn() && canModifyGroup(existing().groupId);
+    }
+
+    // --- Pending recurring-expense confirmations ---
+    // Created only by the daily cron job (server.ts, Admin SDK) and only ever accepted/
+    // declined through /api/recurring-confirm/:id/{accept,decline} (also Admin SDK, so it can
+    // create the resulting expense atomically alongside marking this resolved) — the client
+    // only ever reads its own, never writes here directly.
+    match /pendingRecurringExpenses/{pendingId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // --- Login events (analytics) ---
+    // Written by the client on every sign-in; only read by the backend admin API.
+    match /loginEvents/{eventId} {
+      allow create: if isSignedIn() && incoming().uid == request.auth.uid;
+    }
+
+    // --- Personal Loans ("financial support given to/taken from family & friends") ---
+    // Deliberately NOT group-based: a contact may never sign up for the app at all, so this
+    // models a "contact" as a lightweight, owner-private record (just a name to start) that can
+    // optionally be linked to a real account later (`linkedUserId`) — unilaterally, by the owner,
+    // with no acceptance step from the other side (the whole feature is built around one person
+    // keeping their own record of an informal arrangement, not a shared/negotiated ledger like
+    // group expenses). Once linked, the counterparty gets read access to see their side of it
+    // and can set their own reminder / respond to reminders / propose-or-accept an installment
+    // plan, but everything else about the record (adding ledger lines, editing terms) stays
+    // owner-only — see `loanContacts/{contactId}/entries` below for why.
+    match /loanContacts/{contactId} {
+      function isValidContact(data) {
+        return data.keys().hasAll(['ownerId', 'name', 'balance', 'currency', 'createdAt']) &&
+               data.ownerId == request.auth.uid &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+               data.balance is number &&
+               data.currency is string &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['installmentPlan']) || data.installmentPlan == null || (
+                 data.installmentPlan.amount is number && data.installmentPlan.amount > 0 &&
+                 data.installmentPlan.frequency in ['weekly', 'monthly'] &&
+                 data.installmentPlan.status in ['pending', 'active', 'declined']
+               ));
+      }
+
+      // The self-referential `ownerId`/`counterpartyUserId` disjuncts (matching the exact field
+      // each of the app's two separate queries filters on — `where('ownerId','==',uid)` for the
+      // owner's own list, `where('counterpartyUserId','==',uid)` for "loans about me") are
+      // required for Firestore to prove either `list` query directly — see the identical
+      // reasoning already documented on `recurringExpenses` above.
+      allow read: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid ||
+        (resource.data.keys().hasAll(['linkedUserId']) && resource.data.linkedUserId == request.auth.uid)
+      );
+      allow create: if isSignedIn() && isValidContact(incoming());
+      allow update: if isSignedIn() && (
+        (existing().ownerId == request.auth.uid && isValidContact(incoming())) ||
+        // The linked counterparty may only ever touch their own reminder and participate in the
+        // installment plan (propose/accept/decline) — never the contact's name, balance, or link.
+        (existing().keys().hasAll(['linkedUserId']) && existing().linkedUserId == request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['counterpartyReminderAt', 'counterpartyReminderSent', 'installmentPlan', 'updatedAt']))
+      );
+      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+
+    function loanContact(contactId) {
+      return get(/databases/$(database)/documents/loanContacts/$(contactId)).data;
+    }
+
+    function canAccessLoanContact(contactData) {
+      return contactData.ownerId == request.auth.uid ||
+        (contactData.keys().hasAll(['linkedUserId']) && contactData.linkedUserId == request.auth.uid);
+    }
+
+    // --- Personal Loans: ledger entries ---
+    // Append-only (no update/delete) — this is a running financial history, not something
+    // meant to be edited after the fact; a mistake gets corrected with a new offsetting entry,
+    // same principle as real accounting ledgers. Owner-only writes (not the linked counterparty)
+    // keeps a single source of truth for what actually happened, avoiding a two-sided
+    // reconciliation/dispute mechanism this feature was explicitly never meant to be.
+    match /loanContacts/{contactId}/entries/{entryId} {
+      function isValidEntry(data) {
+        return data.keys().hasAll(['type', 'addedBy', 'createdAt']) &&
+               data.type in ['given', 'taken', 'repayment_by_them', 'repayment_by_me', 'note'] &&
+               data.addedBy == request.auth.uid &&
+               data.createdAt is string &&
+               (data.type == 'note' || (data.keys().hasAll(['amount']) && data.amount is number && data.amount > 0));
+      }
+
+      allow read: if isSignedIn() && canAccessLoanContact(loanContact(contactId));
+      allow create: if isSignedIn() && loanContact(contactId).ownerId == request.auth.uid && isValidEntry(incoming());
+    }
+
+    function isValidLoanComment(data) {
+      return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
+             data.createdAt is string;
+    }
+
+    // --- Personal Loans: comments on the overall account/relationship ---
+    // Unlike ledger entries, a comment thread is naturally bidirectional (either side can add
+    // context or ask a question), so both the owner and the linked counterparty can write here —
+    // same read/write shape as groups/{groupId}/comments, reusing Comments.tsx as-is.
+    match /loanContacts/{contactId}/comments/{commentId} {
+      allow read: if isSignedIn() && canAccessLoanContact(loanContact(contactId));
+      allow create: if isSignedIn() && canAccessLoanContact(loanContact(contactId)) && isValidLoanComment(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- Personal Loans: comments on a single ledger entry ---
+    match /loanContacts/{contactId}/entries/{entryId}/comments/{commentId} {
+      allow read: if isSignedIn() && canAccessLoanContact(loanContact(contactId));
+      allow create: if isSignedIn() && canAccessLoanContact(loanContact(contactId)) && isValidLoanComment(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- Personal Loans: missed-commitment log ---
+    // Written when the party who currently owes money responds "Can't pay yet" to a reminder —
+    // either side can write here (whichever one is actually the debtor depends on the contact's
+    // current balance sign, which can flip over time, so this isn't restricted to a fixed role).
+    match /loanContacts/{contactId}/commitments/{commitmentId} {
+      function isValidCommitment(data) {
+        return data.keys().hasAll(['message', 'respondedBy', 'createdAt']) &&
+               data.message is string && data.message.size() > 0 && data.message.size() <= 500 &&
+               data.respondedBy == request.auth.uid &&
+               data.createdAt is string;
+      }
+
+      allow read: if isSignedIn() && canAccessLoanContact(loanContact(contactId));
+      allow create: if isSignedIn() && canAccessLoanContact(loanContact(contactId)) && isValidCommitment(incoming());
+    }
+
+    // --- Shopkeeper mode ---
+    // A separate small-business point-of-sale + CRM layer, gated behind admin approval (see
+    // `shopkeeperRequests` below and users/{userId}'s note on `shopId`/`shopRole` above — those
+    // two fields are the actual access gate and are never client-writable).
+
+    // Access requests: a user creates their own (status always forced to 'pending' by
+    // isValidRequest, so a client write can never self-approve); admin review/approval happens
+    // entirely through server.ts's Admin-SDK endpoints, not direct Firestore access, so no
+    // admin-side rule is needed here.
+    match /shopkeeperRequests/{userId} {
+      function isValidRequest(data) {
+        return data.keys().hasAll(['userId', 'userName', 'userEmail', 'status', 'createdAt']) &&
+               data.userId == request.auth.uid &&
+               data.status == 'pending' &&
+               data.userName is string && data.userEmail is string && data.createdAt is string;
+      }
+
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidRequest(incoming());
+      // Re-submitting after a rejection is fine; overwriting a still-pending or already-approved
+      // request from the client is not (that second case in particular would otherwise let a
+      // user quietly re-open/alter a request an admin already acted on).
+      allow update: if isSignedIn() && request.auth.uid == userId && existing().status != 'pending' && isValidRequest(incoming());
+    }
+
+    function shopDoc(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)).data;
+    }
+    function isShopOwner(shopId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/shops/$(shopId)) && shopDoc(shopId).ownerId == request.auth.uid;
+    }
+    function isShopMember(shopId) {
+      return isShopOwner(shopId) || exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid));
+    }
+
+    // The shop record itself: created only by the admin-approval server endpoint (Admin SDK) at
+    // the moment a request is approved — no client `allow create` here on purpose, so a shop can
+    // never exist without having gone through that approval. The owner can edit shop details;
+    // staff (added the same server-only way, via /api/shops/:id/add-staff) get read access to
+    // everything under the shop but can't rename it or manage who else is staff.
+    match /shops/{shopId} {
+      function isValidShop(data) {
+        return data.keys().hasAll(['ownerId', 'shopName', 'ownerName', 'createdAt']) &&
+               data.shopName is string && data.shopName.size() > 0 && data.shopName.size() <= 100 &&
+               data.ownerName is string && data.createdAt is string;
+      }
+
+      allow read: if isShopMember(shopId);
+      allow update: if isShopOwner(shopId) && isValidShop(incoming());
+    }
+
+    // Staff roster — also server-only writes (adding staff means granting `shopId`/`shopRole` on
+    // that person's own user doc too, which only the server can do; keeping both writes on the
+    // same Admin-SDK code path avoids the two ever getting out of sync).
+    match /shops/{shopId}/staff/{staffUid} {
+      allow read: if isShopMember(shopId);
+    }
+
+    // Shop-scoped activity feed — mirrors the group `activities` collection but keyed under its
+    // own shop (not the top-level `activities` collection, which is queried by `groupId`, so a
+    // shop's actions were otherwise invisible anywhere). Any shop member can log an entry for
+    // themself; nobody edits or deletes history.
+    match /shops/{shopId}/activities/{activityId} {
+      function isValidShopActivity(data) {
+        return data.keys().hasAll(['userId', 'type', 'createdAt']) &&
+               data.userId == request.auth.uid &&
+               data.type is string && data.createdAt is string;
+      }
+
+      allow read: if isShopMember(shopId);
+      allow create: if isShopMember(shopId) && isValidShopActivity(incoming());
+    }
+
+    // Customers: any shop member (owner or staff) can create/edit — a shop's customer list is a
+    // shared resource across whoever's working the counter, not owned by whoever added a given
+    // customer first.
+    match /shops/{shopId}/customers/{customerId} {
+      function isValidCustomer(data) {
+        return data.keys().hasAll(['name', 'creditBalance', 'createdAt']) &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+               data.creditBalance is number &&
+               data.createdAt is string;
+      }
+
+      allow read: if isShopMember(shopId);
+      allow create: if isShopMember(shopId) && isValidCustomer(incoming());
+      allow update: if isShopMember(shopId) && isValidCustomer(incoming());
+    }
+
+    // Credit/"udhaar" ledger per customer — a separate ledger from Personal Loans on purpose
+    // (this is shop credit extended for goods, not a personal loan between two people), same
+    // append-only "line item" shape as a real accounting ledger though: `sale_credit` entries are
+    // created automatically when a sale's paymentStatus is 'credit', `payment_received` entries
+    // are added manually when the customer pays some/all of it back.
+    match /shops/{shopId}/customers/{customerId}/creditEntries/{entryId} {
+      function isValidCreditEntry(data) {
+        return data.keys().hasAll(['type', 'amount', 'addedBy', 'createdAt']) &&
+               data.type in ['sale_credit', 'payment_received'] &&
+               data.amount is number && data.amount > 0 &&
+               data.addedBy == request.auth.uid &&
+               data.createdAt is string;
+      }
+
+      allow read: if isShopMember(shopId);
+      allow create: if isShopMember(shopId) && isValidCreditEntry(incoming());
+    }
+
+    // Sales — any shop member can create or edit any sale (explicitly requested: "shopkeeper
+    // should be able to change any sale later"), not just whoever originally rang it up, matching
+    // the same shared/collaborative access model as customers above.
+    match /shops/{shopId}/sales/{saleId} {
+      function isValidSale(data) {
+        return data.keys().hasAll(['customerId', 'itemName', 'price', 'costPending', 'paymentStatus', 'soldBy', 'date', 'createdAt']) &&
+               data.customerId is string &&
+               data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 200 &&
+               data.price is number && data.price >= 0 &&
+               data.costPending is bool &&
+               data.paymentStatus in ['paid', 'credit'] &&
+               data.date is string && data.createdAt is string;
+      }
+
+      allow read: if isShopMember(shopId);
+      allow create: if isShopMember(shopId) && incoming().soldBy == request.auth.uid && isValidSale(incoming());
+      allow update: if isShopMember(shopId) && isValidSale(incoming());
+    }
+
+    // Sudoku leaderboard — one doc per (user, difficulty), id'd `{uid}_{difficulty}` by
+    // convention on the client (not enforced here, since a user spamming extra docs that all
+    // still carry their own userId is just self-inflicted leaderboard clutter, not a security
+    // issue). Client upserts via a transaction (read current totalScore, add the new puzzle's
+    // score to it) so this only ever needs create/update, both gated the same way. `totalScore`
+    // (a running SUM of every completed puzzle, not a max) replaced the older `bestScore` field —
+    // see sudokuSync.ts's comment — this validator has to accept what the client actually writes
+    // now, not the pre-sum-model shape.
+    match /sudokuLeaderboard/{entryId} {
+      function isValidLeaderboardEntry(data) {
+        return data.keys().hasAll(['userId', 'userName', 'difficulty', 'totalScore', 'bestScore', 'gamesPlayed', 'updatedAt']) &&
+               data.userId == request.auth.uid &&
+               data.difficulty in ['easy', 'medium', 'hard'] &&
+               data.totalScore is number && data.totalScore >= 0 &&
+               data.bestScore is number && data.bestScore >= 0 &&
+               data.gamesPlayed is number && data.gamesPlayed >= 0 &&
+               data.updatedAt is string;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidLeaderboardEntry(incoming());
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidLeaderboardEntry(incoming());
+    }
+
+    match /scrambleLeaderboard/{entryId} {
+      function isValidScrambleEntry(data) {
+        return data.keys().hasAll(['userId', 'userName', 'wordLength', 'timerMode', 'bestScore', 'gamesPlayed', 'dictionaryVersion', 'updatedAt']) &&
+               data.userId == request.auth.uid &&
+               data.wordLength is number && data.wordLength >= 4 && data.wordLength <= 10 &&
+               data.timerMode in ['3min', '5min', '10min'] &&
+               data.bestScore is number && data.bestScore >= 0 &&
+               data.gamesPlayed is number && data.gamesPlayed >= 0 &&
+               data.dictionaryVersion is string &&
+               data.updatedAt is string;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidScrambleEntry(incoming());
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidScrambleEntry(incoming());
+    }
+
+    // Ludo — online multiplayer, up to 4 players, joined either by direct invite (a group member,
+    // notified server-side) or a shared 6-char code. Full move-legality (dice fairness, token
+    // math, whose turn it actually is) is trusted client-side here, same trust level already used
+    // for Personal Loans/Shopkeeper ledger entries — reimplementing a complete Ludo rules engine
+    // in the Firestore rules DSL would be a huge, error-prone undertaking for a casual family-app
+    // game. Rules only gate WHO can write: an existing player (any move/roll/start), or a
+    // brand-new joiner adding just themselves while the lobby's still open and has room.
+    match /ludoGames/{gameId} {
+      function isValidGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'players', 'playerUids', 'currentTurnSeatIndex', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= 4 &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.currentTurnSeatIndex is number &&
+               data.createdAt is string;
+      }
+
+      // Any signed-in user can fetch a SPECIFIC game by id (needed to preview/join via an invite
+      // or a shared code, before they're a player) — but listing/querying is restricted to games
+      // you're already part of, so you can't enumerate other people's open games.
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] && isValidGame(incoming());
+
+      allow update: if isSignedIn() && isValidGame(incoming()) && (
+        request.auth.uid in resource.data.playerUids ||
+        (resource.data.status == 'waiting' &&
+         resource.data.playerUids.size() < 4 &&
+         incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+         request.auth.uid in incoming().playerUids)
+      );
+    }
+
+    // code IS the doc id — a 6-char share code mapping to a gameId, so joining by code is a plain
+    // get-by-id (no query needed, no list-provability concerns). Only the game's host ever
+    // creates one, in the same client action that creates the ludoGames doc.
+    match /ludoGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    // --- 27-Hand Rummy ---
+    // Unlike Ludo/Sudoku, this game has genuine hidden information (opponents' hands, the
+    // undrawn stock pile) that must never be readable by any client — so it can't use those
+    // games' "trust the client, rules just gate who can write" pattern. Clients may only
+    // create/join the still-open lobby directly (identical shape to ludoGames); every action that
+    // touches hidden state (starting the deal, drawing, discarding, declaring) happens exclusively
+    // through server.ts's Admin-SDK-backed endpoints, which bypass these rules entirely — that's
+    // exactly why the hands/stock rules below can be this strict.
+    match /rummyGames/{gameId} {
+      function isValidRummyGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'players', 'playerUids', 'currentTurnSeatIndex', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= 4 &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] &&
+                       incoming().status == 'waiting' && isValidRummyGame(incoming());
+
+      // Only ever "join the open lobby by adding yourself" — starting the game, dealing, turns,
+      // and declarations all happen server-side only, so no further client `update` path exists.
+      allow update: if isSignedIn() && isValidRummyGame(incoming()) &&
+                       resource.data.status == 'waiting' &&
+                       resource.data.playerUids.size() < 4 &&
+                       incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+                       request.auth.uid in incoming().playerUids;
+    }
+
+    match /rummyGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    // A player's own hand — readable only by them. `cards` (the actual hand) stays Admin-SDK-only
+    // forever, via server.ts's draw/discard/declare endpoints — but `groups` (purely cosmetic,
+    // local hand-organization, see RummyGame.tsx's handGroups) is client-writable by that same
+    // player, so the post-game reveal screen can show how they'd actually arranged their hand
+    // instead of just a flat sorted list. `affectedKeys().hasOnly(['groups'])` is what keeps this
+    // safe — a client update touching `cards` at all is rejected outright.
+    match /rummyGames/{gameId}/hands/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['groups']) &&
+                       incoming().groups is list;
+      allow create, delete: if false;
+    }
+
+    // The undrawn stock pile — must never be readable by ANY client, including the player whose
+    // turn it is, or drawing would leak future cards. Admin SDK access only.
+    match /rummyGames/{gameId}/secret/{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Business (Indian Monopoly-style) ---
+    // Deliberately client-trusted, same trust level as Ludo: there's no meaningful hidden state in
+    // this game (everyone's cash/properties/position are always public; only the Chance/Community
+    // Chest draw order is randomized, and card CONTENTS are public rulebook knowledge, so that's
+    // not the kind of secret a Rummy hand is) — reimplementing the full rules engine in the
+    // Firestore rules DSL would be a huge, error-prone undertaking for a casual family-app game.
+    // Rules only gate WHO can write: an existing player (any game action), or a brand-new joiner
+    // adding just themselves while the lobby's still open and has room.
+    match /businessGames/{gameId} {
+      function isValidBusinessGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'players', 'playerUids', 'currentTurnSeatIndex', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= 6 &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.currentTurnSeatIndex is number &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] && isValidBusinessGame(incoming());
+
+      allow update: if isSignedIn() && isValidBusinessGame(incoming()) && (
+        request.auth.uid in resource.data.playerUids ||
+        (resource.data.status == 'waiting' &&
+         resource.data.playerUids.size() < 6 &&
+         incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+         request.auth.uid in incoming().playerUids)
+      );
+    }
+
+    match /businessGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    // --- Chess ---
+    // Deliberately client-trusted, same as Ludo/Business: chess has no hidden information at all
+    // (both players always see the full board), so there's nothing a Rummy/Sweep-style
+    // Admin-SDK-only write would even protect — actual move legality (check, checkmate, castling,
+    // en passant, promotion) is enforced by the `chess.js` library client-side, not reimplemented
+    // in the rules DSL. Rules only gate WHO can write: an existing player (any move/resign/draw),
+    // or a brand-new joiner adding themself while the lobby's still open (always exactly 2 seats).
+    match /chessGames/{gameId} {
+      function isValidChessGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'players', 'playerUids', 'fen', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= 2 &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.fen is string &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] && isValidChessGame(incoming());
+
+      allow update: if isSignedIn() && isValidChessGame(incoming()) && (
+        request.auth.uid in resource.data.playerUids ||
+        (resource.data.status == 'waiting' &&
+         resource.data.playerUids.size() < 2 &&
+         incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+         request.auth.uid in incoming().playerUids)
+      );
+    }
+
+    match /chessGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    match /chessGames/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chessGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    // --- Sweep ---
+    // Like Rummy, this game has genuine hidden information (opponents' hands, and briefly the
+    // bidder's private peek at the 4 floor cards before they're revealed) that must never be
+    // readable by any client — so it can't use Ludo/Business's "trust the client" pattern. Clients
+    // may only create/join the still-open lobby directly; every action that touches hidden state
+    // (dealing, bidding, resolving the bid, playing a card, starting the next deal) happens
+    // exclusively through server.ts's Admin-SDK-backed endpoints, which bypass these rules
+    // entirely.
+    match /sweepGames/{gameId} {
+      function isValidSweepGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'playerCount', 'sweepPoints', 'players', 'playerUids', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'bidding', 'active', 'deal_end', 'finished'] &&
+               data.playerCount in [2, 4] &&
+               data.sweepPoints in [25, 50] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= data.playerCount &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] &&
+                       incoming().status == 'waiting' && isValidSweepGame(incoming());
+
+      // Only ever "join the open lobby by adding yourself" — starting the game, dealing, bidding,
+      // and every turn action all happen server-side only, so no further client `update` path
+      // exists.
+      allow update: if isSignedIn() && isValidSweepGame(incoming()) &&
+                       resource.data.status == 'waiting' &&
+                       resource.data.playerUids.size() < resource.data.playerCount &&
+                       incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+                       request.auth.uid in incoming().playerUids;
+    }
+
+    match /sweepGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    // A player's own hand — readable only by them, never client-writable (every hand mutation is
+    // Admin-SDK-only).
+    match /sweepGames/{gameId}/hands/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // The undealt "rest of the deck" (between /api/sweep/start or /deal and /api/sweep/resolve-bid)
+    // AND the 4 floor cards before the bid value is committed (between /api/sweep/start or /deal
+    // and /api/sweep/bid) — both must never be readable by ANY client, including the bidder, who
+    // can otherwise read their own hands doc: the bidder must choose a bid value blind, from their
+    // hand alone, with no floor-visibility advantage over any other player. Admin SDK access only.
+    match /sweepGames/{gameId}/secret/{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Sequence ---
+    // Same shape as Sweep — hidden hands and an undealt draw pile mean this can't be client-
+    // trusted either, even though the BOARD itself (chip placements) is fully public. Clients may
+    // only create/join the still-open lobby directly; dealing and every turn action (place,
+    // remove, dead-card exchange) happen exclusively through server.ts's Admin-SDK-backed
+    // endpoints.
+    match /sequenceGames/{gameId} {
+      function isValidSequenceGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'playerCount', 'players', 'playerUids', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.playerCount in [2, 3, 4, 6, 8, 9, 10, 12] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= data.playerCount &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] &&
+                       incoming().status == 'waiting' && isValidSequenceGame(incoming());
+
+      // Only ever "join the open lobby by adding yourself" — starting the game and every turn
+      // action happen server-side only, so no further client `update` path exists.
+      allow update: if isSignedIn() && isValidSequenceGame(incoming()) &&
+                       resource.data.status == 'waiting' &&
+                       resource.data.playerUids.size() < resource.data.playerCount &&
+                       incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+                       request.auth.uid in incoming().playerUids;
+    }
+
+    match /sequenceGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    match /sequenceGames/{gameId}/hands/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // The undealt draw pile — must never be readable by any client, since knowing what's left
+    // would reveal future draws. Admin SDK access only.
+    match /sequenceGames/{gameId}/secret/{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Scramble (multiplayer) ---
+    // Same shape as Sweep/Sequence: clients may only create/join the still-open lobby directly.
+    // Starting the match, every answer submission, hints, and match-end all go through server.ts's
+    // Admin-SDK-backed endpoints, since a client-trusted score would be trivially cheatable.
+    match /scrambleGames/{gameId} {
+      function isValidScrambleGame(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'wordLength', 'totalWords', 'timerMode', 'matchTimerMode', 'players', 'playerUids', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.wordLength is number && data.wordLength >= 4 && data.wordLength <= 10 &&
+               data.totalWords in [5, 10, 15] &&
+               data.timerMode in ['15s', '30s', '45s'] &&
+               data.matchTimerMode in ['3min', '5min', '10min'] &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= 4 &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] &&
+                       incoming().status == 'waiting' && isValidScrambleGame(incoming());
+
+      // Only ever "join the open lobby by adding yourself" — starting the game and every gameplay
+      // action happen server-side only, so no further client `update` path exists.
+      allow update: if isSignedIn() && isValidScrambleGame(incoming()) &&
+                       resource.data.status == 'waiting' &&
+                       resource.data.playerUids.size() < 4 &&
+                       incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+                       request.auth.uid in incoming().playerUids;
+    }
+
+    match /scrambleGameCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    // The locked target-word sequence — must never be readable by any client, since it's the
+    // source hints reveal from. Tiles themselves (the actual puzzle) live on the public game doc
+    // and are safe to expose. Admin SDK access only.
+    match /scrambleGames/{gameId}/secret/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Per-player hint progress + this match's already-solved-answer list — readable only by that
+    // player, so someone can't peek at another player's revealed hint letters even though the
+    // tiles themselves are already public to everyone. Never client-writable.
+    match /scrambleGames/{gameId}/private/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // --- Multiplayer game chat ---
+    // One `comments` subcollection per game, scoped to whoever is actually in that game (not
+    // public, not open to spectators previewing by code/link) — same read/write shape as
+    // groups/{groupId}/comments, just gated on the parent game's `playerUids` instead of group
+    // membership. `displayName`/`photoURL` are denormalized onto each message (a player's identity
+    // at the moment they sent it) rather than looked up live, since these games have no persistent
+    // membership doc to join against the way groups do. Append-only — no edit, since a chat log is
+    // a running record, not something meant to be revised after the fact; deleting your own message
+    // (or Sachin, for moderation) is still allowed.
+    function isValidGameComment(data) {
+      return data.keys().hasAll(['userId', 'displayName', 'text', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.displayName is string &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
+             data.createdAt is string;
+    }
+
+    match /ludoGames/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/ludoGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    match /rummyGames/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummyGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    match /businessGames/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/businessGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    match /sweepGames/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sweepGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    match /sequenceGames/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sequenceGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    // Parent doc for a DM chat — participants/lastMessageAt/unreadFor, used to list + order a
+    // user's DM chats and show unread badges without a collectionGroup scan. Written server-only
+    // (via /api/chat/send's Admin SDK write, which bypasses these rules) so `unreadFor` counters
+    // can't be tampered with on increment; `update` is allowed client-side ONLY to let a
+    // participant zero out their own read counter when they open the chat (see ChatPanel's
+    // read-receipt effect) — trusted the same way chatReads' self-reported lastReadAt already is.
+    match /directChats/{chatId} {
+      function isParticipant() {
+        return isSignedIn() && request.auth.uid in chatId.split('_');
+      }
+      allow read: if isParticipant();
+      allow create: if false;
+      allow update: if isParticipant() && incoming().diff(existing()).affectedKeys().hasOnly(['unreadFor']);
+      allow delete: if false;
+    }
+
+    // --- Direct 1:1 chat between two group co-members ---
+    // `chatId` is always `[uidA, uidB].sort().join('_')` (see Dashboard.tsx's dmChatId /
+    // server.ts's /api/chat/send) — being one of the two halves of the id IS the membership
+    // check, no separate participants doc needed. Sends go through /api/chat/send (Admin SDK,
+    // bypasses these rules) so the server can push-notify the other participant in the same
+    // request; `create` is still allowed here too, same defense-in-depth as the game chats above.
+    match /directChats/{chatId}/comments/{commentId} {
+      function isParticipant() {
+        return isSignedIn() && request.auth.uid in chatId.split('_');
+      }
+      allow read: if isParticipant();
+      allow create: if isParticipant() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
+    // --- Game chat abuse reports ---
+    // Anyone can file a report on a message (self-attributed, never on someone else's behalf);
+    // reading the report list back, resolving, and deleting are all admin-only — same read/write
+    // shape as `feedback` above. Block/mute themselves need no rules here: they're just array
+    // fields (`blockedUsers`/`mutedUsers`/`mutedGameChats`) on the reporting user's OWN `users/
+    // {uid}` doc, already covered by that doc's existing self-update rule.
+    match /chatReports/{reportId} {
+      function isValidChatReport(data) {
+        return data.keys().hasAll(['gameType', 'gameId', 'commentId', 'messageText', 'messageUserId', 'messageUserName', 'reportedBy', 'reportedByName', 'createdAt']) &&
+               data.reportedBy == request.auth.uid &&
+               data.gameType is string && data.gameId is string && data.commentId is string &&
+               data.messageText is string && data.messageText.size() <= 500 &&
+               data.messageUserId is string && data.messageUserName is string &&
+               data.reportedByName is string &&
+               data.createdAt is string;
+      }
+
+      allow create: if isSignedIn() && isValidChatReport(incoming());
+      allow read, update, delete: if isAnyAdminRule();
+    }
+
+    // --- In-app invite drop-down notices ---
+    // Written server-side only (Admin SDK, alongside the push notification) whenever a group or
+    // game invite is sent to an existing FamiliLedger account — lets a client that's already open
+    // show an in-app banner instantly via its own listener, rather than depending on a push
+    // notification's inconsistent-across-platforms foreground-delivery behavior. Read/delete are
+    // restricted to the addressee; nobody, including the sender, can read who else was invited.
+    match /inviteNotices/{noticeId} {
+      allow read, delete: if isSignedIn() && resource.data.toUid == request.auth.uid;
+      allow create, update: if false;
+    }
+
+    // --- Chat read receipts ---
+    // One doc per (chat, viewer): "I've read this chat up to this instant." Read is open to any
+    // signed-in user (same posture as `users/{uid}` itself) since a bare timestamp doesn't leak
+    // anything sensitive — the write side is what matters: only the viewer themself can ever
+    // write their own read receipt.
+    match /chatReads/{readId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && incoming().uid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // --- Chat delivery receipts ---
+    // Same one-doc-per-(chat,viewer) shape as chatReads, but written the moment a message is
+    // received via the live listener (useGameChat, always subscribed) rather than only while the
+    // chat panel is actually open — the "double gray tick" (delivered) vs "double blue tick"
+    // (read) distinction depends on these being two genuinely different moments.
+    match /chatDelivered/{deliveredId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && incoming().uid == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}

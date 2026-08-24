@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="FamilyLedger">
+    <link rel="apple-touch-icon" href="/logo.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <title>FamilyLedger</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <script>
+      // Suppress benign background Vite HMR or WebSocket connection failures in AI Studio environment
+      (function() {
+        // Hide Vite Error/HMR Overlay
+        const style = document.createElement('style');
+        style.innerHTML = 'vite-error-overlay, #vite-error-overlay, [id^="vite-error-"] { display: none !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }';
+        document.head.appendChild(style);
+
+        const isHmrError = function(err) {
+          if (!err) return false;
+          const msg = (err.message || String(err) || '').toLowerCase();
+          return (
+            msg.includes('websocket') || 
+            msg.includes('vite') || 
+            msg.includes('hmr') || 
+            msg.includes('closed without opened') || 
+            msg.includes('connection lost')
+          );
+        };
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (isHmrError(event.reason) || isHmrError(event.detail)) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          if (isHmrError(event.message) || isHmrError(event.error)) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+
+        // Safely patch WebSocket constructor to prevent uncaught network exceptions
+        const OriginalWebSocket = window.WebSocket;
+        if (OriginalWebSocket) {
+          const PatchedWebSocket = function(url, protocols) {
+            const isViteHmr = typeof url === 'string' && (
+              url.includes('vite') || 
+              url.includes('hmr') || 
+              url.includes('/@vite/') || 
+              url.includes('localhost') || 
+              url.includes('127.0.0.1')
+            );
+            
+            let ws;
+            try {
+              if (protocols) {
+                ws = new OriginalWebSocket(url, protocols);
+              } else {
+                ws = new OriginalWebSocket(url);
+              }
+            } catch (e) {
+              if (isViteHmr) {
+                console.warn('[Vite WebSocket Mock] Failed to create socket:', e.message);
+              }
+              throw e;
+            }
+
+            if (isViteHmr && ws) {
+              ws.addEventListener('error', function(e) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+              }, { capture: true });
+            }
+            return ws;
+          };
+
+          PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+          for (const key in OriginalWebSocket) {
+            if (Object.prototype.hasOwnProperty.call(OriginalWebSocket, key)) {
+              PatchedWebSocket[key] = OriginalWebSocket[key];
+            }
+          }
+          window.WebSocket = PatchedWebSocket;
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

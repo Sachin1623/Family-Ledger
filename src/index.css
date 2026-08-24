@@ -1,0 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-primary: #003044;
+  --color-primary-container: #0f4761;
+  --color-surface: #F6F8FA;
+  --color-surface-container: #edeef0;
+  --color-on-surface: #1a1c1e;
+  --color-text-muted: #6B7280;
+  --color-border-subtle: #E5E7EB;
+  --color-success: #16A34A;
+  --color-warning: #F59E0B;
+  --color-error: #DC2626;
+  --color-error-container: #ffdad6;
+}
+
+@layer base {
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+
+  /* Kills the default mobile WebKit/Chromium "flash" highlight (a translucent blue box) that
+     briefly covers whatever you tap — every interactive element already has its own hover/active
+     styling, so this system default only ever adds an ugly, off-theme blue overlay on top. */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Retints native date/time inputs' picker icon and internal selection highlight (day-segment
+     focus background, the calendar popup's accent) from the browser's default blue to the app's
+     own primary color — `accent-color` is respected by Chromium (incl. Android WebView, what
+     this app runs in) for these controls, so this is the one lever available to make a native
+     date/time input feel on-theme instead of visibly "OS blue" against the rest of the UI. */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"] {
+    accent-color: var(--color-primary);
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Floating quick-reaction emoji (Ludo/Rummy/Business/Sweep) — drifts up and fades over ~3s. */
+@keyframes reaction-float {
+  0% { transform: translateY(0) scale(0.5); opacity: 0; }
+  15% { transform: translateY(-10px) scale(1.15); opacity: 1; }
+  30% { transform: translateY(-24px) scale(1); opacity: 1; }
+  100% { transform: translateY(-180px) scale(1); opacity: 0; }
+}
+.reaction-float {
+  animation: reaction-float 3s ease-out forwards;
+}
