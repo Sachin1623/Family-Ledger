@@ -1005,11 +1005,12 @@ export default function SweepGame() {
           onClose={() => setShowChat(false)}
         />
       )}
-      {/* The ENTIRE screen is pinned between the global app Header (`min-h-[60px]`) and the fixed
+      {/* The ENTIRE screen is pinned between the global app Header (`min-h-[60px]` plus
+          env(safe-area-inset-top) on iOS — not a flat 60px, see RummyGame.tsx) and the fixed
           bottom Navigation bar (`h-16` = 64px) — see RummyGame.tsx for the full rationale on this
           `position: fixed` technique. Everything through the Team A/Net/Team B status card is
           `shrink-0` and never scrolls; only the floor/hand/history area below it does. */}
-      <div className="fixed inset-x-0 top-[60px] bottom-16 z-30 flex flex-col bg-surface overflow-hidden">
+      <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-16 z-30 flex flex-col bg-surface overflow-hidden">
       <div className="shrink-0">
       <header className="p-2 flex items-center gap-2 flex-wrap bg-white border-b border-border-subtle shrink-0">
         <button onClick={() => navigate('/games/sweep')} className="text-text-muted">
