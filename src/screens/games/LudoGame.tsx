@@ -474,14 +474,17 @@ export default function LudoGame() {
     });
   };
 
-  // Only ever offered when exactly 4 players are seated — each player picks their own team (0 or
-  // 1) independently; there's no requirement that it end up an even 2-2 split before starting,
-  // since capture immunity (see applyMove) only ever looks at whether two SPECIFIC players share
-  // a team, not at the split as a whole. Toggling your own choice off (tapping the team you're
-  // already on) clears it back to "no team."
-  const handleChangeTeam = async (team: 0 | 1) => {
+  // Only ever offered when exactly 4 players are seated. Real Ludo partnership play always seats
+  // teammates diagonally opposite each other on the board (seatIndex 0<->2, 1<->3 — see
+  // boardSlot/OPPOSITE_COLOR in lib/ludo.ts), so "team" is no longer a free 0-or-1 pick between
+  // any two players — it's derived from your own seatIndex parity, meaning tapping this can only
+  // ever pair you with your actual diagonal partner, never an adjacent seat. There's no
+  // requirement both players opt in before starting, since capture immunity (see applyMove) only
+  // ever looks at whether two SPECIFIC players share a team value. Tapping your own already-active
+  // choice clears it back to "no team."
+  const handleChangeTeam = async () => {
     if (!myPlayer || game.status !== 'waiting') return;
-    const nextTeam = myPlayer.team === team ? null : team;
+    const nextTeam = myPlayer.team != null ? null : ((myPlayer.seatIndex % 2) as 0 | 1);
     const updatedPlayers = players.map((p) => (p.uid === myPlayer.uid ? { ...p, team: nextTeam } : p));
     await updateDoc(doc(db, 'ludoGames', gameId!), { players: updatedPlayers }).catch((err) => {
       console.error('Failed to change team:', err);
@@ -795,35 +798,36 @@ export default function LudoGame() {
               </div>
             )}
 
-            {isPlayer && players.length === 4 && (
-              <div className="space-y-2">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                  Teams (optional) — teammates can't capture each other's pawns
-                </p>
-                <div className="flex gap-2">
-                  {([0, 1] as const).map((team) => {
-                    const onTeam = players.filter((p) => p.team === team);
-                    const mine = myPlayer!.team === team;
-                    return (
-                      <button
-                        key={team}
-                        type="button"
-                        onClick={() => handleChangeTeam(team)}
-                        className={clsx(
-                          'flex-1 py-2 px-2 rounded-xl border-2 text-left transition-all',
-                          mine ? 'border-primary bg-primary/5' : 'border-border-subtle active:scale-95',
-                        )}
-                      >
-                        <p className="text-[10px] font-bold text-primary uppercase tracking-wide">Team {team === 0 ? 'A' : 'B'}</p>
-                        <p className="text-[11px] text-text-muted truncate">
-                          {onTeam.length > 0 ? onTeam.map((p) => p.displayName).join(', ') : 'Tap to join'}
-                        </p>
-                      </button>
-                    );
-                  })}
+            {isPlayer && players.length === 4 && (() => {
+              const partnerSeatIndex = (myPlayer!.seatIndex + 2) % 4;
+              const partner = players.find((p) => p.seatIndex === partnerSeatIndex);
+              if (!partner) return null;
+              const myTeam = myPlayer!.team;
+              const bothTeamed = myTeam != null && partner.team === myTeam;
+              return (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
+                    Partner mode (optional) — teammates can't capture each other's pawns
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleChangeTeam}
+                    className={clsx(
+                      'w-full py-2.5 px-3 rounded-xl border-2 flex items-center gap-2 text-left transition-all',
+                      myTeam != null ? 'border-primary bg-primary/5' : 'border-border-subtle active:scale-95',
+                    )}
+                  >
+                    <span className="text-base shrink-0">🤝</span>
+                    <span className="min-w-0">
+                      <p className="text-[11px] font-bold text-primary">
+                        {bothTeamed ? `Teamed up with ${partner.displayName}` : myTeam != null ? `Waiting for ${partner.displayName} to accept` : `Team up with ${partner.displayName}`}
+                      </p>
+                      <p className="text-[9px] text-text-muted">Partners are always seated opposite each other on the board</p>
+                    </span>
+                  </button>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {isPlayer && (
               <button onClick={() => setShowInvite((v) => !v)} className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2">
