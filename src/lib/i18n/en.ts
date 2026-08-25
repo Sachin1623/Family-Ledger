@@ -298,20 +298,20 @@ const en = {
 
   // Expense categories (EXPENSE_CATEGORIES in lib/constants.ts)
   'category.housing': 'Housing',
-  'category.food': 'Food: Eating Out or Delivery',
+  'category.food': 'Dine out/Order',
   'category.groceries': 'Groceries',
   'category.travel': 'Transportation',
-  'category.bills': 'Bills & Utilities',
-  'category.personal': 'Personal & Family Care',
+  'category.bills': 'Bill/Utilities',
+  'category.personal': 'Personal',
   'category.health': 'Health',
   'category.education': 'Education',
   'category.kids': 'Kids',
-  'category.ent': 'Entertainment & Leisure',
-  'category.finance': 'Finance & Investments',
+  'category.ent': 'Fun',
+  'category.finance': 'Finance',
   'category.shopping': 'Apparel',
   'category.household': 'Household',
   'category.gifts': 'Gifts',
-  'category.misc': 'Miscellaneous',
+  'category.misc': 'Other',
 
   // Income categories (INCOME_CATEGORIES in lib/constants.ts)
   'income.salary': 'Salary',

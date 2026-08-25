@@ -34,7 +34,7 @@ export default function FeedPanel({
             transition={{ type: 'tween', duration: 0.25, ease: 'easeOut' }}
             className="absolute inset-y-0 left-0 w-full sm:w-[420px] bg-surface shadow-2xl flex flex-col"
           >
-            <div className="p-4 border-b border-border-subtle flex items-center justify-between shrink-0 bg-white">
+            <div className="px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] border-b border-border-subtle flex items-center justify-between shrink-0 bg-white">
               <div>
                 <h2 className="text-lg font-bold text-primary">{t('feed.title')}</h2>
                 <p className="text-xs text-text-muted">{t('feed.subtitle')}</p>

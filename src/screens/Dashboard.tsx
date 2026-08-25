@@ -15,6 +15,7 @@ import { clsx } from 'clsx';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { openFeedPanel } from '../lib/feedPanelRef';
 import { useLanguage } from '../context/LanguageContext';
+import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -301,6 +302,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [quickViewExpense, setQuickViewExpense] = useState<any>(null);
+  const [showQuickActions, setShowQuickActions] = useState(false);
   const [poking, setPoking] = useState(false);
   const [poked, setPoked] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -469,8 +471,8 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
             <span className="text-[18px] leading-none block">🧾</span>
           </button>
           <span className="w-px h-5 bg-border-subtle mx-0.5 shrink-0" />
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}/manage?from=dashboard`))} className="p-2 hover:bg-surface-container rounded-full transition-colors">
-            <span className="text-[18px] leading-none block">⚙️</span>
+          <button onClick={stopAnd(() => setShowQuickActions(true))} title="Group actions" className="p-2 hover:bg-surface-container rounded-full transition-colors">
+            <span className="material-symbols-outlined text-[20px] block">more_vert</span>
           </button>
         </div>
 
@@ -662,6 +664,16 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
         members={members}
         onClose={() => setQuickViewExpense(null)}
         returnTo="/"
+      />
+    )}
+
+    {showQuickActions && (
+      <GroupQuickActionsMenu
+        groupId={groupId}
+        group={group}
+        members={members}
+        budget={budget}
+        onClose={() => setShowQuickActions(false)}
       />
     )}
 

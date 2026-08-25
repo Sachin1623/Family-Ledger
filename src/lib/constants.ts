@@ -34,20 +34,20 @@ export const formatAmountCompact = (amount: number, currencyCode?: string) => {
 // color emoji font regardless of surrounding classes.
 export const EXPENSE_CATEGORIES = [
   { id: 'housing', name: 'Housing', icon: '🏠' },
-  { id: 'food', name: 'Food: Eating Out or Delivery', icon: '🍔' },
+  { id: 'food', name: 'Dine out/Order', icon: '🍔' },
   { id: 'groceries', name: 'Groceries', icon: '🛒' },
   { id: 'travel', name: 'Transportation', icon: '🚗' },
-  { id: 'bills', name: 'Bills & Utilities', icon: '🧾' },
-  { id: 'personal', name: 'Personal & Family Care', icon: '🧑' },
+  { id: 'bills', name: 'Bill/Utilities', icon: '🧾' },
+  { id: 'personal', name: 'Personal', icon: '🧑' },
   { id: 'health', name: 'Health', icon: '💊' },
   { id: 'education', name: 'Education', icon: '🎓' },
   { id: 'kids', name: 'Kids', icon: '🧒' },
-  { id: 'ent', name: 'Entertainment & Leisure', icon: '🎬' },
-  { id: 'finance', name: 'Finance & Investments', icon: '💳' },
+  { id: 'ent', name: 'Fun', icon: '🎬' },
+  { id: 'finance', name: 'Finance', icon: '💳' },
   { id: 'shopping', name: 'Apparel', icon: '👕' },
   { id: 'household', name: 'Household', icon: '🧹' },
   { id: 'gifts', name: 'Gifts', icon: '🎁' },
-  { id: 'misc', name: 'Miscellaneous', icon: '✨' }
+  { id: 'misc', name: 'Other', icon: '✨' }
 ];
 
 export const INCOME_CATEGORIES = [
