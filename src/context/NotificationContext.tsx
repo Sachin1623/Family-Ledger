@@ -150,7 +150,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       {children}
       
       {/* Toast Container */}
-      <div className="fixed top-0 left-0 right-0 z-[100] pointer-events-none flex flex-col items-center gap-3 p-4 px-6 sm:px-4 sm:pt-6">
+      <div className="fixed top-0 left-0 right-0 z-[100] pointer-events-none flex flex-col items-center gap-3 pb-4 px-6 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-4 sm:pt-[calc(1.5rem+env(safe-area-inset-top))]">
         <AnimatePresence>
           {notifications.map((notification) => (
             <motion.div

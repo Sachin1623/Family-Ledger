@@ -367,7 +367,7 @@ export default function ScrambleMultiplayerGame() {
           the top of the viewport — this is what keeps the play area always in view: no matter how
           tall "Everyone's Progress" grows below it, the word/letters/buttons never scroll out of
           reach, and there's no fragile pixel-offset math needed for a second sticky region. */}
-      <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-b border-border-subtle">
+      <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-b border-border-subtle pt-[env(safe-area-inset-top)]">
         <div className="max-w-xl mx-auto w-full p-4 flex items-center justify-between gap-2">
           <button onClick={handleExit} className="text-xs font-bold text-primary flex items-center gap-1 shrink-0">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>

@@ -218,7 +218,7 @@ export default function ScrambleGame() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <header className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-b border-border-subtle">
+      <header className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-b border-border-subtle pt-[env(safe-area-inset-top)]">
         <div className="max-w-xl mx-auto w-full p-4 flex items-center justify-between gap-2">
           <button onClick={handleQuit} className="text-xs font-bold text-primary flex items-center gap-1 shrink-0">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>

@@ -65,7 +65,7 @@ export default function InviteBanner() {
   };
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-[290] flex justify-center px-3 pt-3 pointer-events-none">
+    <div className="fixed top-0 left-0 right-0 z-[290] flex justify-center px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pointer-events-none">
       <AnimatePresence>
         {visible && (
           <motion.div

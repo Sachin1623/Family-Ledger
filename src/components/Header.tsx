@@ -105,7 +105,11 @@ export default function Header() {
 
   return (
     <header className={clsx(
-      "sticky top-0 z-50 border-b px-4 py-2 flex items-center justify-between min-h-[60px] transition-colors",
+      // `viewport-fit=cover` (index.html) lets the WebView draw edge-to-edge on iOS, which is
+      // what makes the notch/status-bar icons overlap plain top-0 content in the first place —
+      // padding-top adds the safe-area inset on top of the normal 0.5rem breathing room instead
+      // of replacing it. Evaluates to just that 0.5rem on Android/web, where the inset is 0.
+      "sticky top-0 z-50 border-b px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 flex items-center justify-between min-h-[60px] transition-colors",
       shopMode ? "bg-[#7C3AED]/5 border-[#7C3AED]/20" : "bg-white border-border-subtle",
     )}>
       {/* `shrink-0` here is load-bearing — without it, this side has no protection against the
