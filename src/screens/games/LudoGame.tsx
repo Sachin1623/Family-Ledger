@@ -588,13 +588,24 @@ export default function LudoGame() {
       const seatIndex = game.currentTurnSeatIndex;
       const result = applyMove(players, seatIndex, tokenIndex, dice);
       const mover = result.players[seatIndex];
-      const won = mover.tokens.every((t) => t === HOME);
+      const moverDone = mover.tokens.every((t) => t === HOME);
+      // In confirmed partner mode (see handleChangeTeam), the game isn't over just because ONE
+      // partner's own 4 tokens are all home — real Ludo team play ends only once BOTH partners'
+      // tokens are all home. If only this player is done, the game continues: they'll roll with
+      // zero legal moves every future turn (all 4 tokens already at HOME) and the existing
+      // no-legal-moves auto-pass below (pendingPassRef) skips them harmlessly until their
+      // teammate also finishes.
+      const teammate = moverDone && mover.team != null
+        ? result.players.find((p) => p.uid !== mover.uid && p.team === mover.team)
+        : undefined;
+      const won = moverDone && (!teammate || teammate.tokens.every((t) => t === HOME));
 
       if (won) {
         await updateDoc(doc(db, 'ludoGames', gameId!), {
           players: result.players,
           status: 'finished',
           winnerUid: mover.uid,
+          winningTeam: teammate ? [mover.uid, teammate.uid] : null,
           finishedAt: new Date().toISOString(),
         });
         return;
@@ -860,7 +871,9 @@ export default function LudoGame() {
             <span className="relative material-symbols-outlined text-4xl text-primary">{game.winnerUid ? 'emoji_events' : 'flag'}</span>
             <p className="relative text-lg font-black text-primary">
               {game.winnerUid
-                ? `${players.find((p) => p.uid === game.winnerUid)?.displayName || 'Someone'} won!`
+                ? game.winningTeam
+                  ? `${game.winningTeam.map((uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Someone').join(' & ')} won!`
+                  : `${players.find((p) => p.uid === game.winnerUid)?.displayName || 'Someone'} won!`
                 : `Game ended early${game.endedByName ? ` by ${game.endedByName}` : ''}.`}
             </p>
             <button onClick={() => navigate('/games/ludo')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">

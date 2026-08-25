@@ -1072,7 +1072,10 @@ async function verifyLudoResult(db: Firestore, uid: string, body: any): Promise<
   if (data.status !== 'finished') return { ok: false, reason: 'Game is not finished.' };
   const playerUids: string[] = data.playerUids || [];
   if (!playerUids.includes(uid)) return { ok: false, reason: 'Not a player in that game.' };
-  return { ok: true, gameId, won: data.winnerUid === uid };
+  // A team win (see LudoGame.tsx's handleMoveToken) credits both partners, not just the literal
+  // winnerUid (whichever of the two happened to finish their own tokens last).
+  const won = data.winnerUid === uid || (Array.isArray(data.winningTeam) && data.winningTeam.includes(uid));
+  return { ok: true, gameId, won };
 }
 
 const POINTS_VERIFIERS: Record<string, (db: Firestore, uid: string, body: any) => Promise<PointsVerifyResult>> = {
