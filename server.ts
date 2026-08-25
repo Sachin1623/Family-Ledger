@@ -3609,9 +3609,14 @@ async function startServer() {
   });
 
   // App version / force-update config, read publicly by the client (see UpdatePrompt.tsx) and
-  // written only by admins here. `latestVersionCode` is compared against the installed native
-  // app's versionCode (via @capacitor/app's App.getInfo()) — web/PWA use is unaffected since
-  // there's no native build to be behind.
+  // written only by admins here. Android and iOS ship from completely separate build pipelines
+  // (Play Console versionCode vs. Xcode Cloud's CFBundleVersion) with independently incrementing
+  // numbers, so each platform's "latest" is tracked separately under its own key — comparing an
+  // iOS install's build number against Android's versionCode (as this used to do, back when the
+  // doc had one flat set of fields) made every iOS install look permanently out of date. The
+  // pre-iOS shape (flat `latestVersionCode`/`latestVersionName`/`releaseNotes` at the doc root)
+  // is left as-is on read for backward compatibility — UpdatePrompt.tsx treats it as the Android
+  // config until an admin re-saves through the updated form, which writes the new nested shape.
   app.get('/api/admin/app-version', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
@@ -3628,18 +3633,35 @@ async function startServer() {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
 
-    const latestVersionCode = Number(req.body?.latestVersionCode);
-    const latestVersionName = String(req.body?.latestVersionName || '');
-    const releaseNotes = String(req.body?.releaseNotes || '');
-    if (!Number.isFinite(latestVersionCode) || latestVersionCode <= 0) {
-      return res.status(400).json({ error: 'latestVersionCode must be a positive number.' });
+    const androidVersionCode = Number(req.body?.android?.latestVersionCode);
+    if (!Number.isFinite(androidVersionCode) || androidVersionCode <= 0) {
+      return res.status(400).json({ error: 'Android latestVersionCode must be a positive number.' });
+    }
+    const android = {
+      latestVersionCode: androidVersionCode,
+      latestVersionName: String(req.body?.android?.latestVersionName || ''),
+      releaseNotes: String(req.body?.android?.releaseNotes || ''),
+    };
+
+    // iOS is optional — while there's no forced-update need yet (TestFlight already notifies
+    // testers directly), an admin can leave it unset and no iOS prompt will ever show.
+    let ios: { latestVersionCode: number; latestVersionName: string; releaseNotes: string } | null = null;
+    if (req.body?.ios?.latestVersionCode !== undefined && req.body?.ios?.latestVersionCode !== '') {
+      const iosVersionCode = Number(req.body.ios.latestVersionCode);
+      if (!Number.isFinite(iosVersionCode) || iosVersionCode <= 0) {
+        return res.status(400).json({ error: 'iOS latestVersionCode must be a positive number.' });
+      }
+      ios = {
+        latestVersionCode: iosVersionCode,
+        latestVersionName: String(req.body?.ios?.latestVersionName || ''),
+        releaseNotes: String(req.body?.ios?.releaseNotes || ''),
+      };
     }
 
     try {
       await adminDb.collection('app_config').doc('version').set({
-        latestVersionCode,
-        latestVersionName,
-        releaseNotes,
+        android,
+        ios,
         updatedAt: new Date().toISOString(),
         updatedBy: decoded.email || decoded.uid,
       });

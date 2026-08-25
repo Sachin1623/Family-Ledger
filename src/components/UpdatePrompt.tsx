@@ -7,9 +7,14 @@ import { db } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+// No live App Store listing yet (iOS is still TestFlight-only) — leave blank until one exists.
+// The "Update Now" button is hidden on iOS whenever this is empty (see below).
+const APP_STORE_URL = '';
 
 const DISMISS_STORAGE_KEY = 'fl_update_prompt_dismissal';
 const DISMISS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+type PlatformVersionConfig = { latestVersionCode?: number; latestVersionName?: string; releaseNotes?: string };
 
 function readDismissal(): { versionCode: number; dismissedAt: number } | null {
   try {
@@ -20,8 +25,11 @@ function readDismissal(): { versionCode: number; dismissedAt: number } | null {
   }
 }
 
-// Checks the installed native app's versionCode against the latest one configured by admins
-// (app_config/version) and, if behind, nags the user to update. "Not Now" is persisted to
+// Checks the installed native app's build number against the latest one configured by admins
+// (app_config/version), scoped to the CURRENT platform — Android and iOS ship from separate
+// pipelines with independently incrementing build numbers, so comparing against the wrong
+// platform's "latest" would make every install on the other platform look permanently outdated.
+// If behind, nags the user to update. "Not Now" is persisted to
 // localStorage (not just component state) for 24h, scoped to the specific latestVersionCode
 // that was dismissed — plain React state didn't survive Android killing/reloading the WebView
 // on backgrounding, which made this reappear on nearly every reopen ("non-stop") even though it
@@ -33,9 +41,20 @@ export default function UpdatePrompt() {
   const [installedBuild, setInstalledBuild] = React.useState<number | null>(null);
 
   const [versionDoc] = useDocument(doc(db, 'app_config', 'version'));
-  const config = versionDoc?.data() as
-    | { latestVersionCode?: number; latestVersionName?: string; releaseNotes?: string }
+  const rawConfig = versionDoc?.data() as
+    | { android?: PlatformVersionConfig; ios?: PlatformVersionConfig | null; latestVersionCode?: number; latestVersionName?: string; releaseNotes?: string }
     | undefined;
+
+  const platform = Capacitor.getPlatform();
+  // Pre-iOS docs stored one flat set of fields (always meant for Android, the only native
+  // platform that existed then) — treat that shape as Android's config until an admin re-saves
+  // through the updated form, which writes the new per-platform shape.
+  const config: PlatformVersionConfig | undefined =
+    platform === 'android'
+      ? rawConfig?.android ?? (rawConfig ? { latestVersionCode: rawConfig.latestVersionCode, latestVersionName: rawConfig.latestVersionName, releaseNotes: rawConfig.releaseNotes } : undefined)
+      : platform === 'ios'
+        ? rawConfig?.ios ?? undefined
+        : undefined;
 
   React.useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -50,6 +69,7 @@ export default function UpdatePrompt() {
     typeof config?.latestVersionCode === 'number' &&
     installedBuild < config.latestVersionCode;
 
+  const storeUrl = platform === 'ios' ? APP_STORE_URL : PLAY_STORE_URL;
   const persistedDismissal = readDismissal();
   const isCooledDown =
     !!persistedDismissal &&
@@ -96,12 +116,14 @@ export default function UpdatePrompt() {
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <button
-              onClick={() => window.open(PLAY_STORE_URL, '_system')}
-              className="w-full bg-primary text-white py-3.5 rounded-2xl font-bold active:scale-95 transition-all"
-            >
-              Update Now
-            </button>
+            {storeUrl && (
+              <button
+                onClick={() => window.open(storeUrl, '_system')}
+                className="w-full bg-primary text-white py-3.5 rounded-2xl font-bold active:scale-95 transition-all"
+              >
+                Update Now
+              </button>
+            )}
             <button
               onClick={handleDismiss}
               className="w-full py-3.5 rounded-2xl font-bold text-text-muted hover:bg-surface-container transition-all"
