@@ -18,6 +18,22 @@ import { useLanguage } from '../context/LanguageContext';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Renders a slice's percentage AT the ring's own mid-radius (halfway between inner and outer),
+// so the text always sits inside the donut itself — never an external leader-line label that
+// could extend past the chart's own container. Recharts calls this with cx/cy/midAngle/radii/
+// percent for every slice automatically when passed as <Pie label={...}>.
+const RADIAN = Math.PI / 180;
+function renderDonutPercentLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight="bold">
+      {`${Math.round(percent * 100)}%`}
+    </text>
+  );
+}
+
 interface AnalysisBookmark {
   id: string;
   name: string;
@@ -372,8 +388,8 @@ export default function GroupAnalysisSummary() {
   }, [expenses]);
 
   const trendData = useMemo(() => {
-    const dataMap: Record<string, { value: number; label: string }> = {};
-    
+    const dataMap: Record<string, { value: number; essential: number; optional: number; income: number; label: string }> = {};
+
     expenses.forEach(exp => {
       let key = '';
       let label = '';
@@ -417,9 +433,20 @@ export default function GroupAnalysisSummary() {
         label = groupMembers.find(m => m.userId === exp.paidBy)?.displayName || t('common.unknown');
       }
       
+      // Stacked-bar breakdown: income never carries an Essential/Optional classification, so it
+      // gets its own stack segment rather than being forced into one bucket or the other — this
+      // way the stacked bar's total height always still equals `value` exactly, whatever mix of
+      // expense/income the current entryTypeFilter includes.
+      const isIncome = exp.type === 'income';
+      const expGroup = selectedGroupId === 'all' ? allGroups.find((g: any) => g.id === exp.groupId) : groupData;
+      const classification = !isIncome ? getCategoryClassification(expGroup, exp.category) : null;
+      const prev = dataMap[key] || { value: 0, essential: 0, optional: 0, income: 0, label };
       dataMap[key] = {
-        value: (dataMap[key]?.value || 0) + exp.amount,
-        label: label
+        value: prev.value + exp.amount,
+        essential: prev.essential + (classification === 'essential' ? exp.amount : 0),
+        optional: prev.optional + (classification === 'optional' ? exp.amount : 0),
+        income: prev.income + (isIncome ? exp.amount : 0),
+        label,
       };
     });
 
@@ -429,6 +456,9 @@ export default function GroupAnalysisSummary() {
       .map(([key, data]) => ({
         name: data.label,
         value: data.value,
+        essential: data.essential,
+        optional: data.optional,
+        income: data.income,
         originalKey: key,
         ...(showBudget && budgetsByMonth[key] != null ? { budget: budgetsByMonth[key] } : {}),
       }));
@@ -459,7 +489,7 @@ export default function GroupAnalysisSummary() {
     }
 
     return result;
-  }, [expenses, timeStep, sortOrder, xSortOrder, viewType, groupMembers, CATEGORIES_LIST, selectedGroupId, budgetsByMonth, t]);
+  }, [expenses, timeStep, sortOrder, xSortOrder, viewType, groupMembers, CATEGORIES_LIST, selectedGroupId, budgetsByMonth, allGroups, groupData, t]);
 
   const handleDownload = async () => {
     if (expenses.length === 0) {
@@ -852,6 +882,9 @@ export default function GroupAnalysisSummary() {
                             return (
                               <div className="bg-[#0F4761] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold shadow-lg transform -translate-y-8 space-y-0.5">
                                 <div>{currencySymbol}{point.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                {point.essential > 0 && <div className="text-green-300 font-normal">{t('common.essential')}: {currencySymbol}{point.essential.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>}
+                                {point.optional > 0 && <div className="text-yellow-300 font-normal">{t('common.optional')}: {currencySymbol}{point.optional.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>}
+                                {point.income > 0 && <div className="text-blue-300 font-normal">{t('common.income')}: {currencySymbol}{point.income.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>}
                                 {diff != null && (
                                   <div className={diff > 0 ? 'text-red-300' : 'text-green-300'}>
                                     Budget {currencySymbol}{point.budget.toLocaleString()} · {diff > 0 ? 'Over' : 'Under'} by {currencySymbol}{Math.abs(diff).toLocaleString()}
@@ -863,26 +896,30 @@ export default function GroupAnalysisSummary() {
                           return null;
                         }}
                       />
+                      {/* Stacked essential/optional/income — same stackId so each bar's total
+                          height still equals `value`. Income (no Essential/Optional concept)
+                          gets its own segment rather than being folded into either, and carries
+                          the total-value label since it's rendered last (topmost). */}
+                      <Bar dataKey="essential" stackId="a" fill="#16A34A" barSize={32} name={t('common.essential')} />
+                      <Bar dataKey="optional" stackId="a" fill="#EAB308" barSize={32} name={t('common.optional')} />
                       <Bar
-                        dataKey="value"
-                        fill="#0F4761"
+                        dataKey="income"
+                        stackId="a"
+                        fill="#2563EB"
                         radius={[6, 6, 0, 0]}
                         barSize={32}
-                        label={{
-                          position: 'top',
-                          formatter: (val: number) => `${currencySymbol}${Math.round(val)}`,
-                          fontSize: 9,
-                          fontWeight: 'bold',
-                          fill: '#0F4761'
+                        name={t('common.income')}
+                        label={(props: any) => {
+                          const { x, y, width, index } = props;
+                          const total = trendData[index]?.value ?? 0;
+                          if (!total) return <g key={`total-label-${index}`} />;
+                          return (
+                            <text key={`total-label-${index}`} x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={9} fontWeight="bold" fill="#0F4761">
+                              {`${currencySymbol}${Math.round(total)}`}
+                            </text>
+                          );
                         }}
-                      >
-                        {trendData.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={index === trendData.length - 1 ? '#0F4761' : '#F1F5F9'}
-                          />
-                        ))}
-                      </Bar>
+                      />
                       {timeStep === 'monthly' && selectedGroupId !== 'all' && (
                         <Line
                           dataKey="budget"
@@ -989,47 +1026,47 @@ export default function GroupAnalysisSummary() {
             </motion.section>
 
             {essentialOptionalData.length > 0 && (
-              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3">
+              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3 overflow-hidden">
                 <h3 className="font-bold text-primary">Essential vs Optional</h3>
-                <div className="flex items-center gap-4">
-                  <div className="w-32 h-32 shrink-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={essentialOptionalData}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius="60%"
-                          outerRadius="100%"
-                          paddingAngle={2}
-                          strokeWidth={0}
-                        >
-                          {essentialOptionalData.map((entry) => (
-                            <Cell key={entry.name} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          formatter={(value: number, name: string) => [`${currencySymbol}${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, name]}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    {essentialOptionalData.map((entry) => {
-                      const total = essentialOptionalData.reduce((sum, d) => sum + d.value, 0);
-                      const pct = total > 0 ? Math.round((entry.value / total) * 100) : 0;
-                      return (
-                        <div key={entry.name} className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
-                          <span className="text-xs font-bold text-on-surface flex-1">{entry.name}</span>
-                          <span className="text-xs font-bold text-text-muted">{pct}%</span>
-                          <span className="text-xs font-black text-primary w-20 text-right">
-                            {currencySymbol}{entry.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                {/* Percentage renders INSIDE each slice (positioned at the ring's own mid-radius,
+                    not as an external leader-line label) so it can never overflow the chart's box
+                    regardless of container size — the leader-line labels recharts uses by default
+                    were exactly what was spilling outside the small side-by-side layout this
+                    replaced. */}
+                <div className="w-44 h-44 mx-auto">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={essentialOptionalData}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius="55%"
+                        outerRadius="90%"
+                        paddingAngle={2}
+                        strokeWidth={0}
+                        label={renderDonutPercentLabel}
+                        labelLine={false}
+                      >
+                        {essentialOptionalData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value: number, name: string) => [`${currencySymbol}${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, name]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex flex-wrap justify-center gap-x-5 gap-y-1.5">
+                  {essentialOptionalData.map((entry) => (
+                    <div key={entry.name} className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                      <span className="text-xs font-bold text-on-surface truncate">{entry.name}</span>
+                      <span className="text-xs font-black text-primary shrink-0">
+                        {currencySymbol}{entry.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </section>
             )}

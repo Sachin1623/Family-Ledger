@@ -5,7 +5,7 @@ import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, Reorder } from 'motion/react';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact } from '../lib/constants';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact, getCategoryClassification } from '../lib/constants';
 import ExpenseQuickView from '../components/ExpenseQuickView';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { FAVORITABLE_BY_KEY } from '../lib/favorites';
@@ -306,6 +306,9 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
   // Filters the "Latest Spend" list below to just this member's own entries — tapping the same
   // avatar again clears it. Local to this card (not persisted), same lifecycle as `collapsed`.
   const [spendMemberFilter, setSpendMemberFilter] = useState<string | null>(null);
+  // Same idea, for Essential/Optional (see lib/constants.ts's getCategoryClassification) — both
+  // filters combine (AND), so a member + classification can be selected together.
+  const [spendClassificationFilter, setSpendClassificationFilter] = useState<'essential' | 'optional' | null>(null);
   const [poking, setPoking] = useState(false);
   const [poked, setPoked] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -356,10 +359,14 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
     const exps = expensesValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue]);
-  const latestSpendExpenses = useMemo(
-    () => (spendMemberFilter ? expenses.filter((e: any) => e.paidBy === spendMemberFilter) : expenses),
-    [expenses, spendMemberFilter],
-  );
+  const latestSpendExpenses = useMemo(() => {
+    let filtered = expenses;
+    if (spendMemberFilter) filtered = filtered.filter((e: any) => e.paidBy === spendMemberFilter);
+    if (spendClassificationFilter) {
+      filtered = filtered.filter((e: any) => e.type !== 'income' && getCategoryClassification(group, e.category) === spendClassificationFilter);
+    }
+    return filtered;
+  }, [expenses, spendMemberFilter, spendClassificationFilter, group]);
 
   const monthKey = currentLocalMonthKey();
   const previousMonthKey = useMemo(() => {
@@ -553,6 +560,24 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
                   </button>
                 ))}
               </div>
+            </div>
+            {/* Essential/Optional — same tap-to-toggle-off pattern as the member avatars above,
+                combines with it (AND) rather than replacing it. */}
+            <div className="flex items-center gap-1.5 mb-3">
+              {(['essential', 'optional'] as const).map((opt) => (
+                <button
+                  key={opt}
+                  onClick={stopAnd(() => setSpendClassificationFilter((prev) => (prev === opt ? null : opt)))}
+                  className={clsx(
+                    'px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all',
+                    spendClassificationFilter === opt
+                      ? 'bg-primary text-white border-primary'
+                      : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
+                  )}
+                >
+                  {opt === 'essential' ? t('common.essential') : t('common.optional')}
+                </button>
+              ))}
             </div>
             {/* Scrolls internally (rather than letting the tile itself grow further) once there
                 are enough entries to need it — shows up to the last 20, not just 5, without

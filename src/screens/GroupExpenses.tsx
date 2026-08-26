@@ -231,13 +231,19 @@ export default function GroupExpenses() {
   const filteredTotals = useMemo(() => {
     return filteredExpenses.reduce(
       (acc, exp: any) => {
-        if (exp.type === 'income') acc.income += exp.amount || 0;
-        else acc.expense += exp.amount || 0;
+        if (exp.type === 'income') {
+          acc.income += exp.amount || 0;
+        } else {
+          acc.expense += exp.amount || 0;
+          const expGroup = allGroups.find((g: any) => g.id === exp.groupId);
+          if (getCategoryClassification(expGroup, exp.category) === 'essential') acc.essential += exp.amount || 0;
+          else acc.optional += exp.amount || 0;
+        }
         return acc;
       },
-      { expense: 0, income: 0 },
+      { expense: 0, income: 0, essential: 0, optional: 0 },
     );
-  }, [filteredExpenses]);
+  }, [filteredExpenses, allGroups]);
 
   const editingGroupMembers = useMemo(() => {
     if (!editingExpense || !membersValue) return [];
@@ -765,9 +771,18 @@ export default function GroupExpenses() {
               computed from filteredExpenses so it reflects every active filter (search, member,
               category, type, date range, month/year pills) exactly like the rows below it. */}
           <div className="px-4 py-3 border-b border-border-subtle bg-surface-container-low/50 space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-text-muted uppercase tracking-wider">{t('common.expense')} {t('common.total')}</span>
-              <span className="font-black text-primary">{currencySymbol}{filteredTotals.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-bold text-text-muted uppercase tracking-wider shrink-0">{t('common.expense')} {t('common.total')}</span>
+              {/* Essential/Optional breakdown, inline between the label and the total amount —
+                  only worth showing once there's actually a split to show. */}
+              {filteredTotals.expense > 0 && (
+                <span className="flex-1 min-w-0 truncate text-center text-[10px] font-bold text-text-muted">
+                  <span className="text-success">{t('common.essential')} {currencySymbol}{filteredTotals.essential.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({Math.round((filteredTotals.essential / filteredTotals.expense) * 100)}%)</span>
+                  {' · '}
+                  <span className="text-warning">{t('common.optional')} {currencySymbol}{filteredTotals.optional.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({Math.round((filteredTotals.optional / filteredTotals.expense) * 100)}%)</span>
+                </span>
+              )}
+              <span className="font-black text-primary shrink-0">{currencySymbol}{filteredTotals.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-text-muted uppercase tracking-wider">{t('common.income')} {t('common.total')}</span>
@@ -1305,7 +1320,19 @@ export default function GroupExpenses() {
                 )}
 
                  <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.category')}</label>
+                  <div className="flex items-center justify-between px-1">
+                    <label className="text-[10px] font-bold text-text-muted uppercase">{t('addExpense.category')}</label>
+                    {editingExpense.type !== 'income' && editingExpense.category && (
+                      <span className={clsx(
+                        'text-[9px] font-bold px-2 py-0.5 rounded-full',
+                        getCategoryClassification(allGroups.find(g => g.id === editingExpense.groupId), editingExpense.category) === 'essential'
+                          ? 'bg-success/10 text-success'
+                          : 'bg-warning/10 text-warning',
+                      )}>
+                        {getCategoryClassification(allGroups.find(g => g.id === editingExpense.groupId), editingExpense.category) === 'essential' ? t('common.essential') : t('common.optional')}
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-5 gap-1.5">
                     {(editingExpense.type === 'income' ? INCOME_CATEGORIES : CATEGORIES).map(c => (
                       <button
