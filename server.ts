@@ -2299,6 +2299,15 @@ async function startServer() {
   // and the raw activity ledger — a spendable balance and a log of exactly when/what someone
   // logs stays private, the same way another user's wallet balance would in most apps; only
   // level/XP/badges/streaks are shown, which are the "aura" pieces meant to be seen.
+  // Which of these sections show is controlled by the PROFILE OWNER, not the viewer — a
+  // `publicProfileSettings` map on their own users/{uid} doc (client-writable directly, see
+  // Profile.tsx's Public Profile section; firestore.rules already lets a user write any field on
+  // their own user doc except shopId/shopRole/shortId). level/streaks/badges default ON, matching
+  // this endpoint's pre-existing always-on behavior so nobody's profile goes blank from this
+  // change; the newer, more personal sections (birthday, habits, game stats, friend ranking)
+  // default OFF — opt-in, not opt-out. A toggle set to off means the corresponding field is
+  // omitted from the response entirely, not just hidden client-side, so turning something off
+  // actually stops it from ever leaving the server for that request.
   app.get('/api/public-points/:uid', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
@@ -2306,20 +2315,97 @@ async function startServer() {
     const uid = String(req.params.uid);
 
     try {
-      const [pointsSnap, badgesSnap, expenseStreakSnap] = await Promise.all([
+      const [pointsSnap, badgesSnap, expenseStreakSnap, userSnap] = await Promise.all([
         db.collection('userPoints').doc(uid).get(),
         db.collection('userPoints').doc(uid).collection('badges').get(),
         db.collection('userPoints').doc(uid).collection('meta').doc('expenseStreak').get(),
+        db.collection('users').doc(uid).get(),
       ]);
       const points = pointsSnap.data() || {};
       const badges = badgesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      return res.json({
-        xp: points.xp || 0,
-        level: points.level || 1,
-        gameStreaks: points.gameStreaks || {},
-        expenseStreakLongest: expenseStreakSnap.data()?.longest || 0,
-        badges,
-      });
+      const userData = userSnap.data() || {};
+      const settings = userData.publicProfileSettings || {};
+      const show = (key: string, defaultOn: boolean): boolean =>
+        typeof settings[key] === 'boolean' ? settings[key] : defaultOn;
+
+      const result: Record<string, any> = {};
+
+      if (show('level', true)) {
+        result.xp = points.xp || 0;
+        result.level = points.level || 1;
+      }
+      if (show('streaks', true)) {
+        result.gameStreaks = points.gameStreaks || {};
+        result.expenseStreakLongest = expenseStreakSnap.data()?.longest || 0;
+      }
+      if (show('badges', true)) {
+        result.badges = badges;
+      }
+
+      // Month + day only — the year is never returned, so this can never reveal exact age even
+      // when the owner opts in.
+      if (show('birthday', false) && typeof userData.dateOfBirth === 'string') {
+        const [, month, day] = userData.dateOfBirth.split('-');
+        if (month && day) result.birthdayMonthDay = `${month}-${day}`;
+      }
+
+      // gameOutcomes is the permanent, deletion-proof per-game record (see recordGameOutcome) —
+      // using it instead of the live {gameType}Games collections means a since-deleted game still
+      // counts here, same guarantee GameRanks already relies on.
+      if (show('gameStats', false)) {
+        const outcomesSnap = await db.collection('gameOutcomes').where('playerUids', 'array-contains', uid).get();
+        const stats: Record<string, { played: number; won: number }> = {};
+        outcomesSnap.docs.forEach((d) => {
+          const data = d.data();
+          const gameType = data.gameType;
+          if (!gameType) return;
+          if (!stats[gameType]) stats[gameType] = { played: 0, won: 0 };
+          stats[gameType].played += 1;
+          if (data.winnerUid === uid || (Array.isArray(data.winningTeam) && data.winningTeam.includes(uid))) {
+            stats[gameType].won += 1;
+          }
+        });
+        result.gameStats = stats;
+      }
+
+      // Filtered client-side after a single userId-only query (not a second `where` clause) to
+      // avoid needing a composite index — same pattern ToDoList.tsx already uses for its own
+      // habit list.
+      if (show('habits', false)) {
+        const todosSnap = await db.collection('todos').where('userId', '==', uid).get();
+        const habitDocs = todosSnap.docs.filter((d) => d.data().recurring === true);
+        const streaksSnap = await db.collection('userPoints').doc(uid).collection('habitStreaks').get();
+        const streakByTodoId = new Map(streaksSnap.docs.map((d) => [d.id, d.data()]));
+        result.habits = habitDocs.map((d) => ({
+          title: d.data().title || 'Habit',
+          currentStreak: streakByTodoId.get(d.id)?.current || 0,
+        }));
+      }
+
+      // The OWNER's own rank among THEIR accepted friends (not the viewer's) — a fixed fact about
+      // the profile being viewed, same as level/badges, rather than something that would show a
+      // different number depending on who's looking. Same friends-scope query already proven safe
+      // by /api/points/leaderboard above.
+      if (show('rankings', false)) {
+        const friendsSnap = await db.collection('friendships')
+          .where('participants', 'array-contains', uid)
+          .where('status', '==', 'accepted')
+          .get();
+        const friendUids: string[] = friendsSnap.docs
+          .map((d) => (d.data().participants || []).find((u: string) => u !== uid))
+          .filter(Boolean);
+        const scopeUids = Array.from(new Set([uid, ...friendUids])).slice(0, 50);
+        if (scopeUids.length > 1) {
+          const scopePointsSnaps = await Promise.all(scopeUids.map((u) => db.collection('userPoints').doc(u).get()));
+          const sorted = scopeUids
+            .map((u, i) => ({ uid: u, xp: scopePointsSnaps[i].data()?.xp || 0 }))
+            .sort((a, b) => b.xp - a.xp);
+          const rank = sorted.findIndex((e) => e.uid === uid) + 1;
+          result.friendsRank = { rank, of: sorted.length };
+        }
+      }
+
+      return res.json(result);
     } catch (error) {
       console.error('public-points error:', error);
       return res.status(500).json({ error: 'Unable to load points.' });

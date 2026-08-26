@@ -57,13 +57,40 @@ export async function showGamePointsIfAny(gameType: string, gameId: string): Pro
   }
 }
 
+// Every field is optional now — which ones the server actually sends depends entirely on the
+// PROFILE OWNER's own publicProfileSettings (see server.ts's /api/public-points/:uid); a toggle
+// turned off means the field is missing from the response, not just falsy.
 export interface PublicPoints {
-  xp: number;
-  level: number;
-  gameStreaks: Record<string, number>;
-  expenseStreakLongest: number;
-  badges: { id: string; awardedAt: string; streakDays?: number }[];
+  xp?: number;
+  level?: number;
+  gameStreaks?: Record<string, number>;
+  expenseStreakLongest?: number;
+  badges?: { id: string; awardedAt: string; streakDays?: number }[];
+  birthdayMonthDay?: string;
+  gameStats?: Record<string, { played: number; won: number }>;
+  habits?: { title: string; currentStreak: number }[];
+  friendsRank?: { rank: number; of: number };
 }
+
+export interface PublicProfileSettings {
+  level: boolean;
+  streaks: boolean;
+  badges: boolean;
+  gameStats: boolean;
+  rankings: boolean;
+  habits: boolean;
+  birthday: boolean;
+}
+
+export const DEFAULT_PUBLIC_PROFILE_SETTINGS: PublicProfileSettings = {
+  level: true,
+  streaks: true,
+  badges: true,
+  gameStats: false,
+  rankings: false,
+  habits: false,
+  birthday: false,
+};
 
 // The public-profile counterpart of claimPoints — level/XP/badges/streaks only, never coins or
 // the raw activity ledger (see server.ts's /api/public-points/:uid for why those stay private).

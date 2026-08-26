@@ -15,6 +15,7 @@ import { BiometricAuth, BiometryError } from '@aparajita/capacitor-biometric-aut
 import { getAppLockSettings, enablePinLock, enableBiometricLock, disableAppLock } from '../lib/appLock';
 import { removeCurrentDeviceToken } from '../lib/pushNotifications';
 import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from '../context/LanguageContext';
+import { DEFAULT_PUBLIC_PROFILE_SETTINGS, PublicProfileSettings } from '../lib/pointsApi';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -109,6 +110,72 @@ function AnalyticsConsentToggle() {
       <div className={clsx('w-10 h-5 rounded-full relative transition-all shrink-0', consent ? 'bg-primary' : 'bg-gray-200')}>
         <div className={clsx('w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow-md', consent ? 'right-0.5' : 'left-0.5')} />
       </div>
+    </div>
+  );
+}
+
+const PUBLIC_PROFILE_TOGGLES: { key: keyof PublicProfileSettings; icon: string; label: string; hint: string }[] = [
+  { key: 'level', icon: 'military_tech', label: 'Level & XP', hint: 'Your current level and progress' },
+  { key: 'streaks', icon: 'local_fire_department', label: 'Streaks', hint: 'Expense-logging and game streaks' },
+  { key: 'badges', icon: 'workspace_premium', label: 'Badges', hint: 'Milestones you\'ve earned' },
+  { key: 'gameStats', icon: 'sports_esports', label: 'Game Stats', hint: 'Games played and won, per game' },
+  { key: 'rankings', icon: 'leaderboard', label: 'Friend Ranking', hint: 'Your rank among your own friends' },
+  { key: 'habits', icon: 'checklist', label: 'Habits', hint: 'Your active habits and their streaks' },
+  { key: 'birthday', icon: 'cake', label: 'Birthday', hint: 'Month and day only — never the year' },
+];
+
+// Self-contained, reads/writes users/{uid}.publicProfileSettings directly (already
+// client-writable per firestore.rules — see server.ts's /api/public-points/:uid for how each
+// toggle is enforced when someone actually views the profile, not just hidden here). Missing
+// keys fall back to DEFAULT_PUBLIC_PROFILE_SETTINGS so a profile that's never touched this
+// screen still behaves exactly like the pre-existing always-on level/streaks/badges behavior.
+function PublicProfileSettingsSection() {
+  const { user, profile } = useAuth();
+  const navigate = useNavigate();
+  const saved: Partial<PublicProfileSettings> = (profile as any)?.publicProfileSettings || {};
+  const settings: PublicProfileSettings = { ...DEFAULT_PUBLIC_PROFILE_SETTINGS, ...saved };
+
+  const handleToggle = async (key: keyof PublicProfileSettings) => {
+    if (!user) return;
+    const next = { ...settings, [key]: !settings[key] };
+    try {
+      await updateDoc(doc(db, 'users', user.uid), { publicProfileSettings: next });
+    } catch (err) {
+      console.error('Failed to update public profile settings:', err);
+    }
+  };
+
+  return (
+    <div className="divide-y divide-border-subtle">
+      {user && (
+        <button
+          onClick={() => navigate(`/u/${user.uid}`)}
+          className="w-full p-4 flex items-center justify-between text-primary font-bold text-sm hover:bg-surface-container/20 transition-colors text-left"
+        >
+          <span>Preview my public profile</span>
+          <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+        </button>
+      )}
+      {PUBLIC_PROFILE_TOGGLES.map(({ key, icon, label, hint }) => (
+        <div
+          key={key}
+          onClick={() => handleToggle(key)}
+          className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
+        >
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary shrink-0">
+              <span className="material-symbols-outlined">{icon}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="font-bold text-primary text-sm">{label}</p>
+              <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider truncate">{hint}</p>
+            </div>
+          </div>
+          <div className={clsx('w-10 h-5 rounded-full relative transition-all shrink-0', settings[key] ? 'bg-primary' : 'bg-gray-200')}>
+            <div className={clsx('w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow-md', settings[key] ? 'right-0.5' : 'left-0.5')} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1271,6 +1338,16 @@ export default function Profile() {
           <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Privacy</h3>
           <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
             <AnalyticsConsentToggle />
+          </div>
+        </section>
+
+        <section className="space-y-1">
+          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Public Profile</h3>
+          <p className="px-2 text-[11px] text-text-muted">
+            Choose what other signed-in FamilyLedger users can see on your public profile page.
+          </p>
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
+            <PublicProfileSettingsSection />
           </div>
         </section>
 

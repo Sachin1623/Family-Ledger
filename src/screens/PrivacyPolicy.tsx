@@ -64,6 +64,9 @@ export default function PrivacyPolicy() {
             <p>
               We track experience points (XP), a level, spendable coins, streaks, and badges earned from your activity in the app — such as logging expenses, completing to-dos and habits, setting budgets, and playing games. Your level, XP, streaks, and badges are shown on a public profile page that any other signed-in FamilyLedger user can view; your coin balance and the detailed log of exactly what earned you points are never shown on that public profile. Friends and members of your groups can additionally see your coin balance on friends- and group-scoped leaderboards, which compare your progress only against people you already share expenses or games with — we do not publish a global ranking of every FamilyLedger user.
             </p>
+            <p>
+              You control exactly what appears on your own public profile from Profile → Public Profile: level/XP, streaks, and badges are shown by default (matching how this page has always worked); per-game win/loss stats, your rank among your own friends, your active habits and their streaks, and your birthday (month and day only — we never show the year) are off by default and only appear if you turn them on yourself.
+            </p>
           </div>
         </section>
 
