@@ -5,6 +5,7 @@ import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { searchFeatures, SearchableFeature } from '../lib/searchIndex';
+import { useFriendships } from '../lib/useFriendships';
 import { EXPENSE_CATEGORIES, getCurrencySymbol } from '../lib/constants';
 import { parseLocalDate } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
@@ -112,6 +113,19 @@ export default function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onC
     return members.filter((m: any) => (m.displayName || '').toLowerCase().includes(q)).slice(0, 8);
   }, [queryText, members]);
 
+  // Accepted friends may not share any group with the caller at all, so this is a separate
+  // source from memberResults above (which is scoped to group co-members) — distinct sections in
+  // the UI so it's clear which is which. Only queries while the search modal is open.
+  const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(isOpen ? user?.uid : undefined);
+  const friendResults = useMemo(() => {
+    const q = queryText.trim().toLowerCase();
+    if (!q) return [];
+    return acceptedFriends
+      .map(({ friendUid }) => friendUsersByUid.get(friendUid))
+      .filter((u): u is { uid: string; displayName: string; photoURL: string } => !!u && (u.displayName || '').toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [queryText, acceptedFriends, friendUsersByUid]);
+
   const commentResults = useMemo(() => {
     const q = queryText.trim().toLowerCase();
     if (!q) return [];
@@ -148,6 +162,11 @@ export default function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onC
 
   const handleMemberClick = (uid: string) => {
     navigate(`/?dm=${uid}`);
+    onClose();
+  };
+
+  const handleFriendClick = (uid: string) => {
+    navigate(`/u/${uid}`);
     onClose();
   };
 
@@ -189,6 +208,7 @@ export default function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onC
           {queryText.trim() &&
             featureResults.length === 0 &&
             groupResults.length === 0 &&
+            friendResults.length === 0 &&
             memberResults.length === 0 &&
             expenseResults.length === 0 &&
             commentResults.length === 0 && (
@@ -235,6 +255,31 @@ export default function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onC
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-on-surface truncate">{g.name}</p>
                     <p className="text-[11px] text-text-muted truncate">{t('search.groupLabel')}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {friendResults.length > 0 && (
+            <div className="py-2 border-t border-border-subtle">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-4 py-1">{t('search.sectionFriends')}</p>
+              {friendResults.map((f) => (
+                <button
+                  key={f.uid}
+                  onClick={() => handleFriendClick(f.uid)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-container/40 text-left transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-full bg-primary/5 flex items-center justify-center text-primary shrink-0 overflow-hidden">
+                    {f.photoURL ? (
+                      <img src={f.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <span className="text-xs font-bold">{f.displayName?.slice(0, 1) || '?'}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-on-surface truncate">{f.displayName}</p>
+                    <p className="text-[11px] text-text-muted truncate">{t('search.sectionFriends')}</p>
                   </div>
                 </button>
               ))}
