@@ -82,6 +82,8 @@ const en = {
   'common.income': 'Income',
   'common.net': 'Net',
   'common.total': 'Total',
+  'common.essential': 'Essential',
+  'common.optional': 'Optional',
   'common.netIncomeLabel': 'Net Income',
   'common.netExpenseLabel': 'Net Expense',
   'common.to': 'to',

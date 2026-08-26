@@ -6,7 +6,7 @@ import { collection, query, where, orderBy, doc, setDoc, updateDoc, deleteDoc, d
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS, getCategoryClassification, CategoryClassification } from '../lib/constants';
 import { updateGlobalStats } from '../services/statsService';
 import Comments from '../components/Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
@@ -41,6 +41,7 @@ export default function GroupExpenses() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedGroupIdFilter, setSelectedGroupIdFilter] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState<'all' | 'expense' | 'income'>('all');
+  const [selectedClassification, setSelectedClassification] = useState<'all' | CategoryClassification>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   // Multi-select quick filters, same pattern as GroupAnalysisSummary.tsx's — empty means "no
@@ -211,9 +212,18 @@ export default function GroupExpenses() {
       const matchesDate = (!startDate || (exp.date && exp.date >= startDate)) && (!endDate || (exp.date && exp.date <= endDate));
       const matchesMonth = selectedMonths.length === 0 || (exp.date && selectedMonths.includes(parseLocalDate(exp.date).getMonth()));
       const matchesYear = selectedYears.length === 0 || (exp.date && selectedYears.includes(parseLocalDate(exp.date).getFullYear()));
-      return matchesSearch && matchesMember && matchesCategory && matchesType && matchesDate && matchesMonth && matchesYear;
+      // Only meaningful for expenses (income has no Essential/Optional concept) — an income row
+      // always passes this check regardless of the selected classification filter. Classification
+      // is looked up against the expense's OWN group, since this screen can span every group the
+      // user belongs to and each group can override the app-wide default independently.
+      const expGroup = allGroups.find((g: any) => g.id === exp.groupId);
+      const matchesClassification =
+        selectedClassification === 'all' ||
+        exp.type === 'income' ||
+        getCategoryClassification(expGroup, exp.category) === selectedClassification;
+      return matchesSearch && matchesMember && matchesCategory && matchesType && matchesDate && matchesMonth && matchesYear && matchesClassification;
     });
-  }, [allExpenses, searchTerm, selectedMemberId, selectedCategory, selectedType, startDate, endDate, selectedMonths, selectedYears, members]);
+  }, [allExpenses, searchTerm, selectedMemberId, selectedCategory, selectedType, startDate, endDate, selectedMonths, selectedYears, selectedClassification, allGroups, members]);
 
   // Two-line summary above the table — always both totals (not just whichever `selectedType` is
   // active), computed from the SAME filtered set the table itself shows, so it reflects every
@@ -646,6 +656,23 @@ export default function GroupExpenses() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Essential/Optional — see lib/constants.ts's getCategoryClassification. */}
+          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
+            {(['all', 'essential', 'optional'] as const).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setSelectedClassification(opt)}
+                className={clsx(
+                  'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
+                  selectedClassification === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                )}
+              >
+                {opt === 'all' ? t('groupExpenses.all') : opt === 'essential' ? t('common.essential') : t('common.optional')}
+              </button>
+            ))}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

@@ -7,7 +7,7 @@ import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { PieChart, Pie, Cell, ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification } from '../lib/constants';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { shareWithAi } from '../lib/aiShare';
@@ -30,6 +30,9 @@ interface AnalysisBookmark {
     selectedYears: number[];
     viewType: 'time' | 'category' | 'member';
     timeStep: 'daily' | 'weekly' | 'monthly';
+    // Optional — bookmarks saved before this filter existed simply won't have it; applyBookmark
+    // defaults to 'all' in that case.
+    selectedClassification?: 'all' | 'essential' | 'optional';
   };
 }
 
@@ -86,6 +89,7 @@ export default function GroupAnalysisSummary() {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showTimeStepDropdown, setShowTimeStepDropdown] = useState(false);
   const [entryTypeFilter, setEntryTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
+  const [selectedClassification, setSelectedClassification] = useState<'all' | 'essential' | 'optional'>('all');
   // Quick month/year filters — multi-select (e.g. "every January and July across 2024 and 2025"),
   // empty means "no restriction" for that axis. Kept independent of `timeStep`/`viewType` (which
   // only control how the chart GROUPS/labels data, not which expenses are included at all).
@@ -104,6 +108,7 @@ export default function GroupAnalysisSummary() {
 
   const activeFilterCount =
     (entryTypeFilter !== 'all' ? 1 : 0) +
+    (selectedClassification !== 'all' ? 1 : 0) +
     (selectedCategory !== 'all' ? 1 : 0) +
     (selectedMemberId ? 1 : 0) +
     selectedMonths.length +
@@ -111,6 +116,7 @@ export default function GroupAnalysisSummary() {
 
   const clearAllFilters = () => {
     setEntryTypeFilter('all');
+    setSelectedClassification('all');
     setSelectedCategory('all');
     setSelectedMemberId(null);
     setSelectedMonths([]);
@@ -134,7 +140,7 @@ export default function GroupAnalysisSummary() {
     const bookmark: AnalysisBookmark = {
       id: `${Date.now()}`,
       name,
-      filters: { selectedGroupId, entryTypeFilter, selectedCategory, selectedMemberId, selectedMonths, selectedYears, viewType, timeStep },
+      filters: { selectedGroupId, entryTypeFilter, selectedCategory, selectedMemberId, selectedMonths, selectedYears, viewType, timeStep, selectedClassification },
     };
     persistBookmarks([...bookmarks, bookmark]);
     setNewBookmarkName('');
@@ -143,6 +149,7 @@ export default function GroupAnalysisSummary() {
   const applyBookmark = (b: AnalysisBookmark) => {
     setSelectedGroupId(b.filters.selectedGroupId);
     setEntryTypeFilter(b.filters.entryTypeFilter);
+    setSelectedClassification(b.filters.selectedClassification || 'all');
     setSelectedCategory(b.filters.selectedCategory);
     setSelectedMemberId(b.filters.selectedMemberId);
     setSelectedMonths(b.filters.selectedMonths);
@@ -290,13 +297,41 @@ export default function GroupAnalysisSummary() {
     if (selectedYears.length > 0) {
       filtered = filtered.filter(exp => selectedYears.includes(parseLocalDate(exp.date).getFullYear()));
     }
+    // Income has no Essential/Optional concept, so it's never excluded by this filter — only
+    // expense rows are actually checked against their (possibly per-group-overridden)
+    // classification. See lib/constants.ts's getCategoryClassification.
+    if (selectedClassification !== 'all') {
+      filtered = filtered.filter(exp => {
+        if (exp.type === 'income') return true;
+        const expGroup = selectedGroupId === 'all' ? allGroups.find((g) => g.id === exp.groupId) : groupData;
+        return getCategoryClassification(expGroup, exp.category) === selectedClassification;
+      });
+    }
     return filtered;
-  }, [allExpenses, selectedCategory, selectedMonths, selectedYears]);
+  }, [allExpenses, selectedCategory, selectedMonths, selectedYears, selectedClassification, selectedGroupId, allGroups, groupData]);
 
   const expenses = useMemo(() => {
     if (!selectedMemberId) return categoryFilteredExpenses;
     return categoryFilteredExpenses.filter(exp => exp.paidBy === selectedMemberId);
   }, [categoryFilteredExpenses, selectedMemberId]);
+
+  // Essential vs Optional split of whatever's currently in `expenses` — same filtered scope the
+  // bar chart above and every other section on this screen reads from. Income rows are excluded
+  // outright (no classification concept applies to them), same as the filter itself.
+  const essentialOptionalData = useMemo(() => {
+    let essential = 0;
+    let optional = 0;
+    expenses.forEach((exp: any) => {
+      if (exp.type === 'income') return;
+      const expGroup = selectedGroupId === 'all' ? allGroups.find((g) => g.id === exp.groupId) : groupData;
+      if (getCategoryClassification(expGroup, exp.category) === 'essential') essential += exp.amount || 0;
+      else optional += exp.amount || 0;
+    });
+    return [
+      { name: t('common.essential'), value: essential, color: '#16A34A' },
+      { name: t('common.optional'), value: optional, color: '#EAB308' },
+    ].filter((d) => d.value > 0);
+  }, [expenses, selectedGroupId, allGroups, groupData, t]);
 
   // Favorited expenses within whatever scope/filters are currently active — any member's
   // favorite shows here (not just whoever's looking), same as the picker on AddExpense.tsx.
@@ -661,6 +696,23 @@ export default function GroupAnalysisSummary() {
                 ))}
               </div>
 
+              {/* Essential/Optional — see lib/constants.ts's getCategoryClassification. */}
+              <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
+                {(['all', 'essential', 'optional'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setSelectedClassification(opt)}
+                    className={clsx(
+                      'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
+                      selectedClassification === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                    )}
+                  >
+                    {opt === 'all' ? t('groupExpenses.all') : opt === 'essential' ? t('common.essential') : t('common.optional')}
+                  </button>
+                ))}
+              </div>
+
               {/* Quick month/year filters — multi-select pills, horizontally scrollable so 12
                   months and a growing list of years never wrap or crowd the screen. Applies
                   everywhere on this page (chart, category/group/member breakdowns, favorites),
@@ -935,6 +987,52 @@ export default function GroupAnalysisSummary() {
                 </div>
               </div>
             </motion.section>
+
+            {essentialOptionalData.length > 0 && (
+              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3">
+                <h3 className="font-bold text-primary">Essential vs Optional</h3>
+                <div className="flex items-center gap-4">
+                  <div className="w-32 h-32 shrink-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={essentialOptionalData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius="60%"
+                          outerRadius="100%"
+                          paddingAngle={2}
+                          strokeWidth={0}
+                        >
+                          {essentialOptionalData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(value: number, name: string) => [`${currencySymbol}${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, name]}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    {essentialOptionalData.map((entry) => {
+                      const total = essentialOptionalData.reduce((sum, d) => sum + d.value, 0);
+                      const pct = total > 0 ? Math.round((entry.value / total) * 100) : 0;
+                      return (
+                        <div key={entry.name} className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                          <span className="text-xs font-bold text-on-surface flex-1">{entry.name}</span>
+                          <span className="text-xs font-bold text-text-muted">{pct}%</span>
+                          <span className="text-xs font-black text-primary w-20 text-right">
+                            {currencySymbol}{entry.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+            )}
 
             {favoriteExpenses.length > 0 && (
               <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3">

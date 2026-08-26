@@ -50,6 +50,42 @@ export const EXPENSE_CATEGORIES = [
   { id: 'misc', name: 'Other', icon: '✨' }
 ];
 
+export type CategoryClassification = 'essential' | 'optional';
+
+// Sensible starting point so the Essential/Optional filter and donut chart are useful the moment
+// a group exists, before any admin has actually visited the new "Spend Categories" setting in
+// ManageGroup.tsx — every group can override any of these for itself (see
+// groups/{groupId}.categoryClassification), this is only the fallback for a category a group has
+// never explicitly classified.
+export const DEFAULT_CATEGORY_CLASSIFICATION: Record<string, CategoryClassification> = {
+  housing: 'essential',
+  food: 'optional',
+  groceries: 'essential',
+  travel: 'essential',
+  bills: 'essential',
+  personal: 'essential',
+  health: 'essential',
+  education: 'essential',
+  kids: 'essential',
+  ent: 'optional',
+  finance: 'essential',
+  shopping: 'optional',
+  household: 'essential',
+  gifts: 'optional',
+  misc: 'optional',
+};
+
+// A group's own overrides (set by its owner/admin) take priority over the app-wide default above;
+// an entirely unrecognized category id (shouldn't normally happen) falls back to 'optional' rather
+// than throwing, so a stale/removed category id never breaks the filter or chart.
+export function getCategoryClassification(
+  group: { categoryClassification?: Record<string, CategoryClassification> } | undefined,
+  categoryId: string | undefined,
+): CategoryClassification {
+  if (!categoryId) return 'optional';
+  return group?.categoryClassification?.[categoryId] || DEFAULT_CATEGORY_CLASSIFICATION[categoryId] || 'optional';
+}
+
 export const INCOME_CATEGORIES = [
   { id: 'salary', name: 'Salary', icon: '💼' },
   { id: 'house_rent', name: 'House Rent', icon: '🏠' },

@@ -18,7 +18,7 @@ import { todayLocalDateString, currentLocalMonthKey } from '../lib/dateUtils';
 import { getParentPath } from '../lib/navigationParents';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification } from '../lib/constants';
 import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
@@ -678,7 +678,22 @@ export default function AddExpense() {
         </div>
 
         <section className="space-y-1.5" data-tour="expense-category">
-          <h2 className="px-1 text-[10px] font-bold text-primary uppercase tracking-widest opacity-60">{t('addExpense.category')}</h2>
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-[10px] font-bold text-primary uppercase tracking-widest opacity-60">{t('addExpense.category')}</h2>
+            {/* Informational only — set by the group's owner/admin in Manage Group, every member
+                just sees the current classification here so they know how their spend will be
+                counted in the group's Essential/Optional filter and chart. */}
+            {entryType !== 'income' && category && (
+              <span className={clsx(
+                'text-[9px] font-bold px-2 py-0.5 rounded-full',
+                getCategoryClassification(selectedGroup, category) === 'essential'
+                  ? 'bg-success/10 text-success'
+                  : 'bg-warning/10 text-warning',
+              )}>
+                {getCategoryClassification(selectedGroup, category) === 'essential' ? t('common.essential') : t('common.optional')}
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-5 gap-1.5">
             {activeCategories.map(cat => {
               const catLabel = t(`${entryType === 'income' ? 'income' : 'category'}.${cat.id}`);

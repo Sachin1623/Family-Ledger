@@ -7,7 +7,7 @@ import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact } from '../lib/constants';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification } from '../lib/constants';
 import { inviteToGroup, inviteUserToGroup, searchUsers, FoundUser } from '../lib/inviteApi';
 import { useFriendships } from '../lib/useFriendships';
 import { claimPoints, getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
@@ -271,6 +271,17 @@ export default function ManageGroup() {
       await updateDoc(doc(db, 'groups', groupId!), { groupType });
     } catch (error) {
       console.error('Set group type error:', error);
+    }
+  };
+
+  // Per-group override of DEFAULT_CATEGORY_CLASSIFICATION (lib/constants.ts) — every category not
+  // explicitly set here still falls back to that app-wide default, so this only ever needs to
+  // write the categories an admin actually wants to change for this specific group.
+  const handleSetCategoryClassification = async (categoryId: string, classification: CategoryClassification) => {
+    try {
+      await updateDoc(doc(db, 'groups', groupId!), { [`categoryClassification.${categoryId}`]: classification });
+    } catch (error) {
+      console.error('Set category classification error:', error);
     }
   };
 
@@ -821,6 +832,42 @@ export default function ManageGroup() {
                   </div>
                   <div className={clsx('w-11 h-6 rounded-full transition-all relative', group.incomeEnabled ? 'bg-primary' : 'bg-border-subtle')}>
                     <div className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm', group.incomeEnabled ? 'left-6' : 'left-1')} />
+                  </div>
+                </div>
+
+                {/* Essential vs Optional — every category already has a sensible app-wide default
+                    (see DEFAULT_CATEGORY_CLASSIFICATION), so this only needs to show current state
+                    and let an admin override any category for THIS group specifically. */}
+                <div className="p-3 bg-surface rounded-xl border border-border-subtle space-y-2">
+                  <p className="text-xs font-bold text-primary">Spend Categories</p>
+                  <p className="text-[10px] text-text-muted">Classify each category so members see it while adding an expense, and so the group's Essential/Optional filter and chart work.</p>
+                  <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                    {EXPENSE_CATEGORIES.map((cat) => {
+                      const current = getCategoryClassification(group, cat.id);
+                      return (
+                        <div key={cat.id} className="flex items-center justify-between gap-2 py-1">
+                          <span className="text-xs font-bold text-on-surface flex items-center gap-1.5 min-w-0">
+                            <span>{cat.icon}</span>
+                            <span className="truncate">{t(`category.${cat.id}`)}</span>
+                          </span>
+                          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 shrink-0">
+                            {(['essential', 'optional'] as CategoryClassification[]).map((opt) => (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => handleSetCategoryClassification(cat.id, opt)}
+                                className={clsx(
+                                  'px-2 py-1 rounded-md text-[10px] font-bold transition-all',
+                                  current === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                                )}
+                              >
+                                {opt === 'essential' ? t('common.essential') : t('common.optional')}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
