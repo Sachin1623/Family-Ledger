@@ -19,6 +19,7 @@ import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const PAYMENT_METHODS_LIST = PAYMENT_METHODS;
 
@@ -42,6 +43,12 @@ export default function GroupExpenses() {
   const [selectedType, setSelectedType] = useState<'all' | 'expense' | 'income'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  // Multi-select quick filters, same pattern as GroupAnalysisSummary.tsx's — empty means "no
+  // month/year restriction", not "match nothing".
+  const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
+  const [selectedYears, setSelectedYears] = useState<number[]>([]);
+  const toggleMonth = (m: number) => setSelectedMonths((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
+  const toggleYear = (y: number) => setSelectedYears((prev) => (prev.includes(y) ? prev.filter((x) => x !== y) : [...prev, y]));
 
   // Tapping a row opens this read-only view first (via the shared ExpenseQuickView, same
   // component the Dashboard uses) — its own "Edit or Delete in Group Expenses" button navigates
@@ -177,6 +184,15 @@ export default function GroupExpenses() {
     return getCurrencySymbol(groupData?.currency);
   }, [groupData?.currency]);
 
+  // Every year actually present in this scope's data, for the quick year-filter row — always
+  // includes the current year even with zero history yet, so a brand-new group isn't left with
+  // nothing to tap. Same pattern as GroupAnalysisSummary.tsx's availableYears.
+  const availableYears = useMemo(() => {
+    const years = new Set<number>([new Date().getFullYear()]);
+    allExpenses.forEach((exp: any) => { if (exp.date) years.add(parseLocalDate(exp.date).getFullYear()); });
+    return Array.from(years).sort((a, b) => b - a);
+  }, [allExpenses]);
+
   const filteredExpenses = useMemo(() => {
     return allExpenses.filter(exp => {
       const payer = members.find(m => m.userId === exp.paidBy);
@@ -184,18 +200,34 @@ export default function GroupExpenses() {
       const category = (exp.type === 'income' ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === exp.category);
       const categoryName = (category?.name || '').toLowerCase();
 
-      const matchesSearch = !searchTerm || 
+      const matchesSearch = !searchTerm ||
         (exp.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         payerName.includes(searchTerm.toLowerCase()) ||
         categoryName.includes(searchTerm.toLowerCase());
-      
+
       const matchesMember = !selectedMemberId || exp.paidBy === selectedMemberId;
       const matchesCategory = !selectedCategory || exp.category === selectedCategory;
       const matchesType = selectedType === 'all' || (selectedType === 'income' ? exp.type === 'income' : exp.type !== 'income');
       const matchesDate = (!startDate || (exp.date && exp.date >= startDate)) && (!endDate || (exp.date && exp.date <= endDate));
-      return matchesSearch && matchesMember && matchesCategory && matchesType && matchesDate;
+      const matchesMonth = selectedMonths.length === 0 || (exp.date && selectedMonths.includes(parseLocalDate(exp.date).getMonth()));
+      const matchesYear = selectedYears.length === 0 || (exp.date && selectedYears.includes(parseLocalDate(exp.date).getFullYear()));
+      return matchesSearch && matchesMember && matchesCategory && matchesType && matchesDate && matchesMonth && matchesYear;
     });
-  }, [allExpenses, searchTerm, selectedMemberId, selectedCategory, selectedType, startDate, endDate, members]);
+  }, [allExpenses, searchTerm, selectedMemberId, selectedCategory, selectedType, startDate, endDate, selectedMonths, selectedYears, members]);
+
+  // Two-line summary above the table — always both totals (not just whichever `selectedType` is
+  // active), computed from the SAME filtered set the table itself shows, so it reflects every
+  // filter (search, member, category, type, date range, month/year pills) uniformly.
+  const filteredTotals = useMemo(() => {
+    return filteredExpenses.reduce(
+      (acc, exp: any) => {
+        if (exp.type === 'income') acc.income += exp.amount || 0;
+        else acc.expense += exp.amount || 0;
+        return acc;
+      },
+      { expense: 0, income: 0 },
+    );
+  }, [filteredExpenses]);
 
   const editingGroupMembers = useMemo(() => {
     if (!editingExpense || !membersValue) return [];
@@ -576,6 +608,46 @@ export default function GroupExpenses() {
               </button>
             ))}
           </div>
+
+          {/* Quick month/year filters — multi-select pills, horizontally scrollable, same
+              pattern as GroupAnalysisSummary.tsx's. Applies to the table and the totals below it. */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              {MONTH_LABELS.map((label, idx) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => toggleMonth(idx)}
+                  className={clsx(
+                    'shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all',
+                    selectedMonths.includes(idx)
+                      ? 'bg-primary text-white border-primary'
+                      : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              {availableYears.map((year) => (
+                <button
+                  key={year}
+                  type="button"
+                  onClick={() => toggleYear(year)}
+                  className={clsx(
+                    'shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all',
+                    selectedYears.includes(year)
+                      ? 'bg-primary text-white border-primary'
+                      : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
+                  )}
+                >
+                  {year}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             {groupId === 'all' && (
               <div className="col-span-2 space-y-1">
@@ -651,6 +723,20 @@ export default function GroupExpenses() {
 
         {/* Transactions list */}
         <section className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden">
+          {/* Two-line summary — always both totals regardless of the All/Expense/Income toggle,
+              computed from filteredExpenses so it reflects every active filter (search, member,
+              category, type, date range, month/year pills) exactly like the rows below it. */}
+          <div className="px-4 py-3 border-b border-border-subtle bg-surface-container-low/50 space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-text-muted uppercase tracking-wider">{t('common.expense')} {t('common.total')}</span>
+              <span className="font-black text-primary">{currencySymbol}{filteredTotals.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-text-muted uppercase tracking-wider">{t('common.income')} {t('common.total')}</span>
+              <span className="font-black text-[#0F7A38]">{currencySymbol}{filteredTotals.income.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-12 bg-surface-container-low px-4 py-3 border-b border-border-subtle text-[10px] font-bold text-text-muted uppercase tracking-wider">
             <div className="col-span-4">{t('groupExpenses.dateMember')}</div>
             <div className="col-span-5 px-2">{t('groupExpenses.descriptionCat')}</div>
