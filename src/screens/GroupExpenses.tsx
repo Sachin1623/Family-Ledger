@@ -181,6 +181,26 @@ export default function GroupExpenses() {
     }
   }, [location.state, searchParams, allExpenses, navigate, location.pathname, setSearchParams]);
 
+  // Carries over every filter that was active on GroupAnalysisSummary.tsx when the user tapped a
+  // "view transactions" link there (see its buildExpensesLink) — so switching screens doesn't
+  // silently drop back to an unfiltered list. Reacts to `searchParams` itself, not mount-only, for
+  // the same reason as the expenseId effect above. Left in the URL afterward (not scrubbed) since
+  // this is real filter state, not a one-time action — a bookmarked/shared link stays filtered.
+  useEffect(() => {
+    const type = searchParams.get('type');
+    const classification = searchParams.get('classification');
+    const category = searchParams.get('category');
+    const memberId = searchParams.get('memberId');
+    const monthsParam = searchParams.get('months');
+    const yearsParam = searchParams.get('years');
+    if (type === 'expense' || type === 'income') setSelectedType(type);
+    if (classification === 'essential' || classification === 'optional') setSelectedClassification(classification);
+    if (category) setSelectedCategory(category);
+    if (memberId) setSelectedMemberId(memberId);
+    if (monthsParam) setSelectedMonths(monthsParam.split(',').map(Number).filter((n) => !Number.isNaN(n)));
+    if (yearsParam) setSelectedYears(yearsParam.split(',').map(Number).filter((n) => !Number.isNaN(n)));
+  }, [searchParams]);
+
   const currencySymbol = useMemo(() => {
     return getCurrencySymbol(groupData?.currency);
   }, [groupData?.currency]);

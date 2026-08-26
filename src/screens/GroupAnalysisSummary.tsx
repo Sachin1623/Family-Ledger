@@ -115,6 +115,26 @@ export default function GroupAnalysisSummary() {
   const [bookmarks, setBookmarks] = useState<AnalysisBookmark[]>([]);
   const [newBookmarkName, setNewBookmarkName] = useState('');
 
+  // Every "view transactions" link on this screen carries the currently-active filters over to
+  // Group Expenses as query params (read back by GroupExpenses.tsx), so switching screens doesn't
+  // silently drop context back to an unfiltered list. `categoryOverride`/`memberOverride` let a
+  // specific category/member row's own tap target that ONE value regardless of what the
+  // screen-wide selectedCategory/selectedMemberId filter is currently set to.
+  const buildExpensesLink = (categoryOverride?: string, memberOverride?: string) => {
+    const base = selectedGroupId === 'all' || !selectedGroupId ? '/groups/all/expenses' : `/groups/${selectedGroupId}/expenses`;
+    const params = new URLSearchParams();
+    if (entryTypeFilter !== 'all') params.set('type', entryTypeFilter);
+    if (selectedClassification !== 'all') params.set('classification', selectedClassification);
+    const cat = categoryOverride || (selectedCategory !== 'all' ? selectedCategory : '');
+    if (cat) params.set('category', cat);
+    const member = memberOverride || selectedMemberId;
+    if (member) params.set('memberId', member);
+    if (selectedMonths.length > 0) params.set('months', selectedMonths.join(','));
+    if (selectedYears.length > 0) params.set('years', selectedYears.join(','));
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
+  };
+
   useEffect(() => {
     if (user) setBookmarks(loadBookmarks(user.uid));
   }, [user]);
@@ -701,8 +721,8 @@ export default function GroupAnalysisSummary() {
             >
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold text-primary">{t('analysis.spendingTrend')}</h2>
-                <button 
-                  onClick={() => navigate(selectedGroupId === 'all' ? '/groups/all/expenses' : `/groups/${selectedGroupId}/expenses`)}
+                <button
+                  onClick={() => navigate(buildExpensesLink())}
                   className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
                   title={t('analysis.viewTransactions')}
                 >
@@ -1113,8 +1133,8 @@ export default function GroupAnalysisSummary() {
                 >
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-primary">{t('analysis.spendingByGroup')}</h3>
-                    <button 
-                      onClick={() => navigate('/groups/all/expenses')}
+                    <button
+                      onClick={() => navigate(buildExpensesLink())}
                       className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
                       title={t('analysis.viewTransactions')}
                     >
@@ -1182,8 +1202,8 @@ export default function GroupAnalysisSummary() {
                       {currencySymbol}{totalSpending.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <button 
-                    onClick={() => selectedGroupId && navigate(`/groups/${selectedGroupId}/expenses`)}
+                  <button
+                    onClick={() => navigate(buildExpensesLink())}
                     className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
                     title={t('analysis.viewTransactions')}
                   >
@@ -1196,7 +1216,11 @@ export default function GroupAnalysisSummary() {
                     categoryData.sort((a, b) => b.value - a.value).map((entry, index) => {
                       const pct = totalSpending > 0 ? (entry.value / totalSpending) * 100 : 0;
                       return (
-                        <div key={entry.name} className="space-y-1 p-1 hover:bg-surface-container/5 rounded-xl transition-all cursor-default">
+                        <div
+                          key={entry.name}
+                          onClick={() => navigate(buildExpensesLink(entry.name))}
+                          className="space-y-1 p-1 hover:bg-surface-container/40 rounded-xl transition-all cursor-pointer"
+                        >
                           <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-lg bg-primary/5 border border-primary/10 flex items-center justify-center flex-shrink-0">
                               <span className="text-sm">
@@ -1241,8 +1265,8 @@ export default function GroupAnalysisSummary() {
             >
               <div className="flex justify-between items-center mb-6">
                 <h3 className="font-bold text-primary">{t('analysis.memberContributions')}</h3>
-                <button 
-                  onClick={() => navigate(selectedGroupId === 'all' ? '/groups/all/expenses' : `/groups/${selectedGroupId}/expenses`)}
+                <button
+                  onClick={() => navigate(buildExpensesLink())}
                   className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
                   title={t('analysis.viewTransactions')}
                 >
@@ -1269,7 +1293,7 @@ export default function GroupAnalysisSummary() {
                   const sortedCats = Object.entries(catBuckets).sort((a, b) => b[1] - a[1]);
 
                   return (
-                    <div key={member.userId} className="space-y-3 cursor-pointer hover:bg-surface-container/5 p-2 rounded-xl transition-all" onClick={() => setSelectedMemberId(member.userId)}>
+                    <div key={member.userId} className="space-y-3 cursor-pointer hover:bg-surface-container/40 p-2 rounded-xl transition-all" onClick={() => navigate(buildExpensesLink(undefined, member.userId))}>
                       <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2">
                           <img src={member.photoURL || `https://ui-avatars.com/api/?name=${member.displayName}`} className="w-8 h-8 rounded-full border border-border-subtle" alt="avatar" />

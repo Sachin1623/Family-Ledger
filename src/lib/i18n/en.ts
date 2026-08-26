@@ -94,7 +94,7 @@ const en = {
   'dashboard.loading': 'Loading...',
   'dashboard.membersCount': '{{count}} members',
   'dashboard.thisMonth': 'This month: {{amount}}',
-  'dashboard.latestSpend': 'Latest spend',
+  'dashboard.latestSpend': "This Month's Spend",
   'dashboard.noExpensesYet': 'No expenses yet',
   'dashboard.addExpenseTooltip': 'Add expense to this group',
   'dashboard.pokeTooltip': 'Poke everyone in this group to add expenses',

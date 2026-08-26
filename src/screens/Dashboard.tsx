@@ -359,16 +359,24 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
     const exps = expensesValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue]);
+  const monthKey = currentLocalMonthKey();
+  // "Aug'26" style badge shown right next to the section label, so the month-scoping is explicit
+  // rather than something a user has to infer.
+  const monthLabel = useMemo(() => {
+    const [y, m] = monthKey.split('-').map(Number);
+    return `${new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short' })}'${String(y).slice(-2)}`;
+  }, [monthKey]);
+  // Scoped to the current calendar month — this section used to show up to the last 20 entries
+  // regardless of date, which could reach weeks or months back once a group had enough history.
+  // "Latest Spend" is renamed below to make that month-scoping explicit rather than implicit.
   const latestSpendExpenses = useMemo(() => {
-    let filtered = expenses;
+    let filtered = expenses.filter((e: any) => typeof e.date === 'string' && e.date.startsWith(monthKey));
     if (spendMemberFilter) filtered = filtered.filter((e: any) => e.paidBy === spendMemberFilter);
     if (spendClassificationFilter) {
       filtered = filtered.filter((e: any) => e.type !== 'income' && getCategoryClassification(group, e.category) === spendClassificationFilter);
     }
     return filtered;
-  }, [expenses, spendMemberFilter, spendClassificationFilter, group]);
-
-  const monthKey = currentLocalMonthKey();
+  }, [expenses, monthKey, spendMemberFilter, spendClassificationFilter, group]);
   const previousMonthKey = useMemo(() => {
     const [y, m] = monthKey.split('-').map(Number);
     const d = new Date(y, m - 2, 1); // m is 1-indexed; m-2 goes back one month from month index m-1
@@ -535,7 +543,10 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
         >
           <div className="pt-2">
             <div className="flex items-center justify-between gap-2 mb-3">
-              <h4 className="text-[11px] text-text-muted uppercase font-bold tracking-wider shrink-0">{t('dashboard.latestSpend')}</h4>
+              <h4 className="text-[11px] text-text-muted uppercase font-bold tracking-wider shrink-0 flex items-center gap-1.5">
+                {t('dashboard.latestSpend')}
+                <span className="normal-case font-black text-primary/70">{monthLabel}</span>
+              </h4>
               {/* Self first, then everyone else — tap to show only that person's entries below,
                   tap again to clear. Capped at 30% of the row width and horizontally scrollable
                   so a large group never crowds out the label. */}
