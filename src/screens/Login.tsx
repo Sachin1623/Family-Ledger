@@ -604,20 +604,28 @@ export default function Login() {
             )}
           </button>
 
-          <button
-            onClick={handleAppleSignIn}
-            disabled={isLoggingIn}
-            className="w-full py-4 px-6 bg-black hover:bg-neutral-800 text-white font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-sm disabled:opacity-50"
-          >
-            {isLoggingIn ? (
-              <span className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-[22px]">apple</span>
-                <span>{t('auth.continueWithApple')}</span>
-              </>
-            )}
-          </button>
+          {/* Hidden until the next Android/iOS build actually goes out — the currently-installed
+              production APK's bundled native config doesn't have 'apple.com' in its provider
+              list yet (that only takes effect via npx cap sync, baked into a new build), so
+              showing this now would just produce "Apple sign-in provider is not enabled" for
+              every user. handleAppleSignIn/appleProvider/capacitor.config.ts are already wired
+              up — re-add this button once a build with the updated config is live. */}
+          {false && (
+            <button
+              onClick={handleAppleSignIn}
+              disabled={isLoggingIn}
+              className="w-full py-4 px-6 bg-black hover:bg-neutral-800 text-white font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+            >
+              {isLoggingIn ? (
+                <span className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-[22px]">apple</span>
+                  <span>{t('auth.continueWithApple')}</span>
+                </>
+              )}
+            </button>
+          )}
 
           <button
             onClick={() => switchMode("login")}
