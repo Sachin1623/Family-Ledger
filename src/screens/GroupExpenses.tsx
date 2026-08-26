@@ -793,17 +793,36 @@ export default function GroupExpenses() {
           <div className="px-4 py-3 border-b border-border-subtle bg-surface-container-low/50 space-y-1">
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-bold text-text-muted uppercase tracking-wider shrink-0">{t('common.expense')} {t('common.total')}</span>
-              {/* Essential/Optional breakdown, inline between the label and the total amount —
-                  only worth showing once there's actually a split to show. */}
-              {filteredTotals.expense > 0 && (
-                <span className="flex-1 min-w-0 truncate text-center text-[10px] font-bold text-text-muted">
-                  <span className="text-success">{t('common.essential')} {currencySymbol}{filteredTotals.essential.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({Math.round((filteredTotals.essential / filteredTotals.expense) * 100)}%)</span>
-                  {' · '}
-                  <span className="text-warning">{t('common.optional')} {currencySymbol}{filteredTotals.optional.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({Math.round((filteredTotals.optional / filteredTotals.expense) * 100)}%)</span>
-                </span>
-              )}
               <span className="font-black text-primary shrink-0">{currencySymbol}{filteredTotals.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
+            {/* Essential/Optional breakdown as a two-color bar (same idiom as Analysis Summary's
+                Member Contributions bars) instead of inline text — text-based %/amount labels
+                squeezed between the total label and amount used to overlap or truncate on
+                narrow screens. %s render below the bar, never on top of other text. */}
+            {filteredTotals.expense > 0 && (
+              <div className="space-y-1 pt-0.5">
+                <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
+                  {filteredTotals.essential > 0 && (
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(filteredTotals.essential / filteredTotals.expense) * 100}%` }}
+                      className="h-full bg-success"
+                    />
+                  )}
+                  {filteredTotals.optional > 0 && (
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(filteredTotals.optional / filteredTotals.expense) * 100}%` }}
+                      className="h-full bg-warning"
+                    />
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-bold">
+                  <span className="text-success">{t('common.essential')} {Math.round((filteredTotals.essential / filteredTotals.expense) * 100)}%</span>
+                  <span className="text-warning">{t('common.optional')} {Math.round((filteredTotals.optional / filteredTotals.expense) * 100)}%</span>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-text-muted uppercase tracking-wider">{t('common.income')} {t('common.total')}</span>
               <span className="font-black text-[#0F7A38]">{currencySymbol}{filteredTotals.income.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
