@@ -23,6 +23,29 @@ const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'S
 // could extend past the chart's own container. Recharts calls this with cx/cy/midAngle/radii/
 // percent for every slice automatically when passed as <Pie label={...}>.
 const RADIAN = Math.PI / 180;
+// Attached to all three stacked Bar segments (essential/optional/income) — only the ONE that's
+// actually the topmost non-zero segment for a given bar draws anything, so the total-value label
+// always sits at the real top of that specific bar regardless of which segments happen to be
+// zero for that period (varies point to point — a period with no income shouldn't get its label
+// positioned as if it had some).
+function topStackSegment(point: { essential: number; optional: number; income: number }): 'essential' | 'optional' | 'income' {
+  if (point.income > 0) return 'income';
+  if (point.optional > 0) return 'optional';
+  return 'essential';
+}
+function makeStackTotalLabel(segment: 'essential' | 'optional' | 'income', trendData: any[], currencySymbol: string) {
+  return (props: any) => {
+    const { x, y, width, index } = props;
+    const point = trendData[index];
+    if (!point || !point.value || topStackSegment(point) !== segment) return <g key={`stack-label-empty-${segment}-${index}`} />;
+    return (
+      <text key={`stack-label-${segment}-${index}`} x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={9} fontWeight="bold" fill="#0F4761">
+        {`${currencySymbol}${Math.round(point.value)}`}
+      </text>
+    );
+  };
+}
+
 function renderDonutPercentLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
   const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
@@ -882,7 +905,7 @@ export default function GroupAnalysisSummary() {
                 {trendData.length > 0 ? (
                   <div style={{ height: '100%', width: `${Math.max(trendData.length * 64, 320)}px` }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={trendData} margin={{ top: 25, right: 8, left: -20, bottom: 0 }}>
+                    <ComposedChart data={trendData} margin={{ top: 25, right: 8, left: 0, bottom: 0 }}>
                       <XAxis
                         dataKey="name"
                         fontSize={10}
@@ -892,7 +915,7 @@ export default function GroupAnalysisSummary() {
                         dy={5}
                         interval={0}
                       />
-                      <YAxis hide />
+                      <YAxis hide width={0} />
                       <Tooltip
                         cursor={{ fill: 'transparent' }}
                         content={({ active, payload }) => {
@@ -918,28 +941,18 @@ export default function GroupAnalysisSummary() {
                       />
                       {/* Stacked essential/optional/income — same stackId so each bar's total
                           height still equals `value`. Income (no Essential/Optional concept)
-                          gets its own segment rather than being folded into either, and carries
-                          the total-value label since it's rendered last (topmost). */}
-                      <Bar dataKey="essential" stackId="a" fill="#16A34A" barSize={32} name={t('common.essential')} />
-                      <Bar dataKey="optional" stackId="a" fill="#EAB308" barSize={32} name={t('common.optional')} />
-                      <Bar
-                        dataKey="income"
-                        stackId="a"
-                        fill="#2563EB"
-                        radius={[6, 6, 0, 0]}
-                        barSize={32}
-                        name={t('common.income')}
-                        label={(props: any) => {
-                          const { x, y, width, index } = props;
-                          const total = trendData[index]?.value ?? 0;
-                          if (!total) return <g key={`total-label-${index}`} />;
-                          return (
-                            <text key={`total-label-${index}`} x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={9} fontWeight="bold" fill="#0F4761">
-                              {`${currencySymbol}${Math.round(total)}`}
-                            </text>
-                          );
-                        }}
-                      />
+                          gets its own segment rather than being folded into either. No `radius`
+                          on any segment — recharts renders a rounded corner as a non-zero-height
+                          sliver even when a segment's actual value is 0, which is exactly what
+                          was showing as a stray colored line across the chart whenever a period
+                          had $0 income (i.e. almost always) — and pushing the total-value label's
+                          height off the real stack top with it. The label is attached to
+                          whichever segment is ACTUALLY the topmost non-zero one for each specific
+                          bar (varies per period), computed via topStackSegment, instead of
+                          assuming it's always the same series. */}
+                      <Bar dataKey="essential" stackId="a" fill="#16A34A" barSize={32} name={t('common.essential')} label={makeStackTotalLabel('essential', trendData, currencySymbol)} />
+                      <Bar dataKey="optional" stackId="a" fill="#EAB308" barSize={32} name={t('common.optional')} label={makeStackTotalLabel('optional', trendData, currencySymbol)} />
+                      <Bar dataKey="income" stackId="a" fill="#2563EB" barSize={32} name={t('common.income')} label={makeStackTotalLabel('income', trendData, currencySymbol)} />
                       {timeStep === 'monthly' && selectedGroupId !== 'all' && (
                         <Line
                           dataKey="budget"
