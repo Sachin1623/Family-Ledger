@@ -914,7 +914,9 @@ export default function RummyGame() {
       {/* The ENTIRE screen is pinned between the global app Header (App.tsx's `<Header />`,
           `min-h-[60px]` plus env(safe-area-inset-top) on iOS — Header.tsx pads for the
           notch/status bar, so its real height varies by device, not a flat 60px) and the fixed
-          bottom Navigation bar (`h-16` = 64px) — `position: fixed` with both `top` and `bottom`
+          bottom Navigation bar (`h-16` = 64px, plus env(safe-area-inset-bottom) on iOS —
+          Navigation.tsx pads for the home indicator, same reasoning as Header.tsx above) —
+          `position: fixed` with both `top` and `bottom`
           set gives this a fully DEFINITE height regardless of whatever AuthenticatedLayout's own
           `<main>` scrolling setup does, and takes it completely out of normal document flow, so
           it can never itself contribute to a page/window-level scroll no matter how much it
@@ -925,7 +927,7 @@ export default function RummyGame() {
           is a safety net for an extremely short viewport where even the fixed top content alone
           would exceed the available height — clips rather than pushing content down under the
           nav bar. */}
-      <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-16 z-30 flex flex-col bg-surface overflow-hidden">
+      <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
         <div className="shrink-0">
         <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
           <button onClick={() => navigate('/games/rummy')} className="text-text-muted">

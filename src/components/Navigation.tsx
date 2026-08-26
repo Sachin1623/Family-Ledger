@@ -39,7 +39,12 @@ export default function Navigation() {
   const addActionTo = shopMode ? '/shop/sales' : '/add-expense';
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-border-subtle flex flex-col z-50">
+    // pb-[env(safe-area-inset-bottom)] pushes the actual tap targets (the h-16 row below) up
+    // above the device's own gesture/home-indicator area on iOS, and Android's equivalent — the
+    // nav's real height used to stop exactly at the physical screen edge, right where an
+    // accidental OS-level back-swipe/gesture is most likely to land. Evaluates to 0 with no
+    // layout change on devices/browsers with no inset (most Android phones, desktop web).
+    <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-border-subtle flex flex-col z-50 pb-[env(safe-area-inset-bottom)]">
       {/* Navigation Items Layer */}
       <div className="h-16 flex justify-around items-center">
         {links.map((link) => (
