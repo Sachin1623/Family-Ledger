@@ -1,5 +1,5 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, OAuthProvider } from 'firebase/auth';
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -60,6 +60,7 @@ async function testConnection() {
 testConnection();
 
 export const googleProvider = new GoogleAuthProvider();
+export const appleProvider = new OAuthProvider('apple.com');
 
 // --- Analytics ---
 // The Firebase project already had a GA4 stream configured (measurementId in the config file),

@@ -2,6 +2,7 @@ import React from "react";
 import {
   auth,
   googleProvider,
+  appleProvider,
   db,
   handleFirestoreError,
   OperationType,
@@ -12,6 +13,7 @@ import {
   signInWithPopup,
   signInWithCredential,
   GoogleAuthProvider,
+  OAuthProvider,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   getAdditionalUserInfo,
@@ -179,6 +181,54 @@ export default function Login() {
         error.errorMessage !== "The user canceled the sign-in flow."
       ) {
         setLoginError(error?.message || t('auth.errGoogleSignInFailed'));
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  // Mirrors handleGoogleSignIn's native/web split. Apple only returns the user's real name on
+  // the very FIRST authorization ever granted to this app (never again after, even from the same
+  // device) — createOrUpdateUserRecords below already only sets displayName when one isn't set
+  // yet, so a returning Apple user who signed up with a name keeps it even though later sign-ins
+  // won't re-supply one.
+  const handleAppleSignIn = async () => {
+    setIsLoggingIn(true);
+    setLoginError(null);
+    setStatusMessage(null);
+    try {
+      let firebaseUser;
+      let isNewUser = false;
+      if (Capacitor.isNativePlatform()) {
+        const nativeResult = await FirebaseAuthentication.signInWithApple();
+        const idToken = nativeResult.credential?.idToken;
+        if (!idToken) {
+          setLoginError(t('auth.errNoValidCredential'));
+          return;
+        }
+        const credential = new OAuthProvider('apple.com').credential({
+          idToken,
+          rawNonce: (nativeResult.credential as any)?.nonce,
+        });
+        const result = await signInWithCredential(auth, credential);
+        firebaseUser = result.user;
+        isNewUser = !!getAdditionalUserInfo(result)?.isNewUser;
+      } else {
+        const result = await signInWithPopup(auth, appleProvider);
+        firebaseUser = result.user;
+        isNewUser = !!getAdditionalUserInfo(result)?.isNewUser;
+      }
+      await createOrUpdateUserRecords(firebaseUser);
+      trackEvent(isNewUser ? 'sign_up' : 'login', { method: 'apple' });
+      navigate(from, { replace: true });
+    } catch (error: any) {
+      console.error("Apple sign-in error:", error);
+      if (
+        error.code !== "auth/popup-closed-by-user" &&
+        error.code !== "1001" &&
+        error.errorMessage !== "The user canceled the sign-in flow."
+      ) {
+        setLoginError(error?.message || t('auth.errAppleSignInFailed'));
       }
     } finally {
       setIsLoggingIn(false);
@@ -550,6 +600,21 @@ export default function Login() {
                   />
                 </svg>
                 <span>{t('auth.continueWithGoogle')}</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={handleAppleSignIn}
+            disabled={isLoggingIn}
+            className="w-full py-4 px-6 bg-black hover:bg-neutral-800 text-white font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+          >
+            {isLoggingIn ? (
+              <span className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-[22px]">apple</span>
+                <span>{t('auth.continueWithApple')}</span>
               </>
             )}
           </button>
