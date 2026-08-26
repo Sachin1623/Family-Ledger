@@ -303,6 +303,9 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
   const { t } = useLanguage();
   const [quickViewExpense, setQuickViewExpense] = useState<any>(null);
   const [showQuickActions, setShowQuickActions] = useState(false);
+  // Filters the "Latest Spend" list below to just this member's own entries — tapping the same
+  // avatar again clears it. Local to this card (not persisted), same lifecycle as `collapsed`.
+  const [spendMemberFilter, setSpendMemberFilter] = useState<string | null>(null);
   const [poking, setPoking] = useState(false);
   const [poked, setPoked] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -337,6 +340,13 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
     query(collection(db, 'members'), where('groupId', '==', groupId))
   );
   const members = membersValue?.docs.map(d => d.data()) || [];
+  // Self first, then everyone else in their existing order — for the member-filter avatar row.
+  const spendFilterMembers = useMemo(() => {
+    const self = members.find((m: any) => m.userId === user?.uid);
+    const others = members.filter((m: any) => m.userId !== user?.uid);
+    return self ? [self, ...others] : members;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members, user?.uid]);
 
   const [expensesValue] = useCollection(
     groupId ? query(collection(db, 'expenses'), where('groupId', '==', groupId)) : null
@@ -346,6 +356,10 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
     const exps = expensesValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue]);
+  const latestSpendExpenses = useMemo(
+    () => (spendMemberFilter ? expenses.filter((e: any) => e.paidBy === spendMemberFilter) : expenses),
+    [expenses, spendMemberFilter],
+  );
 
   const monthKey = currentLocalMonthKey();
   const previousMonthKey = useMemo(() => {
@@ -513,13 +527,39 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
           className="overflow-hidden"
         >
           <div className="pt-2">
-            <h4 className="text-[11px] text-text-muted uppercase font-bold tracking-wider mb-3">{t('dashboard.latestSpend')}</h4>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h4 className="text-[11px] text-text-muted uppercase font-bold tracking-wider shrink-0">{t('dashboard.latestSpend')}</h4>
+              {/* Self first, then everyone else — tap to show only that person's entries below,
+                  tap again to clear. Capped at 30% of the row width and horizontally scrollable
+                  so a large group never crowds out the label. */}
+              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar w-[30%] justify-end">
+                {spendFilterMembers.map((m: any) => (
+                  <button
+                    key={m.userId}
+                    onClick={stopAnd(() => setSpendMemberFilter((prev) => (prev === m.userId ? null : m.userId)))}
+                    title={m.userId === user?.uid ? 'Me' : m.displayName}
+                    className={clsx(
+                      'w-6 h-6 rounded-full overflow-hidden shrink-0 border-2 transition-all',
+                      spendMemberFilter === m.userId ? 'border-primary' : 'border-transparent opacity-70',
+                    )}
+                  >
+                    {m.photoURL ? (
+                      <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-[9px] font-bold">
+                        {m.displayName?.slice(0, 1) || '?'}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
             {/* Scrolls internally (rather than letting the tile itself grow further) once there
                 are enough entries to need it — shows up to the last 20, not just 5, without
                 pushing every other group tile below it down the page. */}
             <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-              {expenses.length > 0 ? (
-                expenses.slice(0, 20).map((expense: any, idx: number) => {
+              {latestSpendExpenses.length > 0 ? (
+                latestSpendExpenses.slice(0, 20).map((expense: any, idx: number) => {
                   const payer = members.find((m: any) => m.userId === expense.paidBy);
                   const isIncomeRow = expense.type === 'income';
                   const icon = (isIncomeRow ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === expense.category)?.icon || '🧾';
