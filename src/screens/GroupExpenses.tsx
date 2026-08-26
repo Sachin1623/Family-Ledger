@@ -707,7 +707,18 @@ export default function GroupExpenses() {
               <input
                 type="date"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setStartDate(value);
+                  // matchesDate treats a blank end date as "no upper bound" (>= start only), so
+                  // picking just a start date used to silently become an open-ended "from here
+                  // on" filter instead of "this one day" — confusing since nothing in the UI
+                  // signals that distinction. Defaulting end to match start makes a single date
+                  // pick mean exactly that day; the user can still widen it afterward by editing
+                  // end date manually. Also nudges end forward if it would otherwise sit before
+                  // the new start, avoiding an inverted (always-empty) range.
+                  if (value && (!endDate || endDate < value)) setEndDate(value);
+                }}
                 className="flex-1 min-w-0 bg-surface-container border border-border-subtle rounded-lg px-2 py-2 text-xs font-bold text-primary outline-none"
               />
               <span className="text-[10px] font-bold text-text-muted uppercase flex-none">{t('common.to')}</span>
