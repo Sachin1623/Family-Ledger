@@ -362,11 +362,13 @@ export default function HealthGlucose() {
   const [loggedTime, setLoggedTime] = useState(nowLocalTimeString());
   const [saving, setSaving] = useState(false);
   // Self by default; or anyone who's authorized me to log on their behalf (see
-  // healthDelegateSettings). The saved entry's userId becomes THEM, loggedBy stays me.
+  // healthDelegateSettings). The saved entry's userId becomes THEM, loggedBy stays me. Doubles as
+  // the "reassign to" picker while editing — same field, same picker, just pre-set to whoever the
+  // entry currently belongs to instead of defaulting to myself.
   const [enteringForUid, setEnteringForUid] = useState<string>('me');
   // Set while editing an existing entry (from the Dashboard table's edit button) instead of
-  // creating a new one — userId/loggedBy stay whatever they already were, only the fields below
-  // are editable, so there's no "entering for" picker in this mode.
+  // creating a new one. loggedBy always stays whatever it already was; userId (who the reading
+  // belongs to) is editable via enteringForUid, same as a brand-new entry.
   const [editingLog, setEditingLog] = useState<GlucoseLog | null>(null);
 
   const handleEditStart = (log: GlucoseLog) => {
@@ -379,7 +381,7 @@ export default function HealthGlucose() {
     const d = new Date(log.loggedAt);
     setLoggedDate(toLocalDateString(d));
     setLoggedTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
-    setEnteringForUid('me');
+    setEnteringForUid(log.userId === user?.uid ? 'me' : log.userId);
     setTab('log');
   };
 
@@ -433,7 +435,7 @@ export default function HealthGlucose() {
     if (!user || !hasValidValue) return;
     setSaving(true);
     try {
-      const targetUid = editingLog ? editingLog.userId : enteringForUid === 'me' ? user.uid : enteringForUid;
+      const targetUid = enteringForUid === 'me' ? user.uid : enteringForUid;
       const loggedAt = combineLocalDateAndTime(loggedDate, loggedTime).toISOString();
 
       // Sharing is a property of whose data it is, not who's typing it in — entering (or editing)
@@ -460,7 +462,7 @@ export default function HealthGlucose() {
       };
 
       if (editingLog) {
-        fireWrite(updateDoc(doc(db, 'glucoseLogs', editingLog.id), fields), 'update glucose log');
+        fireWrite(updateDoc(doc(db, 'glucoseLogs', editingLog.id), { userId: targetUid, ...fields }), 'update glucose log');
       } else {
         fireWrite(
           setDoc(doc(collection(db, 'glucoseLogs')), {
@@ -789,16 +791,26 @@ export default function HealthGlucose() {
                 </button>
               </div>
             )}
-            {!editingLog && delegatorsForMe.length > 0 && (
+            {(editingLog || delegatorsForMe.length > 0) && (
               <div className="space-y-1">
-                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.enteringFor')}</label>
+                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">
+                  {editingLog ? t('health.assignTo') : t('health.enteringFor')}
+                </label>
                 <select
                   value={enteringForUid}
                   onChange={(e) => setEnteringForUid(e.target.value)}
                   className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none"
                 >
                   <option value="me">{t('health.myself')}</option>
-                  {delegatorsForMe.map((d) => (
+                  {[
+                    ...delegatorsForMe,
+                    // The entry's current owner might not (or no longer) be in delegatorsForMe —
+                    // e.g. the delegate grant was revoked after this was logged — but must still
+                    // appear as the pre-selected option so the dropdown never shows a blank value.
+                    ...(editingLog && editingLog.userId !== user?.uid && !delegatorsForMe.some((d) => d.userId === editingLog.userId)
+                      ? [resolveSharer(editingLog.userId)]
+                      : []),
+                  ].map((d) => (
                     <option key={d.userId} value={d.userId}>{d.displayName}</option>
                   ))}
                 </select>
@@ -1185,10 +1197,10 @@ export default function HealthGlucose() {
             <h2 className="text-base font-black text-primary">{editingLog ? t('health.confirmUpdateTitle') : t('health.confirmTitle')}</h2>
 
             <div className="bg-surface rounded-2xl border border-border-subtle p-4 space-y-3">
-              {!editingLog && enteringForUid !== 'me' && (
+              {enteringForUid !== 'me' && (
                 <div className="flex items-center gap-1.5 text-[11px] font-bold text-primary">
                   <span className="material-symbols-outlined text-[14px]">person</span>
-                  {t('health.enteringForName', { name: delegatorsForMe.find((d) => d.userId === enteringForUid)?.displayName || '' })}
+                  {t(editingLog ? 'health.assignedToName' : 'health.enteringForName', { name: resolveSharer(enteringForUid).displayName })}
                 </div>
               )}
               <div className="flex items-center gap-3">

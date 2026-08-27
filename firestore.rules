@@ -638,10 +638,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidGlucoseLog(incoming()) && isSelfOrAuthorizedDelegate(incoming()) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
       // Editable by whoever could also delete it — the data owner OR whoever originally logged
-      // it — never by reassigning userId/loggedBy themselves (those stay exactly as created).
-      allow update: if isSignedIn() && isValidGlucoseLog(incoming()) && incoming().userId == existing().userId &&
+      // it. userId MAY be reassigned (e.g. fixing a wrong "entering for" pick after the fact),
+      // but only to the editor themselves or someone the editor is an authorized delegate for —
+      // the same test create() already applies, just re-run against the NEW owner. loggedBy never
+      // changes on an edit, preserving who actually first entered the reading.
+      allow update: if isSignedIn() && isValidGlucoseLog(incoming()) &&
         incoming().loggedBy == existing().loggedBy &&
         (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid) &&
+        (incoming().userId == existing().userId || incoming().userId == request.auth.uid || isGlucoseDelegateFor(incoming().userId)) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid);
     }
