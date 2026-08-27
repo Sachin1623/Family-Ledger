@@ -519,19 +519,19 @@ export default function HealthGlucose() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-2">
+      <main className="flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24">
+        <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-2xl font-black text-primary">{t('health.glucoseTracker')}</h1>
-            <p className="text-sm text-text-muted mt-1">{t('health.glucoseTrackerDesc')}</p>
+            <h1 className="text-lg font-black text-primary leading-tight">{t('health.glucoseTracker')}</h1>
+            <p className="text-[11px] text-text-muted leading-tight">{t('health.glucoseTrackerDesc')}</p>
           </div>
           <button
             type="button"
             onClick={openSettings}
-            className="shrink-0 w-10 h-10 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
+            className="shrink-0 w-9 h-9 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
             title={t('health.settings')}
           >
-            <span className="material-symbols-outlined text-[20px]">settings</span>
+            <span className="material-symbols-outlined text-[18px]">settings</span>
           </button>
         </div>
 
@@ -541,7 +541,7 @@ export default function HealthGlucose() {
             type="button"
             onClick={() => setTab('log')}
             className={clsx(
-              'flex-1 py-2.5 rounded-lg text-xs font-bold transition-all',
+              'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
               tab === 'log' ? 'bg-primary text-white' : 'text-text-muted',
             )}
           >
@@ -551,7 +551,7 @@ export default function HealthGlucose() {
             type="button"
             onClick={() => setTab('dashboard')}
             className={clsx(
-              'flex-1 py-2.5 rounded-lg text-xs font-bold transition-all',
+              'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
               tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted',
             )}
           >
@@ -560,35 +560,35 @@ export default function HealthGlucose() {
         </div>
 
         {tab === 'log' && (
-          <form onSubmit={handleSave} className="space-y-5">
-            <div className="space-y-2">
-              <label className="text-[11px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.selectMealType')}</label>
-              <div className="grid grid-cols-3 gap-2">
+          <form onSubmit={handleSave} className="space-y-2.5">
+            <div className="space-y-1">
+              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.selectMealType')}</label>
+              <div className="grid grid-cols-3 gap-1.5">
                 {MEAL_TYPES.map((m) => (
                   <button
                     key={m.value}
                     type="button"
                     onClick={() => setMealType(m.value)}
                     className={clsx(
-                      'py-4 rounded-xl border text-xs font-bold flex flex-col items-center gap-1.5 transition-all',
+                      'py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
                       mealType === m.value ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
                     )}
                   >
-                    <span className="text-2xl">{m.icon}</span>
+                    <span className="text-base">{m.icon}</span>
                     {t(m.labelKey)}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[11px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.testingTiming')}</label>
-              <div className="flex gap-2">
+            <div className="space-y-1">
+              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.testingTiming')}</label>
+              <div className="flex gap-1.5">
                 <button
                   type="button"
                   onClick={() => setTiming('before')}
                   className={clsx(
-                    'flex-1 py-3 rounded-xl text-xs font-bold border transition-all',
+                    'flex-1 py-2 rounded-xl text-xs font-bold border transition-all',
                     timing === 'before' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
                   )}
                 >
@@ -598,48 +598,40 @@ export default function HealthGlucose() {
                   type="button"
                   onClick={() => setTiming('after')}
                   className={clsx(
-                    'flex-1 py-3 rounded-xl text-xs font-bold border transition-all',
+                    'flex-1 py-2 rounded-xl text-xs font-bold border transition-all',
                     timing === 'after' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
                   )}
                 >
                   {t('health.afterMeal')}
                 </button>
-              </div>
-              {timing === 'after' && (
-                <div className="space-y-1 pt-1">
-                  <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.postMealDuration')}</label>
-                  <div className="grid grid-cols-4 gap-2">
+                {timing === 'after' && (
+                  <select
+                    value={postMealHours}
+                    onChange={(e) => setPostMealHours(Number(e.target.value))}
+                    title={t('health.postMealDuration')}
+                    className="shrink-0 w-16 bg-white border border-border-subtle rounded-xl text-xs font-bold text-primary outline-none text-center"
+                  >
                     {POST_MEAL_HOUR_OPTIONS.map((hr) => (
-                      <button
-                        key={hr}
-                        type="button"
-                        onClick={() => setPostMealHours(hr)}
-                        className={clsx(
-                          'py-2 rounded-lg text-xs font-bold border transition-all',
-                          postMealHours === hr ? 'bg-primary/10 text-primary border-primary' : 'bg-white text-text-muted border-border-subtle',
-                        )}
-                      >
-                        {hr}hr
-                      </button>
+                      <option key={hr} value={hr}>+{hr}hr</option>
                     ))}
-                  </div>
-                </div>
-              )}
+                  </select>
+                )}
+              </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-3">
-              <label className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('health.enterGlucoseValue')}</label>
-              <div className="flex items-center gap-3">
+            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-2.5 space-y-1.5">
+              <label className="text-[10px] text-text-muted font-bold uppercase tracking-wider">{t('health.enterGlucoseValue')}</label>
+              <div className="flex items-center gap-2">
                 <input
                   type="number"
                   inputMode="numeric"
                   value={valueInput}
                   onChange={(e) => setValueInput(e.target.value)}
                   placeholder="0"
-                  className="flex-1 min-w-0 text-4xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-4 outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 text-2xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-2 outline-none focus:ring-2 focus:ring-primary/20"
                 />
-                <div className="shrink-0 text-left space-y-1">
-                  <div className="text-xs font-bold text-text-muted">mg/dL</div>
+                <div className="shrink-0 text-left space-y-0.5">
+                  <div className="text-[11px] font-bold text-text-muted">mg/dL</div>
                   {hasValidValue && (
                     <div className={clsx('text-[10px] font-bold flex items-center gap-1 whitespace-nowrap', rangeInfo(parsedValue, liveWindowTarget, t).cls)}>
                       {rangeInfo(parsedValue, liveWindowTarget, t).icon} {rangeInfo(parsedValue, liveWindowTarget, t).text}
@@ -649,38 +641,37 @@ export default function HealthGlucose() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[11px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.dateAndTime')}</label>
-              <div className="flex items-center gap-2">
+            <div className="space-y-1">
+              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.dateAndTime')}</label>
+              <div className="flex items-center gap-1.5">
                 <input
                   type="date"
                   value={loggedDate}
                   max={todayLocalDateString()}
                   onChange={(e) => setLoggedDate(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-2 rounded-xl border border-border-subtle text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 <input
                   type="time"
                   value={loggedTime}
                   onChange={(e) => setLoggedTime(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-2 rounded-xl border border-border-subtle text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
-              <p className="text-[10px] text-text-muted px-1">{t('health.dateAndTimeHint')}</p>
             </div>
 
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder={t('health.notesPlaceholder')}
-              rows={2}
-              className="w-full bg-white p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+              rows={1}
+              className="w-full bg-white p-2 rounded-xl border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none"
             />
 
             <button
               type="submit"
               disabled={saving || !hasValidValue}
-              className="w-full py-3.5 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+              className="w-full py-2.5 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
             >
               {saving ? t('common.saving') : t('health.saveLogEntry')}
             </button>
