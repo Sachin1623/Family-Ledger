@@ -262,8 +262,17 @@ export default function HealthGlucose() {
 
   const liveWindowTarget = targetForWindow(targets, `${mealType}_${timing}`);
 
-  const handleSave = (e: React.FormEvent) => {
+  // Tapping Save doesn't write immediately — it opens a summary to confirm or go back and
+  // change, since a glucose reading is often typed in a hurry and a typo is easy to miss.
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidValue) return;
+    setShowConfirm(true);
+  };
+
+  const handleConfirmSave = () => {
     if (!user || !hasValidValue) return;
     setSaving(true);
     const loggedAt = combineLocalDateAndTime(loggedDate, loggedTime).toISOString();
@@ -313,6 +322,7 @@ export default function HealthGlucose() {
     setLoggedDate(todayLocalDateString());
     setLoggedTime(nowLocalTimeString());
     setSaving(false);
+    setShowConfirm(false);
   };
 
   const handleDelete = (id: string) => {
@@ -560,7 +570,7 @@ export default function HealthGlucose() {
         </div>
 
         {tab === 'log' && (
-          <form onSubmit={handleSave} className="space-y-2.5">
+          <form onSubmit={handleSubmit} className="space-y-2.5">
             <div className="space-y-1">
               <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.selectMealType')}</label>
               <div className="grid grid-cols-3 gap-1.5">
@@ -892,6 +902,67 @@ export default function HealthGlucose() {
           </div>
         )}
       </main>
+
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setShowConfirm(false)}>
+          <div
+            className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-black text-primary">{t('health.confirmTitle')}</h2>
+
+            <div className="bg-surface rounded-2xl border border-border-subtle p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl shrink-0">{MEAL_TYPES.find((m) => m.value === mealType)?.icon}</span>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold truncate">{windowLabel(mealType, timing)}{timing === 'after' ? ` (+${postMealHours}hr)` : ''}</p>
+                  <p className="text-[11px] text-text-muted">{combineLocalDateAndTime(loggedDate, loggedTime).toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-border-subtle pt-3">
+                <span className="text-[11px] font-bold text-text-muted uppercase tracking-wider">{t('health.readingLabel')}</span>
+                <div className="text-right">
+                  <p className="text-2xl font-black text-primary">{parsedValue} <span className="text-xs font-bold text-text-muted">mg/dL</span></p>
+                  <p className={clsx('text-[10px] font-bold flex items-center justify-end gap-1', rangeInfo(parsedValue, liveWindowTarget, t).cls)}>
+                    {rangeInfo(parsedValue, liveWindowTarget, t).icon} {rangeInfo(parsedValue, liveWindowTarget, t).text}
+                  </p>
+                </div>
+              </div>
+
+              {notes.trim() && (
+                <div className="border-t border-border-subtle pt-3">
+                  <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('health.notes')}</p>
+                  <p className="text-xs text-on-surface">{notes.trim()}</p>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 border-t border-border-subtle pt-3 text-[11px] text-text-muted">
+                <span className="material-symbols-outlined text-[14px]">{hasShareTarget(shareSettings) ? 'share' : 'lock'}</span>
+                {hasShareTarget(shareSettings) ? t('health.sharing') : t('todo.justMe')}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowConfirm(false)}
+                className="flex-1 py-3 rounded-xl font-bold text-text-muted border border-border-subtle"
+              >
+                {t('health.change')}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSave}
+                disabled={saving}
+                className="flex-1 py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+              >
+                {saving ? t('common.saving') : t('health.confirmAndSave')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setShowSettings(false)}>
