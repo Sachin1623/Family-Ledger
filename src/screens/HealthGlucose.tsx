@@ -130,19 +130,22 @@ export default function HealthGlucose() {
   const shareSettings: GlucoseShareSettings = (shareSettingsSnap?.data()?.glucose as any) || DEFAULT_GLUCOSE_SHARE_SETTINGS;
   const reminders: GlucoseReminderSettings = profile?.glucoseReminders || DEFAULT_GLUCOSE_REMINDERS;
 
-  const [showSettings, setShowSettings] = useState(false);
+  // The gear button opens a small menu first (Target Range / Sharing / Meal Reminders), each of
+  // which then opens as its own floating window with its own Save — rather than one long combined
+  // sheet, so changing just one thing doesn't require scrolling past the other two.
+  const [settingsPanel, setSettingsPanel] = useState<'menu' | 'target' | 'sharing' | 'reminders' | null>(null);
   const [targetForm, setTargetForm] = useState<GlucoseTargetMap>(targets);
   const [shareForm, setShareForm] = useState<GlucoseShareSettings>(shareSettings);
   const [remindersForm, setRemindersForm] = useState(reminders);
   const [savingSettings, setSavingSettings] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
 
-  const openSettings = () => {
+  const openSettingsMenu = () => {
     setTargetForm(targets);
     setShareForm(shareSettings);
     setRemindersForm(reminders);
     setFriendSearchQuery('');
-    setShowSettings(true);
+    setSettingsPanel('menu');
   };
 
   // A family (Friends.tsx's "families" feature) is just a named subset of my own accepted
@@ -178,14 +181,24 @@ export default function HealthGlucose() {
     return name.toLowerCase().includes(friendSearchQuery.trim().toLowerCase());
   });
 
-  const handleSaveSettings = async () => {
+  const handleSaveTarget = async () => {
     if (!user) return;
     setSavingSettings(true);
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        healthTargets: { glucose: targetForm },
-        glucoseReminders: remindersForm,
-      });
+      await updateDoc(doc(db, 'users', user.uid), { healthTargets: { glucose: targetForm } });
+      setSettingsPanel(null);
+    } catch (err) {
+      console.error('Failed to save target ranges:', err);
+      alert(t('health.settingsSaveFailed'));
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleSaveSharing = async () => {
+    if (!user) return;
+    setSavingSettings(true);
+    try {
       await setDoc(doc(db, 'healthShareSettings', user.uid), {
         userId: user.uid,
         glucose: shareForm,
@@ -210,10 +223,24 @@ export default function HealthGlucose() {
         await batch.commit();
       }
 
-      scheduleGlucoseReminders(remindersForm); // fire-and-forget, no-op on web
-      setShowSettings(false);
+      setSettingsPanel(null);
     } catch (err) {
-      console.error('Failed to save health settings:', err);
+      console.error('Failed to save sharing settings:', err);
+      alert(t('health.settingsSaveFailed'));
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleSaveReminders = async () => {
+    if (!user) return;
+    setSavingSettings(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), { glucoseReminders: remindersForm });
+      scheduleGlucoseReminders(remindersForm); // fire-and-forget, no-op on web
+      setSettingsPanel(null);
+    } catch (err) {
+      console.error('Failed to save reminder settings:', err);
       alert(t('health.settingsSaveFailed'));
     } finally {
       setSavingSettings(false);
@@ -537,7 +564,7 @@ export default function HealthGlucose() {
           </div>
           <button
             type="button"
-            onClick={openSettings}
+            onClick={openSettingsMenu}
             className="shrink-0 w-9 h-9 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
             title={t('health.settings')}
           >
@@ -968,226 +995,296 @@ export default function HealthGlucose() {
         </div>
       )}
 
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setShowSettings(false)}>
-          <div
-            className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5 space-y-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-black text-primary">{t('health.settings')}</h2>
-              <button type="button" onClick={() => setShowSettings(false)} className="text-text-muted">
+      {settingsPanel === 'menu' && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSettingsPanel(null)}>
+          <div className="bg-white w-full max-w-xs rounded-2xl p-2 space-y-0.5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-3 py-2">
+              <h2 className="text-sm font-black text-primary">{t('health.settings')}</h2>
+              <button type="button" onClick={() => setSettingsPanel(null)} className="text-text-muted">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            {[
+              { key: 'target' as const, icon: 'track_changes', label: t('health.targetRange') },
+              { key: 'sharing' as const, icon: 'share', label: t('health.sharing') },
+              { key: 'reminders' as const, icon: 'notifications_active', label: t('health.reminders') },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setSettingsPanel(item.key)}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-surface transition-colors text-left"
+              >
+                <span className="material-symbols-outlined text-primary text-[20px]">{item.icon}</span>
+                <span className="flex-1 text-sm font-bold">{item.label}</span>
+                <span className="material-symbols-outlined text-text-muted text-[18px]">chevron_right</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {settingsPanel === 'target' && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSettingsPanel(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setSettingsPanel('menu')} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined rtl:-scale-x-100">arrow_back</span>
+              </button>
+              <h2 className="text-base font-black text-primary flex-1">{t('health.targetRange')}</h2>
+              <button type="button" onClick={() => setSettingsPanel(null)} className="text-text-muted shrink-0">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
-            {/* Target ranges — one per meal window, since before/after targets genuinely differ */}
-            <div className="space-y-2">
-              <label className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('health.targetRange')}</label>
-              <div className="space-y-1.5">
-                {GLUCOSE_WINDOWS.map((w) => (
-                  <div key={w.key} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
-                    <span className="text-sm shrink-0">{w.icon}</span>
-                    <span className="text-[10px] font-bold text-text-muted w-20 shrink-0">{t(w.labelKey)}</span>
-                    <input
-                      type="number"
-                      value={targetForm[w.key]?.min ?? ''}
-                      onChange={(e) => setTargetForm((f) => ({ ...f, [w.key]: { ...f[w.key], min: Number(e.target.value) } }))}
-                      className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
-                    />
-                    <span className="text-text-muted text-[10px] font-bold shrink-0">{t('common.to')}</span>
-                    <input
-                      type="number"
-                      value={targetForm[w.key]?.max ?? ''}
-                      onChange={(e) => setTargetForm((f) => ({ ...f, [w.key]: { ...f[w.key], max: Number(e.target.value) } }))}
-                      className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Sharing — one group AND/OR any number of individual friends, independent of each other */}
-            <div className="space-y-2 pt-2 border-t border-border-subtle">
-              <label className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('health.sharing')}</label>
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-text-muted px-1">{t('health.shareWithGroup')}</label>
-                <select
-                  value={shareForm.groupId || ''}
-                  onChange={(e) => setShareForm((f) => ({ ...f, groupId: e.target.value || null, mode: e.target.value ? f.mode || 'always' : f.mode }))}
-                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
-                >
-                  <option value="">{t('todo.justMe')}</option>
-                  {groups.map((g: any) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
-              </div>
-              {myFamilies.length > 0 && (
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-text-muted px-1">{t('health.shareWithFamilies')}</label>
-                  <div className="space-y-1">
-                    {myFamilies.map((fam: any) => {
-                      const members = membersByFamilyId.get(fam.id) || [];
-                      const selected = isFamilyFullySelected(fam.id);
-                      return (
-                        <button
-                          key={fam.id}
-                          type="button"
-                          onClick={() => toggleFamily(fam.id)}
-                          className={clsx(
-                            'w-full flex items-center justify-between px-2.5 py-2 rounded-lg border text-left transition-all',
-                            selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle',
-                          )}
-                        >
-                          <span className="text-xs font-bold flex items-center gap-1.5">
-                            <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
-                              {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
-                            </span>
-                            {fam.name}
-                          </span>
-                          <span className="text-[10px] font-bold text-text-muted shrink-0">{t('health.membersCount', { count: members.length })}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              {acceptedFriends.length > 0 && (
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between px-1">
-                    <label className="text-[10px] font-bold text-text-muted">{t('health.shareWithFriends')}</label>
-                    {shareForm.friendUids.length > 0 && (
-                      <span className="text-[10px] font-bold text-primary">{t('health.friendsSelectedCount', { count: shareForm.friendUids.length })}</span>
-                    )}
-                  </div>
+            {/* One range per meal window, since before/after targets genuinely differ */}
+            <div className="space-y-1.5">
+              {GLUCOSE_WINDOWS.map((w) => (
+                <div key={w.key} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
+                  <span className="text-sm shrink-0">{w.icon}</span>
+                  <span className="text-[10px] font-bold text-text-muted w-20 shrink-0">{t(w.labelKey)}</span>
                   <input
-                    type="text"
-                    value={friendSearchQuery}
-                    onChange={(e) => setFriendSearchQuery(e.target.value)}
-                    placeholder={t('health.searchFriends')}
-                    className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-1.5 text-xs outline-none"
+                    type="number"
+                    value={targetForm[w.key]?.min ?? ''}
+                    onChange={(e) => setTargetForm((f) => ({ ...f, [w.key]: { ...f[w.key], min: Number(e.target.value) } }))}
+                    className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
                   />
-                  <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle">
-                    {filteredFriends.length === 0 ? (
-                      <p className="text-[11px] text-text-muted text-center py-3">{t('health.noFriendsFound')}</p>
-                    ) : (
-                      filteredFriends.map(({ friendUid }) => {
-                        const friend = friendUsersByUid.get(friendUid);
-                        const selected = shareForm.friendUids.includes(friendUid);
-                        return (
-                          <button
-                            key={friendUid}
-                            type="button"
-                            onClick={() => toggleFriend(friendUid)}
-                            className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors"
-                          >
-                            <img
-                              src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`}
-                              className="w-6 h-6 rounded-full object-cover shrink-0"
-                              alt=""
-                            />
-                            <span className="flex-1 text-left text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
-                            <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
-                              {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
-                            </span>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
+                  <span className="text-text-muted text-[10px] font-bold shrink-0">{t('common.to')}</span>
+                  <input
+                    type="number"
+                    value={targetForm[w.key]?.max ?? ''}
+                    onChange={(e) => setTargetForm((f) => ({ ...f, [w.key]: { ...f[w.key], max: Number(e.target.value) } }))}
+                    className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
+                  />
                 </div>
-              )}
-              {hasShareTarget(shareForm) && (
-                <>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShareForm((f) => ({ ...f, mode: 'always' }))}
-                      className={clsx(
-                        'flex-1 py-2 rounded-lg text-xs font-bold border transition-all',
-                        shareForm.mode === 'always' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                      )}
-                    >
-                      {t('health.always')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShareForm((f) => ({ ...f, mode: 'range' }))}
-                      className={clsx(
-                        'flex-1 py-2 rounded-lg text-xs font-bold border transition-all',
-                        shareForm.mode === 'range' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                      )}
-                    >
-                      {t('health.dateRangeLabel')}
-                    </button>
-                  </div>
-                  {shareForm.mode === 'range' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="date"
-                        value={shareForm.startDate || ''}
-                        onChange={(e) => setShareForm((f) => ({ ...f, startDate: e.target.value || null }))}
-                        className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-2 text-xs font-bold text-primary outline-none"
-                      />
-                      <span className="text-[10px] font-bold text-text-muted uppercase shrink-0">{t('common.to')}</span>
-                      <input
-                        type="date"
-                        value={shareForm.endDate || ''}
-                        onChange={(e) => setShareForm((f) => ({ ...f, endDate: e.target.value || null }))}
-                        placeholder={t('health.ongoing')}
-                        className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-2 text-xs font-bold text-primary outline-none"
-                      />
-                    </div>
-                  )}
-                  <p className="text-[10px] text-text-muted">{t('health.sharingHint')}</p>
-                </>
-              )}
-            </div>
-
-            {/* Reminders */}
-            <div className="space-y-2 pt-2 border-t border-border-subtle">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('health.reminders')}</label>
-                <button
-                  type="button"
-                  onClick={() => setRemindersForm((f) => ({ ...f, enabled: !f.enabled }))}
-                  className={clsx('w-10 h-6 rounded-full transition-colors relative shrink-0', remindersForm.enabled ? 'bg-primary' : 'bg-surface-container')}
-                >
-                  <span className={clsx('absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all', remindersForm.enabled ? 'left-[18px]' : 'left-0.5')} />
-                </button>
-              </div>
-              {remindersForm.enabled && (
-                <div className="space-y-2">
-                  {MEAL_TYPES.map((m) => (
-                    <div key={m.value} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
-                      <span className="text-sm shrink-0">{m.icon}</span>
-                      <span className="text-[11px] font-bold text-text-muted w-16 shrink-0">{t(m.labelKey)}</span>
-                      <input
-                        type="time"
-                        value={remindersForm[m.value].time}
-                        onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], time: e.target.value } }))}
-                        className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
-                      />
-                      <select
-                        value={remindersForm[m.value].afterHours}
-                        onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], afterHours: Number(e.target.value) } }))}
-                        className="shrink-0 bg-white border border-border-subtle rounded-md px-1.5 py-1 text-xs font-bold text-primary outline-none"
-                      >
-                        {POST_MEAL_HOUR_OPTIONS.map((hr) => (
-                          <option key={hr} value={hr}>+{hr}hr</option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                  <p className="text-[10px] text-text-muted">{t('health.reminderHint')}</p>
-                </div>
-              )}
+              ))}
             </div>
 
             <button
               type="button"
-              onClick={handleSaveSettings}
+              onClick={handleSaveTarget}
+              disabled={savingSettings}
+              className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+            >
+              {savingSettings ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {settingsPanel === 'sharing' && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSettingsPanel(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setSettingsPanel('menu')} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined rtl:-scale-x-100">arrow_back</span>
+              </button>
+              <h2 className="text-base font-black text-primary flex-1">{t('health.sharing')}</h2>
+              <button type="button" onClick={() => setSettingsPanel(null)} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* One group AND/OR any number of individual friends, independent of each other */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('health.shareWithGroup')}</label>
+              <select
+                value={shareForm.groupId || ''}
+                onChange={(e) => setShareForm((f) => ({ ...f, groupId: e.target.value || null, mode: e.target.value ? f.mode || 'always' : f.mode }))}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+              >
+                <option value="">{t('todo.justMe')}</option>
+                {groups.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+            {myFamilies.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1">{t('health.shareWithFamilies')}</label>
+                <div className="space-y-1">
+                  {myFamilies.map((fam: any) => {
+                    const members = membersByFamilyId.get(fam.id) || [];
+                    const selected = isFamilyFullySelected(fam.id);
+                    return (
+                      <button
+                        key={fam.id}
+                        type="button"
+                        onClick={() => toggleFamily(fam.id)}
+                        className={clsx(
+                          'w-full flex items-center justify-between px-2.5 py-2 rounded-lg border text-left transition-all',
+                          selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle',
+                        )}
+                      >
+                        <span className="text-xs font-bold flex items-center gap-1.5">
+                          <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                            {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                          </span>
+                          {fam.name}
+                        </span>
+                        <span className="text-[10px] font-bold text-text-muted shrink-0">{t('health.membersCount', { count: members.length })}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {acceptedFriends.length > 0 && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-bold text-text-muted">{t('health.shareWithFriends')}</label>
+                  {shareForm.friendUids.length > 0 && (
+                    <span className="text-[10px] font-bold text-primary">{t('health.friendsSelectedCount', { count: shareForm.friendUids.length })}</span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  value={friendSearchQuery}
+                  onChange={(e) => setFriendSearchQuery(e.target.value)}
+                  placeholder={t('health.searchFriends')}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-1.5 text-xs outline-none"
+                />
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle">
+                  {filteredFriends.length === 0 ? (
+                    <p className="text-[11px] text-text-muted text-center py-3">{t('health.noFriendsFound')}</p>
+                  ) : (
+                    filteredFriends.map(({ friendUid }) => {
+                      const friend = friendUsersByUid.get(friendUid);
+                      const selected = shareForm.friendUids.includes(friendUid);
+                      return (
+                        <button
+                          key={friendUid}
+                          type="button"
+                          onClick={() => toggleFriend(friendUid)}
+                          className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors"
+                        >
+                          <img
+                            src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`}
+                            className="w-6 h-6 rounded-full object-cover shrink-0"
+                            alt=""
+                          />
+                          <span className="flex-1 text-left text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
+                          <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                            {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+            {hasShareTarget(shareForm) && (
+              <>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShareForm((f) => ({ ...f, mode: 'always' }))}
+                    className={clsx(
+                      'flex-1 py-2 rounded-lg text-xs font-bold border transition-all',
+                      shareForm.mode === 'always' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                    )}
+                  >
+                    {t('health.always')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShareForm((f) => ({ ...f, mode: 'range' }))}
+                    className={clsx(
+                      'flex-1 py-2 rounded-lg text-xs font-bold border transition-all',
+                      shareForm.mode === 'range' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                    )}
+                  >
+                    {t('health.dateRangeLabel')}
+                  </button>
+                </div>
+                {shareForm.mode === 'range' && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={shareForm.startDate || ''}
+                      onChange={(e) => setShareForm((f) => ({ ...f, startDate: e.target.value || null }))}
+                      className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-2 text-xs font-bold text-primary outline-none"
+                    />
+                    <span className="text-[10px] font-bold text-text-muted uppercase shrink-0">{t('common.to')}</span>
+                    <input
+                      type="date"
+                      value={shareForm.endDate || ''}
+                      onChange={(e) => setShareForm((f) => ({ ...f, endDate: e.target.value || null }))}
+                      placeholder={t('health.ongoing')}
+                      className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-2 text-xs font-bold text-primary outline-none"
+                    />
+                  </div>
+                )}
+                <p className="text-[10px] text-text-muted">{t('health.sharingHint')}</p>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveSharing}
+              disabled={savingSettings}
+              className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+            >
+              {savingSettings ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {settingsPanel === 'reminders' && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSettingsPanel(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setSettingsPanel('menu')} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined rtl:-scale-x-100">arrow_back</span>
+              </button>
+              <h2 className="text-base font-black text-primary flex-1">{t('health.reminders')}</h2>
+              <button type="button" onClick={() => setSettingsPanel(null)} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('health.reminders')}</span>
+              <button
+                type="button"
+                onClick={() => setRemindersForm((f) => ({ ...f, enabled: !f.enabled }))}
+                className={clsx('w-10 h-6 rounded-full transition-colors relative shrink-0', remindersForm.enabled ? 'bg-primary' : 'bg-surface-container')}
+              >
+                <span className={clsx('absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all', remindersForm.enabled ? 'left-[18px]' : 'left-0.5')} />
+              </button>
+            </div>
+            {remindersForm.enabled && (
+              <div className="space-y-2">
+                {MEAL_TYPES.map((m) => (
+                  <div key={m.value} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
+                    <span className="text-sm shrink-0">{m.icon}</span>
+                    <span className="text-[11px] font-bold text-text-muted w-16 shrink-0">{t(m.labelKey)}</span>
+                    <input
+                      type="time"
+                      value={remindersForm[m.value].time}
+                      onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], time: e.target.value } }))}
+                      className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
+                    />
+                    <select
+                      value={remindersForm[m.value].afterHours}
+                      onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], afterHours: Number(e.target.value) } }))}
+                      className="shrink-0 bg-white border border-border-subtle rounded-md px-1.5 py-1 text-xs font-bold text-primary outline-none"
+                    >
+                      {POST_MEAL_HOUR_OPTIONS.map((hr) => (
+                        <option key={hr} value={hr}>+{hr}hr</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+                <p className="text-[10px] text-text-muted">{t('health.reminderHint')}</p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveReminders}
               disabled={savingSettings}
               className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
             >
