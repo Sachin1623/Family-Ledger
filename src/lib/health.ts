@@ -3,7 +3,8 @@ export type GlucoseTiming = 'before' | 'after';
 
 export interface GlucoseLog {
   id: string;
-  userId: string;
+  userId: string; // whose reading this is — a delegate can log it, but it always belongs to this uid
+  loggedBy: string; // who actually entered it; equals userId for a self-entry, the delegate's uid otherwise
   groupId: string | null; // computed from GlucoseShareSettings at write time, not user-picked per entry
   sharedFriendUids: string[]; // ditto — individual friends this entry is currently shared with
   mealType: GlucoseMealType;
@@ -105,17 +106,43 @@ export function isShareActiveForDate(settings: GlucoseShareSettings, dateStr: st
   return true;
 }
 
-// --- Per-meal reminder times (Firestore: users/{uid}.glucoseReminders) ---
+// --- Delegated entry (Firestore: healthDelegateSettings/{uid}) ---
+// The inverse of sharing: sharing grants READ access to my data; this grants WRITE access — one
+// group AND/OR any number of individual friends who may log a reading (or set reminders) on my
+// behalf, e.g. a caregiver logging for an elderly parent who doesn't use the app themselves. Same
+// group-scalar + friend-array shape as GlucoseShareSettings, and the same reasoning applies to why
+// the friend check is safe in Firestore rules without iterating the reader's own friend list.
+export interface GlucoseDelegateSettings {
+  groupId: string | null;
+  friendUids: string[];
+}
+
+export const DEFAULT_GLUCOSE_DELEGATE_SETTINGS: GlucoseDelegateSettings = {
+  groupId: null,
+  friendUids: [],
+};
+
+export function hasDelegateTarget(settings: GlucoseDelegateSettings): boolean {
+  return !!settings.groupId || settings.friendUids.length > 0;
+}
+
+// --- Reminders (Firestore: users/{uid}.glucoseReminders) ---
 // "Before" is always a fixed 15 minutes ahead of the meal time (matches how people actually test —
 // right before eating); "after" is however many hours the user themselves finds meaningful for
-// their own post-meal check, so that one's configurable per meal.
+// their own post-meal check, so that one's configurable per meal. `meals` controls which of the
+// three actually get reminders at all; `cadence`/`weekdays` control which days they fire on.
 export interface MealReminderTime {
   time: string; // 'HH:mm', 24hr, local
   afterHours: number;
 }
 
+export type GlucoseReminderCadence = 'daily' | 'weekly';
+
 export interface GlucoseReminderSettings {
   enabled: boolean;
+  meals: GlucoseMealType[]; // which meals get a reminder at all
+  cadence: GlucoseReminderCadence;
+  weekdays: number[]; // 0=Sun..6=Sat, used only when cadence === 'weekly'
   breakfast: MealReminderTime;
   lunch: MealReminderTime;
   dinner: MealReminderTime;
@@ -123,6 +150,9 @@ export interface GlucoseReminderSettings {
 
 export const DEFAULT_GLUCOSE_REMINDERS: GlucoseReminderSettings = {
   enabled: false,
+  meals: ['breakfast', 'lunch', 'dinner'],
+  cadence: 'daily',
+  weekdays: [1, 2, 3, 4, 5], // Mon–Fri, only used once cadence is switched to weekly
   breakfast: { time: '08:00', afterHours: 2 },
   lunch: { time: '13:00', afterHours: 2 },
   dinner: { time: '20:00', afterHours: 2 },

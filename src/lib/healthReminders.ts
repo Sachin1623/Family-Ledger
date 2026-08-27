@@ -1,24 +1,34 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { GlucoseReminderSettings, BEFORE_MEAL_REMINDER_LEAD_MINUTES } from './health';
+import { GlucoseMealType, GlucoseReminderSettings, BEFORE_MEAL_REMINDER_LEAD_MINUTES } from './health';
 
 // On-device only, same reasoning as localReminders.ts's to-do reminders — no server round trip,
-// works offline, exact to the minute. Fixed ids (not per-user hashed) since a device only ever
-// has ONE glucose reminder configuration active at a time, unlike to-dos which have many.
-const REMINDER_IDS: Record<string, number> = {
-  breakfast_before: 9101,
-  breakfast_after: 9102,
-  lunch_before: 9103,
-  lunch_after: 9104,
-  dinner_before: 9105,
-  dinner_after: 9106,
-};
+// works offline, exact to the minute. Deterministic ids over the FULL possible id space (every
+// meal × before/after × every weekday, plus the plain-daily variant) so cancelGlucoseReminders can
+// always clear everything this feature could ever have scheduled, regardless of what the previous
+// cadence/meal selection was, before scheduling the current one.
+const MEAL_INDEX: Record<GlucoseMealType, number> = { breakfast: 0, lunch: 1, dinner: 2 };
+const MEAL_LABELS: Record<GlucoseMealType, string> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
 
-const MEAL_LABELS: Record<'breakfast' | 'lunch' | 'dinner', string> = {
-  breakfast: 'Breakfast',
-  lunch: 'Lunch',
-  dinner: 'Dinner',
-};
+// Daily ids: 9100 + meal*10 + timing(1|2) — 6 ids, 9101..9132.
+function dailyId(meal: GlucoseMealType, timing: 'before' | 'after'): number {
+  return 9100 + MEAL_INDEX[meal] * 10 + (timing === 'before' ? 1 : 2);
+}
+// Weekly ids: 9200 + meal*70 + timing(0|35) + weekday(0-6) — 42 ids, 9200..9341, never overlapping daily's range.
+function weeklyId(meal: GlucoseMealType, timing: 'before' | 'after', weekday: number): number {
+  return 9200 + MEAL_INDEX[meal] * 70 + (timing === 'before' ? 0 : 35) + weekday;
+}
+
+function allPossibleIds(): number[] {
+  const ids: number[] = [];
+  (['breakfast', 'lunch', 'dinner'] as const).forEach((meal) => {
+    (['before', 'after'] as const).forEach((timing) => {
+      ids.push(dailyId(meal, timing));
+      for (let weekday = 0; weekday <= 6; weekday++) ids.push(weeklyId(meal, timing, weekday));
+    });
+  });
+  return ids;
+}
 
 function minusMinutes(time: string, minutes: number): { hour: number; minute: number } {
   const [h, m] = time.split(':').map(Number);
@@ -36,28 +46,44 @@ export async function scheduleGlucoseReminders(settings: GlucoseReminderSettings
   if (!Capacitor.isNativePlatform()) return; // no local notifications on web
   try {
     await cancelGlucoseReminders();
-    if (!settings.enabled) return;
+    if (!settings.enabled || settings.meals.length === 0) return;
+
     const notifications: any[] = [];
-    (['breakfast', 'lunch', 'dinner'] as const).forEach((meal) => {
+    settings.meals.forEach((meal) => {
       const cfg = settings[meal];
       const before = minusMinutes(cfg.time, BEFORE_MEAL_REMINDER_LEAD_MINUTES);
       const after = plusHours(cfg.time, cfg.afterHours);
-      notifications.push({
-        id: REMINDER_IDS[`${meal}_before`],
-        title: 'Glucose check',
-        body: `Before-${MEAL_LABELS[meal]} reading time`,
-        schedule: { on: { hour: before.hour, minute: before.minute }, every: 'day', allowWhileIdle: true },
-        extra: { type: 'glucose_reminder', meal, timing: 'before' },
-      });
-      notifications.push({
-        id: REMINDER_IDS[`${meal}_after`],
-        title: 'Glucose check',
-        body: `After-${MEAL_LABELS[meal]} reading time (${cfg.afterHours}hr later)`,
-        schedule: { on: { hour: after.hour, minute: after.minute }, every: 'day', allowWhileIdle: true },
-        extra: { type: 'glucose_reminder', meal, timing: 'after' },
+      const entries: { timing: 'before' | 'after'; at: { hour: number; minute: number }; body: string }[] = [
+        { timing: 'before', at: before, body: `Before-${MEAL_LABELS[meal]} reading time` },
+        { timing: 'after', at: after, body: `After-${MEAL_LABELS[meal]} reading time (${cfg.afterHours}hr later)` },
+      ];
+
+      entries.forEach(({ timing, at, body }) => {
+        if (settings.cadence === 'daily') {
+          notifications.push({
+            id: dailyId(meal, timing),
+            title: 'Glucose check',
+            body,
+            schedule: { on: { hour: at.hour, minute: at.minute }, every: 'day', allowWhileIdle: true },
+            extra: { type: 'glucose_reminder', meal, timing },
+          });
+        } else {
+          settings.weekdays.forEach((weekday) => {
+            notifications.push({
+              // Capacitor's `on.weekday` is 1-7 (Sun=1) — settings.weekdays is stored 0-6 (Sun=0)
+              // to match JS Date.getDay(), so convert only at the scheduling boundary.
+              id: weeklyId(meal, timing, weekday),
+              title: 'Glucose check',
+              body,
+              schedule: { on: { weekday: weekday + 1, hour: at.hour, minute: at.minute }, every: 'week', allowWhileIdle: true },
+              extra: { type: 'glucose_reminder', meal, timing },
+            });
+          });
+        }
       });
     });
-    await LocalNotifications.schedule({ notifications });
+
+    if (notifications.length > 0) await LocalNotifications.schedule({ notifications });
   } catch (err) {
     console.error('Failed to schedule glucose reminders:', err);
   }
@@ -66,7 +92,7 @@ export async function scheduleGlucoseReminders(settings: GlucoseReminderSettings
 export async function cancelGlucoseReminders() {
   if (!Capacitor.isNativePlatform()) return;
   try {
-    await LocalNotifications.cancel({ notifications: Object.values(REMINDER_IDS).map((id) => ({ id })) });
+    await LocalNotifications.cancel({ notifications: allPossibleIds().map((id) => ({ id })) });
   } catch (err) {
     console.error('Failed to cancel glucose reminders:', err);
   }

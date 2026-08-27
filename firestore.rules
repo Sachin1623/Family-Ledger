@@ -83,6 +83,18 @@ service cloud.firestore {
       return isSignedIn() && (isMember(groupId) || isOwner(groupId));
     }
 
+    // Health > Glucose delegated entry (see healthDelegateSettings/{uid} below): whether the
+    // CALLER has been authorized by `targetUid` to log a reading or set reminders on their
+    // behalf. Defined at top level (not nested in the healthDelegateSettings match block) since
+    // both `users/{userId}`'s update rule and `glucoseLogs`'s create/delete rules need it.
+    function isGlucoseDelegateFor(targetUid) {
+      let path = /databases/$(database)/documents/healthDelegateSettings/$(targetUid);
+      return isSignedIn() && exists(path) && (
+        (get(path).data.glucose.groupId != null && canModifyGroup(get(path).data.glucose.groupId)) ||
+        (get(path).data.glucose.keys().hasAll(['friendUids']) && get(path).data.glucose.friendUids.hasAny([request.auth.uid]))
+      );
+    }
+
     // Strictly the original creator of the group — not any 'owner'-role member.
     // Used to gate group deletion, member removal, and invite management to
     // exactly one person per group, regardless of who else holds admin/owner roles.
@@ -104,7 +116,13 @@ service cloud.firestore {
       // uniqueness against every other user before writing; a client-writable shortId could
       // collide with someone else's and break the invite-search feature it's for.
       allow create: if isSignedIn() && request.auth.uid == userId && !incoming().keys().hasAny(['shopId', 'shopRole', 'shortId']);
-      allow update: if isSignedIn() && request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['shopId', 'shopRole', 'shortId']);
+      allow update: if isSignedIn() && (
+        (request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['shopId', 'shopRole', 'shortId'])) ||
+        // A delegate (see healthDelegateSettings) may set reminders on someone else's behalf —
+        // e.g. a caregiver scheduling checks for a parent who doesn't manage the app themselves —
+        // but that's the ONLY field this grants write access to, nothing else on the user doc.
+        (incoming().diff(existing()).affectedKeys().hasOnly(['glucoseReminders']) && isGlucoseDelegateFor(userId))
+      );
       allow delete: if isSignedIn() && request.auth.uid == userId;
 
       match /private/info {
@@ -584,14 +602,18 @@ service cloud.firestore {
     // Same personal-or-shared model as todos, extended with a second, independent share target: a
     // log defaults to private (groupId == null, sharedFriendUids == []) and the owner can
     // optionally share it to one group AND/OR any number of individual friends (e.g. family
-    // monitoring an elderly parent's readings without needing a shared group at all). Only the
-    // original logger can ever edit/delete their own entries — sharing only ever grants read
-    // access. The friend check is safe without iterating the reader's friend list: it only needs
-    // to confirm the READER'S OWN uid is in the log's sharedFriendUids array, which `hasAny` can
-    // do directly against `request.auth.uid` — no membership lookup required, unlike groupId.
+    // monitoring an elderly parent's readings without needing a shared group at all). The friend
+    // check is safe without iterating the reader's friend list: it only needs to confirm the
+    // READER'S OWN uid is in the log's sharedFriendUids array, which `hasAny` can do directly
+    // against `request.auth.uid` — no membership lookup required, unlike groupId.
+    //
+    // Writes are usually self (loggedBy == userId) but a delegate (healthDelegateSettings) may
+    // also create/delete entries FOR someone else — loggedBy is always the true actor, userId is
+    // always whose data it is, and isGlucoseDelegateFor re-verifies the grant at write time
+    // rather than trusting whatever the client claims.
     match /glucoseLogs/{logId} {
       function isValidGlucoseLog(data) {
-        return data.keys().hasAll(['userId', 'mealType', 'timing', 'value', 'loggedAt', 'createdAt']) &&
+        return data.keys().hasAll(['userId', 'loggedBy', 'mealType', 'timing', 'value', 'loggedAt', 'createdAt']) &&
                data.mealType in ['breakfast', 'lunch', 'dinner'] &&
                data.timing in ['before', 'after'] &&
                data.value is number && data.value > 0 && data.value <= 1000 &&
@@ -603,17 +625,22 @@ service cloud.firestore {
                (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
       }
 
+      function isSelfOrAuthorizedDelegate(data) {
+        return data.loggedBy == request.auth.uid &&
+          (data.userId == request.auth.uid || isGlucoseDelegateFor(data.userId));
+      }
+
       allow read: if isSignedIn() && (
         resource.data.userId == request.auth.uid ||
         (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
         (resource.data.keys().hasAll(['sharedFriendUids']) && resource.data.sharedFriendUids.hasAny([request.auth.uid]))
       );
-      allow create: if isSignedIn() && isValidGlucoseLog(incoming()) && incoming().userId == request.auth.uid &&
+      allow create: if isSignedIn() && isValidGlucoseLog(incoming()) && isSelfOrAuthorizedDelegate(incoming()) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
       allow update: if isSignedIn() && isValidGlucoseLog(incoming()) && incoming().userId == existing().userId &&
-        existing().userId == request.auth.uid &&
+        incoming().loggedBy == existing().loggedBy && existing().loggedBy == request.auth.uid &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid);
     }
 
     // Standing "share always / share readings dated in this range" preference behind the Health
@@ -622,6 +649,27 @@ service cloud.firestore {
     // groupId directly, so this doc never needs to leak the underlying date-range logic itself.
     match /healthShareSettings/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Who I've authorized to log a glucose reading or set reminders on MY behalf — the inverse of
+    // sharing (that grants read access to my data; this grants write access). Unlike
+    // healthShareSettings, this MUST be readable by the delegate themselves — both
+    // isGlucoseDelegateFor (evaluated as the delegate) and the client's own "who am I allowed to
+    // enter for" query need to read someone ELSE's doc, so the read rule mirrors glucoseLogs'
+    // friend/group check instead of being self-only.
+    match /healthDelegateSettings/{uid} {
+      function isValidDelegateSettings(data) {
+        return data.keys().hasAll(['userId', 'glucose']) && data.userId == uid &&
+          data.glucose.keys().hasAll(['friendUids']) && data.glucose.friendUids is list &&
+          (!data.glucose.keys().hasAll(['groupId']) || data.glucose.groupId == null || data.glucose.groupId is string);
+      }
+
+      allow read: if isSignedIn() && (
+        request.auth.uid == uid ||
+        (resource.data.glucose.groupId != null && canModifyGroup(resource.data.glucose.groupId)) ||
+        resource.data.glucose.friendUids.hasAny([request.auth.uid])
+      );
+      allow write: if isSignedIn() && request.auth.uid == uid && isValidDelegateSettings(incoming());
     }
 
     // --- Shopping lists ---

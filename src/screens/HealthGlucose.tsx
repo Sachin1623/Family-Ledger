@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
-import { collection, query, where, doc, setDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
@@ -15,6 +15,7 @@ import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { scheduleGlucoseReminders } from '../lib/healthReminders';
 import { useFriendships } from '../lib/useFriendships';
 import { useFamilies } from '../lib/useFamilies';
+import { WEEKDAY_LABELS } from '../lib/frequency';
 import { auth } from '../lib/firebase';
 import {
   GlucoseLog,
@@ -24,11 +25,14 @@ import {
   GlucoseTargetMap,
   GlucoseShareSettings,
   GlucoseReminderSettings,
+  GlucoseDelegateSettings,
   defaultGlucoseTargetMap,
   targetForWindow,
   hasShareTarget,
+  hasDelegateTarget,
   DEFAULT_GLUCOSE_SHARE_SETTINGS,
   DEFAULT_GLUCOSE_REMINDERS,
+  DEFAULT_GLUCOSE_DELEGATE_SETTINGS,
   POST_MEAL_HOUR_OPTIONS,
   GLUCOSE_WINDOWS,
   glucoseWindowOf,
@@ -125,26 +129,59 @@ export default function HealthGlucose() {
     return Array.from(byId.values());
   }, [sharedByGroupValue, sharedByFriendValue]);
 
-  // --- Settings: target ranges (per meal window), sharing, reminders ---
+  // Who has authorized ME to log a reading or set reminders on THEIR behalf (the reverse of who
+  // I've delegated to — see healthDelegateSettings). Same group-scalar + friend-array merge shape
+  // as sharedLogs above. Feeds both the Log Entry "Entering for" picker and the Reminders panel's
+  // "Setting reminders for" picker — the same permission covers both capabilities.
+  const [delegatedToMeByGroupValue] = useCollection(
+    groupIds.length > 0 ? query(collection(db, 'healthDelegateSettings'), where('glucose.groupId', 'in', groupIds)) : null,
+  );
+  const [delegatedToMeByFriendValue] = useCollection(
+    user ? query(collection(db, 'healthDelegateSettings'), where('glucose.friendUids', 'array-contains', user.uid)) : null,
+  );
+  const delegatorsForMe = useMemo(() => {
+    const uids = new Set<string>();
+    delegatedToMeByGroupValue?.docs.forEach((d) => uids.add(d.id));
+    delegatedToMeByFriendValue?.docs.forEach((d) => uids.add(d.id));
+    return Array.from(uids)
+      .filter((uid) => uid !== user?.uid)
+      .map((uid) => {
+        const member = allMembers.find((m: any) => m.userId === uid);
+        if (member) return { userId: uid, displayName: member.displayName, photoURL: member.photoURL };
+        const friend = friendUsersByUid.get(uid);
+        return { userId: uid, displayName: friend?.displayName || t('common.someone'), photoURL: friend?.photoURL || '' };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, allMembers, friendUsersByUid, user]);
+
+  // --- Settings: target ranges (per meal window), sharing, delegated entry, reminders ---
   const targets: GlucoseTargetMap = profile?.healthTargets?.glucose || defaultGlucoseTargetMap();
   const [shareSettingsSnap] = useDocument(user ? doc(db, 'healthShareSettings', user.uid) : null);
   const shareSettings: GlucoseShareSettings = (shareSettingsSnap?.data()?.glucose as any) || DEFAULT_GLUCOSE_SHARE_SETTINGS;
+  const [delegateSettingsSnap] = useDocument(user ? doc(db, 'healthDelegateSettings', user.uid) : null);
+  const delegateSettings: GlucoseDelegateSettings = (delegateSettingsSnap?.data()?.glucose as any) || DEFAULT_GLUCOSE_DELEGATE_SETTINGS;
   const reminders: GlucoseReminderSettings = profile?.glucoseReminders || DEFAULT_GLUCOSE_REMINDERS;
 
-  // The gear button opens a small menu first (Target Range / Sharing / Meal Reminders), each of
-  // which then opens as its own floating window with its own Save — rather than one long combined
-  // sheet, so changing just one thing doesn't require scrolling past the other two.
-  const [settingsPanel, setSettingsPanel] = useState<'menu' | 'target' | 'sharing' | 'reminders' | null>(null);
+  // The gear button opens a small menu first (Target Range / Sharing / Delegates / Reminders),
+  // each of which then opens as its own floating window with its own Save — rather than one long
+  // combined sheet, so changing just one thing doesn't require scrolling past the others.
+  const [settingsPanel, setSettingsPanel] = useState<'menu' | 'target' | 'sharing' | 'delegates' | 'reminders' | null>(null);
   const [targetForm, setTargetForm] = useState<GlucoseTargetMap>(targets);
   const [shareForm, setShareForm] = useState<GlucoseShareSettings>(shareSettings);
+  const [delegateForm, setDelegateForm] = useState<GlucoseDelegateSettings>(delegateSettings);
   const [remindersForm, setRemindersForm] = useState(reminders);
+  // Who the Reminders panel is currently editing for — Self, or someone who's delegated to me.
+  // Loads/saves THEIR users/{uid}.glucoseReminders instead of mine when not 'me'.
+  const [remindersForUid, setRemindersForUid] = useState<string>('me');
   const [savingSettings, setSavingSettings] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
 
   const openSettingsMenu = () => {
     setTargetForm(targets);
     setShareForm(shareSettings);
+    setDelegateForm(delegateSettings);
     setRemindersForm(reminders);
+    setRemindersForUid('me');
     setFriendSearchQuery('');
     setSettingsPanel('menu');
   };
@@ -152,21 +189,23 @@ export default function HealthGlucose() {
   // A family (Friends.tsx's "families" feature) is just a named subset of my own accepted
   // friends — see useFamilies.ts / firestore.rules' comment on `families`. So a family's
   // "selected" state is derived, not stored: fully selected only once every one of its current
-  // members is in shareForm.friendUids, and toggling it just bulk-adds/removes that set.
-  const isFamilyFullySelected = (familyId: string) => {
+  // members is in the target friendUids list, and toggling it just bulk-adds/removes that set.
+  // Shared by the Sharing and Delegates panels — both are "a group and/or some friends" pickers
+  // over a different friendUids array, so the toggle logic itself doesn't need to know which.
+  const isFamilyFullySelectedIn = (friendUids: string[], familyId: string) => {
     const members = membersByFamilyId.get(familyId) || [];
-    return members.length > 0 && members.every((m) => shareForm.friendUids.includes(m.userId));
+    return members.length > 0 && members.every((m) => friendUids.includes(m.userId));
   };
-  const toggleFamily = (familyId: string) => {
+  const toggleFamilyInShare = (familyId: string) => {
     const memberUids = (membersByFamilyId.get(familyId) || []).map((m) => m.userId);
-    const allSelected = isFamilyFullySelected(familyId);
+    const allSelected = isFamilyFullySelectedIn(shareForm.friendUids, familyId);
     setShareForm((f) => ({
       ...f,
       friendUids: allSelected ? f.friendUids.filter((u) => !memberUids.includes(u)) : Array.from(new Set([...f.friendUids, ...memberUids])),
       mode: !allSelected ? f.mode || 'always' : f.mode,
     }));
   };
-  const toggleFriend = (friendUid: string) => {
+  const toggleFriendInShare = (friendUid: string) => {
     setShareForm((f) => {
       const selected = f.friendUids.includes(friendUid);
       return {
@@ -175,6 +214,20 @@ export default function HealthGlucose() {
         mode: !selected ? f.mode || 'always' : f.mode,
       };
     });
+  };
+  const toggleFamilyInDelegate = (familyId: string) => {
+    const memberUids = (membersByFamilyId.get(familyId) || []).map((m) => m.userId);
+    const allSelected = isFamilyFullySelectedIn(delegateForm.friendUids, familyId);
+    setDelegateForm((f) => ({
+      ...f,
+      friendUids: allSelected ? f.friendUids.filter((u) => !memberUids.includes(u)) : Array.from(new Set([...f.friendUids, ...memberUids])),
+    }));
+  };
+  const toggleFriendInDelegate = (friendUid: string) => {
+    setDelegateForm((f) => ({
+      ...f,
+      friendUids: f.friendUids.includes(friendUid) ? f.friendUids.filter((u) => u !== friendUid) : [...f.friendUids, friendUid],
+    }));
   };
   const filteredFriends = acceptedFriends.filter(({ friendUid }) => {
     if (!friendSearchQuery.trim()) return true;
@@ -233,12 +286,50 @@ export default function HealthGlucose() {
     }
   };
 
+  const handleSaveDelegates = async () => {
+    if (!user) return;
+    setSavingSettings(true);
+    try {
+      await setDoc(doc(db, 'healthDelegateSettings', user.uid), {
+        userId: user.uid,
+        glucose: delegateForm,
+        updatedAt: new Date().toISOString(),
+      });
+      setSettingsPanel(null);
+    } catch (err) {
+      console.error('Failed to save delegate settings:', err);
+      alert(t('health.settingsSaveFailed'));
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // Loads whoever remindersForUid currently points at, so switching the panel's "Setting
+  // reminders for" dropdown always starts from their actual saved settings, not mine.
+  const loadRemindersFor = async (targetUid: string) => {
+    if (targetUid === 'me') {
+      setRemindersForm(reminders);
+      return;
+    }
+    try {
+      const snap = await getDoc(doc(db, 'users', targetUid));
+      setRemindersForm((snap.data() as any)?.glucoseReminders || DEFAULT_GLUCOSE_REMINDERS);
+    } catch (err) {
+      console.error('Failed to load reminders for delegate target:', err);
+      setRemindersForm(DEFAULT_GLUCOSE_REMINDERS);
+    }
+  };
+
   const handleSaveReminders = async () => {
     if (!user) return;
     setSavingSettings(true);
     try {
-      await updateDoc(doc(db, 'users', user.uid), { glucoseReminders: remindersForm });
-      scheduleGlucoseReminders(remindersForm); // fire-and-forget, no-op on web
+      const targetUid = remindersForUid === 'me' ? user.uid : remindersForUid;
+      await updateDoc(doc(db, 'users', targetUid), { glucoseReminders: remindersForm });
+      // Local notifications are on-device only — scheduling them here would fire on MY phone even
+      // when I just set them for someone else. Only self-schedule; the target's own device picks
+      // up the change and self-schedules via the effect below the next time THEY open this screen.
+      if (remindersForUid === 'me') scheduleGlucoseReminders(remindersForm);
       setSettingsPanel(null);
     } catch (err) {
       console.error('Failed to save reminder settings:', err);
@@ -247,6 +338,15 @@ export default function HealthGlucose() {
       setSavingSettings(false);
     }
   };
+
+  // Keeps THIS device's local notifications in sync with my own glucoseReminders field, however
+  // it last changed — including a delegate (e.g. a caregiver) setting it on my behalf. Local
+  // notifications can only ever be scheduled on the device that runs this, so this is the only
+  // point my own phone actually picks up a change made remotely.
+  useEffect(() => {
+    scheduleGlucoseReminders(reminders);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(reminders)]);
 
   // --- Log entry form ---
   const [mealType, setMealType] = useState<GlucoseMealType>('breakfast');
@@ -261,6 +361,9 @@ export default function HealthGlucose() {
   const [loggedDate, setLoggedDate] = useState(todayLocalDateString());
   const [loggedTime, setLoggedTime] = useState(nowLocalTimeString());
   const [saving, setSaving] = useState(false);
+  // Self by default; or anyone who's authorized me to log on their behalf (see
+  // healthDelegateSettings). The saved entry's userId becomes THEM, loggedBy stays me.
+  const [enteringForUid, setEnteringForUid] = useState<string>('me');
 
   // A `glucose_reminder` push (see healthReminders.ts + pushNotifications.ts) deep-links here as
   // `?meal=&timing=` — prefills the log form and switches to it. Reacts to searchParams itself
@@ -300,57 +403,71 @@ export default function HealthGlucose() {
     setShowConfirm(true);
   };
 
-  const handleConfirmSave = () => {
+  const handleConfirmSave = async () => {
     if (!user || !hasValidValue) return;
     setSaving(true);
-    const loggedAt = combineLocalDateAndTime(loggedDate, loggedTime).toISOString();
-    const createdAt = new Date().toISOString();
-    const shouldShare = isShareActiveForDate(shareSettings, loggedAt);
-    const computedGroupId = shouldShare ? shareSettings.groupId : null;
-    const computedFriendUids = shouldShare ? shareSettings.friendUids : [];
-    fireWrite(
-      setDoc(doc(collection(db, 'glucoseLogs')), {
-        userId: user.uid,
-        groupId: computedGroupId,
-        sharedFriendUids: computedFriendUids,
-        mealType,
-        timing,
-        postMealHours: timing === 'after' ? postMealHours : null,
-        value: parsedValue,
-        notes: notes.trim() || null,
-        loggedAt,
-        createdAt,
-      }),
-      'add glucose log',
-    );
-    const actorName = profile?.displayName || user.displayName || undefined;
-    if (computedGroupId) {
-      notifyGroupActivity({
-        groupId: computedGroupId,
-        action: 'glucose_logged',
-        amount: parsedValue,
-        contextLabel: windowLabel(mealType, timing),
-        actorName,
-      });
+    try {
+      const targetUid = enteringForUid === 'me' ? user.uid : enteringForUid;
+      const loggedAt = combineLocalDateAndTime(loggedDate, loggedTime).toISOString();
+      const createdAt = new Date().toISOString();
+
+      // Sharing is a property of whose data it is, not who's typing it in — entering for someone
+      // else uses THEIR standing sharing preference, fetched fresh rather than the live
+      // subscription above (which only ever tracks my own).
+      const effectiveShareSettings: GlucoseShareSettings =
+        targetUid === user.uid
+          ? shareSettings
+          : ((await getDoc(doc(db, 'healthShareSettings', targetUid))).data()?.glucose as any) || DEFAULT_GLUCOSE_SHARE_SETTINGS;
+
+      const shouldShare = isShareActiveForDate(effectiveShareSettings, loggedAt);
+      const computedGroupId = shouldShare ? effectiveShareSettings.groupId : null;
+      const computedFriendUids = shouldShare ? effectiveShareSettings.friendUids : [];
+      fireWrite(
+        setDoc(doc(collection(db, 'glucoseLogs')), {
+          userId: targetUid,
+          loggedBy: user.uid,
+          groupId: computedGroupId,
+          sharedFriendUids: computedFriendUids,
+          mealType,
+          timing,
+          postMealHours: timing === 'after' ? postMealHours : null,
+          value: parsedValue,
+          notes: notes.trim() || null,
+          loggedAt,
+          createdAt,
+        }),
+        'add glucose log',
+      );
+      const actorName = profile?.displayName || user.displayName || undefined;
+      if (computedGroupId) {
+        notifyGroupActivity({
+          groupId: computedGroupId,
+          action: 'glucose_logged',
+          amount: parsedValue,
+          contextLabel: windowLabel(mealType, timing),
+          actorName,
+        });
+      }
+      if (computedFriendUids.length > 0) {
+        auth.currentUser
+          ?.getIdToken()
+          .then((idToken) =>
+            fetch('/api/health/notify-glucose-shared', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ friendUids: computedFriendUids, value: parsedValue, contextLabel: windowLabel(mealType, timing), actorName }),
+            }),
+          )
+          .catch((err) => console.error('notify-glucose-shared failed:', err));
+      }
+      setValueInput('');
+      setNotes('');
+      setLoggedDate(todayLocalDateString());
+      setLoggedTime(nowLocalTimeString());
+      setShowConfirm(false);
+    } finally {
+      setSaving(false);
     }
-    if (computedFriendUids.length > 0) {
-      auth.currentUser
-        ?.getIdToken()
-        .then((idToken) =>
-          fetch('/api/health/notify-glucose-shared', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ friendUids: computedFriendUids, value: parsedValue, contextLabel: windowLabel(mealType, timing), actorName }),
-          }),
-        )
-        .catch((err) => console.error('notify-glucose-shared failed:', err));
-    }
-    setValueInput('');
-    setNotes('');
-    setLoggedDate(todayLocalDateString());
-    setLoggedTime(nowLocalTimeString());
-    setSaving(false);
-    setShowConfirm(false);
   };
 
   const handleDelete = (id: string) => {
@@ -616,6 +733,21 @@ export default function HealthGlucose() {
 
         {tab === 'log' && (
           <form onSubmit={handleSubmit} className="space-y-2.5">
+            {delegatorsForMe.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.enteringFor')}</label>
+                <select
+                  value={enteringForUid}
+                  onChange={(e) => setEnteringForUid(e.target.value)}
+                  className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none"
+                >
+                  <option value="me">{t('health.myself')}</option>
+                  {delegatorsForMe.map((d) => (
+                    <option key={d.userId} value={d.userId}>{d.displayName}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="space-y-1">
               <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.selectMealType')}</label>
               <div className="grid grid-cols-3 gap-1.5">
@@ -704,13 +836,13 @@ export default function HealthGlucose() {
                   value={loggedDate}
                   max={todayLocalDateString()}
                   onChange={(e) => setLoggedDate(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-2 rounded-xl border border-border-subtle text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 <input
                   type="time"
                   value={loggedTime}
                   onChange={(e) => setLoggedTime(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-2 rounded-xl border border-border-subtle text-xs font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
             </div>
@@ -719,7 +851,7 @@ export default function HealthGlucose() {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder={t('health.notesPlaceholder')}
-              rows={1}
+              rows={2}
               className="w-full bg-white p-2 rounded-xl border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none"
             />
 
@@ -988,6 +1120,12 @@ export default function HealthGlucose() {
             <h2 className="text-base font-black text-primary">{t('health.confirmTitle')}</h2>
 
             <div className="bg-surface rounded-2xl border border-border-subtle p-4 space-y-3">
+              {enteringForUid !== 'me' && (
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-primary">
+                  <span className="material-symbols-outlined text-[14px]">person</span>
+                  {t('health.enteringForName', { name: delegatorsForMe.find((d) => d.userId === enteringForUid)?.displayName || '' })}
+                </div>
+              )}
               <div className="flex items-center gap-3">
                 <span className="text-3xl shrink-0">{MEAL_TYPES.find((m) => m.value === mealType)?.icon}</span>
                 <div className="min-w-0">
@@ -1052,6 +1190,7 @@ export default function HealthGlucose() {
             {[
               { key: 'target' as const, icon: 'track_changes', label: t('health.targetRange') },
               { key: 'sharing' as const, icon: 'share', label: t('health.sharing') },
+              { key: 'delegates' as const, icon: 'group_add', label: t('health.delegates') },
               { key: 'reminders' as const, icon: 'notifications_active', label: t('health.reminders') },
             ].map((item) => (
               <button
@@ -1150,12 +1289,12 @@ export default function HealthGlucose() {
                 <div className="space-y-1">
                   {myFamilies.map((fam: any) => {
                     const members = membersByFamilyId.get(fam.id) || [];
-                    const selected = isFamilyFullySelected(fam.id);
+                    const selected = isFamilyFullySelectedIn(shareForm.friendUids, fam.id);
                     return (
                       <button
                         key={fam.id}
                         type="button"
-                        onClick={() => toggleFamily(fam.id)}
+                        onClick={() => toggleFamilyInShare(fam.id)}
                         className={clsx(
                           'w-full flex items-center justify-between px-2.5 py-2 rounded-lg border text-left transition-all',
                           selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle',
@@ -1200,7 +1339,7 @@ export default function HealthGlucose() {
                         <button
                           key={friendUid}
                           type="button"
-                          onClick={() => toggleFriend(friendUid)}
+                          onClick={() => toggleFriendInShare(friendUid)}
                           className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors"
                         >
                           <img
@@ -1277,6 +1416,121 @@ export default function HealthGlucose() {
         </div>
       )}
 
+      {settingsPanel === 'delegates' && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSettingsPanel(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setSettingsPanel('menu')} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined rtl:-scale-x-100">arrow_back</span>
+              </button>
+              <h2 className="text-base font-black text-primary flex-1">{t('health.delegates')}</h2>
+              <button type="button" onClick={() => setSettingsPanel(null)} className="text-text-muted shrink-0">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-text-muted">{t('health.delegatesHint')}</p>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('health.shareWithGroup')}</label>
+              <select
+                value={delegateForm.groupId || ''}
+                onChange={(e) => setDelegateForm((f) => ({ ...f, groupId: e.target.value || null }))}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+              >
+                <option value="">{t('todo.justMe')}</option>
+                {groups.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+            {myFamilies.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1">{t('health.shareWithFamilies')}</label>
+                <div className="space-y-1">
+                  {myFamilies.map((fam: any) => {
+                    const members = membersByFamilyId.get(fam.id) || [];
+                    const selected = isFamilyFullySelectedIn(delegateForm.friendUids, fam.id);
+                    return (
+                      <button
+                        key={fam.id}
+                        type="button"
+                        onClick={() => toggleFamilyInDelegate(fam.id)}
+                        className={clsx(
+                          'w-full flex items-center justify-between px-2.5 py-2 rounded-lg border text-left transition-all',
+                          selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle',
+                        )}
+                      >
+                        <span className="text-xs font-bold flex items-center gap-1.5">
+                          <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                            {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                          </span>
+                          {fam.name}
+                        </span>
+                        <span className="text-[10px] font-bold text-text-muted shrink-0">{t('health.membersCount', { count: members.length })}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {acceptedFriends.length > 0 && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-bold text-text-muted">{t('health.shareWithFriends')}</label>
+                  {delegateForm.friendUids.length > 0 && (
+                    <span className="text-[10px] font-bold text-primary">{t('health.friendsSelectedCount', { count: delegateForm.friendUids.length })}</span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  value={friendSearchQuery}
+                  onChange={(e) => setFriendSearchQuery(e.target.value)}
+                  placeholder={t('health.searchFriends')}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-1.5 text-xs outline-none"
+                />
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle">
+                  {filteredFriends.length === 0 ? (
+                    <p className="text-[11px] text-text-muted text-center py-3">{t('health.noFriendsFound')}</p>
+                  ) : (
+                    filteredFriends.map(({ friendUid }) => {
+                      const friend = friendUsersByUid.get(friendUid);
+                      const selected = delegateForm.friendUids.includes(friendUid);
+                      return (
+                        <button
+                          key={friendUid}
+                          type="button"
+                          onClick={() => toggleFriendInDelegate(friendUid)}
+                          className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors"
+                        >
+                          <img
+                            src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`}
+                            className="w-6 h-6 rounded-full object-cover shrink-0"
+                            alt=""
+                          />
+                          <span className="flex-1 text-left text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
+                          <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                            {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveDelegates}
+              disabled={savingSettings}
+              className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+            >
+              {savingSettings ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {settingsPanel === 'reminders' && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSettingsPanel(null)}>
           <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -1290,6 +1544,25 @@ export default function HealthGlucose() {
               </button>
             </div>
 
+            {delegatorsForMe.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1">{t('health.settingRemindersFor')}</label>
+                <select
+                  value={remindersForUid}
+                  onChange={(e) => {
+                    setRemindersForUid(e.target.value);
+                    loadRemindersFor(e.target.value);
+                  }}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+                >
+                  <option value="me">{t('health.myself')}</option>
+                  {delegatorsForMe.map((d) => (
+                    <option key={d.userId} value={d.userId}>{d.displayName}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('health.reminders')}</span>
               <button
@@ -1301,28 +1574,110 @@ export default function HealthGlucose() {
               </button>
             </div>
             {remindersForm.enabled && (
-              <div className="space-y-2">
-                {MEAL_TYPES.map((m) => (
-                  <div key={m.value} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
-                    <span className="text-sm shrink-0">{m.icon}</span>
-                    <span className="text-[11px] font-bold text-text-muted w-16 shrink-0">{t(m.labelKey)}</span>
-                    <input
-                      type="time"
-                      value={remindersForm[m.value].time}
-                      onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], time: e.target.value } }))}
-                      className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
-                    />
-                    <select
-                      value={remindersForm[m.value].afterHours}
-                      onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], afterHours: Number(e.target.value) } }))}
-                      className="shrink-0 bg-white border border-border-subtle rounded-md px-1.5 py-1 text-xs font-bold text-primary outline-none"
-                    >
-                      {POST_MEAL_HOUR_OPTIONS.map((hr) => (
-                        <option key={hr} value={hr}>+{hr}hr</option>
-                      ))}
-                    </select>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('health.remindMeFor')}</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {MEAL_TYPES.map((m) => {
+                      const selected = remindersForm.meals.includes(m.value);
+                      return (
+                        <button
+                          key={m.value}
+                          type="button"
+                          onClick={() =>
+                            setRemindersForm((f) => ({
+                              ...f,
+                              meals: selected ? f.meals.filter((x) => x !== m.value) : [...f.meals, m.value],
+                            }))
+                          }
+                          className={clsx(
+                            'py-2 rounded-lg text-xs font-bold border flex items-center justify-center gap-1 transition-all',
+                            selected ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                          )}
+                        >
+                          <span>{m.icon}</span>{t(m.labelKey)}
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('health.repeats')}</label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRemindersForm((f) => ({ ...f, cadence: 'daily' }))}
+                      className={clsx(
+                        'flex-1 py-2 rounded-lg text-xs font-bold border transition-all',
+                        remindersForm.cadence === 'daily' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                      )}
+                    >
+                      {t('health.daily')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemindersForm((f) => ({ ...f, cadence: 'weekly' }))}
+                      className={clsx(
+                        'flex-1 py-2 rounded-lg text-xs font-bold border transition-all',
+                        remindersForm.cadence === 'weekly' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                      )}
+                    >
+                      {t('health.weekly')}
+                    </button>
+                  </div>
+                  {remindersForm.cadence === 'weekly' && (
+                    <div className="flex gap-1 pt-1">
+                      {WEEKDAY_LABELS.map((label, idx) => {
+                        const selected = remindersForm.weekdays.includes(idx);
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() =>
+                              setRemindersForm((f) => ({
+                                ...f,
+                                weekdays: selected ? f.weekdays.filter((d) => d !== idx) : [...f.weekdays, idx],
+                              }))
+                            }
+                            className={clsx(
+                              'flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition-all',
+                              selected ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                            )}
+                          >
+                            {label.slice(0, 1)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {remindersForm.meals.length > 0 && (
+                  <div className="space-y-2">
+                    {MEAL_TYPES.filter((m) => remindersForm.meals.includes(m.value)).map((m) => (
+                      <div key={m.value} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
+                        <span className="text-sm shrink-0">{m.icon}</span>
+                        <span className="text-[11px] font-bold text-text-muted w-16 shrink-0">{t(m.labelKey)}</span>
+                        <input
+                          type="time"
+                          value={remindersForm[m.value].time}
+                          onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], time: e.target.value } }))}
+                          className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
+                        />
+                        <select
+                          value={remindersForm[m.value].afterHours}
+                          onChange={(e) => setRemindersForm((f) => ({ ...f, [m.value]: { ...f[m.value], afterHours: Number(e.target.value) } }))}
+                          className="shrink-0 bg-white border border-border-subtle rounded-md px-1.5 py-1 text-xs font-bold text-primary outline-none"
+                        >
+                          {POST_MEAL_HOUR_OPTIONS.map((hr) => (
+                            <option key={hr} value={hr}>+{hr}hr</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <p className="text-[10px] text-text-muted">{t('health.reminderHint')}</p>
               </div>
             )}
