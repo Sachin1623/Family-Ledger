@@ -580,11 +580,11 @@ export default function HealthGlucose() {
                     type="button"
                     onClick={() => setMealType(m.value)}
                     className={clsx(
-                      'py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
+                      'py-3.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all',
                       mealType === m.value ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
                     )}
                   >
-                    <span className="text-base">{m.icon}</span>
+                    <span className="text-3xl">{m.icon}</span>
                     {t(m.labelKey)}
                   </button>
                 ))}
