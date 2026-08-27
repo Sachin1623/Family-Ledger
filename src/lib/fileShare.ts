@@ -35,8 +35,18 @@ function blobToBase64(blob: Blob): Promise<string> {
 // these plugins is installed, the native branch succeeds and this fallback is simply never reached.
 export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType: string) {
   if (Capacitor.isNativePlatform()) {
+    // An install can report isNativePlatform() === true while genuinely lacking one of these two
+    // plugins natively (predates them being added, see the fallback note below for why this
+    // isn't just theoretical) — checking up front turns that into an immediately readable error
+    // instead of whatever cryptic rejection the plugin call itself throws.
+    if (!Capacitor.isPluginAvailable('Filesystem') || !Capacitor.isPluginAvailable('Share')) {
+      throw new Error(
+        `Required native plugin missing (Filesystem: ${Capacitor.isPluginAvailable('Filesystem')}, Share: ${Capacitor.isPluginAvailable('Share')}) — this app install needs to be updated.`,
+      );
+    }
     try {
       const base64Data = await blobToBase64(blob);
+      console.log(`shareOrDownloadFile: writing ${filename} (${(base64Data.length / 1024).toFixed(0)}KB base64)`);
       const written = await Filesystem.writeFile({ path: filename, data: base64Data, directory: Directory.Cache });
       await Share.share({ title: filename, url: written.uri });
       return;
@@ -45,7 +55,16 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
       // there's no error to report, and definitely nothing to fall back to (they saw the sheet
       // and chose not to use it).
       if (typeof err?.message === 'string' && /cancel/i.test(err.message)) return;
-      console.error('Native file share failed, falling back to web download:', err);
+      console.error('Native file share failed:', err);
+      // Deliberately NOT falling through to the web-only path below on native — that path is
+      // exactly what the comment above it already documents as unreliable inside a Capacitor
+      // WebView (no Downloads-folder integration for blob: URLs, inconsistent File-capable
+      // navigator.share support), which is why the native path exists in the first place. Falling
+      // through to it silently "succeeded" from this function's own point of view — it never threw
+      // — while doing nothing visible on screen, which is worse than a clear failure: the caller's
+      // own error handling (an alert with the real message, where wired up) never got a chance to
+      // fire, so a real native failure looked identical to a real success.
+      throw err;
     }
   }
 
