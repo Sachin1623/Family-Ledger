@@ -336,6 +336,8 @@ const ar = {
   'health.testingTiming': '٢. توقيت القياس',
   'health.postMealDuration': 'المدة بعد الوجبة',
   'health.enterGlucoseValue': '٣. أدخل قيمة سكر الدم',
+  'health.dateAndTime': '٤. التاريخ والوقت',
+  'health.dateAndTimeHint': 'يكون الآن افتراضيًا — غيّره إذا كنت تسجّل قراءة أخذتها سابقًا.',
   'health.breakfast': 'الإفطار',
   'health.lunch': 'الغداء',
   'health.dinner': 'العشاء',

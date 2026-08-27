@@ -336,6 +336,8 @@ const ro = {
   'health.testingTiming': '2. Momentul măsurării',
   'health.postMealDuration': 'Durata după masă',
   'health.enterGlucoseValue': '3. Introdu valoarea glicemiei',
+  'health.dateAndTime': '4. Dată și oră',
+  'health.dateAndTimeHint': 'Implicit acum — schimbă dacă înregistrezi o citire luată mai devreme.',
   'health.breakfast': 'Mic dejun',
   'health.lunch': 'Prânz',
   'health.dinner': 'Cină',

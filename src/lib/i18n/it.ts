@@ -349,6 +349,8 @@ const it = {
   'health.testingTiming': '2. Momento della misurazione',
   'health.postMealDuration': 'Durata dopo il pasto',
   'health.enterGlucoseValue': '3. Inserisci il valore di glicemia',
+  'health.dateAndTime': '4. Data e ora',
+  'health.dateAndTimeHint': 'Predefinito su ora — modificalo se stai registrando una lettura presa in precedenza.',
   'health.breakfast': 'Colazione',
   'health.lunch': 'Pranzo',
   'health.dinner': 'Cena',

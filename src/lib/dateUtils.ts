@@ -26,6 +26,23 @@ export function currentLocalMonthKey(): string {
   return todayLocalDateString().slice(0, 7);
 }
 
+// Current local "HH:mm", for defaulting a native <input type="time"> to "now".
+export function nowLocalTimeString(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Combines a date-only "YYYY-MM-DD" and a time-only "HH:mm" into one local Date — built from the
+// numeric parts (not `new Date(\`${date}T${time}\`)`) for the same reason parseLocalDate exists:
+// explicit local construction, no reliance on how a given JS engine resolves a timezone-less
+// datetime string.
+export function combineLocalDateAndTime(dateOnlyString: string, timeOnlyString: string): Date {
+  const [year, month, day] = dateOnlyString.split('-').map(Number);
+  const [hour, minute] = timeOnlyString.split(':').map(Number);
+  return new Date(year, month - 1, day, hour, minute);
+}
+
 // "Just now" / "5m ago" / "2h ago" / "3d ago" / a plain date past a week — the bucket logic
 // presence.ts's lastSeenLabel already used, factored out here so anything showing a relative
 // timestamp (friend-request "last sent", chat presence, ...) shares one implementation. Returns

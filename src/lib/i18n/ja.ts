@@ -349,6 +349,8 @@ const ja = {
   'health.testingTiming': '2. 測定タイミング',
   'health.postMealDuration': '食後の経過時間',
   'health.enterGlucoseValue': '3. 血糖値を入力',
+  'health.dateAndTime': '4. 日付と時刻',
+  'health.dateAndTimeHint': '初期値は現在時刻です。以前測定した記録を後から入力する場合は変更してください。',
   'health.breakfast': '朝食',
   'health.lunch': '昼食',
   'health.dinner': '夕食',

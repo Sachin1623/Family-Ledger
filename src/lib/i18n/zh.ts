@@ -349,6 +349,8 @@ const zh = {
   'health.testingTiming': '2. 测量时间',
   'health.postMealDuration': '餐后时长',
   'health.enterGlucoseValue': '3. 输入血糖值',
+  'health.dateAndTime': '4. 日期和时间',
+  'health.dateAndTimeHint': '默认为当前时间——如果你正在补录之前测量的读数，请修改此项。',
   'health.breakfast': '早餐',
   'health.lunch': '午餐',
   'health.dinner': '晚餐',

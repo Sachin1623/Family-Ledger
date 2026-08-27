@@ -9,7 +9,7 @@ import { clsx } from 'clsx';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 import { fireWrite } from '../lib/offlineWrite';
 import { shareOrDownloadFile } from '../lib/fileShare';
-import { toLocalDateString, todayLocalDateString } from '../lib/dateUtils';
+import { toLocalDateString, todayLocalDateString, nowLocalTimeString, combineLocalDateAndTime } from '../lib/dateUtils';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { scheduleGlucoseReminders } from '../lib/healthReminders';
 import { useFriendships } from '../lib/useFriendships';
@@ -226,6 +226,12 @@ export default function HealthGlucose() {
   const [postMealHours, setPostMealHours] = useState<number>(2);
   const [valueInput, setValueInput] = useState('');
   const [notes, setNotes] = useState('');
+  // Defaults to right now, but editable — for a reading actually taken earlier and only logged
+  // later. loggedAt (what these drive) is the clinically-meaningful timestamp everywhere else in
+  // this screen; createdAt (separately, always "now") is untouched, preserving when the record
+  // itself was actually entered.
+  const [loggedDate, setLoggedDate] = useState(todayLocalDateString());
+  const [loggedTime, setLoggedTime] = useState(nowLocalTimeString());
   const [saving, setSaving] = useState(false);
 
   // A `glucose_reminder` push (see healthReminders.ts + pushNotifications.ts) deep-links here as
@@ -260,8 +266,9 @@ export default function HealthGlucose() {
     e.preventDefault();
     if (!user || !hasValidValue) return;
     setSaving(true);
-    const now = new Date().toISOString();
-    const shouldShare = isShareActiveForDate(shareSettings, now);
+    const loggedAt = combineLocalDateAndTime(loggedDate, loggedTime).toISOString();
+    const createdAt = new Date().toISOString();
+    const shouldShare = isShareActiveForDate(shareSettings, loggedAt);
     const computedGroupId = shouldShare ? shareSettings.groupId : null;
     const computedFriendUids = shouldShare ? shareSettings.friendUids : [];
     fireWrite(
@@ -274,8 +281,8 @@ export default function HealthGlucose() {
         postMealHours: timing === 'after' ? postMealHours : null,
         value: parsedValue,
         notes: notes.trim() || null,
-        loggedAt: now,
-        createdAt: now,
+        loggedAt,
+        createdAt,
       }),
       'add glucose log',
     );
@@ -303,6 +310,8 @@ export default function HealthGlucose() {
     }
     setValueInput('');
     setNotes('');
+    setLoggedDate(todayLocalDateString());
+    setLoggedTime(nowLocalTimeString());
     setSaving(false);
   };
 
@@ -638,6 +647,26 @@ export default function HealthGlucose() {
                   )}
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.dateAndTime')}</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={loggedDate}
+                  max={todayLocalDateString()}
+                  onChange={(e) => setLoggedDate(e.target.value)}
+                  className="flex-1 min-w-0 bg-white p-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <input
+                  type="time"
+                  value={loggedTime}
+                  onChange={(e) => setLoggedTime(e.target.value)}
+                  className="flex-1 min-w-0 bg-white p-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+              <p className="text-[10px] text-text-muted px-1">{t('health.dateAndTimeHint')}</p>
             </div>
 
             <textarea

@@ -336,6 +336,8 @@ const hi = {
   'health.testingTiming': '2. जाँच का समय',
   'health.postMealDuration': 'भोजन के बाद की अवधि',
   'health.enterGlucoseValue': '3. ब्लड ग्लूकोज़ वैल्यू दर्ज करें',
+  'health.dateAndTime': '4. तारीख और समय',
+  'health.dateAndTimeHint': 'डिफ़ॉल्ट रूप से अभी — अगर आप पहले ली गई रीडिंग दर्ज कर रहे हैं तो इसे बदलें।',
   'health.breakfast': 'नाश्ता',
   'health.lunch': 'दोपहर का भोजन',
   'health.dinner': 'रात का भोजन',

@@ -349,6 +349,8 @@ const ru = {
   'health.testingTiming': '2. Время измерения',
   'health.postMealDuration': 'Время после еды',
   'health.enterGlucoseValue': '3. Введите значение глюкозы',
+  'health.dateAndTime': '4. Дата и время',
+  'health.dateAndTimeHint': 'По умолчанию — сейчас. Измените, если вносите измерение, сделанное ранее.',
   'health.breakfast': 'Завтрак',
   'health.lunch': 'Обед',
   'health.dinner': 'Ужин',

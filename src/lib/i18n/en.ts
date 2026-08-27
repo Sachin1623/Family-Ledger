@@ -369,6 +369,8 @@ const en = {
   'health.testingTiming': '2. Testing Timing',
   'health.postMealDuration': 'Post-Meal Duration',
   'health.enterGlucoseValue': '3. Enter Blood Glucose Value',
+  'health.dateAndTime': '4. Date & Time',
+  'health.dateAndTimeHint': "Defaults to now — change it if you're logging a reading you took earlier.",
   'health.breakfast': 'Breakfast',
   'health.lunch': 'Lunch',
   'health.dinner': 'Dinner',

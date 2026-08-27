@@ -336,6 +336,8 @@ const fr = {
   'health.testingTiming': '2. Moment de la mesure',
   'health.postMealDuration': 'Durée après le repas',
   'health.enterGlucoseValue': '3. Saisissez la valeur de glycémie',
+  'health.dateAndTime': '4. Date et heure',
+  'health.dateAndTimeHint': "Par défaut, c'est maintenant — modifiez-le si vous enregistrez une mesure prise plus tôt.",
   'health.breakfast': 'Petit-déjeuner',
   'health.lunch': 'Déjeuner',
   'health.dinner': 'Dîner',

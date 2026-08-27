@@ -336,6 +336,8 @@ const de = {
   'health.testingTiming': '2. Messzeitpunkt',
   'health.postMealDuration': 'Zeit nach der Mahlzeit',
   'health.enterGlucoseValue': '3. Blutzuckerwert eingeben',
+  'health.dateAndTime': '4. Datum & Uhrzeit',
+  'health.dateAndTimeHint': 'Standardmäßig jetzt — ändere es, wenn du einen früher gemessenen Wert nachträgst.',
   'health.breakfast': 'Frühstück',
   'health.lunch': 'Mittagessen',
   'health.dinner': 'Abendessen',

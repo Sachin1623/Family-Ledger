@@ -336,6 +336,8 @@ const es = {
   'health.testingTiming': '2. Momento de la medición',
   'health.postMealDuration': 'Tiempo después de comer',
   'health.enterGlucoseValue': '3. Ingresa el valor de glucosa',
+  'health.dateAndTime': '4. Fecha y hora',
+  'health.dateAndTimeHint': 'Por defecto es ahora — cámbialo si estás registrando una lectura que tomaste antes.',
   'health.breakfast': 'Desayuno',
   'health.lunch': 'Almuerzo',
   'health.dinner': 'Cena',
