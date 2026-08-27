@@ -178,6 +178,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'todo_completed': return 'task_alt';
       case 'todo_reminder': return 'notifications_active';
       case 'budget_set': case 'budget_reminder': return 'account_balance_wallet';
+      case 'glucose_logged': return 'bloodtype';
       case 'recurring_created': case 'recurring_changed': return 'autorenew';
       case 'recurring_deleted': return 'event_busy';
       case 'recurring_confirm_pending': return 'pending_actions';
@@ -397,6 +398,19 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
                 amount: activity.data?.amount != null ? `${getCurrencySymbol(groupsMap[activity.groupId]?.currency)}${Number(activity.data.amount).toLocaleString()}` : '',
                 month: activity.data?.month != null ? t(MONTH_KEYS[activity.data.month]) : '',
                 year: activity.data?.year ?? '',
+              })}
+            </p>
+          </div>
+        );
+      case 'glucose_logged':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-error uppercase tracking-wider">{t('feed.glucoseLoggedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">
+              {t('feed.glucoseLoggedActivity', {
+                name: activity.userName || t('common.someone'),
+                amount: activity.data?.amount ?? '',
+                window: activity.data?.contextLabel || '',
               })}
             </p>
           </div>

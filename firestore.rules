@@ -580,6 +580,50 @@ service cloud.firestore {
       );
     }
 
+    // --- Health tracker logs (Tools > Health > Glucose) ---
+    // Same personal-or-shared model as todos, extended with a second, independent share target: a
+    // log defaults to private (groupId == null, sharedFriendUids == []) and the owner can
+    // optionally share it to one group AND/OR any number of individual friends (e.g. family
+    // monitoring an elderly parent's readings without needing a shared group at all). Only the
+    // original logger can ever edit/delete their own entries — sharing only ever grants read
+    // access. The friend check is safe without iterating the reader's friend list: it only needs
+    // to confirm the READER'S OWN uid is in the log's sharedFriendUids array, which `hasAny` can
+    // do directly against `request.auth.uid` — no membership lookup required, unlike groupId.
+    match /glucoseLogs/{logId} {
+      function isValidGlucoseLog(data) {
+        return data.keys().hasAll(['userId', 'mealType', 'timing', 'value', 'loggedAt', 'createdAt']) &&
+               data.mealType in ['breakfast', 'lunch', 'dinner'] &&
+               data.timing in ['before', 'after'] &&
+               data.value is number && data.value > 0 && data.value <= 1000 &&
+               data.loggedAt is string &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['sharedFriendUids']) || data.sharedFriendUids is list) &&
+               (!data.keys().hasAll(['postMealHours']) || data.postMealHours == null || data.postMealHours is number) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+      }
+
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+        (resource.data.keys().hasAll(['sharedFriendUids']) && resource.data.sharedFriendUids.hasAny([request.auth.uid]))
+      );
+      allow create: if isSignedIn() && isValidGlucoseLog(incoming()) && incoming().userId == request.auth.uid &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && isValidGlucoseLog(incoming()) && incoming().userId == existing().userId &&
+        existing().userId == request.auth.uid &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // Standing "share always / share readings dated in this range" preference behind the Health
+    // Glucose sharing settings — deliberately private (self-only, not group-member-readable): the
+    // useful signal for "who has shared with my group" is just querying glucoseLogs for that
+    // groupId directly, so this doc never needs to leak the underlying date-range logic itself.
+    match /healthShareSettings/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
     // --- Shopping lists ---
     // Same personal-or-shared-to-one-group model as todos: any group member gets full control
     // (edit the list itself, add/check/delete items) once a list is shared. Items live in a

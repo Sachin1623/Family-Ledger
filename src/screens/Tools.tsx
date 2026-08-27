@@ -13,6 +13,7 @@ const TOOLS = [
   { to: '/calculator', favKey: 'calculator', icon: '🧮', titleKey: 'tools.calculator', descKey: 'tools.calculatorDesc' },
   { to: '/financial-calculators', favKey: 'financial-calculators', icon: '🏦', titleKey: 'tools.financialCalculators', descKey: 'tools.financialCalculatorsDesc' },
   { to: '/games', favKey: null, icon: '🎮', titleKey: 'tools.games', descKey: 'tools.gamesDesc' },
+  { to: '/health', favKey: 'health', icon: '🩺', titleKey: 'tools.health', descKey: 'tools.healthDesc' },
 ];
 
 export default function Tools() {

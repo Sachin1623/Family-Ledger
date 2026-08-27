@@ -4069,6 +4069,7 @@ async function startServer() {
         todo_completed: 'completed a to-do',
         budget_set: 'set the group budget',
         income_added: 'added income',
+        glucose_logged: 'logged a glucose reading',
       };
 
       let title: string;
@@ -4103,6 +4104,10 @@ async function startServer() {
         title = `${groupName}: Budget updated`;
         body = `${actorName || 'Someone'} ${actionText.budget_set}${description ? `: ${description}` : ''}`;
         pushType = 'budget_set';
+      } else if (action === 'glucose_logged') {
+        title = `${groupName}: Glucose reading`;
+        body = `${actorName || 'Someone'} ${actionText.glucose_logged}${amount != null ? `: ${amount} mg/dL` : ''}${description ? ` (${description})` : ''}`;
+        pushType = 'glucose_logged';
       } else {
         // Only 'added'/'updated'/'deleted'/'income_added' reach here (every other action has its
         // own branch above) — all genuinely expense-list activity, so this gets its own pushType
@@ -4123,6 +4128,34 @@ async function startServer() {
       return res.json({ sent });
     } catch (error) {
       console.error('notify-group-activity error:', error);
+      return res.status(500).json({ error: 'Unable to send notification.' });
+    }
+  });
+
+  // Health > Glucose sharing can target individual friends directly, with no group involved at
+  // all — a separate, much simpler endpoint than notify-group-activity above (no group-name/
+  // member-list lookups, just push straight to the given uids) rather than twisting that one to
+  // handle a groupless case throughout every one of its title templates.
+  app.post('/api/health/notify-glucose-shared', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const { friendUids, value, contextLabel, actorName } = req.body || {};
+    if (!Array.isArray(friendUids) || friendUids.length === 0 || typeof value !== 'number') {
+      return res.status(400).json({ error: 'friendUids and value are required.' });
+    }
+
+    try {
+      const recipientUids = friendUids.filter((uid: unknown) => typeof uid === 'string' && uid !== decoded.uid);
+      if (recipientUids.length === 0) return res.json({ sent: 0 });
+
+      const title = 'Glucose reading shared';
+      const body = `${actorName || 'Someone'} logged a glucose reading: ${value} mg/dL${contextLabel ? ` (${contextLabel})` : ''}`;
+      const tokens = await collectPushTokens(adminDb, recipientUids, 'notificationsEnabled');
+      const sent = await sendPush(tokens, title, body, { type: 'glucose_logged' });
+      return res.json({ sent });
+    } catch (error) {
+      console.error('notify-glucose-shared error:', error);
       return res.status(500).json({ error: 'Unable to send notification.' });
     }
   });

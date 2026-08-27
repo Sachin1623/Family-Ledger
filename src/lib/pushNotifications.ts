@@ -81,6 +81,11 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     data.type === 'birthday_group_reminder'
   ) {
     navigateTo('/todo');
+  } else if (data.type === 'glucose_reminder' || data.type === 'glucose_logged') {
+    const params = new URLSearchParams();
+    if (data.meal) params.set('meal', data.meal);
+    if (data.timing) params.set('timing', data.timing);
+    navigateTo(`/health/glucose${params.toString() ? `?${params.toString()}` : ''}`);
   } else if (data.type === 'spread_word_reminder' || data.type === 'birthday_wish') {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {

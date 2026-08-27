@@ -29,6 +29,8 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/personal-loans': '/tools',
   '/friends': '/tools',
   '/progress': '/tools',
+  '/health': '/tools',
+  '/health/glucose': '/health',
   '/games/sudoku': '/games',
   '/games/sudoku/leaderboard': '/games/sudoku',
   '/games/scramble': '/games',

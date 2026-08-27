@@ -4,7 +4,7 @@ import { addDoc, collection } from 'firebase/firestore';
 type GroupActivityAction =
   | 'added' | 'updated' | 'deleted' | 'commented' | 'recurring_created' | 'recurring_changed'
   | 'recurring_deleted' | 'shopping_list_created' | 'member_left' | 'todo_created' | 'todo_completed'
-  | 'budget_set' | 'income_added';
+  | 'budget_set' | 'income_added' | 'glucose_logged';
 
 // Actions that already write their own purpose-built doc to `activities` at the call site
 // (add_expense/edit_expense/delete_expense, add_income, leave) — logging here too would
@@ -21,6 +21,7 @@ const ACTIVITY_TYPE: Partial<Record<GroupActivityAction, string>> = {
   todo_created: 'todo_created',
   todo_completed: 'todo_completed',
   budget_set: 'budget_set',
+  glucose_logged: 'glucose_logged',
 };
 
 // Fire-and-forget push notification (and, for actions not already logged elsewhere, a matching

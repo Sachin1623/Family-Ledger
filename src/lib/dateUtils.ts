@@ -8,13 +8,17 @@ export function parseLocalDate(dateOnlyString: string): Date {
   return new Date(year, month - 1, day);
 }
 
-// Today's date as a local "YYYY-MM-DD" string. NOT `new Date().toISOString().split('T')[0]`,
-// which gives the UTC calendar day — wrong for any non-UTC user, and specifically wrong right
-// after local midnight for positive-UTC-offset zones (e.g. IST), where it still shows yesterday.
-export function todayLocalDateString(): string {
-  const d = new Date();
+// Any Date as a local "YYYY-MM-DD" string. NOT `date.toISOString().split('T')[0]`, which gives
+// the UTC calendar day — wrong for any non-UTC user, and specifically wrong right after local
+// midnight for positive-UTC-offset zones (e.g. IST), where it still shows the previous day.
+export function toLocalDateString(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Today's date as a local "YYYY-MM-DD" string — see toLocalDateString above.
+export function todayLocalDateString(): string {
+  return toLocalDateString(new Date());
 }
 
 // Current "YYYY-MM" month key in local time — same reasoning as todayLocalDateString.
