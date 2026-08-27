@@ -106,6 +106,18 @@ service cloud.firestore {
       );
     }
 
+    // Same shape again for Health > Medicines' own delegate grant (medicineDelegateSettings).
+    // Unlike glucose/BP, a medicine delegate is also granted READ (see medicines/medicineLogs
+    // below) — a caregiver managing someone's medication list genuinely needs to see what's
+    // already there, not just add to it blind.
+    function isMedicineDelegateFor(targetUid) {
+      let path = /databases/$(database)/documents/medicineDelegateSettings/$(targetUid);
+      return isSignedIn() && exists(path) && (
+        (get(path).data.medicine.groupId != null && canModifyGroup(get(path).data.medicine.groupId)) ||
+        (get(path).data.medicine.keys().hasAll(['friendUids']) && get(path).data.medicine.friendUids.hasAny([request.auth.uid]))
+      );
+    }
+
     // Strictly the original creator of the group — not any 'owner'-role member.
     // Used to gate group deletion, member removal, and invite management to
     // exactly one person per group, regardless of who else holds admin/owner roles.
@@ -747,6 +759,108 @@ service cloud.firestore {
         resource.data.bp.friendUids.hasAny([request.auth.uid])
       );
       allow write: if isSignedIn() && request.auth.uid == uid && isValidBpDelegateSettings(incoming());
+    }
+
+    // --- Health tracker (Tools > Health > Medicine Reminders) ---
+    // Unlike glucoseLogs/bloodPressureLogs (one entity: a logged reading), medicines split into
+    // two: `medicines` is the standing prescription/schedule (name, dose times, duration) and
+    // `medicineLogs` is one taken/skipped dose instance against it. Sharing/delegate settings keep
+    // the same shape as glucose/BP for consistency. Reminders are deliberately NOT their own
+    // settings doc here — a medicine's own times/weekdays/duration already fully determine its
+    // reminder schedule (see medicineReminders.ts), so there's no separate reminders field to
+    // guard on `users/{uid}` the way glucoseReminders/bpReminders needed.
+    match /medicines/{medicineId} {
+      function isValidMedicine(data) {
+        return data.keys().hasAll(['userId', 'loggedBy', 'name', 'dosage', 'times', 'weekdays', 'startDate', 'durationMode', 'remindersEnabled', 'active', 'createdAt']) &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+               data.dosage is string && data.dosage.size() <= 50 &&
+               data.times is list && data.times.size() > 0 && data.times.size() <= 12 &&
+               data.weekdays is list &&
+               data.startDate is string &&
+               data.durationMode is string && data.durationMode in ['ongoing', 'endDate', 'dayCount'] &&
+               data.remindersEnabled is bool &&
+               data.active is bool &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['sharedFriendUids']) || data.sharedFriendUids is list) &&
+               (!data.keys().hasAll(['endDate']) || data.endDate == null || data.endDate is string) &&
+               (!data.keys().hasAll(['dayCount']) || data.dayCount == null || data.dayCount is number) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+      }
+
+      function isSelfOrAuthorizedMedicineDelegate(data) {
+        return data.loggedBy == request.auth.uid &&
+          (data.userId == request.auth.uid || isMedicineDelegateFor(data.userId));
+      }
+
+      // Delegate READ (not just write) is deliberate here — see isMedicineDelegateFor's comment.
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+        (resource.data.keys().hasAll(['sharedFriendUids']) && resource.data.sharedFriendUids.hasAny([request.auth.uid])) ||
+        isMedicineDelegateFor(resource.data.userId)
+      );
+      allow create: if isSignedIn() && isValidMedicine(incoming()) && isSelfOrAuthorizedMedicineDelegate(incoming()) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && isValidMedicine(incoming()) &&
+        incoming().loggedBy == request.auth.uid &&
+        (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId)) &&
+        (incoming().userId == existing().userId || incoming().userId == request.auth.uid || isMedicineDelegateFor(incoming().userId)) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId));
+    }
+
+    // One taken/skipped dose instance. Deterministic doc ID (see medicineLogId() in
+    // medicines.ts) makes "already logged today" a plain getDoc/setDoc instead of a query, and
+    // the UI never edits a logged dose in place — "Undo" deletes it back to pending, so unlike
+    // glucoseLogs/bloodPressureLogs there is no `allow update` here at all.
+    match /medicineLogs/{logId} {
+      function isValidMedicineLog(data) {
+        return data.keys().hasAll(['userId', 'loggedBy', 'medicineId', 'medicineName', 'doseTimeId', 'doseLabel', 'scheduledTime', 'status', 'dateStr', 'loggedAt', 'createdAt']) &&
+               data.medicineId is string &&
+               data.medicineName is string &&
+               data.status is string && data.status in ['taken', 'skipped'] &&
+               data.dateStr is string &&
+               data.loggedAt is string &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['sharedFriendUids']) || data.sharedFriendUids is list) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+      }
+
+      function isSelfOrAuthorizedMedicineDelegate(data) {
+        return data.loggedBy == request.auth.uid &&
+          (data.userId == request.auth.uid || isMedicineDelegateFor(data.userId));
+      }
+
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+        (resource.data.keys().hasAll(['sharedFriendUids']) && resource.data.sharedFriendUids.hasAny([request.auth.uid])) ||
+        isMedicineDelegateFor(resource.data.userId)
+      );
+      allow create: if isSignedIn() && isValidMedicineLog(incoming()) && isSelfOrAuthorizedMedicineDelegate(incoming()) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId));
+    }
+
+    match /medicineShareSettings/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /medicineDelegateSettings/{uid} {
+      function isValidMedicineDelegateSettings(data) {
+        return data.keys().hasAll(['userId', 'medicine']) && data.userId == uid &&
+          data.medicine.keys().hasAll(['friendUids']) && data.medicine.friendUids is list &&
+          (!data.medicine.keys().hasAll(['groupId']) || data.medicine.groupId == null || data.medicine.groupId is string);
+      }
+
+      allow read: if isSignedIn() && (
+        request.auth.uid == uid ||
+        (resource.data.medicine.groupId != null && canModifyGroup(resource.data.medicine.groupId)) ||
+        resource.data.medicine.friendUids.hasAny([request.auth.uid])
+      );
+      allow write: if isSignedIn() && request.auth.uid == uid && isValidMedicineDelegateSettings(incoming());
     }
 
     // --- Shopping lists ---

@@ -4070,6 +4070,8 @@ async function startServer() {
         budget_set: 'set the group budget',
         income_added: 'added income',
         glucose_logged: 'logged a glucose reading',
+        bp_logged: 'logged a blood pressure reading',
+        medicine_logged: 'logged a medicine dose',
       };
 
       let title: string;
@@ -4108,6 +4110,14 @@ async function startServer() {
         title = `${groupName}: Glucose reading`;
         body = `${actorName || 'Someone'} ${actionText.glucose_logged}${amount != null ? `: ${amount} mg/dL` : ''}${description ? ` (${description})` : ''}`;
         pushType = 'glucose_logged';
+      } else if (action === 'bp_logged') {
+        title = `${groupName}: Blood pressure reading`;
+        body = `${actorName || 'Someone'} ${actionText.bp_logged}${contextLabel ? `: ${contextLabel} mmHg` : ''}`;
+        pushType = 'bp_logged';
+      } else if (action === 'medicine_logged') {
+        title = `${groupName}: Medicine dose`;
+        body = `${actorName || 'Someone'} ${actionText.medicine_logged}${contextLabel ? `: ${contextLabel}` : ''}`;
+        pushType = 'medicine_logged';
       } else {
         // Only 'added'/'updated'/'deleted'/'income_added' reach here (every other action has its
         // own branch above) — all genuinely expense-list activity, so this gets its own pushType
@@ -4140,19 +4150,29 @@ async function startServer() {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
 
-    const { friendUids, value, contextLabel, actorName } = req.body || {};
-    if (!Array.isArray(friendUids) || friendUids.length === 0 || typeof value !== 'number') {
-      return res.status(400).json({ error: 'friendUids and value are required.' });
+    // Shared by all three health trackers (glucose/BP/medicine) — `kind` picks the wording below;
+    // omitted (as HealthGlucose.tsx's existing calls do) defaults to glucose for backward compat.
+    // `readingLabel` is the pre-formatted reading text (e.g. "120" or "120/80" or "Metformin —
+    // Morning"); the older `value` (numeric-only) is still accepted as an alias for it.
+    const { friendUids, value, readingLabel, kind, contextLabel, actorName } = req.body || {};
+    const label = readingLabel !== undefined ? String(readingLabel) : typeof value === 'number' ? String(value) : undefined;
+    if (!Array.isArray(friendUids) || friendUids.length === 0 || label === undefined) {
+      return res.status(400).json({ error: 'friendUids and value/readingLabel are required.' });
     }
 
     try {
       const recipientUids = friendUids.filter((uid: unknown) => typeof uid === 'string' && uid !== decoded.uid);
       if (recipientUids.length === 0) return res.json({ sent: 0 });
 
-      const title = 'Glucose reading shared';
-      const body = `${actorName || 'Someone'} logged a glucose reading: ${value} mg/dL${contextLabel ? ` (${contextLabel})` : ''}`;
+      const KIND_INFO: Record<string, { title: string; verb: string; unit: string; pushType: string }> = {
+        glucose: { title: 'Glucose reading shared', verb: 'logged a glucose reading', unit: ' mg/dL', pushType: 'glucose_logged' },
+        bp: { title: 'Blood pressure reading shared', verb: 'logged a blood pressure reading', unit: ' mmHg', pushType: 'bp_logged' },
+        medicine: { title: 'Medicine dose shared', verb: 'logged a medicine dose', unit: '', pushType: 'medicine_logged' },
+      };
+      const info = KIND_INFO[kind] || KIND_INFO.glucose;
+      const body = `${actorName || 'Someone'} ${info.verb}: ${label}${info.unit}${contextLabel ? ` (${contextLabel})` : ''}`;
       const tokens = await collectPushTokens(adminDb, recipientUids, 'notificationsEnabled');
-      const sent = await sendPush(tokens, title, body, { type: 'glucose_logged' });
+      const sent = await sendPush(tokens, info.title, body, { type: info.pushType });
       return res.json({ sent });
     } catch (error) {
       console.error('notify-glucose-shared error:', error);

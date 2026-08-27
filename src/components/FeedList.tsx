@@ -179,6 +179,8 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'todo_reminder': return 'notifications_active';
       case 'budget_set': case 'budget_reminder': return 'account_balance_wallet';
       case 'glucose_logged': return 'bloodtype';
+      case 'bp_logged': return 'monitor_heart';
+      case 'medicine_logged': return 'medication';
       case 'recurring_created': case 'recurring_changed': return 'autorenew';
       case 'recurring_deleted': return 'event_busy';
       case 'recurring_confirm_pending': return 'pending_actions';
@@ -412,6 +414,24 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
                 amount: activity.data?.amount ?? '',
                 window: activity.data?.contextLabel || '',
               })}
+            </p>
+          </div>
+        );
+      case 'bp_logged':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-error uppercase tracking-wider">{t('feed.bpLoggedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">
+              {t('feed.bpLoggedActivity', { name: activity.userName || t('common.someone'), reading: activity.data?.contextLabel || '' })}
+            </p>
+          </div>
+        );
+      case 'medicine_logged':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-error uppercase tracking-wider">{t('feed.medicineLoggedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">
+              {t('feed.medicineLoggedActivity', { name: activity.userName || t('common.someone'), dose: activity.data?.contextLabel || '' })}
             </p>
           </div>
         );

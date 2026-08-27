@@ -378,9 +378,8 @@ export default function HealthBloodPressure() {
         if (computedGroupId) {
           notifyGroupActivity({
             groupId: computedGroupId,
-            action: 'glucose_logged', // reuses the existing generic "health reading logged" Feed/push type
-            amount: parsedSystolic,
-            contextLabel: `BP ${readingLabel}`,
+            action: 'bp_logged',
+            contextLabel: readingLabel,
             actorName,
           });
         }
@@ -391,7 +390,7 @@ export default function HealthBloodPressure() {
               fetch('/api/health/notify-glucose-shared', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ friendUids: computedFriendUids, value: readingLabel, contextLabel: 'Blood pressure', actorName }),
+                body: JSON.stringify({ friendUids: computedFriendUids, kind: 'bp', readingLabel, actorName }),
               }),
             )
             .catch((err) => console.error('notify-bp-shared failed:', err));

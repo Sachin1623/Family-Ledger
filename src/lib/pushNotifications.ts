@@ -88,6 +88,8 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo(`/health/glucose${params.toString() ? `?${params.toString()}` : ''}`);
   } else if (data.type === 'bp_reminder' || data.type === 'bp_logged') {
     navigateTo('/health/blood-pressure');
+  } else if (data.type === 'medicine_reminder' || data.type === 'medicine_logged') {
+    navigateTo('/health/medicines');
   } else if (data.type === 'spread_word_reminder' || data.type === 'birthday_wish') {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {

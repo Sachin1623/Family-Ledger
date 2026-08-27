@@ -32,6 +32,7 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/health': '/tools',
   '/health/glucose': '/health',
   '/health/blood-pressure': '/health',
+  '/health/medicines': '/health',
   '/games/sudoku': '/games',
   '/games/sudoku/leaderboard': '/games/sudoku',
   '/games/scramble': '/games',
