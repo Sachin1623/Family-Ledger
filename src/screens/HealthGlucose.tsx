@@ -636,8 +636,34 @@ export default function HealthGlucose() {
       const autoTable = autoTableModule.default;
       const html2canvas = html2canvasModule.default;
       const docPdf = new jsPDF();
+      const brandColor: [number, number, number] = [15, 71, 97];
+      const webUrl = 'https://familyledger-backend-192700919713.us-central1.run.app';
+      const androidUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+
+      // FamilyLedger wordmark top-right, with a clickable "Get it on Google Play" icon+link
+      // directly below it — no iOS link yet, not published there; add it here once it is.
+      const pageWidth = docPdf.internal.pageSize.getWidth();
+      docPdf.setFontSize(13);
+      docPdf.setTextColor(...brandColor);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text('FamilyLedger', pageWidth - 14, 14, { align: 'right' });
+      docPdf.setFont('helvetica', 'normal');
+
+      const badgeLabel = 'Get it on Google Play';
+      const badgeY = 19;
+      docPdf.setFontSize(8);
+      const badgeTextWidth = docPdf.getTextWidth(badgeLabel);
+      const iconSize = 3;
+      const iconGap = 1.5;
+      const badgeWidth = iconSize + iconGap + badgeTextWidth;
+      const badgeStartX = pageWidth - 14 - badgeWidth;
+      docPdf.setFillColor(...brandColor);
+      docPdf.triangle(badgeStartX, badgeY - iconSize / 2, badgeStartX, badgeY + iconSize / 2, badgeStartX + iconSize, badgeY, 'F');
+      docPdf.text(badgeLabel, badgeStartX + iconSize + iconGap, badgeY + 1.3);
+      docPdf.link(badgeStartX - 1, badgeY - 3, badgeWidth + 2, 6, { url: androidUrl });
 
       docPdf.setFontSize(16);
+      docPdf.setTextColor(0);
       docPdf.text('Patient Blood Glucose Report', 14, 18);
       docPdf.setFontSize(9);
       docPdf.setTextColor(120);
@@ -697,7 +723,11 @@ export default function HealthGlucose() {
         let cy = 28;
         for (const w of chartable) {
           const el = chartRefs.current.get(w.key)!;
-          const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff' });
+          // scale 1.5, not 2 — a native share writes this whole PDF as one base64 string across
+          // the JS↔native bridge, and 6 charts at scale 2 can produce a multi-MB payload that
+          // silently fails to cross that bridge on Android/iOS even though the identical blob
+          // downloads fine on web (no bridge involved there). Still plenty sharp for a report.
+          const canvas = await html2canvas(el, { scale: 1.5, backgroundColor: '#ffffff' });
           const imgData = canvas.toDataURL('image/png');
           const imgWidth = 110;
           const imgHeight = (canvas.height / canvas.width) * imgWidth;
@@ -713,10 +743,7 @@ export default function HealthGlucose() {
       }
 
       // Footer on every page — patient name (already in the header too, but a footer survives a
-      // page getting separated from the rest) and where to get/open FamilyLedger. No iOS link yet
-      // — the app isn't published there; add it here once it is.
-      const webUrl = 'https://familyledger-backend-192700919713.us-central1.run.app';
-      const androidUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+      // page getting separated from the rest) and where to get/open FamilyLedger.
       const totalPages = docPdf.getNumberOfPages();
       for (let i = 1; i <= totalPages; i++) {
         docPdf.setPage(i);
@@ -730,7 +757,10 @@ export default function HealthGlucose() {
       await shareOrDownloadFile(pdfBlob, `glucose_${safeName}_${todayLocalDateString()}.pdf`, 'application/pdf');
     } catch (err) {
       console.error('Glucose PDF export failed:', err);
-      alert(t('health.exportFailed'));
+      // Includes the real error, not just a generic message — on native this is the only way to
+      // see why it failed at all, since there's no browser console to check on a phone.
+      const detail = err instanceof Error ? err.message : String(err);
+      alert(`${t('health.exportFailed')}\n\n${detail}`);
     } finally {
       setExportingPdf(false);
     }
