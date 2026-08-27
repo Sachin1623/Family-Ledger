@@ -1,7 +1,10 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import html2canvas from 'html2canvas';
+// html2canvas-pro, not plain html2canvas — see HealthGlucose.tsx's PDF export for why (the
+// original throws on Tailwind v4's color-mix()/oklab()-based opacity modifiers, which this
+// recap tile's own classes use).
+import html2canvas from 'html2canvas-pro';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';

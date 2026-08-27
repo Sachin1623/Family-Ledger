@@ -35,7 +35,7 @@
     "express": "^4.21.2",
     "firebase": "^12.12.1",
     "firebase-admin": "^13.10.0",
-    "html2canvas": "^1.4.1",
+    "html2canvas-pro": "^2.4.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.546.0",

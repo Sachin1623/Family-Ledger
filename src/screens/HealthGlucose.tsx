@@ -581,10 +581,16 @@ export default function HealthGlucose() {
     setExportingPdf(true);
     try {
       // Lazy-loaded so these ~300KB+ libraries only ship to whoever actually exports a report.
+      // html2canvas-pro, not plain html2canvas — the original library throws
+      // "Attempting to parse an unsupported color function" the moment it walks past any element
+      // using a Tailwind v4 opacity modifier (bg-white/95, border-primary/20, ...), which Tailwind
+      // v4 compiles to color-mix()/oklab() under the hood. Those modifiers are all over this app's
+      // design system, so the export silently failed on every platform — this fork adds support
+      // for those modern CSS color functions and is a drop-in replacement (same API).
       const [{ default: jsPDF }, autoTableModule, html2canvasModule] = await Promise.all([
         import('jspdf'),
         import('jspdf-autotable'),
-        import('html2canvas'),
+        import('html2canvas-pro'),
       ]);
       const autoTable = autoTableModule.default;
       const html2canvas = html2canvasModule.default;
