@@ -637,8 +637,11 @@ service cloud.firestore {
       );
       allow create: if isSignedIn() && isValidGlucoseLog(incoming()) && isSelfOrAuthorizedDelegate(incoming()) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      // Editable by whoever could also delete it — the data owner OR whoever originally logged
+      // it — never by reassigning userId/loggedBy themselves (those stay exactly as created).
       allow update: if isSignedIn() && isValidGlucoseLog(incoming()) && incoming().userId == existing().userId &&
-        incoming().loggedBy == existing().loggedBy && existing().loggedBy == request.auth.uid &&
+        incoming().loggedBy == existing().loggedBy &&
+        (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid);
     }

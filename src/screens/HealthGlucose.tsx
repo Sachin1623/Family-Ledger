@@ -364,6 +364,32 @@ export default function HealthGlucose() {
   // Self by default; or anyone who's authorized me to log on their behalf (see
   // healthDelegateSettings). The saved entry's userId becomes THEM, loggedBy stays me.
   const [enteringForUid, setEnteringForUid] = useState<string>('me');
+  // Set while editing an existing entry (from the Dashboard table's edit button) instead of
+  // creating a new one — userId/loggedBy stay whatever they already were, only the fields below
+  // are editable, so there's no "entering for" picker in this mode.
+  const [editingLog, setEditingLog] = useState<GlucoseLog | null>(null);
+
+  const handleEditStart = (log: GlucoseLog) => {
+    setEditingLog(log);
+    setMealType(log.mealType);
+    setTiming(log.timing);
+    setPostMealHours(log.postMealHours || 2);
+    setValueInput(String(log.value));
+    setNotes(log.notes || '');
+    const d = new Date(log.loggedAt);
+    setLoggedDate(toLocalDateString(d));
+    setLoggedTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+    setEnteringForUid('me');
+    setTab('log');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingLog(null);
+    setValueInput('');
+    setNotes('');
+    setLoggedDate(todayLocalDateString());
+    setLoggedTime(nowLocalTimeString());
+  };
 
   // A `glucose_reminder` push (see healthReminders.ts + pushNotifications.ts) deep-links here as
   // `?meal=&timing=` — prefills the log form and switches to it. Reacts to searchParams itself
@@ -407,13 +433,13 @@ export default function HealthGlucose() {
     if (!user || !hasValidValue) return;
     setSaving(true);
     try {
-      const targetUid = enteringForUid === 'me' ? user.uid : enteringForUid;
+      const targetUid = editingLog ? editingLog.userId : enteringForUid === 'me' ? user.uid : enteringForUid;
       const loggedAt = combineLocalDateAndTime(loggedDate, loggedTime).toISOString();
-      const createdAt = new Date().toISOString();
 
-      // Sharing is a property of whose data it is, not who's typing it in — entering for someone
-      // else uses THEIR standing sharing preference, fetched fresh rather than the live
-      // subscription above (which only ever tracks my own).
+      // Sharing is a property of whose data it is, not who's typing it in — entering (or editing)
+      // for someone else uses THEIR standing sharing preference, fetched fresh rather than the
+      // live subscription above (which only ever tracks my own). Re-evaluated on every save
+      // (including edits) since the date itself might have just changed.
       const effectiveShareSettings: GlucoseShareSettings =
         targetUid === user.uid
           ? shareSettings
@@ -422,44 +448,56 @@ export default function HealthGlucose() {
       const shouldShare = isShareActiveForDate(effectiveShareSettings, loggedAt);
       const computedGroupId = shouldShare ? effectiveShareSettings.groupId : null;
       const computedFriendUids = shouldShare ? effectiveShareSettings.friendUids : [];
-      fireWrite(
-        setDoc(doc(collection(db, 'glucoseLogs')), {
-          userId: targetUid,
-          loggedBy: user.uid,
-          groupId: computedGroupId,
-          sharedFriendUids: computedFriendUids,
-          mealType,
-          timing,
-          postMealHours: timing === 'after' ? postMealHours : null,
-          value: parsedValue,
-          notes: notes.trim() || null,
-          loggedAt,
-          createdAt,
-        }),
-        'add glucose log',
-      );
-      const actorName = profile?.displayName || user.displayName || undefined;
-      if (computedGroupId) {
-        notifyGroupActivity({
-          groupId: computedGroupId,
-          action: 'glucose_logged',
-          amount: parsedValue,
-          contextLabel: windowLabel(mealType, timing),
-          actorName,
-        });
+      const fields = {
+        groupId: computedGroupId,
+        sharedFriendUids: computedFriendUids,
+        mealType,
+        timing,
+        postMealHours: timing === 'after' ? postMealHours : null,
+        value: parsedValue,
+        notes: notes.trim() || null,
+        loggedAt,
+      };
+
+      if (editingLog) {
+        fireWrite(updateDoc(doc(db, 'glucoseLogs', editingLog.id), fields), 'update glucose log');
+      } else {
+        fireWrite(
+          setDoc(doc(collection(db, 'glucoseLogs')), {
+            userId: targetUid,
+            loggedBy: user.uid,
+            createdAt: new Date().toISOString(),
+            ...fields,
+          }),
+          'add glucose log',
+        );
+        // Only a brand-new entry triggers the "reading recorded" notification — editing an
+        // already-shared entry doesn't need to re-announce it.
+        const actorName = profile?.displayName || user.displayName || undefined;
+        if (computedGroupId) {
+          notifyGroupActivity({
+            groupId: computedGroupId,
+            action: 'glucose_logged',
+            amount: parsedValue,
+            contextLabel: windowLabel(mealType, timing),
+            actorName,
+          });
+        }
+        if (computedFriendUids.length > 0) {
+          auth.currentUser
+            ?.getIdToken()
+            .then((idToken) =>
+              fetch('/api/health/notify-glucose-shared', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ friendUids: computedFriendUids, value: parsedValue, contextLabel: windowLabel(mealType, timing), actorName }),
+              }),
+            )
+            .catch((err) => console.error('notify-glucose-shared failed:', err));
+        }
       }
-      if (computedFriendUids.length > 0) {
-        auth.currentUser
-          ?.getIdToken()
-          .then((idToken) =>
-            fetch('/api/health/notify-glucose-shared', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ friendUids: computedFriendUids, value: parsedValue, contextLabel: windowLabel(mealType, timing), actorName }),
-            }),
-          )
-          .catch((err) => console.error('notify-glucose-shared failed:', err));
-      }
+
+      setEditingLog(null);
       setValueInput('');
       setNotes('');
       setLoggedDate(todayLocalDateString());
@@ -471,6 +509,7 @@ export default function HealthGlucose() {
   };
 
   const handleDelete = (id: string) => {
+    if (!window.confirm(t('health.confirmDeleteEntry'))) return;
     fireWrite(deleteDoc(doc(db, 'glucoseLogs', id)), 'delete glucose log');
   };
 
@@ -739,7 +778,18 @@ export default function HealthGlucose() {
 
         {tab === 'log' && (
           <form onSubmit={handleSubmit} className="space-y-2.5">
-            {delegatorsForMe.length > 0 && (
+            {editingLog && (
+              <div className="flex items-center justify-between gap-2 bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
+                <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                  {t('health.editingEntry')}
+                </span>
+                <button type="button" onClick={handleCancelEdit} className="text-[11px] font-bold text-text-muted">
+                  {t('common.cancel')}
+                </button>
+              </div>
+            )}
+            {!editingLog && delegatorsForMe.length > 0 && (
               <div className="space-y-1">
                 <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.enteringFor')}</label>
                 <select
@@ -866,7 +916,7 @@ export default function HealthGlucose() {
               disabled={saving || !hasValidValue}
               className="w-full py-2.5 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
             >
-              {saving ? t('common.saving') : t('health.saveLogEntry')}
+              {saving ? t('common.saving') : editingLog ? t('health.updateLogEntry') : t('health.saveLogEntry')}
             </button>
           </form>
         )}
@@ -1093,14 +1143,23 @@ export default function HealthGlucose() {
                             <p className="text-sm font-black text-primary">{log.value} <span className="text-[10px] font-bold text-text-muted">mg/dL</span></p>
                             <p className={clsx('text-[9px] font-bold', info.cls)}>{info.icon} {info.text}</p>
                           </div>
-                          {viewUid === 'me' && (
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(log.id)}
-                              className="shrink-0 p-1.5 text-text-muted hover:text-error transition-colors"
-                            >
-                              <span className="material-symbols-outlined text-[16px]">delete</span>
-                            </button>
+                          {(log.userId === user?.uid || log.loggedBy === user?.uid) && (
+                            <div className="flex items-center shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleEditStart(log)}
+                                className="p-1.5 text-text-muted hover:text-primary transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(log.id)}
+                                className="p-1.5 text-text-muted hover:text-error transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
+                              </button>
+                            </div>
                           )}
                         </div>
                       );
@@ -1123,10 +1182,10 @@ export default function HealthGlucose() {
             className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-base font-black text-primary">{t('health.confirmTitle')}</h2>
+            <h2 className="text-base font-black text-primary">{editingLog ? t('health.confirmUpdateTitle') : t('health.confirmTitle')}</h2>
 
             <div className="bg-surface rounded-2xl border border-border-subtle p-4 space-y-3">
-              {enteringForUid !== 'me' && (
+              {!editingLog && enteringForUid !== 'me' && (
                 <div className="flex items-center gap-1.5 text-[11px] font-bold text-primary">
                   <span className="material-symbols-outlined text-[14px]">person</span>
                   {t('health.enteringForName', { name: delegatorsForMe.find((d) => d.userId === enteringForUid)?.displayName || '' })}
@@ -1177,7 +1236,7 @@ export default function HealthGlucose() {
                 disabled={saving}
                 className="flex-1 py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
               >
-                {saving ? t('common.saving') : t('health.confirmAndSave')}
+                {saving ? t('common.saving') : editingLog ? t('health.confirmUpdate') : t('health.confirmAndSave')}
               </button>
             </div>
           </div>
