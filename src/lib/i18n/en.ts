@@ -456,6 +456,26 @@ const en = {
   'health.allReadings': 'All readings',
   'health.outOfRange': 'Out of Range',
 
+  // Blood Pressure tracker (HealthBloodPressure.tsx) — mirrors health.* above, minus the meal dimension
+  'bp.tracker': 'Blood Pressure Tracker',
+  'bp.trackerDesc': 'Log & track blood pressure readings',
+  'bp.rangeHigh': 'Above Target',
+  'bp.rangeLow': 'Below Target',
+  'bp.confirmDeleteEntry': 'Delete this blood pressure reading? This cannot be undone.',
+  'bp.confirmClearHistory': 'Delete all of your blood pressure log entries? This cannot be undone.',
+  'bp.enterReading': 'Enter Blood Pressure Reading',
+  'bp.systolic': 'Systolic',
+  'bp.diastolic': 'Diastolic',
+  'bp.pulse': 'Pulse',
+  'bp.average': 'Average',
+  'bp.trendChart': 'Blood Pressure Trend',
+  'bp.trendChartDesc': 'Historical progression by date · target {{sysMin}}-{{sysMax}}/{{diaMin}}-{{diaMax}} mmHg',
+  'bp.reading': 'Reading',
+  'bp.reminders': 'Blood Pressure Reading Reminders',
+  'bp.reminderLabelPlaceholder': 'Label (e.g. Morning)',
+  'bp.addReminderTime': 'Add reminder time',
+  'bp.reminderHint': "Fires at each time you set, on the days you choose. On-device only — nothing is sent if the app isn't installed as a native app.",
+
   // Games (games/GamesHub.tsx)
   'games.title': 'Games',
   'games.subtitle': 'A little break from the ledger.',

@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { FavoriteButton } from '../components/FavoriteButton';
 
-// Only one tracker today — structured as a list (rather than routing /health straight to Glucose)
-// so future trackers (blood pressure, weight, ...) slot in as additional rows without a reroute.
+// Structured as a list (rather than routing /health straight to Glucose) so future trackers
+// slot in as additional rows without a reroute.
 const HEALTH_TRACKERS = [
   { to: '/health/glucose', favKey: 'glucose-tracker', icon: '🩸', titleKey: 'health.glucoseTracker', descKey: 'health.glucoseTrackerDesc' },
+  { to: '/health/blood-pressure', favKey: 'bp-tracker', icon: '❤️', titleKey: 'bp.tracker', descKey: 'bp.trackerDesc' },
 ];
 
 export default function Health() {

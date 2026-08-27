@@ -95,6 +95,17 @@ service cloud.firestore {
       );
     }
 
+    // Same as isGlucoseDelegateFor above, but for Health > Blood Pressure's own, separate
+    // delegate grant (bpDelegateSettings) — a person can authorize different delegates for each
+    // metric, so these are deliberately not the same collection/check.
+    function isBpDelegateFor(targetUid) {
+      let path = /databases/$(database)/documents/bpDelegateSettings/$(targetUid);
+      return isSignedIn() && exists(path) && (
+        (get(path).data.bp.groupId != null && canModifyGroup(get(path).data.bp.groupId)) ||
+        (get(path).data.bp.keys().hasAll(['friendUids']) && get(path).data.bp.friendUids.hasAny([request.auth.uid]))
+      );
+    }
+
     // Strictly the original creator of the group — not any 'owner'-role member.
     // Used to gate group deletion, member removal, and invite management to
     // exactly one person per group, regardless of who else holds admin/owner roles.
@@ -118,10 +129,12 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == userId && !incoming().keys().hasAny(['shopId', 'shopRole', 'shortId']);
       allow update: if isSignedIn() && (
         (request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['shopId', 'shopRole', 'shortId'])) ||
-        // A delegate (see healthDelegateSettings) may set reminders on someone else's behalf —
-        // e.g. a caregiver scheduling checks for a parent who doesn't manage the app themselves —
-        // but that's the ONLY field this grants write access to, nothing else on the user doc.
-        (incoming().diff(existing()).affectedKeys().hasOnly(['glucoseReminders']) && isGlucoseDelegateFor(userId))
+        // A delegate (see healthDelegateSettings / bpDelegateSettings) may set reminders on
+        // someone else's behalf — e.g. a caregiver scheduling checks for a parent who doesn't
+        // manage the app themselves — but that's the ONLY field this grants write access to,
+        // nothing else on the user doc.
+        (incoming().diff(existing()).affectedKeys().hasOnly(['glucoseReminders']) && isGlucoseDelegateFor(userId)) ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['bpReminders']) && isBpDelegateFor(userId))
       );
       allow delete: if isSignedIn() && request.auth.uid == userId;
 
@@ -677,6 +690,63 @@ service cloud.firestore {
         resource.data.glucose.friendUids.hasAny([request.auth.uid])
       );
       allow write: if isSignedIn() && request.auth.uid == uid && isValidDelegateSettings(incoming());
+    }
+
+    // --- Health tracker logs (Tools > Health > Blood Pressure) ---
+    // Same shape as glucoseLogs above, minus the meal-window dimension (a BP reading isn't
+    // meaningfully "before/after breakfast" the way glucose is) — just a systolic/diastolic pair
+    // + optional pulse. See glucoseLogs' own comment for the sharing/delegate reasoning, which
+    // applies identically here against the separate bpShareSettings/bpDelegateSettings.
+    match /bloodPressureLogs/{logId} {
+      function isValidBpLog(data) {
+        return data.keys().hasAll(['userId', 'loggedBy', 'systolic', 'diastolic', 'loggedAt', 'createdAt']) &&
+               data.systolic is number && data.systolic > 0 && data.systolic <= 300 &&
+               data.diastolic is number && data.diastolic > 0 && data.diastolic <= 300 &&
+               data.loggedAt is string &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['sharedFriendUids']) || data.sharedFriendUids is list) &&
+               (!data.keys().hasAll(['pulse']) || data.pulse == null || data.pulse is number) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+      }
+
+      function isSelfOrAuthorizedBpDelegate(data) {
+        return data.loggedBy == request.auth.uid &&
+          (data.userId == request.auth.uid || isBpDelegateFor(data.userId));
+      }
+
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+        (resource.data.keys().hasAll(['sharedFriendUids']) && resource.data.sharedFriendUids.hasAny([request.auth.uid]))
+      );
+      allow create: if isSignedIn() && isValidBpLog(incoming()) && isSelfOrAuthorizedBpDelegate(incoming()) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && isValidBpLog(incoming()) &&
+        incoming().loggedBy == existing().loggedBy &&
+        (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid) &&
+        (incoming().userId == existing().userId || incoming().userId == request.auth.uid || isBpDelegateFor(incoming().userId)) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid);
+    }
+
+    match /bpShareSettings/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /bpDelegateSettings/{uid} {
+      function isValidBpDelegateSettings(data) {
+        return data.keys().hasAll(['userId', 'bp']) && data.userId == uid &&
+          data.bp.keys().hasAll(['friendUids']) && data.bp.friendUids is list &&
+          (!data.bp.keys().hasAll(['groupId']) || data.bp.groupId == null || data.bp.groupId is string);
+      }
+
+      allow read: if isSignedIn() && (
+        request.auth.uid == uid ||
+        (resource.data.bp.groupId != null && canModifyGroup(resource.data.bp.groupId)) ||
+        resource.data.bp.friendUids.hasAny([request.auth.uid])
+      );
+      allow write: if isSignedIn() && request.auth.uid == uid && isValidBpDelegateSettings(incoming());
     }
 
     // --- Shopping lists ---

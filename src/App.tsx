@@ -62,6 +62,7 @@ import Friends from './screens/Friends';
 import MyProgress from './screens/MyProgress';
 import Health from './screens/Health';
 import HealthGlucose from './screens/HealthGlucose';
+import HealthBloodPressure from './screens/HealthBloodPressure';
 import PublicProfile from './screens/PublicProfile';
 import ShoppingLists from './screens/ShoppingLists';
 import ShoppingListDetail from './screens/ShoppingListDetail';
@@ -291,6 +292,7 @@ export default function App() {
               <Route path="/progress" element={<AuthenticatedLayout><MyProgress /></AuthenticatedLayout>} />
               <Route path="/health" element={<AuthenticatedLayout><Health /></AuthenticatedLayout>} />
               <Route path="/health/glucose" element={<AuthenticatedLayout><HealthGlucose /></AuthenticatedLayout>} />
+              <Route path="/health/blood-pressure" element={<AuthenticatedLayout><HealthBloodPressure /></AuthenticatedLayout>} />
               <Route path="/u/:uid" element={<AuthenticatedLayout><PublicProfile /></AuthenticatedLayout>} />
               <Route path="/calculator" element={<AuthenticatedLayout><Calculator /></AuthenticatedLayout>} />
               <Route path="/financial-calculators" element={<AuthenticatedLayout><FinancialCalculators /></AuthenticatedLayout>} />

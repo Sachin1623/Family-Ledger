@@ -29,6 +29,7 @@ export const FAVORITABLE_ITEMS: FavoritableItem[] = [
   { key: 'recurring-expenses', to: '/recurring-expenses', icon: '🔁', label: 'Recurring Expenses' },
   { key: 'health', to: '/health', icon: '🩺', label: 'Health' },
   { key: 'glucose-tracker', to: '/health/glucose', icon: '🩸', label: 'Glucose Tracker' },
+  { key: 'bp-tracker', to: '/health/blood-pressure', icon: '❤️', label: 'Blood Pressure Tracker' },
 ];
 
 export const FAVORITABLE_BY_KEY: Record<string, FavoritableItem> = Object.fromEntries(
