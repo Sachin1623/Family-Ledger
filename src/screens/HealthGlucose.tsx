@@ -337,6 +337,12 @@ export default function HealthGlucose() {
   const baseLogs = viewUid === 'me' ? logs : sharedLogs.filter((l) => l.userId === viewUid);
   const { start: rangeStart, end: rangeEnd } = presetBounds(datePreset, customStart, customEnd);
 
+  // In-range/out-of-range judgments on someone ELSE's readings should use THEIR own target
+  // ranges, not mine — `users/{uid}` is readable by any signed-in user (see firestore.rules), so
+  // this is just a plain doc read, not a new access grant.
+  const [viewedUserSnap] = useDocument(viewUid !== 'me' ? doc(db, 'users', viewUid) : null);
+  const viewedTargets: GlucoseTargetMap = viewUid === 'me' ? targets : (viewedUserSnap?.data() as any)?.healthTargets?.glucose || defaultGlucoseTargetMap();
+
   const filteredLogs = useMemo(() => {
     return baseLogs.filter((l) => {
       const day = l.loggedAt.slice(0, 10);
@@ -345,13 +351,13 @@ export default function HealthGlucose() {
       if (filterMeal !== 'all' && l.mealType !== filterMeal) return false;
       if (filterTiming !== 'all' && l.timing !== filterTiming) return false;
       if (filterRangeStatus !== 'all') {
-        const inRange = isGlucoseInRange(l.value, targetForWindow(targets, glucoseWindowOf(l)));
+        const inRange = isGlucoseInRange(l.value, targetForWindow(viewedTargets, glucoseWindowOf(l)));
         if (filterRangeStatus === 'inRange' && !inRange) return false;
         if (filterRangeStatus === 'outOfRange' && inRange) return false;
       }
       return true;
     }).sort((a, b) => (b.loggedAt || '').localeCompare(a.loggedAt || ''));
-  }, [baseLogs, rangeStart, rangeEnd, filterMeal, filterTiming, filterRangeStatus, targets]);
+  }, [baseLogs, rangeStart, rangeEnd, filterMeal, filterTiming, filterRangeStatus, viewedTargets]);
 
   const clearDashboardFilters = () => {
     setDatePreset('all');
@@ -363,6 +369,11 @@ export default function HealthGlucose() {
   };
 
   const average = filteredLogs.length > 0 ? Math.round(filteredLogs.reduce((sum, l) => sum + l.value, 0) / filteredLogs.length) : 0;
+
+  const viewingName =
+    viewUid === 'me'
+      ? profile?.displayName || user?.displayName || t('health.myReport')
+      : shareableMembers.find((m: any) => m.userId === viewUid)?.displayName || t('common.someone');
 
   const windowAverage = (windowKey: string) => {
     const windowLogs = filteredLogs.filter((l) => glucoseWindowOf(l) === windowKey);
@@ -395,7 +406,7 @@ export default function HealthGlucose() {
   };
 
   const handleExportPdf = async () => {
-    if (viewUid !== 'me' || filteredLogs.length === 0) {
+    if (filteredLogs.length === 0) {
       alert(t('health.noDataToExport'));
       return;
     }
@@ -416,10 +427,11 @@ export default function HealthGlucose() {
       docPdf.setFontSize(9);
       docPdf.setTextColor(120);
       const rangeLabel = rangeStart || rangeEnd ? `${rangeStart || 'earliest'} to ${rangeEnd || 'latest'}` : 'All time';
-      docPdf.text(`Generated via FamilyLedger Health Monitoring — ${new Date().toLocaleString()} — Period: ${rangeLabel}`, 14, 24);
+      docPdf.text(`Patient: ${viewingName}`, 14, 24);
+      docPdf.text(`Generated via FamilyLedger Health Monitoring — ${new Date().toLocaleString()} — Period: ${rangeLabel}`, 14, 29);
       docPdf.setTextColor(0);
       docPdf.setFontSize(10);
-      docPdf.text(`Overall average: ${average} mg/dL     Total readings: ${filteredLogs.length}`, 14, 32);
+      docPdf.text(`Overall average: ${average} mg/dL     Total readings: ${filteredLogs.length}`, 14, 37);
 
       let y = 42;
       docPdf.setFontSize(11);
@@ -428,7 +440,7 @@ export default function HealthGlucose() {
       docPdf.setFontSize(9);
       visibleWindows.forEach((w) => {
         const avg = windowAverage(w.key);
-        const wTarget = targetForWindow(targets, w.key);
+        const wTarget = targetForWindow(viewedTargets, w.key);
         docPdf.text(`${t(w.labelKey)}: ${avg != null ? avg + ' mg/dL' : 'No data'} (target ${wTarget.min}-${wTarget.max})`, 14, y);
         y += 5;
       });
@@ -486,7 +498,8 @@ export default function HealthGlucose() {
       }
 
       const pdfBlob = docPdf.output('blob') as Blob;
-      await shareOrDownloadFile(pdfBlob, `glucose_report_${todayLocalDateString()}.pdf`, 'application/pdf');
+      const safeName = viewingName.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'report';
+      await shareOrDownloadFile(pdfBlob, `glucose_${safeName}_${todayLocalDateString()}.pdf`, 'application/pdf');
     } catch (err) {
       console.error('Glucose PDF export failed:', err);
       alert(t('health.exportFailed'));
@@ -647,37 +660,21 @@ export default function HealthGlucose() {
 
         {tab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Whose data — Me, plus anyone who has shared readings to a group I'm in */}
+            {/* Whose report — my own, or anyone who's shared readings with me (via a group,
+                friend, or family) — drives everything below, including the PDF download. */}
             {shareableMembers.length > 0 && (
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
-                <button
-                  type="button"
-                  onClick={() => setViewUid('me')}
-                  className={clsx(
-                    'shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-bold border transition-all',
-                    viewUid === 'me' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('health.viewingReportFor')}</label>
+                <select
+                  value={viewUid}
+                  onChange={(e) => setViewUid(e.target.value)}
+                  className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none shadow-sm"
                 >
-                  {t('health.me')}
-                </button>
-                {shareableMembers.map((m: any) => (
-                  <button
-                    key={m.userId}
-                    type="button"
-                    onClick={() => setViewUid(m.userId)}
-                    className={clsx(
-                      'shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-bold border transition-all',
-                      viewUid === m.userId ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                    )}
-                  >
-                    <img
-                      src={m.photoURL || `https://ui-avatars.com/api/?name=${m.displayName || '?'}`}
-                      className="w-5 h-5 rounded-full object-cover"
-                      alt=""
-                    />
-                    {m.displayName}
-                  </button>
-                ))}
+                  <option value="me">{t('health.myReport')}</option>
+                  {shareableMembers.map((m: any) => (
+                    <option key={m.userId} value={m.userId}>{m.displayName}</option>
+                  ))}
+                </select>
               </div>
             )}
 
@@ -764,17 +761,15 @@ export default function HealthGlucose() {
               </div>
             </div>
 
-            {viewUid === 'me' && (
-              <button
-                type="button"
-                onClick={handleExportPdf}
-                disabled={exportingPdf || filteredLogs.length === 0}
-                className="w-full py-3 bg-primary/5 border border-primary/20 text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-                {exportingPdf ? t('health.generatingPdf') : t('health.exportPdfForDoctor')}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={exportingPdf || filteredLogs.length === 0}
+              className="w-full py-3 bg-primary/5 border border-primary/20 text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+              {exportingPdf ? t('health.generatingPdf') : viewUid === 'me' ? t('health.exportPdfForDoctor') : t('health.downloadReportFor', { name: viewingName })}
+            </button>
 
             <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-4">
               <div>
@@ -785,7 +780,7 @@ export default function HealthGlucose() {
                 {visibleWindows.map((w) => {
                   const trend = windowTrend(w.key);
                   const avg = windowAverage(w.key);
-                  const wTarget = targetForWindow(targets, w.key);
+                  const wTarget = targetForWindow(viewedTargets, w.key);
                   return (
                     <div
                       key={w.key}
@@ -845,7 +840,7 @@ export default function HealthGlucose() {
               ) : (
                 <div className="divide-y divide-border-subtle max-h-96 overflow-y-auto">
                   {filteredLogs.map((log) => {
-                    const info = rangeInfo(log.value, targetForWindow(targets, glucoseWindowOf(log)), t);
+                    const info = rangeInfo(log.value, targetForWindow(viewedTargets, glucoseWindowOf(log)), t);
                     return (
                       <div key={log.id} className="px-4 py-3 flex items-center justify-between gap-2">
                         <div className="min-w-0">
