@@ -7,6 +7,7 @@ import { collection, query, where, doc, setDoc, updateDoc, deleteDoc, writeBatch
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
+import { motion } from 'motion/react';
 import { fireWrite } from '../lib/offlineWrite';
 import { shareOrDownloadFile } from '../lib/fileShare';
 import { toLocalDateString, todayLocalDateString, nowLocalTimeString, combineLocalDateAndTime } from '../lib/dateUtils';
@@ -364,6 +365,10 @@ export default function HealthGlucose() {
   const [filterMeal, setFilterMeal] = useState<'all' | GlucoseMealType>('all');
   const [filterTiming, setFilterTiming] = useState<'all' | GlucoseTiming>('all');
   const [filterRangeStatus, setFilterRangeStatus] = useState<'all' | 'inRange' | 'outOfRange'>('all');
+  // Collapsed by CSS height, not unmounted — chartRefs must stay measurable by html2canvas for
+  // PDF export even while a section is visually collapsed on screen.
+  const [chartsCollapsed, setChartsCollapsed] = useState(false);
+  const [tableCollapsed, setTableCollapsed] = useState(false);
 
   // A shared-with-me entry's owner might not share any group with me at all (a friend-only
   // share) — falls back from the group-members list to the friends list for name/photo.
@@ -541,6 +546,19 @@ export default function HealthGlucose() {
           docPdf.addImage(imgData, 'PNG', 14, cy + 3, imgWidth, imgHeight);
           cy += imgHeight + 14;
         }
+      }
+
+      // Footer on every page — patient name (already in the header too, but a footer survives a
+      // page getting separated from the rest) and where to get/open FamilyLedger. No iOS link yet
+      // — the app isn't published there; add it here once it is.
+      const webUrl = 'https://familyledger-backend-192700919713.us-central1.run.app';
+      const androidUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+      const totalPages = docPdf.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        docPdf.setPage(i);
+        docPdf.setFontSize(7);
+        docPdf.setTextColor(150);
+        docPdf.text(`${viewingName} · FamilyLedger — Web: ${webUrl}  ·  Android: ${androidUrl}`, 14, 291);
       }
 
       const pdfBlob = docPdf.output('blob') as Blob;
@@ -828,11 +846,26 @@ export default function HealthGlucose() {
               {exportingPdf ? t('health.generatingPdf') : viewUid === 'me' ? t('health.exportPdfForDoctor') : t('health.downloadReportFor', { name: viewingName })}
             </button>
 
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-4">
-              <div>
-                <h3 className="font-bold text-primary text-sm">{t('health.mealTrendCharts')}</h3>
-                <p className="text-[11px] text-text-muted">{t('health.mealTrendChartsDesc')}</p>
-              </div>
+            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-3">
+              <button
+                type="button"
+                onClick={() => setChartsCollapsed((c) => !c)}
+                className="w-full flex items-center justify-between text-left"
+              >
+                <div>
+                  <h3 className="font-bold text-primary text-sm">{t('health.mealTrendCharts')}</h3>
+                  <p className="text-[11px] text-text-muted">{t('health.mealTrendChartsDesc')}</p>
+                </div>
+                <span className={clsx('material-symbols-outlined text-text-muted transition-transform shrink-0', chartsCollapsed && '-rotate-90')}>
+                  expand_more
+                </span>
+              </button>
+              <motion.div
+                initial={false}
+                animate={{ height: chartsCollapsed ? 0 : 'auto', opacity: chartsCollapsed ? 0 : 1 }}
+                transition={{ duration: 0.2, ease: 'easeInOut' }}
+                className="overflow-hidden"
+              >
               <div className="space-y-3">
                 {visibleWindows.map((w) => {
                   const trend = windowTrend(w.key);
@@ -881,49 +914,61 @@ export default function HealthGlucose() {
                   );
                 })}
               </div>
+              </motion.div>
             </div>
 
             <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
-                <h3 className="font-bold text-primary text-sm">{t('health.tabularRecordsLog')}</h3>
+                <button
+                  type="button"
+                  onClick={() => setTableCollapsed((c) => !c)}
+                  className="flex items-center gap-1.5 text-left min-w-0"
+                >
+                  <span className={clsx('material-symbols-outlined text-text-muted transition-transform text-[18px] shrink-0', tableCollapsed && '-rotate-90')}>
+                    expand_more
+                  </span>
+                  <h3 className="font-bold text-primary text-sm truncate">{t('health.tabularRecordsLog')}</h3>
+                </button>
                 {viewUid === 'me' && filteredLogs.length > 0 && (
-                  <button type="button" onClick={handleClearHistory} className="text-[11px] font-bold text-error">
+                  <button type="button" onClick={handleClearHistory} className="text-[11px] font-bold text-error shrink-0">
                     {t('health.clearHistory')}
                   </button>
                 )}
               </div>
-              {filteredLogs.length === 0 ? (
-                <p className="text-sm text-text-muted text-center py-8">{t('health.noEntriesYet')}</p>
-              ) : (
-                <div className="divide-y divide-border-subtle max-h-96 overflow-y-auto">
-                  {filteredLogs.map((log) => {
-                    const info = rangeInfo(log.value, targetForWindow(viewedTargets, glucoseWindowOf(log)), t);
-                    return (
-                      <div key={log.id} className="px-4 py-3 flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold truncate">
-                            {t(`health.${log.mealType}`)} · {log.timing === 'before' ? t('health.beforeMeal') : `${t('health.afterMeal')} (${log.postMealHours}hr)`}
-                          </p>
-                          <p className="text-[10px] text-text-muted">{new Date(log.loggedAt).toLocaleString()}</p>
-                          {log.notes && <p className="text-[10px] text-text-muted italic truncate mt-0.5">{log.notes}</p>}
+              {!tableCollapsed && (
+                filteredLogs.length === 0 ? (
+                  <p className="text-sm text-text-muted text-center py-8">{t('health.noEntriesYet')}</p>
+                ) : (
+                  <div className="divide-y divide-border-subtle max-h-96 overflow-y-auto">
+                    {filteredLogs.map((log) => {
+                      const info = rangeInfo(log.value, targetForWindow(viewedTargets, glucoseWindowOf(log)), t);
+                      return (
+                        <div key={log.id} className="px-4 py-3 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold truncate">
+                              {t(`health.${log.mealType}`)} · {log.timing === 'before' ? t('health.beforeMeal') : `${t('health.afterMeal')} (${log.postMealHours}hr)`}
+                            </p>
+                            <p className="text-[10px] text-text-muted">{new Date(log.loggedAt).toLocaleString()}</p>
+                            {log.notes && <p className="text-[10px] text-text-muted italic truncate mt-0.5">{log.notes}</p>}
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-sm font-black text-primary">{log.value} <span className="text-[10px] font-bold text-text-muted">mg/dL</span></p>
+                            <p className={clsx('text-[9px] font-bold', info.cls)}>{info.icon} {info.text}</p>
+                          </div>
+                          {viewUid === 'me' && (
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(log.id)}
+                              className="shrink-0 p-1.5 text-text-muted hover:text-error transition-colors"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                            </button>
+                          )}
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-sm font-black text-primary">{log.value} <span className="text-[10px] font-bold text-text-muted">mg/dL</span></p>
-                          <p className={clsx('text-[9px] font-bold', info.cls)}>{info.icon} {info.text}</p>
-                        </div>
-                        {viewUid === 'me' && (
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(log.id)}
-                            className="shrink-0 p-1.5 text-text-muted hover:text-error transition-colors"
-                          >
-                            <span className="material-symbols-outlined text-[16px]">delete</span>
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )
               )}
             </div>
           </div>
