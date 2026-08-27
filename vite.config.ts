@@ -26,8 +26,13 @@ export default defineConfig(({mode}) => {
           navigateFallback: '/index.html',
           globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
           // Default is 2MiB; the main JS chunk (which bundles the Sudoku puzzle bank for
-          // guaranteed offline availability — see today's earlier note) is already ~2.3MB.
-          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+          // guaranteed offline availability — see today's earlier note) has kept growing as
+          // features were added and crossed the previous 6MiB ceiling (hit 6.29MB, hard-failing
+          // the whole Cloud Run build since vite-plugin-pwa's precache step errors, not just
+          // warns, past this limit). Raised with real headroom rather than nudging it again next
+          // time a feature pushes it over — route-level code-splitting would be the real fix if
+          // this keeps climbing, but isn't urgent while builds succeed.
+          maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
           runtimeCaching: [
             {
               urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
