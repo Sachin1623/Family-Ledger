@@ -1,11 +1,12 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
+import { FavoriteButton } from '../components/FavoriteButton';
 
 // Only one tracker today — structured as a list (rather than routing /health straight to Glucose)
 // so future trackers (blood pressure, weight, ...) slot in as additional rows without a reroute.
 const HEALTH_TRACKERS = [
-  { to: '/health/glucose', icon: '🩸', titleKey: 'health.glucoseTracker', descKey: 'health.glucoseTrackerDesc' },
+  { to: '/health/glucose', favKey: 'glucose-tracker', icon: '🩸', titleKey: 'health.glucoseTracker', descKey: 'health.glucoseTrackerDesc' },
 ];
 
 export default function Health() {
@@ -36,7 +37,10 @@ export default function Health() {
                   <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t(tracker.descKey)}</p>
                 </div>
               </div>
-              <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
+              <div className="flex items-center gap-1 shrink-0">
+                {tracker.favKey && <FavoriteButton itemKey={tracker.favKey} />}
+                <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
+              </div>
             </div>
           ))}
         </div>

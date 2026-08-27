@@ -904,9 +904,13 @@ export default function HealthGlucose() {
       </main>
 
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setShowConfirm(false)}>
+        // Centered on every screen size (not a bottom sheet) — anchoring this to the bottom on
+        // mobile put its Confirm button right behind the fixed bottom nav bar, off-screen and
+        // untappable. max-h + its own overflow-y-auto keeps it fully on-screen and scrollable
+        // internally on short viewports instead of pushing content below the fold.
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowConfirm(false)}>
           <div
-            className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl p-5 space-y-4"
+            className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-black text-primary">{t('health.confirmTitle')}</h2>
