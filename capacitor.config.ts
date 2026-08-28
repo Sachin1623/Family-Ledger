@@ -16,8 +16,18 @@ const config: CapacitorConfig = {
     url: 'https://familyledger.thirteenapps.com',
   },
   plugins: {
+    // skipNativeAuth: true is required — Login.tsx's native sign-in handlers (Google AND Apple)
+    // both manually bridge the native credential into the JS SDK via signInWithCredential(auth,
+    // ...), which is the only sign-in call this app's `auth` object (and everything built on it —
+    // useAuth(), Firestore rules' request.auth.uid, etc.) ever sees. With skipNativeAuth: false
+    // (the plugin's default), it ALSO completes its own native Firebase sign-in internally before
+    // handing back the credential — for Apple specifically, that consumes the one-time nonce, so
+    // the app's own signInWithCredential call then fails with "Duplicate credential received...
+    // auth/missing-or-invalid-nonce" (Apple's nonce enforcement is strict about reuse; Google's
+    // apparently tolerated the same double-exchange without erroring, which is why this went
+    // unnoticed until Apple sign-in was actually turned on).
     FirebaseAuthentication: {
-      skipNativeAuth: false,
+      skipNativeAuth: true,
       providers: ['google.com', 'apple.com'],
     },
   },
