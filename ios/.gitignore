@@ -11,3 +11,8 @@ capacitor-cordova-ios-plugins
 # Generated Config files
 App/App/capacitor.config.json
 App/App/config.xml
+
+# (This file itself is touched occasionally on purpose — Xcode Cloud's "Files and Folders" start
+# condition uses /ios/* which only matches files directly under this folder, not nested ones like
+# App/App/Info.plist, so a real fix living deeper in ios/ needs a file at THIS level touched too
+# to reliably trigger a new build.)
