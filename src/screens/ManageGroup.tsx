@@ -106,7 +106,10 @@ export default function ManageGroup() {
       setDeviceContacts(result.contacts.filter((c) => (c.phones?.length || 0) > 0));
     } catch (err) {
       console.error('Failed to load device contacts:', err);
-      setContactsError(t('manageGroup.contactsLoadFailed'));
+      // Surfaces the actual plugin/native error text (temporary — this whole catch used to just
+      // show a generic "Failed to load contacts." with no way to tell WHY from a screenshot).
+      const detail = err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
+      setContactsError(`${t('manageGroup.contactsLoadFailed')} (${detail})`);
     } finally {
       setLoadingContacts(false);
     }
