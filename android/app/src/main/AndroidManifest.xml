@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The RECORD_AUDIO permission (in-game voice chat) makes the Android manifest merger
+         auto-imply <uses-feature android:name="android.hardware.microphone" required="true">,
+         which silently excludes every device without a microphone from the Play Store listing
+         entirely (Play Console flagged this as "no longer supports N devices" on the first
+         release after voice chat was added). Declaring it explicitly as NOT required restores
+         those devices — voice chat just won't be available there (the feature already degrades
+         gracefully; see GameVoiceChat.tsx's `supported` check), it doesn't need to block the
+         whole app. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
