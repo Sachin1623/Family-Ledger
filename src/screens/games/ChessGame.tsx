@@ -21,6 +21,7 @@ import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { CHESS_HELP } from '../../lib/gameHelp';
 import { ReactionButton, ReactionOverlay, useReactionOverlay } from '../../components/GameReactions';
 import { ChatButton, ChatPanel, useGameChat } from '../../components/GameChat';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
@@ -110,6 +111,7 @@ export default function ChessGame() {
   const [promotionPending, setPromotionPending] = useState<{ from: Square; to: Square } | null>(null);
 
   const players = game?.players || [];
+  const voice = useGameVoice('chessGames', gameId, players);
   const myPlayer = players.find((p) => p.uid === user?.uid);
   const isPlayer = !!myPlayer;
   const myColor: PlayerColor = myPlayer?.color || 'w';
@@ -393,6 +395,7 @@ export default function ChessGame() {
               </button>
             )}
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
         </div>

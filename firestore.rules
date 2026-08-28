@@ -1680,6 +1680,155 @@ service cloud.firestore {
       allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
     }
 
+    // --- In-game voice chat (WebRTC mesh) ---
+    // voicePresence: one doc per player, self-written, announces "I am in the voice room"
+    // and my own mic-mute state so every other player's client knows who to dial/show.
+    // voiceSignals: one doc per PLAYER PAIR (doc id is `{lowUid}_{highUid}`, sorted so both
+    // sides agree on the same doc without a query), used to exchange WebRTC offer/answer/ICE
+    // candidates directly between two players' clients. Content isn't deep-validated (loose
+    // shape check only) since it's ephemeral signaling data scoped to the two real players who
+    // own it, not sensitive game state.
+    function isValidVoicePresence(data) {
+      return data.keys().hasAll(['uid', 'inVoice', 'micMuted', 'updatedAt']) &&
+             data.uid == request.auth.uid && data.inVoice is bool && data.micMuted is bool && data.updatedAt is string;
+    }
+    function isValidVoiceSignal(data) {
+      return data.keys().hasOnly(['offerFromA', 'offerFromB', 'answerFromA', 'answerFromB', 'iceFromA', 'iceFromB', 'updatedAt']);
+    }
+
+    match /ludoGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/ludoGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /ludoGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/ludoGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /rummyGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummyGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /rummyGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummyGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /businessGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/businessGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /businessGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/businessGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /sweepGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sweepGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /sweepGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sweepGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /sequenceGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sequenceGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /sequenceGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sequenceGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /chessGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chessGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /chessGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chessGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /scrambleGames/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/scrambleGames/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /scrambleGames/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/scrambleGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
     // Parent doc for a DM chat — participants/lastMessageAt/unreadFor, used to list + order a
     // user's DM chats and show unread badges without a collectionGroup scan. Written server-only
     // (via /api/chat/send's Admin SDK write, which bypasses these rules) so `unreadFor` counters

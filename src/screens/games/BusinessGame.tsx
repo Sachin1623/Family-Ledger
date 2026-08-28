@@ -42,6 +42,7 @@ import {
 } from '../../lib/business';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { ChatButton, ChatPanel, useGameChat } from '../../components/GameChat';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
@@ -151,6 +152,7 @@ export default function BusinessGame() {
 
   const [gameSnap, loading] = useDocument(gameId ? doc(db, 'businessGames', gameId) : null);
   const game = gameSnap?.exists() ? (gameSnap.data() as BusinessGameDoc) : null;
+  const voice = useGameVoice('businessGames', gameId, game?.players || []);
 
   // "It's your turn" presence — Business is client-authoritative, so (unlike the server-mediated
   // games) the actual notify call has to happen client-side too, right after whichever updateDoc
@@ -990,6 +992,7 @@ export default function BusinessGame() {
           <ReactionButton onSend={handleSendReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
           {showHelp && <GameHelpModal content={BUSINESS_HELP} onClose={() => setShowHelp(false)} />}
@@ -1212,6 +1215,7 @@ export default function BusinessGame() {
             </button>
           )}
           <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+          <VoiceChatButton voice={voice} />
           <HelpButton onClick={() => setShowHelp(true)} />
         </div>
       </header>

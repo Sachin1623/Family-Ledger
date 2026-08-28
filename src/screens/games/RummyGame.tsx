@@ -21,6 +21,7 @@ import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { RUMMY_HELP } from '../../lib/gameHelp';
 import { ReactionButton, ReactionOverlay, useReactionOverlay } from '../../components/GameReactions';
 import { ChatButton, ChatPanel, useGameChat } from '../../components/GameChat';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
@@ -212,6 +213,7 @@ export default function RummyGame() {
 
   const [gameSnap, loading] = useDocument(gameId ? doc(db, 'rummyGames', gameId) : null);
   const game = gameSnap?.exists() ? (gameSnap.data() as RummyGameDoc) : null;
+  const voice = useGameVoice('rummyGames', gameId, game?.players || []);
 
   // Points are awarded inline, server-side, the moment the game's finish transaction commits —
   // this just triggers every player's OWN flying-coins animation once their client notices the
@@ -635,6 +637,7 @@ export default function RummyGame() {
           <ReactionButton onSend={handleSendReaction} />
           <div className="flex items-center gap-1 ml-auto">
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
           {showHelp && <GameHelpModal content={RUMMY_HELP} onClose={() => setShowHelp(false)} />}
@@ -943,6 +946,7 @@ export default function RummyGame() {
               <span className="material-symbols-outlined text-[22px] block">logout</span>
             </button>
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
         </header>

@@ -30,6 +30,7 @@ import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { SEQUENCE_HELP } from '../../lib/gameHelp';
 import { ReactionButton, ReactionOverlay, useReactionOverlay } from '../../components/GameReactions';
 import { ChatButton, ChatPanel, useGameChat } from '../../components/GameChat';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
@@ -125,6 +126,7 @@ export default function SequenceGame() {
 
   const [gameSnap, loading] = useDocument(gameId ? doc(db, 'sequenceGames', gameId) : null);
   const game = gameSnap?.exists() ? (gameSnap.data() as SequenceGameDoc) : null;
+  const voice = useGameVoice('sequenceGames', gameId, game?.players || []);
 
   // Points are awarded inline, server-side, the moment the game's finish transaction commits —
   // this just triggers every player's OWN flying-coins animation once their client notices the
@@ -393,6 +395,7 @@ export default function SequenceGame() {
           <ReactionButton onSend={handleSendQuickReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
         </header>
@@ -556,6 +559,7 @@ export default function SequenceGame() {
         <ReactionButton onSend={handleSendQuickReaction} />
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
           <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+          <VoiceChatButton voice={voice} />
           <HelpButton onClick={() => setShowHelp(true)} />
           {isFinished ? (
             <button onClick={() => setShowResultPanel(true)} className="p-2 text-primary" aria-label="Show result">

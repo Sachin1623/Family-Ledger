@@ -604,27 +604,35 @@ export default function Login() {
             )}
           </button>
 
-          {/* handleAppleSignIn/appleProvider/capacitor.config.ts (providers: ['google.com',
-              'apple.com']) are already wired up. On native, this only actually works once an
-              Android/iOS build that ran `npx cap sync` after apple.com was added to that config
-              list has shipped — the provider list is baked into the native bundle at build time,
-              not reachable via a JS-only deploy. Works immediately on web (signInWithPopup). */}
-          <button
-            onClick={handleAppleSignIn}
-            disabled={isLoggingIn}
-            className="w-full py-4 px-6 bg-black hover:bg-neutral-800 text-white font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-sm disabled:opacity-50"
-          >
-            {isLoggingIn ? (
-              <span className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
-            ) : (
-              <>
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="white" aria-hidden="true">
-                  <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.256-1.79-2.265-4.51-2.265-7.15 0-4.2 2.605-6.42 5.164-6.42 1.404 0 2.575.9 3.462.9.844 0 2.158-.958 3.762-.958.606 0 2.777.055 4.2 2.107-.11.07-2.507 1.475-2.478 4.396.033 3.497 3.021 4.66 3.058 4.68z" />
-                </svg>
-                <span>{t('auth.continueWithApple')}</span>
-              </>
-            )}
-          </button>
+          {/* iOS-only — Apple's own guideline is that Sign in with Apple only needs to be offered
+              wherever OTHER third-party logins are offered, and native Android has no equivalent
+              concept of an "Apple account" on the device the way iOS does. Also sidesteps needing
+              a working Android-side Apple OAuth config at all (Android would still route through
+              the same web-based signInWithPopup as the browser, which the code below handles
+              fine, but there's no product reason to surface it there once this is restricted).
+              handleAppleSignIn/appleProvider/capacitor.config.ts (providers: ['google.com',
+              'apple.com']) are already wired up. On native iOS, this only actually works once an
+              iOS build that ran `npx cap sync` after apple.com was added to that config list has
+              shipped — the provider list is baked into the native bundle at build time, not
+              reachable via a JS-only deploy. Works immediately on web (signInWithPopup). */}
+          {Capacitor.getPlatform() === 'ios' && (
+            <button
+              onClick={handleAppleSignIn}
+              disabled={isLoggingIn}
+              className="w-full py-4 px-6 bg-black hover:bg-neutral-800 text-white font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+            >
+              {isLoggingIn ? (
+                <span className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
+              ) : (
+                <>
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="white" aria-hidden="true">
+                    <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.256-1.79-2.265-4.51-2.265-7.15 0-4.2 2.605-6.42 5.164-6.42 1.404 0 2.575.9 3.462.9.844 0 2.158-.958 3.762-.958.606 0 2.777.055 4.2 2.107-.11.07-2.507 1.475-2.478 4.396.033 3.497 3.021 4.66 3.058 4.68z" />
+                  </svg>
+                  <span>{t('auth.continueWithApple')}</span>
+                </>
+              )}
+            </button>
+          )}
 
           <button
             onClick={() => switchMode("login")}

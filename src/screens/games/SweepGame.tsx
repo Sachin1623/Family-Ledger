@@ -25,6 +25,7 @@ import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { SWEEP_HELP } from '../../lib/gameHelp';
 import { ReactionButton, ReactionOverlay, useReactionOverlay } from '../../components/GameReactions';
 import { ChatButton, ChatPanel, useGameChat } from '../../components/GameChat';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
@@ -133,6 +134,7 @@ export default function SweepGame() {
 
   const [gameSnap, loading] = useDocument(gameId ? doc(db, 'sweepGames', gameId) : null);
   const game = gameSnap?.exists() ? (gameSnap.data() as SweepGameDoc) : null;
+  const voice = useGameVoice('sweepGames', gameId, game?.players || []);
 
   // Points are awarded inline, server-side, the moment the MATCH (not just a deal) finish
   // transaction commits — this just triggers every player's OWN flying-coins animation once their
@@ -433,6 +435,7 @@ export default function SweepGame() {
           <ReactionButton onSend={handleSendQuickReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
         </header>
@@ -734,6 +737,7 @@ export default function SweepGame() {
               <span className="material-symbols-outlined text-[22px] block">logout</span>
             </button>
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
         </header>
@@ -1024,6 +1028,7 @@ export default function SweepGame() {
             <span className="material-symbols-outlined text-[22px] block">logout</span>
           </button>
           <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+          <VoiceChatButton voice={voice} />
           <HelpButton onClick={() => setShowHelp(true)} />
         </div>
         <span className="text-[11px] font-bold whitespace-nowrap text-primary shrink-0 w-full text-right">

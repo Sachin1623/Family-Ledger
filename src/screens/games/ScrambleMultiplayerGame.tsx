@@ -23,6 +23,7 @@ import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import { SCRAMBLE_HELP } from '../../lib/gameHelp';
 
 const TILE_COLORS = ['#0F7A38', '#B45309', '#B91C1C', '#1D4ED8', '#7C3AED', '#BE185D', '#0891B2', '#CA8A04', '#4D7C0F', '#C2410C'];
@@ -48,6 +49,7 @@ export default function ScrambleMultiplayerGame() {
 
   const [gameSnap] = useDocument(gameId ? doc(db, 'scrambleGames', gameId) : null);
   const game = gameSnap?.exists() ? (gameSnap.data() as ScrambleMultiplayerGameDoc) : null;
+  const voice = useGameVoice('scrambleGames', gameId, game?.players || []);
   const [privateSnap] = useDocument(
     gameId && user && game?.status === 'active' ? doc(db, 'scrambleGames', gameId, 'private', user.uid) : null,
   );
@@ -389,6 +391,7 @@ export default function ScrambleMultiplayerGame() {
               </div>
             </div>
           )}
+          <VoiceChatButton voice={voice} />
           <HelpButton onClick={() => setShowHelp(true)} />
         </div>
 

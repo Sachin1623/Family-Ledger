@@ -26,6 +26,7 @@ import {
 } from '../../lib/ludo';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { ChatButton, ChatPanel, useGameChat } from '../../components/GameChat';
+import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
@@ -301,6 +302,7 @@ export default function LudoGame() {
   const [showInvite, setShowInvite] = useState(false);
 
   const players: LudoPlayer[] = game?.players || [];
+  const voice = useGameVoice('ludoGames', gameId, players);
   const myPlayer = players.find((p) => p.uid === user?.uid);
   const isPlayer = !!myPlayer;
   // Spectators (not seated) see the board in its plain canonical orientation — there's no "own
@@ -706,6 +708,7 @@ export default function LudoGame() {
               </button>
             )}
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
             <HelpButton onClick={() => setShowHelp(true)} />
           </div>
         </div>
