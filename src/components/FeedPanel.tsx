@@ -32,7 +32,13 @@ export default function FeedPanel({
             animate={{ x: 0 }}
             exit={{ x: '-100%' }}
             transition={{ type: 'tween', duration: 0.25, ease: 'easeOut' }}
-            className="absolute inset-y-0 left-0 w-full sm:w-[420px] bg-surface shadow-2xl flex flex-col"
+            // Capped below 100% width (even on mobile) so a strip of backdrop is always visible
+            // and tappable to dismiss — at w-full, the panel covered the entire backdrop, leaving
+            // no "tap outside" area at all and making the X button the only way to close it. The
+            // sibling backdrop div (onClick={onClose}) spans the full screen behind this panel,
+            // so that exposed strip — including where header buttons sit underneath it — already
+            // closes the panel on tap, same as tapping the explicit X.
+            className="absolute inset-y-0 left-0 w-[70%] max-w-[380px] bg-surface shadow-2xl flex flex-col"
           >
             <div className="px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] border-b border-border-subtle flex items-center justify-between shrink-0 bg-white">
               <div>

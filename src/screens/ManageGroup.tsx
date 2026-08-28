@@ -18,6 +18,8 @@ import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
 import { useLanguage } from '../context/LanguageContext';
+import { Capacitor } from '@capacitor/core';
+import { Contacts, type ContactPayload } from '@capacitor-community/contacts';
 
 export default function ManageGroup() {
   const { groupId } = useParams();
@@ -75,8 +77,61 @@ export default function ManageGroup() {
   const [showRecurringPanel, setShowRecurringPanel] = useState(false);
   // Invite tab used to show all four invite methods (WhatsApp/SMS, email, user search, friends)
   // stacked and always expanded — now a picker menu, each method opening its own focused panel.
-  const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | null>(null);
+  const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | 'contacts' | null>(null);
   const [friendInviteSearch, setFriendInviteSearch] = useState('');
+
+  // Browse phone contacts natively (not the flaky Web Contact Picker used by the WhatsApp/SMS
+  // panel below, which isn't reliably available inside the installed app's WebView) and multi-
+  // select some to invite by SMS in one go.
+  const [deviceContacts, setDeviceContacts] = useState<ContactPayload[] | null>(null);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [contactsError, setContactsError] = useState<string | null>(null);
+  const [contactBrowseSearch, setContactBrowseSearch] = useState('');
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
+
+  const loadDeviceContacts = async () => {
+    setLoadingContacts(true);
+    setContactsError(null);
+    try {
+      let status = await Contacts.checkPermissions();
+      if (status.contacts !== 'granted' && status.contacts !== 'limited') {
+        status = await Contacts.requestPermissions();
+      }
+      if (status.contacts !== 'granted' && status.contacts !== 'limited') {
+        setContactsError(t('manageGroup.contactsPermissionDenied'));
+        return;
+      }
+      const result = await Contacts.getContacts({ projection: { name: true, phones: true } });
+      // Only contacts with at least one phone number are inviteable by SMS.
+      setDeviceContacts(result.contacts.filter((c) => (c.phones?.length || 0) > 0));
+    } catch (err) {
+      console.error('Failed to load device contacts:', err);
+      setContactsError(t('manageGroup.contactsLoadFailed'));
+    } finally {
+      setLoadingContacts(false);
+    }
+  };
+
+  const toggleContactSelected = (contactId: string) => {
+    setSelectedContactIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(contactId)) next.delete(contactId);
+      else next.add(contactId);
+      return next;
+    });
+  };
+
+  const handleInviteSelectedContactsBySms = () => {
+    if (!deviceContacts) return;
+    const numbers = deviceContacts
+      .filter((c) => selectedContactIds.has(c.contactId))
+      .map((c) => c.phones?.[0]?.number)
+      .filter((n): n is string => !!n);
+    if (numbers.length === 0) return;
+    const link = `${window.location.origin}/join/${groupId}`;
+    const message = `Hey I am using Family Ledger to track and organise my expenses lets manage our expenses together: ${link}`;
+    window.location.href = `sms:${numbers.join(',')}?body=${encodeURIComponent(message)}`;
+  };
 
   // Monthly budget — doc ID is deterministic (`${groupId}_${YYYY-MM}`) so setting it is a
   // plain upsert. Month-to-date spend is computed client-side from this group's expenses.
@@ -1009,6 +1064,7 @@ export default function ManageGroup() {
 
             <div className="pt-1 space-y-1.5">
               {([
+                ...(Capacitor.isNativePlatform() ? [['contacts', 'contacts', 'manageGroup.browseContacts'] as const] : []),
                 ['whatsapp', 'chat', 'manageGroup.inviteViaWhatsapp'],
                 ['email', 'mail', 'manageGroup.inviteByEmail'],
                 ['search', 'person_search', 'manageGroup.searchUsersLabel'],
@@ -1017,7 +1073,10 @@ export default function ManageGroup() {
                 <button
                   key={key}
                   type="button"
-                  onClick={() => setInviteMethodPanel(key)}
+                  onClick={() => {
+                    setInviteMethodPanel(key);
+                    if (key === 'contacts' && !deviceContacts) loadDeviceContacts();
+                  }}
                   className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border border-border-subtle bg-surface/30 hover:bg-surface transition-colors text-left"
                 >
                   <span className="material-symbols-outlined text-primary text-[20px] shrink-0">{icon}</span>
@@ -1602,7 +1661,8 @@ export default function ManageGroup() {
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-primary">
                   {t(
-                    inviteMethodPanel === 'whatsapp' ? 'manageGroup.inviteViaWhatsapp'
+                    inviteMethodPanel === 'contacts' ? 'manageGroup.browseContacts'
+                      : inviteMethodPanel === 'whatsapp' ? 'manageGroup.inviteViaWhatsapp'
                       : inviteMethodPanel === 'email' ? 'manageGroup.inviteByEmail'
                       : inviteMethodPanel === 'search' ? 'manageGroup.searchUsersLabel'
                       : 'manageGroup.inviteFromFriends',
@@ -1612,6 +1672,66 @@ export default function ManageGroup() {
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
               </div>
+
+              {inviteMethodPanel === 'contacts' && (
+                <div className="space-y-2">
+                  {loadingContacts && (
+                    <p className="text-xs text-text-muted text-center py-6">{t('manageGroup.contactsLoading')}</p>
+                  )}
+                  {contactsError && (
+                    <p className="text-xs font-bold text-error text-center py-3">{contactsError}</p>
+                  )}
+                  {!loadingContacts && deviceContacts && (
+                    <>
+                      <input
+                        type="text"
+                        value={contactBrowseSearch}
+                        onChange={(e) => setContactBrowseSearch(e.target.value)}
+                        placeholder={t('manageGroup.searchContactsPlaceholder')}
+                        autoFocus
+                        className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
+                      />
+                      {selectedContactIds.size > 0 && (
+                        <p className="text-[11px] font-bold text-primary px-1">{t('manageGroup.contactsSelectedCount', { count: selectedContactIds.size })}</p>
+                      )}
+                      <div className="space-y-1 max-h-72 overflow-y-auto">
+                        {deviceContacts
+                          .filter((c) => (c.name?.display || '').toLowerCase().includes(contactBrowseSearch.trim().toLowerCase()))
+                          .map((c) => {
+                            const selected = selectedContactIds.has(c.contactId);
+                            return (
+                              <button
+                                key={c.contactId}
+                                type="button"
+                                onClick={() => toggleContactSelected(c.contactId)}
+                                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-surface transition-colors text-left"
+                              >
+                                <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                                  {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-bold text-on-surface truncate">{c.name?.display || t('manageGroup.contactFallback')}</p>
+                                  <p className="text-[10px] text-text-muted truncate">{c.phones?.[0]?.number}</p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        {deviceContacts.filter((c) => (c.name?.display || '').toLowerCase().includes(contactBrowseSearch.trim().toLowerCase())).length === 0 && (
+                          <p className="text-[11px] text-text-muted text-center py-3">{t('manageGroup.noMatchingUsers')}</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleInviteSelectedContactsBySms}
+                        disabled={selectedContactIds.size === 0}
+                        className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm disabled:opacity-40"
+                      >
+                        {t('manageGroup.inviteBySms', { count: selectedContactIds.size })}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {inviteMethodPanel === 'whatsapp' && (
                 <div className="space-y-2">

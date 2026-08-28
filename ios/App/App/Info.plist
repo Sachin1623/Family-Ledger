@@ -54,6 +54,8 @@
       </array>
     </dict>
 	</dict>
+	<key>NSContactsUsageDescription</key>
+	<string>Used to browse your contacts so you can invite them to a group by SMS.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
