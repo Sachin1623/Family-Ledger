@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Touched to force a fresh Xcode Cloud build after capacitor.config.ts's skipNativeAuth fix —
+     that file lives outside ios/, which is Xcode Cloud's actual trigger scope, so it needed a
+     tracked change under here too. See the "Fix Apple sign-in duplicate credential" commit. -->
 <plist version="1.0">
 <dict>
   <key>CAPACITOR_DEBUG</key>
