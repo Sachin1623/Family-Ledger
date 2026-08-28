@@ -51,6 +51,7 @@ function readStoredVolumes(): { master: number; perPeer: Record<string, number> 
 
 export interface GameVoiceState {
   supported: boolean;
+  unsupportedReason: string | null;
   joined: boolean;
   joining: boolean;
   micMuted: boolean;
@@ -75,7 +76,24 @@ export interface GameVoiceState {
 export function useGameVoice(collectionName: string, gameId: string | undefined, players: Player[]): GameVoiceState {
   const { user } = useAuth();
   const myUid = user?.uid;
-  const supported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof RTCPeerConnection !== 'undefined';
+  // Broken into individually-named checks (rather than one combined boolean) purely so
+  // `unsupportedReason` below can report exactly which one failed — WebRTC/getUserMedia support
+  // inside a native WKWebView (iOS) vs. Chrome's WebView (Android) has enough platform-specific
+  // gaps that "not supported" alone isn't enough to debug from a user's screenshot.
+  const hasNavigator = typeof navigator !== 'undefined';
+  const hasMediaDevices = hasNavigator && !!navigator.mediaDevices;
+  const hasGetUserMedia = hasMediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function';
+  const hasRTCPeerConnection = typeof RTCPeerConnection !== 'undefined';
+  const supported = hasGetUserMedia && hasRTCPeerConnection;
+  const unsupportedReason = supported
+    ? null
+    : !hasNavigator
+      ? 'navigator is undefined'
+      : !hasMediaDevices
+        ? 'navigator.mediaDevices is undefined (not a secure context, or this WebView has no media capture support)'
+        : !hasGetUserMedia
+          ? 'navigator.mediaDevices.getUserMedia is undefined'
+          : 'RTCPeerConnection is undefined (no WebRTC support in this WebView)';
 
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -397,6 +415,7 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
 
   return {
     supported,
+    unsupportedReason,
     joined,
     joining,
     micMuted,
@@ -424,7 +443,22 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
 // in the parent, unlike Chat's separate Button/Panel pair (which needs a parent-held `showChat`).
 export const VoiceChatButton: React.FC<{ voice: GameVoiceState; className?: string }> = ({ voice, className }) => {
   const [open, setOpen] = useState(false);
-  if (!voice.supported) return null;
+  // Shown instead of silently hiding — "the button just isn't there" was undebuggable from a
+  // screenshot alone. Tapping it surfaces exactly which browser API is missing, so a real gap
+  // (old iOS, no WebRTC in this WebView) is distinguishable from a stale cached bundle that
+  // predates this feature entirely (which wouldn't show this diagnostic at all — a build that
+  // old has no GameVoiceChat.tsx to run).
+  if (!voice.supported) {
+    return (
+      <button
+        onClick={() => alert(`Voice chat isn't available on this device/browser: ${voice.unsupportedReason}`)}
+        className={`relative p-2 shrink-0 opacity-40 ${className || ''}`}
+        aria-label="Voice chat unavailable"
+      >
+        <span className="material-symbols-outlined text-[20px] block">mic_off</span>
+      </button>
+    );
+  }
 
   return (
     <div className="relative">
