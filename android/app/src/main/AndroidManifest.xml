@@ -63,8 +63,13 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- @capacitor-community/contacts — browsing contacts to invite to a group by SMS -->
+    <!-- @capacitor-community/contacts — browsing contacts to invite to a group by SMS. The
+         plugin's native code requires WRITE_CONTACTS declared too, even though this app only
+         ever calls its read methods (getContacts) — confirmed by the plugin's own runtime error
+         ("Missing the following permissions in AndroidManifest.xml: WRITE_CONTACTS") when only
+         READ_CONTACTS was present. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <!-- In-game voice chat (WebRTC getUserMedia) — Capacitor's own BridgeWebChromeClient already
          forwards the WebView's mic permission prompt to these, no custom native code needed. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
