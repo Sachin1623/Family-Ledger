@@ -503,7 +503,7 @@ export default function AddExpense() {
 
           <section className="bg-white p-3 rounded-2xl border border-border-subtle shadow-sm" data-tour="expense-amount">
           <div className="flex items-start justify-between gap-2 mb-1">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.amount')}</label>
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.amount')} <span className="text-error">*</span></label>
             {groupId && budget && (() => {
               const signedEntryAmount = entryType === 'income' ? 0 : (evaluatedAmount || 0);
               const projectedRemaining = budget.amount - monthSpendSoFar - signedEntryAmount;
@@ -564,7 +564,7 @@ export default function AddExpense() {
               </div>
             ) : (
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.group')}</label>
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.group')} <span className="text-error">*</span></label>
                 <select
                   value={groupId}
                   onChange={(e) => setGroupId(e.target.value)}
@@ -638,7 +638,7 @@ export default function AddExpense() {
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1 relative">
-            <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.description')}</label>
+            <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.description')} <span className="text-error">*</span></label>
             <input
               value={description}
               onChange={(e) => setDescription(e.target.value)}

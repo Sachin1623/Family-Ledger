@@ -1057,7 +1057,7 @@ export default function GroupExpenses() {
               <div className="flex-1 overflow-y-auto p-6 pt-4">
                 <form id="edit-expense-form" onSubmit={handleUpdateExpense} className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.description')}</label>
+                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.description')} <span className="text-error">*</span></label>
                   <input 
                     type="text" 
                     value={editingExpense.description}
@@ -1068,7 +1068,7 @@ export default function GroupExpenses() {
 
                 <div className="flex items-start gap-2 relative z-[20]">
                   <div className="flex-1 min-w-0 space-y-1">
-                    <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.group')}</label>
+                    <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.group')} <span className="text-error">*</span></label>
                     <div className="relative">
                       {editingExpense.splitInfo ? (
                         <div className="w-full h-12 bg-surface-container px-4 rounded-xl border border-border-subtle flex items-center font-bold text-primary opacity-70">
@@ -1137,7 +1137,7 @@ export default function GroupExpenses() {
                 )}
 
                 <div className="space-y-1 relative z-[10]">
-                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.amountWithCurrency', { currency: allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency || 'USD' })}</label>
+                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.amountWithCurrency', { currency: allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency || 'USD' })} <span className="text-error">*</span></label>
                   <div className="relative flex items-center gap-2">
                     <div className="relative flex-1">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-primary">

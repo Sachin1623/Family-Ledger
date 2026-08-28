@@ -127,6 +127,10 @@ export default function PersonalLoans() {
       setError(t('loans.chooseContactOrName'));
       return;
     }
+    if (entryDate > todayLocalDateString()) {
+      setError(t('loans.dateCannotBeFuture'));
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -431,6 +435,7 @@ export default function PersonalLoans() {
                   type="date"
                   value={entryDate}
                   onChange={(e) => setEntryDate(e.target.value)}
+                  max={todayLocalDateString()}
                   className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>

@@ -118,6 +118,7 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [membershipsValue, groupOrder.join(',')]);
 
+  const [favoritesCollapsed, setFavoritesCollapsed] = useState(true);
   const [showReorderModal, setShowReorderModal] = useState(false);
   const [dragOrder, setDragOrder] = useState<string[]>([]);
   const [savingOrder, setSavingOrder] = useState(false);
@@ -159,21 +160,35 @@ export default function Dashboard() {
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-24">
       {favoriteItems.length > 0 && (
         <section>
-          <h3 className="text-sm font-black text-primary uppercase tracking-wider mb-3">{t('dashboard.favorites')}</h3>
-          <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-            {favoriteItems.map((item) => (
-              <div
-                key={item.key}
-                onClick={() => navigate(item.to)}
-                className="shrink-0 w-11 flex flex-col items-center gap-0.5 bg-white rounded-lg border border-border-subtle p-1.5 cursor-pointer hover:shadow-sm active:scale-95 transition-all"
-              >
-                <div className="w-5 h-5 rounded-md bg-primary/5 flex items-center justify-center">
-                  <span className="text-[11px]">{item.icon}</span>
+          <button
+            type="button"
+            onClick={() => setFavoritesCollapsed((c) => !c)}
+            className="w-full flex items-center justify-between mb-3"
+          >
+            <h3 className="text-sm font-black text-primary uppercase tracking-wider">{t('dashboard.favorites')}</h3>
+            <span className={clsx('material-symbols-outlined text-text-muted transition-transform', favoritesCollapsed && '-rotate-90')}>expand_more</span>
+          </button>
+          <motion.div
+            initial={false}
+            animate={{ height: favoritesCollapsed ? 0 : 'auto', opacity: favoritesCollapsed ? 0 : 1 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+              {favoriteItems.map((item) => (
+                <div
+                  key={item.key}
+                  onClick={() => navigate(item.to)}
+                  className="shrink-0 w-16 flex flex-col items-center gap-1 bg-white rounded-xl border border-border-subtle p-2 cursor-pointer hover:shadow-sm active:scale-95 transition-all"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center">
+                    <span className="text-xl">{item.icon}</span>
+                  </div>
+                  <p className="text-[9px] font-bold text-on-surface text-center leading-tight line-clamp-2">{item.label}</p>
                 </div>
-                <p className="text-[7px] font-bold text-on-surface text-center leading-tight line-clamp-2">{item.label}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </motion.div>
         </section>
       )}
 
@@ -190,13 +205,6 @@ export default function Dashboard() {
                 <span className="material-symbols-outlined text-[20px]">swap_vert</span>
               </button>
             )}
-            <button
-              onClick={() => navigate('/recurring-expenses')}
-              title="Recurring Expenses"
-              className="w-10 h-10 rounded-xl border border-border-subtle text-primary flex items-center justify-center hover:bg-surface-container active:scale-95 transition-all"
-            >
-              <span className="material-symbols-outlined text-[20px]">event_repeat</span>
-            </button>
             <button
               data-tour="dashboard-new-group"
               onClick={() => navigate('/create-group')}

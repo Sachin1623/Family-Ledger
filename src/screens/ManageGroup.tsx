@@ -57,6 +57,27 @@ export default function ManageGroup() {
   const [recurringTypeFilter, setRecurringTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
+  // Tabbed layout — was one long flat page (icon/name/type/toggles/categories/budget/recurring/
+  // invite/pending/leaderboard/members/danger zone all rendered at once); splitting it into
+  // sections a visitor picks between keeps each screenful short and scannable.
+  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'invite' | 'settings'>('overview');
+  // Group Type used to be three always-visible, always-on-screen controls (type pills + two
+  // toggles). Turned into a short 2-step flow instead — step 1 picks Regular vs One-off, step 2
+  // configures the features that actually depend on that choice — so an admin sees one decision
+  // at a time instead of three unrelated controls competing for attention.
+  const [showGroupTypeFlow, setShowGroupTypeFlow] = useState(false);
+  const [groupTypeStep, setGroupTypeStep] = useState<1 | 2>(1);
+  // Spend Categories and Recurring Expenses were always-expanded inline blocks (the categories
+  // list alone scrolls to 64 units tall) — both now live behind a summary card that opens a
+  // floating panel on click, same idiom as the settings panels elsewhere in this app (Health
+  // trackers' Sharing/Delegates panels).
+  const [showCategoryPanel, setShowCategoryPanel] = useState(false);
+  const [showRecurringPanel, setShowRecurringPanel] = useState(false);
+  // Invite tab used to show all four invite methods (WhatsApp/SMS, email, user search, friends)
+  // stacked and always expanded — now a picker menu, each method opening its own focused panel.
+  const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | null>(null);
+  const [friendInviteSearch, setFriendInviteSearch] = useState('');
+
   // Monthly budget — doc ID is deterministic (`${groupId}_${YYYY-MM}`) so setting it is a
   // plain upsert. Month-to-date spend is computed client-side from this group's expenses.
   const monthKey = currentLocalMonthKey();
@@ -756,123 +777,6 @@ export default function ManageGroup() {
               </div>
             )}
 
-            {isAdminOrOwner && (
-              <div className="space-y-1 pt-2 border-t border-border-subtle/50">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('createGroup.groupType')}</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSetGroupType('regular')}
-                    className={clsx(
-                      'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                      (group.groupType || 'regular') === 'regular'
-                        ? 'bg-primary text-white border-primary'
-                        : 'bg-surface text-text-muted border-border-subtle'
-                    )}
-                  >
-                    {t('createGroup.regularMonthly')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetGroupType('event')}
-                    className={clsx(
-                      'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                      group.groupType === 'event'
-                        ? 'bg-primary text-white border-primary'
-                        : 'bg-surface text-text-muted border-border-subtle'
-                    )}
-                  >
-                    {t('createGroup.oneOffEvent')}
-                  </button>
-                </div>
-                <p className="text-[10px] text-text-muted px-1">
-                  {t('manageGroup.eventGroupsDesc')}
-                </p>
-              </div>
-            )}
-
-            {isAdminOrOwner && (
-              <div className="space-y-2 pt-2 border-t border-border-subtle/50">
-                <div
-                  onClick={handleToggleSplit}
-                  className="flex items-center justify-between p-3 bg-surface rounded-xl border border-border-subtle cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={clsx(
-                      'w-9 h-9 rounded-full flex items-center justify-center transition-colors',
-                      group.splitEnabled ? 'bg-primary text-white' : 'bg-white text-text-muted border border-border-subtle'
-                    )}>
-                      <span className="material-symbols-outlined text-[18px]">call_split</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold text-primary">{t('createGroup.expenseSplitting')}</span>
-                      <span className="text-[10px] text-text-muted">{t('createGroup.expenseSplittingDesc')}</span>
-                    </div>
-                  </div>
-                  <div className={clsx('w-11 h-6 rounded-full transition-all relative', group.splitEnabled ? 'bg-primary' : 'bg-border-subtle')}>
-                    <div className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm', group.splitEnabled ? 'left-6' : 'left-1')} />
-                  </div>
-                </div>
-
-                <div
-                  onClick={handleToggleIncome}
-                  className="flex items-center justify-between p-3 bg-surface rounded-xl border border-border-subtle cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={clsx(
-                      'w-9 h-9 rounded-full flex items-center justify-center transition-colors',
-                      group.incomeEnabled ? 'bg-primary text-white' : 'bg-white text-text-muted border border-border-subtle'
-                    )}>
-                      <span className="material-symbols-outlined text-[18px]">add_card</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold text-primary">{t('createGroup.trackIncome')}</span>
-                      <span className="text-[10px] text-text-muted">{t('createGroup.trackIncomeDesc')}</span>
-                    </div>
-                  </div>
-                  <div className={clsx('w-11 h-6 rounded-full transition-all relative', group.incomeEnabled ? 'bg-primary' : 'bg-border-subtle')}>
-                    <div className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm', group.incomeEnabled ? 'left-6' : 'left-1')} />
-                  </div>
-                </div>
-
-                {/* Essential vs Optional — every category already has a sensible app-wide default
-                    (see DEFAULT_CATEGORY_CLASSIFICATION), so this only needs to show current state
-                    and let an admin override any category for THIS group specifically. */}
-                <div className="p-3 bg-surface rounded-xl border border-border-subtle space-y-2">
-                  <p className="text-xs font-bold text-primary">Spend Categories</p>
-                  <p className="text-[10px] text-text-muted">Classify each category so members see it while adding an expense, and so the group's Essential/Optional filter and chart work.</p>
-                  <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                    {EXPENSE_CATEGORIES.map((cat) => {
-                      const current = getCategoryClassification(group, cat.id);
-                      return (
-                        <div key={cat.id} className="flex items-center justify-between gap-2 py-1">
-                          <span className="text-xs font-bold text-on-surface flex items-center gap-1.5 min-w-0">
-                            <span>{cat.icon}</span>
-                            <span className="truncate">{t(`category.${cat.id}`)}</span>
-                          </span>
-                          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 shrink-0">
-                            {(['essential', 'optional'] as CategoryClassification[]).map((opt) => (
-                              <button
-                                key={opt}
-                                type="button"
-                                onClick={() => handleSetCategoryClassification(cat.id, opt)}
-                                className={clsx(
-                                  'px-2 py-1 rounded-md text-[10px] font-bold transition-all',
-                                  current === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                                )}
-                              >
-                                {opt === 'essential' ? t('common.essential') : t('common.optional')}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
             <AnimatePresence>
               {showIconGrid && isAdminOrOwner && (
                 <motion.div 
@@ -907,6 +811,31 @@ export default function ManageGroup() {
           </div>
         </section>
 
+        {/* Tab bar — the rest of the page used to render every section at once; now only the
+            active tab's sections mount, so a visit is a short, single-purpose screenful. */}
+        <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1 sticky top-[calc(0.5rem+env(safe-area-inset-top))] z-10">
+          {([
+            ['overview', 'manageGroup.tabOverview'],
+            ['members', 'manageGroup.tabMembers'],
+            ['invite', 'manageGroup.tabInvite'],
+            ['settings', 'manageGroup.tabSettings'],
+          ] as const).map(([key, labelKey]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveTab(key)}
+              className={clsx(
+                'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
+                activeTab === key ? 'bg-primary text-white' : 'text-text-muted',
+              )}
+            >
+              {t(labelKey)}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'overview' && (
+        <>
         {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white p-3.5 rounded-2xl border border-border-subtle shadow-sm min-w-0">
@@ -1023,93 +952,38 @@ export default function ManageGroup() {
           )}
         </section>
 
-        {/* Recurring Expenses (group-wide, read-only here — manage your own via Recurring Expenses screen) */}
+        {/* Recurring Expenses summary — tap to open the full list in a floating panel (manage
+            your own rules via the dedicated Recurring Expenses screen, linked from there). */}
         {recurringError && (
           <p className="text-xs text-error px-1">
             {t('manageGroup.couldntLoadRecurring', { error: recurringError.code || recurringError.message })}
           </p>
         )}
         {recurringRules.length > 0 && (
-          <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-primary">{t('search.recurringExpenses')}</h3>
-              <button
-                onClick={() => navigate('/recurring-expenses')}
-                className="text-[11px] font-bold text-primary underline"
-              >
-                {t('manageGroup.manage')}
-              </button>
+          <button
+            type="button"
+            onClick={() => setShowRecurringPanel(true)}
+            className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[20px]">autorenew</span>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-primary truncate">{t('search.recurringExpenses')}</p>
+                <p className="text-[11px] text-text-muted truncate">{t('manageGroup.activeCount', { count: recurringRules.filter((r: any) => r.active).length })}</p>
+              </div>
             </div>
-            <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-              {(['all', 'expense', 'income'] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => setRecurringTypeFilter(opt)}
-                  className={clsx(
-                    'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
-                    recurringTypeFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                  )}
-                >
-                  {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
-                </button>
-              ))}
-            </div>
-            <div className="space-y-2">
-              {recurringRules
-                .filter((rule: any) => recurringTypeFilter === 'all' || (recurringTypeFilter === 'income' ? rule.type === 'income' : rule.type !== 'income'))
-                .map((rule: any) => {
-                const creator = members.find((m: any) => m.userId === rule.userId);
-                const isIncome = rule.type === 'income';
-                const catInfo = (isIncome ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).find((c: any) => c.id === rule.category);
-                return (
-                  <div
-                    key={rule.id}
-                    className={clsx(
-                      "flex items-center gap-3 p-2 rounded-xl border border-border-subtle",
-                      !rule.active && "opacity-50"
-                    )}
-                  >
-                    <div className={clsx('w-9 h-9 rounded-full flex items-center justify-center shrink-0', isIncome ? 'bg-success/10 text-success' : 'bg-primary/5 text-primary')}>
-                      <span className="text-lg">{catInfo?.icon || '🔁'}</span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-bold text-primary truncate flex items-center gap-1.5">
-                        <span className={clsx(
-                          'text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
-                          isIncome ? 'bg-success/10 text-success' : 'bg-primary/10 text-primary',
-                        )}>
-                          {isIncome ? t('common.income') : t('common.expense')}
-                        </span>
-                        <span className="truncate">
-                          {rule.description || (catInfo ? t(`${isIncome ? 'income' : 'category'}.${catInfo.id}`) : '')} — {isIncome ? '+' : ''}{getCurrencySymbol(group.currency)}{Number(rule.amount).toFixed(2)}
-                        </span>
-                      </p>
-                      <p className="text-[10px] text-text-muted truncate">
-                        {describeFrequency(rule)}{!rule.active && ` · ${t('manageGroup.paused')}`}
-                        {rule.splitMembers?.length > 0 && ` · ${t('manageGroup.splitNWays', { count: rule.splitMembers.length })}`}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0" title={t('manageGroup.setUpBy', { name: creator?.displayName || t('todo.aMember') })}>
-                      <div className="w-6 h-6 rounded-full overflow-hidden bg-primary/10">
-                        {creator?.photoURL ? (
-                          <img src={creator.photoURL} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="material-symbols-outlined text-[14px] flex items-center justify-center h-full">person</span>
-                        )}
-                      </div>
-                      <span className="text-[10px] font-bold text-text-muted truncate max-w-[60px]">
-                        {creator?.userId === user?.uid ? t('common.me') : creator?.displayName || t('common.member')}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+            <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
+          </button>
+        )}
+        </>
         )}
 
-        {/* Invite Section */}
+        {activeTab === 'invite' && (
+        <>
+        {/* Invite Section — a method picker instead of every invite path stacked and expanded;
+            each method opens its own focused floating panel (built further down). */}
         {!!currentMember && (
           <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
             <div>
@@ -1133,182 +1007,25 @@ export default function ManageGroup() {
               </button>
             </div>
 
-            <div className="pt-2 border-t border-border-subtle/50 space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                {t('manageGroup.inviteViaWhatsapp')}
-              </label>
-              {contactPickerSupported && !contactPickerFailed ? (
+            <div className="pt-1 space-y-1.5">
+              {([
+                ['whatsapp', 'chat', 'manageGroup.inviteViaWhatsapp'],
+                ['email', 'mail', 'manageGroup.inviteByEmail'],
+                ['search', 'person_search', 'manageGroup.searchUsersLabel'],
+                ...(addableFriends.length > 0 ? [['friends', 'group_add', 'manageGroup.inviteFromFriends'] as const] : []),
+              ] as const).map(([key, icon, labelKey]) => (
                 <button
+                  key={key}
                   type="button"
-                  onClick={handlePickContact}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-border-subtle bg-surface/30 text-xs"
+                  onClick={() => setInviteMethodPanel(key)}
+                  className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border border-border-subtle bg-surface/30 hover:bg-surface transition-colors text-left"
                 >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="material-symbols-outlined text-[18px] text-primary">contacts</span>
-                    <span className="truncate font-medium text-on-surface">
-                      {contactName || contactPhone
-                        ? `${contactName || t('manageGroup.contactFallback')}${contactPhone ? ` · ${contactPhone}` : ''}`
-                        : t('manageGroup.chooseContact')}
-                    </span>
-                  </span>
-                  <span className="text-[10px] font-bold text-primary shrink-0">{contactPhone ? t('manageGroup.change') : t('manageGroup.pick')}</span>
+                  <span className="material-symbols-outlined text-primary text-[20px] shrink-0">{icon}</span>
+                  <span className="flex-1 text-xs font-bold text-on-surface">{t(labelKey)}</span>
+                  <span className="material-symbols-outlined text-text-muted text-[18px] shrink-0">chevron_right</span>
                 </button>
-              ) : (
-                <input
-                  type="tel"
-                  value={contactPhone}
-                  onChange={(e) => setContactPhone(e.target.value)}
-                  placeholder={t('manageGroup.phoneOptional')}
-                  className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
-                />
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleSendWhatsApp}
-                  className="flex-1 bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
-                >
-                  <span className="material-symbols-outlined text-[18px]">chat</span>
-                  WhatsApp
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSendSms}
-                  className="flex-1 bg-primary/5 text-primary py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-primary/10 active:scale-[0.98] transition-all border border-primary/10"
-                >
-                  <span className="material-symbols-outlined text-[18px]">sms</span>
-                  {t('search.messageLabel')}
-                </button>
-              </div>
-              <p className="text-[10px] text-text-muted px-1">
-                {contactPickerSupported && !contactPickerFailed
-                  ? t('manageGroup.pickContactHelp')
-                  : t('manageGroup.addPhoneHelp')}
-              </p>
+              ))}
             </div>
-
-            <div className="pt-2 border-t border-border-subtle/50 space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('manageGroup.inviteByEmail')}</label>
-              <div className="flex gap-2">
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !inviting) handleEmailInvite(); }}
-                  placeholder="name@example.com"
-                  className="flex-1 min-w-0 px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
-                />
-                <button
-                  onClick={handleEmailInvite}
-                  disabled={inviting || !inviteEmail.trim()}
-                  className="px-4 bg-primary text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all disabled:opacity-50 flex-shrink-0"
-                >
-                  {inviting ? (
-                    <span className="material-symbols-outlined animate-spin text-[16px]">sync</span>
-                  ) : (
-                    <span className="material-symbols-outlined text-[16px]">send</span>
-                  )}
-                  <span>{t('manageGroup.send')}</span>
-                </button>
-              </div>
-              {inviteFeedback && (
-                <p className={clsx(
-                  "text-[11px] font-medium px-1",
-                  inviteFeedback.type === 'success' ? 'text-success' : 'text-error'
-                )}>
-                  {inviteFeedback.text}
-                </p>
-              )}
-              <p className="text-[10px] text-text-muted px-1">
-                {t('manageGroup.emailInviteHelp')}
-              </p>
-            </div>
-
-            <div className="pt-2 border-t border-border-subtle/50 space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                {t('manageGroup.searchUsersLabel')}
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={userSearchQuery}
-                  onChange={(e) => setUserSearchQuery(e.target.value)}
-                  placeholder={t('manageGroup.searchUsersPlaceholder')}
-                  className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
-                />
-                {searchingUsers && (
-                  <span className="material-symbols-outlined animate-spin text-[16px] text-text-muted absolute right-3 top-1/2 -translate-y-1/2">sync</span>
-                )}
-              </div>
-              {userSearchQuery.trim().length >= 2 && !searchingUsers && userSearchResults.length === 0 && (
-                <p className="text-[11px] text-text-muted px-1">{t('manageGroup.noMatchingUsers')}</p>
-              )}
-              {userSearchResults.length > 0 && (
-                <div className="space-y-1.5">
-                  {userSearchResults.map((foundUser) => {
-                    const alreadyInvited = invitedUids.has(foundUser.uid);
-                    return (
-                      <div key={foundUser.uid} className="flex items-center justify-between gap-2 p-2 rounded-xl bg-surface/50 border border-border-subtle">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-8 h-8 rounded-full bg-surface-container-high overflow-hidden shrink-0">
-                            {foundUser.photoURL ? (
-                              <img src={foundUser.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-xs font-bold">
-                                {foundUser.displayName.slice(0, 1)}
-                              </div>
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-on-surface truncate">{foundUser.displayName}</p>
-                            {foundUser.shortId && (
-                              <p className="text-[10px] text-text-muted font-bold tracking-wide">{t('manageGroup.idLabel', { id: foundUser.shortId })}</p>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleInviteFoundUser(foundUser)}
-                          disabled={invitingUid === foundUser.uid || alreadyInvited}
-                          className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold flex items-center gap-1 active:scale-[0.98] transition-all disabled:opacity-50 shrink-0"
-                        >
-                          {invitingUid === foundUser.uid ? (
-                            <span className="material-symbols-outlined animate-spin text-[14px]">sync</span>
-                          ) : alreadyInvited ? (
-                            t('manageGroup.invited')
-                          ) : (
-                            t('manageGroup.invite')
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <p className="text-[10px] text-text-muted px-1">
-                {t('manageGroup.findUsersHelp')}
-              </p>
-            </div>
-
-            {addableFriends.length > 0 && (
-              <div className="pt-2 border-t border-border-subtle/50 space-y-2">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                  {t('manageGroup.inviteFromFriends')}
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {addableFriends.map((u) => (
-                    <button
-                      key={u.uid}
-                      onClick={() => handleInviteFoundUser({ uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, shortId: null })}
-                      disabled={invitingUid === u.uid}
-                      className="px-3 py-1.5 rounded-full text-xs font-bold border border-border-subtle bg-white text-text-muted flex items-center gap-1 disabled:opacity-50"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">add</span>
-                      {u.displayName}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </section>
         )}
 
@@ -1355,7 +1072,11 @@ export default function ManageGroup() {
             </div>
           </section>
         )}
+        </>
+        )}
 
+        {activeTab === 'members' && (
+        <>
         {/* Group leaderboard — friends-scoped ranking lives on My Progress; this is the same idea
             scoped to just this group's roster, using the same server endpoint with a different
             `scope` param. */}
@@ -1494,6 +1215,52 @@ export default function ManageGroup() {
             ))}
           </div>
         </section>
+        </>
+        )}
+
+        {activeTab === 'settings' && (
+        <>
+        {isAdminOrOwner && (
+          <section className="space-y-2">
+            <button
+              type="button"
+              onClick={() => { setGroupTypeStep(1); setShowGroupTypeFlow(true); }}
+              className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">tune</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-primary truncate">{t('manageGroup.groupTypeAndFeatures')}</p>
+                  <p className="text-[11px] text-text-muted truncate">
+                    {t((group.groupType || 'regular') === 'event' ? 'createGroup.oneOffEvent' : 'createGroup.regularMonthly')}
+                    {' · '}{t('createGroup.expenseSplitting')} {group.splitEnabled ? t('common.on') : t('common.off')}
+                    {' · '}{t('createGroup.trackIncome')} {group.incomeEnabled ? t('common.on') : t('common.off')}
+                  </p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowCategoryPanel(true)}
+              className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">category</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-primary truncate">{t('manageGroup.spendCategories')}</p>
+                  <p className="text-[11px] text-text-muted truncate">{t('manageGroup.customizeCategories')}</p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
+            </button>
+          </section>
+        )}
 
         {/* Danger Zone */}
         {isCreator && (
@@ -1545,7 +1312,503 @@ export default function ManageGroup() {
             </div>
           </section>
         )}
+        </>
+        )}
       </main>
+
+      {/* Group Type & Features — 2-step flow: pick Regular vs One-off first, then configure the
+          features that depend on it, instead of three unrelated controls all visible at once. */}
+      <AnimatePresence>
+        {showGroupTypeFlow && isAdminOrOwner && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setShowGroupTypeFlow(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-2xl p-5 space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('manageGroup.stepOf', { current: groupTypeStep, total: 2 })}</p>
+                <button type="button" onClick={() => setShowGroupTypeFlow(false)} className="text-text-muted">
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              {groupTypeStep === 1 ? (
+                <>
+                  <h3 className="text-base font-bold text-primary">{t('manageGroup.groupTypeStep1Title')}</h3>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSetGroupType('regular')}
+                      className={clsx(
+                        'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
+                        (group.groupType || 'regular') === 'regular'
+                          ? 'bg-primary text-white border-primary'
+                          : 'bg-surface text-text-muted border-border-subtle'
+                      )}
+                    >
+                      {t('createGroup.regularMonthly')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetGroupType('event')}
+                      className={clsx(
+                        'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
+                        group.groupType === 'event'
+                          ? 'bg-primary text-white border-primary'
+                          : 'bg-surface text-text-muted border-border-subtle'
+                      )}
+                    >
+                      {t('createGroup.oneOffEvent')}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-text-muted px-1">{t('manageGroup.eventGroupsDesc')}</p>
+                  <button
+                    type="button"
+                    onClick={() => setGroupTypeStep(2)}
+                    className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm"
+                  >
+                    {t('common.next')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-base font-bold text-primary">{t('manageGroup.groupTypeStep2Title')}</h3>
+                  <div
+                    onClick={handleToggleSplit}
+                    className="flex items-center justify-between p-3 bg-surface rounded-xl border border-border-subtle cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={clsx(
+                        'w-9 h-9 rounded-full flex items-center justify-center transition-colors',
+                        group.splitEnabled ? 'bg-primary text-white' : 'bg-white text-text-muted border border-border-subtle'
+                      )}>
+                        <span className="material-symbols-outlined text-[18px]">call_split</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-primary">{t('createGroup.expenseSplitting')}</span>
+                        <span className="text-[10px] text-text-muted">{t('createGroup.expenseSplittingDesc')}</span>
+                      </div>
+                    </div>
+                    <div className={clsx('w-11 h-6 rounded-full transition-all relative', group.splitEnabled ? 'bg-primary' : 'bg-border-subtle')}>
+                      <div className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm', group.splitEnabled ? 'left-6' : 'left-1')} />
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={handleToggleIncome}
+                    className="flex items-center justify-between p-3 bg-surface rounded-xl border border-border-subtle cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={clsx(
+                        'w-9 h-9 rounded-full flex items-center justify-center transition-colors',
+                        group.incomeEnabled ? 'bg-primary text-white' : 'bg-white text-text-muted border border-border-subtle'
+                      )}>
+                        <span className="material-symbols-outlined text-[18px]">add_card</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-primary">{t('createGroup.trackIncome')}</span>
+                        <span className="text-[10px] text-text-muted">{t('createGroup.trackIncomeDesc')}</span>
+                      </div>
+                    </div>
+                    <div className={clsx('w-11 h-6 rounded-full transition-all relative', group.incomeEnabled ? 'bg-primary' : 'bg-border-subtle')}>
+                      <div className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm', group.incomeEnabled ? 'left-6' : 'left-1')} />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setGroupTypeStep(1)}
+                      className="flex-1 py-3 rounded-xl font-bold text-text-muted border border-border-subtle text-sm"
+                    >
+                      {t('common.back')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowGroupTypeFlow(false)}
+                      className="flex-1 py-3 bg-primary text-white font-bold rounded-xl text-sm"
+                    >
+                      {t('common.done')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Spend Categories — floating panel, opened from the Settings tab summary card. */}
+      <AnimatePresence>
+        {showCategoryPanel && isAdminOrOwner && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setShowCategoryPanel(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-primary">{t('manageGroup.spendCategories')}</h3>
+                <button type="button" onClick={() => setShowCategoryPanel(false)} className="text-text-muted">
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-text-muted">{t('manageGroup.spendCategoriesDesc')}</p>
+              <div className="space-y-1">
+                {EXPENSE_CATEGORIES.map((cat) => {
+                  const current = getCategoryClassification(group, cat.id);
+                  return (
+                    <div key={cat.id} className="flex items-center justify-between gap-2 py-1">
+                      <span className="text-xs font-bold text-on-surface flex items-center gap-1.5 min-w-0">
+                        <span>{cat.icon}</span>
+                        <span className="truncate">{t(`category.${cat.id}`)}</span>
+                      </span>
+                      <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 shrink-0">
+                        {(['essential', 'optional'] as CategoryClassification[]).map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => handleSetCategoryClassification(cat.id, opt)}
+                            className={clsx(
+                              'px-2 py-1 rounded-md text-[10px] font-bold transition-all',
+                              current === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                            )}
+                          >
+                            {opt === 'essential' ? t('common.essential') : t('common.optional')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Recurring Expenses — floating panel, opened from the Overview tab summary card. */}
+      <AnimatePresence>
+        {showRecurringPanel && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setShowRecurringPanel(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-primary">{t('search.recurringExpenses')}</h3>
+                <button type="button" onClick={() => setShowRecurringPanel(false)} className="text-text-muted">
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
+                  {(['all', 'expense', 'income'] as const).map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setRecurringTypeFilter(opt)}
+                      className={clsx(
+                        'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
+                        recurringTypeFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                      )}
+                    >
+                      {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => { setShowRecurringPanel(false); navigate(`/recurring-expenses?groupId=${groupId}`); }}
+                  className="text-[11px] font-bold text-primary underline shrink-0"
+                >
+                  {t('manageGroup.manage')}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {recurringRules
+                  .filter((rule: any) => recurringTypeFilter === 'all' || (recurringTypeFilter === 'income' ? rule.type === 'income' : rule.type !== 'income'))
+                  .map((rule: any) => {
+                  const creator = members.find((m: any) => m.userId === rule.userId);
+                  const isIncome = rule.type === 'income';
+                  const catInfo = (isIncome ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).find((c: any) => c.id === rule.category);
+                  return (
+                    <div
+                      key={rule.id}
+                      className={clsx(
+                        "flex items-center gap-3 p-2 rounded-xl border border-border-subtle",
+                        !rule.active && "opacity-50"
+                      )}
+                    >
+                      <div className={clsx('w-9 h-9 rounded-full flex items-center justify-center shrink-0', isIncome ? 'bg-success/10 text-success' : 'bg-primary/5 text-primary')}>
+                        <span className="text-lg">{catInfo?.icon || '🔁'}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-primary truncate flex items-center gap-1.5">
+                          <span className={clsx(
+                            'text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
+                            isIncome ? 'bg-success/10 text-success' : 'bg-primary/10 text-primary',
+                          )}>
+                            {isIncome ? t('common.income') : t('common.expense')}
+                          </span>
+                          <span className="truncate">
+                            {rule.description || (catInfo ? t(`${isIncome ? 'income' : 'category'}.${catInfo.id}`) : '')} — {isIncome ? '+' : ''}{getCurrencySymbol(group.currency)}{Number(rule.amount).toFixed(2)}
+                          </span>
+                        </p>
+                        <p className="text-[10px] text-text-muted truncate">
+                          {describeFrequency(rule)}{!rule.active && ` · ${t('manageGroup.paused')}`}
+                          {rule.splitMembers?.length > 0 && ` · ${t('manageGroup.splitNWays', { count: rule.splitMembers.length })}`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0" title={t('manageGroup.setUpBy', { name: creator?.displayName || t('todo.aMember') })}>
+                        <div className="w-6 h-6 rounded-full overflow-hidden bg-primary/10">
+                          {creator?.photoURL ? (
+                            <img src={creator.photoURL} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="material-symbols-outlined text-[14px] flex items-center justify-center h-full">person</span>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-bold text-text-muted truncate max-w-[60px]">
+                          {creator?.userId === user?.uid ? t('common.me') : creator?.displayName || t('common.member')}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Invite methods — each a focused floating panel, opened from the picker menu above. */}
+      <AnimatePresence>
+        {inviteMethodPanel && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setInviteMethodPanel(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-primary">
+                  {t(
+                    inviteMethodPanel === 'whatsapp' ? 'manageGroup.inviteViaWhatsapp'
+                      : inviteMethodPanel === 'email' ? 'manageGroup.inviteByEmail'
+                      : inviteMethodPanel === 'search' ? 'manageGroup.searchUsersLabel'
+                      : 'manageGroup.inviteFromFriends',
+                  )}
+                </h3>
+                <button type="button" onClick={() => setInviteMethodPanel(null)} className="text-text-muted">
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              {inviteMethodPanel === 'whatsapp' && (
+                <div className="space-y-2">
+                  {contactPickerSupported && !contactPickerFailed ? (
+                    <button
+                      type="button"
+                      onClick={handlePickContact}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-border-subtle bg-surface/30 text-xs"
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="material-symbols-outlined text-[18px] text-primary">contacts</span>
+                        <span className="truncate font-medium text-on-surface">
+                          {contactName || contactPhone
+                            ? `${contactName || t('manageGroup.contactFallback')}${contactPhone ? ` · ${contactPhone}` : ''}`
+                            : t('manageGroup.chooseContact')}
+                        </span>
+                      </span>
+                      <span className="text-[10px] font-bold text-primary shrink-0">{contactPhone ? t('manageGroup.change') : t('manageGroup.pick')}</span>
+                    </button>
+                  ) : (
+                    <input
+                      type="tel"
+                      value={contactPhone}
+                      onChange={(e) => setContactPhone(e.target.value)}
+                      placeholder={t('manageGroup.phoneOptional')}
+                      className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
+                    />
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSendWhatsApp}
+                      className="flex-1 bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">chat</span>
+                      WhatsApp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSendSms}
+                      className="flex-1 bg-primary/5 text-primary py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-primary/10 active:scale-[0.98] transition-all border border-primary/10"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">sms</span>
+                      {t('search.messageLabel')}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-text-muted px-1">
+                    {contactPickerSupported && !contactPickerFailed
+                      ? t('manageGroup.pickContactHelp')
+                      : t('manageGroup.addPhoneHelp')}
+                  </p>
+                </div>
+              )}
+
+              {inviteMethodPanel === 'email' && (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !inviting) handleEmailInvite(); }}
+                      placeholder="name@example.com"
+                      autoFocus
+                      className="flex-1 min-w-0 px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
+                    />
+                    <button
+                      onClick={handleEmailInvite}
+                      disabled={inviting || !inviteEmail.trim()}
+                      className="px-4 bg-primary text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all disabled:opacity-50 flex-shrink-0"
+                    >
+                      {inviting ? (
+                        <span className="material-symbols-outlined animate-spin text-[16px]">sync</span>
+                      ) : (
+                        <span className="material-symbols-outlined text-[16px]">send</span>
+                      )}
+                      <span>{t('manageGroup.send')}</span>
+                    </button>
+                  </div>
+                  {inviteFeedback && (
+                    <p className={clsx(
+                      "text-[11px] font-medium px-1",
+                      inviteFeedback.type === 'success' ? 'text-success' : 'text-error'
+                    )}>
+                      {inviteFeedback.text}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-text-muted px-1">
+                    {t('manageGroup.emailInviteHelp')}
+                  </p>
+                </div>
+              )}
+
+              {inviteMethodPanel === 'search' && (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      placeholder={t('manageGroup.searchUsersPlaceholder')}
+                      autoFocus
+                      className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
+                    />
+                    {searchingUsers && (
+                      <span className="material-symbols-outlined animate-spin text-[16px] text-text-muted absolute right-3 top-1/2 -translate-y-1/2">sync</span>
+                    )}
+                  </div>
+                  {userSearchQuery.trim().length >= 2 && !searchingUsers && userSearchResults.length === 0 && (
+                    <p className="text-[11px] text-text-muted px-1">{t('manageGroup.noMatchingUsers')}</p>
+                  )}
+                  {userSearchResults.length > 0 && (
+                    <div className="space-y-1.5">
+                      {userSearchResults.map((foundUser) => {
+                        const alreadyInvited = invitedUids.has(foundUser.uid);
+                        return (
+                          <div key={foundUser.uid} className="flex items-center justify-between gap-2 p-2 rounded-xl bg-surface/50 border border-border-subtle">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-surface-container-high overflow-hidden shrink-0">
+                                {foundUser.photoURL ? (
+                                  <img src={foundUser.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-xs font-bold">
+                                    {foundUser.displayName.slice(0, 1)}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-on-surface truncate">{foundUser.displayName}</p>
+                                {foundUser.shortId && (
+                                  <p className="text-[10px] text-text-muted font-bold tracking-wide">{t('manageGroup.idLabel', { id: foundUser.shortId })}</p>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleInviteFoundUser(foundUser)}
+                              disabled={invitingUid === foundUser.uid || alreadyInvited}
+                              className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold flex items-center gap-1 active:scale-[0.98] transition-all disabled:opacity-50 shrink-0"
+                            >
+                              {invitingUid === foundUser.uid ? (
+                                <span className="material-symbols-outlined animate-spin text-[14px]">sync</span>
+                              ) : alreadyInvited ? (
+                                t('manageGroup.invited')
+                              ) : (
+                                t('manageGroup.invite')
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-text-muted px-1">
+                    {t('manageGroup.findUsersHelp')}
+                  </p>
+                </div>
+              )}
+
+              {inviteMethodPanel === 'friends' && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={friendInviteSearch}
+                    onChange={(e) => setFriendInviteSearch(e.target.value)}
+                    placeholder={t('health.searchFriends')}
+                    autoFocus
+                    className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
+                  />
+                  {(() => {
+                    const filtered = addableFriends.filter((u) =>
+                      u.displayName.toLowerCase().includes(friendInviteSearch.trim().toLowerCase()),
+                    );
+                    if (filtered.length === 0) {
+                      return <p className="text-[11px] text-text-muted px-1">{t('health.noFriendsFound')}</p>;
+                    }
+                    return (
+                      <div className="flex flex-wrap gap-2">
+                        {filtered.map((u) => (
+                          <button
+                            key={u.uid}
+                            onClick={() => handleInviteFoundUser({ uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, shortId: null })}
+                            disabled={invitingUid === u.uid}
+                            className="px-3 py-1.5 rounded-full text-xs font-bold border border-border-subtle bg-white text-text-muted flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">add</span>
+                            {u.displayName}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

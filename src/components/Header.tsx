@@ -149,6 +149,24 @@ export default function Header() {
           the profile avatar, so it can never crowd the logo regardless of screen width. */}
       <div className="flex items-center gap-1.5 shrink-0">
         {user && (
+          <button
+            onClick={() => {
+              if (shopMode) { navigate('/shop/activity'); return; }
+              setFeedGroupId(undefined);
+              setFeedOpen(true);
+            }}
+            className="relative w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+            title={t('feed.title')}
+          >
+            <span className="material-symbols-outlined">notifications</span>
+            {!shopMode && unreadFeedCount > 0 && (
+              <span className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-error text-white text-[9px] font-bold flex items-center justify-center">
+                {unreadFeedCount > 9 ? '9+' : unreadFeedCount}
+              </span>
+            )}
+          </button>
+        )}
+        {user && (
           <div className="relative">
             <button
               data-tour="header-search"
@@ -157,11 +175,6 @@ export default function Header() {
               title="Menu"
             >
               <span className="material-symbols-outlined">menu</span>
-              {!shopMode && unreadFeedCount > 0 && (
-                <span className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-error text-white text-[9px] font-bold flex items-center justify-center">
-                  {unreadFeedCount > 9 ? '9+' : unreadFeedCount}
-                </span>
-              )}
             </button>
             {menuOpen && (
               <>
@@ -175,23 +188,6 @@ export default function Header() {
                   >
                     <span className="material-symbols-outlined text-[20px] text-text-muted">search</span>
                     {t('header.search')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      if (shopMode) { navigate('/shop/activity'); return; }
-                      setFeedGroupId(undefined);
-                      setFeedOpen(true);
-                    }}
-                    className="relative w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
-                  >
-                    <span className="material-symbols-outlined text-[20px] text-text-muted">history</span>
-                    {t('feed.title')}
-                    {!shopMode && unreadFeedCount > 0 && (
-                      <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-error text-white text-[10px] font-bold flex items-center justify-center">
-                        {unreadFeedCount > 9 ? '9+' : unreadFeedCount}
-                      </span>
-                    )}
                   </button>
                   {hasShopAccess && (
                     <button

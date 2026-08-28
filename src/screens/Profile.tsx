@@ -502,6 +502,14 @@ export default function Profile() {
   const [dobInput, setDobInput] = useState('');
   const [dobSeeded, setDobSeeded] = useState(false);
   const [savingDob, setSavingDob] = useState(false);
+  const [dobError, setDobError] = useState<string | null>(null);
+  // Nobody meaningfully sets up their own FamilyLedger account before age 3 — this both blocks an
+  // obviously-wrong birthday typo and matches the date picker's own `max` so the two can't disagree.
+  const maxDobDate = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 3);
+    return d.toISOString().split('T')[0];
+  })();
   useEffect(() => {
     if (!dobSeeded && profile && profile.dateOfBirth !== undefined) {
       setDobInput(profile.dateOfBirth || '');
@@ -518,6 +526,11 @@ export default function Profile() {
 
   const handleSaveDob = async () => {
     if (!user || !dobInput || savingDob) return;
+    if (dobInput > maxDobDate) {
+      setDobError('Enter a valid date of birth — not in the future, and at least 3 years ago.');
+      return;
+    }
+    setDobError(null);
     setSavingDob(true);
     try {
       await updateDoc(doc(db, 'users', user.uid, 'private', 'info'), {
@@ -1004,8 +1017,8 @@ export default function Profile() {
               <input
                 type="date"
                 value={dobInput}
-                onChange={(e) => setDobInput(e.target.value)}
-                max={new Date().toISOString().split('T')[0]}
+                onChange={(e) => { setDobInput(e.target.value); setDobError(null); }}
+                max={maxDobDate}
                 className="flex-1 h-11 bg-surface px-3 rounded-xl border border-border-subtle text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20"
               />
               <button
@@ -1016,6 +1029,7 @@ export default function Profile() {
                 {savingDob ? 'Saving…' : 'Save'}
               </button>
             </div>
+            {dobError && <p className="text-xs font-bold text-error">{dobError}</p>}
             {!profile?.dateOfBirth && (
               <div className="pt-1 border-t border-border-subtle -mx-4 px-4 pt-3">
                 <div

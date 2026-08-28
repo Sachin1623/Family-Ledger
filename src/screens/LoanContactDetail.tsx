@@ -164,6 +164,10 @@ export default function LoanContactDetail() {
     if (!user || !contactId) return;
     const parsedAmount = evaluateAmountSum(amount);
     if (entryType !== 'note' && (!amount || !parsedAmount || parsedAmount <= 0)) return;
+    if (entryDate > todayLocalDateString()) {
+      alert(t('loans.dateCannotBeFuture'));
+      return;
+    }
     setSaving(true);
     try {
       const effect = entryEffect(entryType, parsedAmount || 0);
@@ -561,6 +565,7 @@ export default function LoanContactDetail() {
                     type="date"
                     value={entryDate}
                     onChange={(e) => setEntryDate(e.target.value)}
+                    max={todayLocalDateString()}
                     className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none"
                   />
                 </div>

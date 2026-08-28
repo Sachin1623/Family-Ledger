@@ -353,6 +353,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
               <ToggleRow icon="call_split" label="Split Expenses" checked={!!group?.splitEnabled} busy={togglingSplit} onToggle={handleToggleSplit} />
               <ToggleRow icon="payments" label="Track Income" checked={!!group?.incomeEnabled} busy={togglingIncome} onToggle={handleToggleIncome} />
               <MenuRow icon="account_balance_wallet" label={budget ? 'Edit Budget' : 'Set Budget'} onClick={() => setSubPanel('budget')} />
+              <MenuRow icon="event_repeat" label="Recurring Expenses" onClick={() => { onClose(); navigate(`/recurring-expenses?groupId=${groupId}`); }} />
               <MenuRow
                 icon={isCreator ? 'delete_forever' : 'logout'}
                 label={isCreator ? 'Delete Group' : 'Exit Group'}
