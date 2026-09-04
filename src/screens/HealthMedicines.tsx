@@ -892,12 +892,21 @@ export default function HealthMedicines() {
     const targetUid = manageTargetUid || user.uid;
     const id = medicineLogId(targetUid, medicine.id, doseTime.id, dateStr);
     const loggedAt = new Date().toISOString();
+    // A medicine created before groupId/sharedFriendUids existed on this schema (or via any path
+    // that skipped them) reads back as `undefined`, not `null`/[] — and the Firestore SDK throws
+    // SYNCHRONOUSLY on an undefined field value (setDoc never even returns a promise), so this
+    // whole write never happened and never showed an error either: fireWrite only catches a
+    // REJECTED promise, not a throw before one exists. That's what made "tap Taken/Skipped" do
+    // nothing at all for those medicines. Defaulting here (matching how a freshly-created medicine
+    // already stores these two fields) fixes it regardless of how the medicine doc got here.
+    const groupId = medicine.groupId ?? null;
+    const sharedFriendUids = medicine.sharedFriendUids ?? [];
     fireWrite(
       setDoc(doc(db, 'medicineLogs', id), {
         userId: targetUid,
         loggedBy: user.uid,
-        groupId: medicine.groupId,
-        sharedFriendUids: medicine.sharedFriendUids,
+        groupId,
+        sharedFriendUids,
         medicineId: medicine.id,
         medicineName: medicine.name,
         doseTimeId: doseTime.id,
@@ -914,17 +923,17 @@ export default function HealthMedicines() {
     if (status === 'taken') {
       const actorName = profile?.displayName || user.displayName || undefined;
       const contextLabel = `${medicine.name} — ${doseTime.label}`;
-      if (medicine.groupId) {
-        notifyGroupActivity({ groupId: medicine.groupId, action: 'medicine_logged', contextLabel, actorName });
+      if (groupId) {
+        notifyGroupActivity({ groupId, action: 'medicine_logged', contextLabel, actorName });
       }
-      if (medicine.sharedFriendUids.length > 0) {
+      if (sharedFriendUids.length > 0) {
         auth.currentUser
           ?.getIdToken()
           .then((idToken) =>
             fetch('/api/health/notify-glucose-shared', {
               method: 'POST',
               headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ friendUids: medicine.sharedFriendUids, kind: 'medicine', readingLabel: doseTime.label, contextLabel: medicine.name, actorName }),
+              body: JSON.stringify({ friendUids: sharedFriendUids, kind: 'medicine', readingLabel: doseTime.label, contextLabel: medicine.name, actorName }),
             }),
           )
           .catch((err) => console.error('notify-medicine-shared failed:', err));
