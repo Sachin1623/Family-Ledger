@@ -12,11 +12,67 @@ import { groupIconEmoji } from '../lib/groupIcons';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { shareWithAi } from '../lib/aiShare';
 import { buildGroupAiPrompt } from '../lib/buildAiPrompt';
-import { parseLocalDate, todayLocalDateString } from '../lib/dateUtils';
+import { parseLocalDate, todayLocalDateString, currentLocalMonthKey } from '../lib/dateUtils';
 import { shareOrDownloadFile } from '../lib/fileShare';
 import { useLanguage } from '../context/LanguageContext';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Small pill toggle shared by the three archived-groups toggles on this page (Spending by Group's
+// own, and the one Category + Member Contributions share) — same on/off pill styling already used
+// elsewhere on this screen for the essential/optional filter, just compact enough to sit in a
+// section header next to its existing icon button.
+function ArchiveToggle({ checked, onToggle, label }: { checked: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={label}
+      aria-label={label}
+      aria-pressed={checked}
+      className={clsx(
+        'p-2 rounded-xl border transition-all shrink-0',
+        checked ? 'bg-primary text-white border-primary' : 'bg-primary/5 text-primary border-primary/10 hover:bg-primary/10',
+      )}
+    >
+      <span className="material-symbols-outlined text-[18px] block">archive</span>
+    </button>
+  );
+}
+
+// This-month/last-month readout shared by Spending by Group, Spending by Category, and Member
+// Contributions — deliberately computed from the real current calendar month regardless of
+// whatever month/year/category filters are currently narrowing the rest of the page, since a
+// stable "how am I doing right now vs last month" comparison is the whole point of showing it.
+// `t` is passed in rather than this being its own component, same as describeCadence() elsewhere
+// in this codebase, to avoid re-deriving `useLanguage()` in a tiny leaf just for one string.
+function MonthComparisonLine({
+  thisMonth,
+  lastMonth,
+  currencySymbol,
+  t,
+}: {
+  thisMonth: number;
+  lastMonth: number;
+  currencySymbol: string;
+  t: (key: string, vars?: Record<string, any>) => string;
+}) {
+  if (thisMonth === 0 && lastMonth === 0) return null;
+  const delta = thisMonth - lastMonth;
+  const pct = lastMonth > 0 ? Math.round((Math.abs(delta) / lastMonth) * 100) : null;
+  return (
+    <div className="flex items-center gap-1.5 text-[9px] font-bold text-text-muted mt-0.5 flex-wrap">
+      <span>{t('analysis.thisMonth')} {currencySymbol}{thisMonth.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+      <span className="opacity-40">·</span>
+      <span>{t('analysis.lastMonth')} {currencySymbol}{lastMonth.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+      {pct !== null && delta !== 0 && (
+        <span className={delta > 0 ? 'text-error' : 'text-success'}>
+          {delta > 0 ? '▲' : '▼'} {pct}%
+        </span>
+      )}
+    </div>
+  );
+}
 
 // Renders a slice's percentage AT the ring's own mid-radius (halfway between inner and outer),
 // so the text always sits inside the donut itself — never an external leader-line label that
@@ -129,6 +185,14 @@ export default function GroupAnalysisSummary() {
   const [showTimeStepDropdown, setShowTimeStepDropdown] = useState(false);
   const [entryTypeFilter, setEntryTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [selectedClassification, setSelectedClassification] = useState<'all' | 'essential' | 'optional'>('all');
+  // Archived groups are still fully present in `expenses`/`categoryFilteredExpenses` (nothing
+  // upstream filters them out — the "All Groups" combined chart, trend line, essential/optional
+  // split, and favorites list all still include them exactly as before). These two toggles only
+  // gate the three specific sections the archive feature was scoped to: Spending by Group (its
+  // own toggle) and Spending by Category + Member Contributions (sharing one, since they were
+  // asked for together and there's no reason those two would ever want to disagree).
+  const [showArchivedInGroupSpending, setShowArchivedInGroupSpending] = useState(false);
+  const [includeArchivedInCategoryMember, setIncludeArchivedInCategoryMember] = useState(false);
   // Quick month/year filters — multi-select (e.g. "every January and July across 2024 and 2025"),
   // empty means "no restriction" for that axis. Kept independent of `timeStep`/`viewType` (which
   // only control how the chart GROUPS/labels data, not which expenses are included at all).
@@ -400,6 +464,84 @@ export default function GroupAnalysisSummary() {
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expenses]);
 
+  const isArchivedExpense = (exp: any) => !!allGroups.find((g: any) => g.id === exp.groupId)?.archived;
+
+  // Spending by Group has its own toggle; Category + Member Contributions share the other one —
+  // both start from the same `expenses`/`categoryFilteredExpenses` everything else on this page
+  // still reads unfiltered.
+  const groupSpendingExpenses = useMemo(() => {
+    return showArchivedInGroupSpending ? expenses : expenses.filter((exp: any) => !isArchivedExpense(exp));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenses, allGroups, showArchivedInGroupSpending]);
+
+  const categoryMemberExpenses = useMemo(() => {
+    return includeArchivedInCategoryMember ? expenses : expenses.filter((exp: any) => !isArchivedExpense(exp));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenses, allGroups, includeArchivedInCategoryMember]);
+
+  // Member Contributions deliberately reads categoryFilteredExpenses (not `expenses` — see the
+  // comment above where that's defined), so it needs its own archived-filtered variant rather
+  // than reusing categoryMemberExpenses.
+  const categoryMemberContributionExpenses = useMemo(() => {
+    return includeArchivedInCategoryMember ? categoryFilteredExpenses : categoryFilteredExpenses.filter((exp: any) => !isArchivedExpense(exp));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryFilteredExpenses, allGroups, includeArchivedInCategoryMember]);
+
+  // This-month/last-month readouts for the same three sections — deliberately built from
+  // `allExpenses` (group-scoped + entryTypeFilter-respecting, but NOT re-filtered by whatever
+  // month/year/category the user currently has selected elsewhere on the page), so the numbers
+  // always answer "how does my real current month compare to last month," not "how does the
+  // currently-filtered view compare." Each still respects its own section's archived-groups
+  // toggle, same as the totals right above.
+  const thisMonthKey = currentLocalMonthKey();
+  const lastMonthKey = useMemo(() => {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
+  const monthComparisonByGroup = useMemo(() => {
+    const thisMonth: Record<string, number> = {};
+    const lastMonth: Record<string, number> = {};
+    const source = showArchivedInGroupSpending ? allExpenses : allExpenses.filter((exp: any) => !isArchivedExpense(exp));
+    source.forEach((exp: any) => {
+      const g = allGroups.find((gr: any) => gr.id === exp.groupId);
+      if (!g) return;
+      const mk = String(exp.date || '').slice(0, 7);
+      if (mk === thisMonthKey) thisMonth[g.name] = (thisMonth[g.name] || 0) + exp.amount;
+      else if (mk === lastMonthKey) lastMonth[g.name] = (lastMonth[g.name] || 0) + exp.amount;
+    });
+    return { thisMonth, lastMonth };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allExpenses, allGroups, showArchivedInGroupSpending, thisMonthKey, lastMonthKey]);
+
+  const monthComparisonByCategory = useMemo(() => {
+    const thisMonth: Record<string, number> = {};
+    const lastMonth: Record<string, number> = {};
+    const source = includeArchivedInCategoryMember ? allExpenses : allExpenses.filter((exp: any) => !isArchivedExpense(exp));
+    source.forEach((exp: any) => {
+      const mk = String(exp.date || '').slice(0, 7);
+      if (mk === thisMonthKey) thisMonth[exp.category] = (thisMonth[exp.category] || 0) + exp.amount;
+      else if (mk === lastMonthKey) lastMonth[exp.category] = (lastMonth[exp.category] || 0) + exp.amount;
+    });
+    return { thisMonth, lastMonth };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allExpenses, allGroups, includeArchivedInCategoryMember, thisMonthKey, lastMonthKey]);
+
+  const monthComparisonByMember = useMemo(() => {
+    const thisMonth: Record<string, number> = {};
+    const lastMonth: Record<string, number> = {};
+    const source = includeArchivedInCategoryMember ? allExpenses : allExpenses.filter((exp: any) => !isArchivedExpense(exp));
+    source.forEach((exp: any) => {
+      if (!exp.paidBy) return;
+      const mk = String(exp.date || '').slice(0, 7);
+      if (mk === thisMonthKey) thisMonth[exp.paidBy] = (thisMonth[exp.paidBy] || 0) + exp.amount;
+      else if (mk === lastMonthKey) lastMonth[exp.paidBy] = (lastMonth[exp.paidBy] || 0) + exp.amount;
+    });
+    return { thisMonth, lastMonth };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allExpenses, allGroups, includeArchivedInCategoryMember, thisMonthKey, lastMonthKey]);
+
   // Data processing
   const categoryData = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -407,28 +549,28 @@ export default function GroupAnalysisSummary() {
     CATEGORIES_LIST.forEach(cat => {
       counts[cat.id] = 0;
     });
-    
-    expenses.forEach(exp => {
+
+    categoryMemberExpenses.forEach(exp => {
       counts[exp.category] = (counts[exp.category] || 0) + exp.amount;
     });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [expenses, CATEGORIES_LIST]);
+  }, [categoryMemberExpenses, CATEGORIES_LIST]);
 
   const groupSpendingData = useMemo(() => {
     if (selectedGroupId !== 'all') return [];
     const counts: Record<string, number> = {};
-    expenses.forEach(exp => {
+    groupSpendingExpenses.forEach(exp => {
       const g = allGroups.find(gr => gr.id === exp.groupId);
       if (g) {
         counts[g.name] = (counts[g.name] || 0) + exp.amount;
       }
     });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [expenses, allGroups, selectedGroupId]);
+  }, [groupSpendingExpenses, allGroups, selectedGroupId]);
 
   const totalSpending = useMemo(() => {
-    return expenses.reduce((acc, exp) => acc + exp.amount, 0);
-  }, [expenses]);
+    return categoryMemberExpenses.reduce((acc, exp) => acc + exp.amount, 0);
+  }, [categoryMemberExpenses]);
 
   const trendData = useMemo(() => {
     const dataMap: Record<string, { value: number; essential: number; optional: number; income: number; label: string }> = {};
@@ -719,8 +861,12 @@ export default function GroupAnalysisSummary() {
               value={selectedGroupId || ''}
             >
               <option value="all">{t('analysis.allMyGroups')}</option>
-              {allGroups.map((g: any) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
+              {/* Archived groups stay fully selectable (their own history is still real data
+                  worth looking at) — just pushed to the bottom and marked, rather than mixed in
+                  with the groups actually in current use. A stable sort (archived-ness is the
+                  only key) keeps everything else in its existing order. */}
+              {[...allGroups].sort((a: any, b: any) => (a.archived ? 1 : 0) - (b.archived ? 1 : 0)).map((g: any) => (
+                <option key={g.id} value={g.id}>{g.name}{g.archived ? ` (${t('analysis.archivedTag')})` : ''}</option>
               ))}
             </select>
             <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none text-[20px]">expand_more</span>
@@ -1144,15 +1290,18 @@ export default function GroupAnalysisSummary() {
                   animate={{ opacity: 1, y: 0 }}
                   className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm flex flex-col min-h-[350px]"
                 >
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="font-bold text-primary">{t('analysis.spendingByGroup')}</h3>
-                    <button
-                      onClick={() => navigate(buildExpensesLink())}
-                      className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
-                      title={t('analysis.viewTransactions')}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">receipt_long</span>
-                    </button>
+                  <div className="flex justify-between items-center mb-6 gap-2">
+                    <h3 className="font-bold text-primary shrink-0">{t('analysis.spendingByGroup')}</h3>
+                    <div className="flex items-center gap-1.5">
+                      <ArchiveToggle checked={showArchivedInGroupSpending} onToggle={() => setShowArchivedInGroupSpending((v) => !v)} label={t('analysis.showArchived')} />
+                      <button
+                        onClick={() => navigate(buildExpensesLink())}
+                        className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all shrink-0"
+                        title={t('analysis.viewTransactions')}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">receipt_long</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-6 overflow-y-auto">
                     {groupSpendingData.length > 0 ? (
@@ -1174,7 +1323,10 @@ export default function GroupAnalysisSummary() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex justify-between items-center mb-1">
-                                  <span className="font-bold text-primary truncate text-xs">{entry.name}</span>
+                                  <span className="font-bold text-primary truncate text-xs flex items-center gap-1">
+                                    {group?.archived && <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('analysis.archivedTag')}>archive</span>}
+                                    {entry.name}
+                                  </span>
                                   <span className="font-bold text-success text-xs ml-2">{getCurrencySymbol(group?.currency)}{entry.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
                                 <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
@@ -1187,8 +1339,16 @@ export default function GroupAnalysisSummary() {
                                 </div>
                               </div>
                             </div>
-                            <div className="text-[9px] text-text-muted font-bold uppercase tracking-wider text-right">
-                              {Math.round(pct)}% Share
+                            <div className="flex items-center justify-between gap-2">
+                              <MonthComparisonLine
+                                thisMonth={monthComparisonByGroup.thisMonth[entry.name] || 0}
+                                lastMonth={monthComparisonByGroup.lastMonth[entry.name] || 0}
+                                currencySymbol={getCurrencySymbol(group?.currency)}
+                                t={t}
+                              />
+                              <div className="text-[9px] text-text-muted font-bold uppercase tracking-wider text-right shrink-0">
+                                {Math.round(pct)}% Share
+                              </div>
                             </div>
                           </div>
                         );
@@ -1208,20 +1368,25 @@ export default function GroupAnalysisSummary() {
                   selectedGroupId !== 'all' && "md:col-span-1"
                 )}
               >
-                <div className="flex justify-between items-start mb-6">
-                  <div>
+                <div className="flex justify-between items-start mb-6 gap-2">
+                  <div className="min-w-0">
                     <h3 className="font-bold text-primary">{t('analysis.spendingByCategory')}</h3>
                     <p className="text-xl font-bold text-success mt-1">
                       {currencySymbol}{totalSpending.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </p>
                   </div>
-                  <button
-                    onClick={() => navigate(buildExpensesLink())}
-                    className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
-                    title={t('analysis.viewTransactions')}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">receipt_long</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {selectedGroupId === 'all' && (
+                      <ArchiveToggle checked={includeArchivedInCategoryMember} onToggle={() => setIncludeArchivedInCategoryMember((v) => !v)} label={t('analysis.includeArchived')} />
+                    )}
+                    <button
+                      onClick={() => navigate(buildExpensesLink())}
+                      className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
+                      title={t('analysis.viewTransactions')}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">receipt_long</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-6 overflow-y-auto">
@@ -1257,8 +1422,16 @@ export default function GroupAnalysisSummary() {
                               </div>
                             </div>
                           </div>
-                          <div className="text-[9px] text-text-muted font-bold uppercase tracking-wider text-right">
-                            {Math.round(pct)}% Share
+                          <div className="flex items-center justify-between gap-2">
+                            <MonthComparisonLine
+                              thisMonth={monthComparisonByCategory.thisMonth[entry.name] || 0}
+                              lastMonth={monthComparisonByCategory.lastMonth[entry.name] || 0}
+                              currencySymbol={currencySymbol}
+                              t={t}
+                            />
+                            <div className="text-[9px] text-text-muted font-bold uppercase tracking-wider text-right shrink-0">
+                              {Math.round(pct)}% Share
+                            </div>
                           </div>
                         </div>
                       );
@@ -1276,26 +1449,31 @@ export default function GroupAnalysisSummary() {
               transition={{ delay: 0.2 }}
               className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm"
             >
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="font-bold text-primary">{t('analysis.memberContributions')}</h3>
-                <button
-                  onClick={() => navigate(buildExpensesLink())}
-                  className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
-                  title={t('analysis.viewTransactions')}
-                >
-                  <span className="material-symbols-outlined text-[18px]">receipt_long</span>
-                </button>
+              <div className="flex justify-between items-center mb-6 gap-2">
+                <h3 className="font-bold text-primary shrink-0">{t('analysis.memberContributions')}</h3>
+                <div className="flex items-center gap-1.5">
+                  {selectedGroupId === 'all' && (
+                    <ArchiveToggle checked={includeArchivedInCategoryMember} onToggle={() => setIncludeArchivedInCategoryMember((v) => !v)} label={t('analysis.includeArchived')} />
+                  )}
+                  <button
+                    onClick={() => navigate(buildExpensesLink())}
+                    className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all shrink-0"
+                    title={t('analysis.viewTransactions')}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">receipt_long</span>
+                  </button>
+                </div>
               </div>
               <div className="space-y-6">
                 {[...groupMembers]
                   .sort((a: any, b: any) => {
-                    const spendOf = (m: any) => categoryFilteredExpenses.filter(exp => exp.paidBy === m.userId).reduce((acc, curr) => acc + curr.amount, 0);
+                    const spendOf = (m: any) => categoryMemberContributionExpenses.filter(exp => exp.paidBy === m.userId).reduce((acc, curr) => acc + curr.amount, 0);
                     return spendOf(b) - spendOf(a);
                   })
                   .map((member: any) => {
-                  const memberExpenses = categoryFilteredExpenses.filter(exp => exp.paidBy === member.userId);
+                  const memberExpenses = categoryMemberContributionExpenses.filter(exp => exp.paidBy === member.userId);
                   const contribution = memberExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-                  const total = categoryFilteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+                  const total = categoryMemberContributionExpenses.reduce((acc, curr) => acc + curr.amount, 0);
                   const pct = total > 0 ? (contribution / total) * 100 : 0;
                   
                   // Sort categories by amount
@@ -1343,6 +1521,12 @@ export default function GroupAnalysisSummary() {
                           />
                         ))}
                       </div>
+                      <MonthComparisonLine
+                        thisMonth={monthComparisonByMember.thisMonth[member.userId] || 0}
+                        lastMonth={monthComparisonByMember.lastMonth[member.userId] || 0}
+                        currencySymbol={currencySymbol}
+                        t={t}
+                      />
                       {/* Legend for this member's categories */}
                       <div className="flex flex-wrap gap-x-3 gap-y-1">
                         {sortedCats.map(([cat, amount]) => (

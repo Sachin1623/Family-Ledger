@@ -12,5 +12,14 @@
 	<array>
 		<string>applinks:familyledger.thirteenapps.com</string>
 	</array>
+	<!-- Not yet effective on its own — Apple must separately grant this app's App ID the Critical
+	     Alerts capability (via https://developer.apple.com/contact/request/notifications-critical-alerts-entitlement/,
+	     filed manually, outside Xcode/this repo) before this entitlement does anything. Until then
+	     it's inert scaffolding: medicineReminders.ts's MEDICINE_INTERRUPTION_LEVEL stays
+	     'timeSensitive' (works today, no approval needed) rather than 'critical' (silently
+	     downgrades to a WORSE level than 'timeSensitive' without the grant — see that file's
+	     comment) — flip that one constant once Apple confirms the grant. -->
+	<key>com.apple.developer.usernotifications.critical-alerts</key>
+	<true/>
 </dict>
 </plist>

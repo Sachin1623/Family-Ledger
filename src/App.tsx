@@ -68,6 +68,13 @@ import PublicProfile from './screens/PublicProfile';
 import ShoppingLists from './screens/ShoppingLists';
 import ShoppingListDetail from './screens/ShoppingListDetail';
 import ExpenseReminders from './screens/ExpenseReminders';
+import RemindersHub from './screens/RemindersHub';
+import GoalsHub from './screens/GoalsHub';
+import GoalDetail from './screens/GoalDetail';
+import GoalWizard from './screens/GoalWizard';
+import GoalAllocationManager from './screens/GoalAllocationManager';
+import GoalReports from './screens/GoalReports';
+import AccountsHub from './screens/AccountsHub';
 import PersonalLoans from './screens/PersonalLoans';
 import LoanContactDetail from './screens/LoanContactDetail';
 import ShopProfile from './screens/shop/ShopProfile';
@@ -97,6 +104,8 @@ import BroadcastBanner from './components/BroadcastBanner';
 import AppLockScreen from './components/AppLockScreen';
 import LudoTurnIndicator from './components/LudoTurnIndicator';
 import GameTurnIndicator from './components/GameTurnIndicator';
+import GlobalReminderScheduler from './components/GlobalReminderScheduler';
+import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
 import InviteBanner from './components/InviteBanner';
 import OnboardingTour from './components/OnboardingTour';
 import LoadingScreen from './components/LoadingScreen';
@@ -253,6 +262,8 @@ export default function App() {
           <AppLockScreen />
           <LudoTurnIndicator />
           <GameTurnIndicator />
+          <GlobalReminderScheduler />
+          <GlobalMedicineReminderScheduler />
           <InviteBanner />
           <OnboardingTour />
           <div className="min-h-screen bg-surface font-sans text-on-surface flex flex-col">
@@ -324,6 +335,14 @@ export default function App() {
               <Route path="/shopping-lists" element={<AuthenticatedLayout><ShoppingLists /></AuthenticatedLayout>} />
               <Route path="/shopping-lists/:listId" element={<AuthenticatedLayout><ShoppingListDetail /></AuthenticatedLayout>} />
               <Route path="/expense-reminders" element={<AuthenticatedLayout><ExpenseReminders /></AuthenticatedLayout>} />
+              <Route path="/reminders" element={<AuthenticatedLayout><RemindersHub /></AuthenticatedLayout>} />
+              <Route path="/goals" element={<AuthenticatedLayout><GoalsHub /></AuthenticatedLayout>} />
+              <Route path="/goals/new" element={<AuthenticatedLayout><GoalWizard /></AuthenticatedLayout>} />
+              <Route path="/goals/allocate" element={<AuthenticatedLayout><GoalAllocationManager /></AuthenticatedLayout>} />
+              <Route path="/goals/reports" element={<AuthenticatedLayout><GoalReports /></AuthenticatedLayout>} />
+              <Route path="/goals/accounts" element={<AuthenticatedLayout><AccountsHub /></AuthenticatedLayout>} />
+              <Route path="/goals/:goalId" element={<AuthenticatedLayout><GoalDetail /></AuthenticatedLayout>} />
+              <Route path="/goals/:goalId/edit" element={<AuthenticatedLayout><GoalWizard /></AuthenticatedLayout>} />
               <Route path="/personal-loans" element={<AuthenticatedLayout><PersonalLoans /></AuthenticatedLayout>} />
               <Route path="/personal-loans/:contactId" element={<AuthenticatedLayout><LoanContactDetail /></AuthenticatedLayout>} />
 

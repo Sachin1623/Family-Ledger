@@ -130,6 +130,14 @@ export function isValidSet(cardIds: string[], wildcardRanks: Rank[] = []): Group
   const allSameSuit = suitCounts.size === 1;
   const allDistinctSuits = suitCounts.size === naturals.length;
   if (!allSameSuit && !allDistinctSuits) return { valid: false };
+  // A joker may only fill a genuinely MISSING suit — completing a one-of-each-suit set up to 4 —
+  // never pad out a same-suit duplicate run. Duplicate-suit sets (two+ physical copies of the same
+  // card from different decks) can only be built from real cards; a joker standing in for "one
+  // more of this same suit" isn't a legal use of it here (e.g. D4, D4, joker is invalid even though
+  // D4, D4, D4 alone would be fine). With exactly one natural, allDistinctSuits is trivially true
+  // (a single card is vacuously "all distinct"), so a lone natural plus jokers filling out the
+  // other suits is unaffected by this check.
+  if (wilds.length > 0 && !allDistinctSuits) return { valid: false };
   return { valid: true, type: wilds.length > 0 ? 'impure' : 'set' };
 }
 

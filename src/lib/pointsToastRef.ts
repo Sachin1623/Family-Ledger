@@ -1,7 +1,7 @@
 // Mutable refs bridging pointsApi.ts's claimPoints (a plain async function, not a component,
 // called from event handlers all over the app) to the two visual reactions an award triggers: a
 // toast (via NotificationContext, registered by PointsToastBridge) and a flying-coins animation
-// toward the Header's points pill (registered by HeaderPointsPill). Mirrors feedPanelRef.ts's
+// toward the Header's profile badge (registered by HeaderProfileBadge). Mirrors feedPanelRef.ts's
 // pattern for the same reason — none of this can be React context, since the trigger site isn't
 // a component.
 type AddNotificationFn = (n: { type: 'info' | 'success' | 'warning' | 'error'; title: string; message: string; icon?: string }) => void;
@@ -15,7 +15,7 @@ export function setPointsToastFn(fn: AddNotificationFn | null) {
   addFn = fn;
 }
 
-// Registered by HeaderPointsPill with a function that reads its own DOM node's current
+// Registered by HeaderProfileBadge with a function that reads its own DOM node's current
 // getBoundingClientRect() — read fresh on every award rather than cached, so the flight target
 // stays correct across layout shifts (window resize, orientation change, keyboard opening).
 export function setPointsHudTarget(getter: (() => DOMRect | null) | null) {

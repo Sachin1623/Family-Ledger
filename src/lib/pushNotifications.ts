@@ -1,8 +1,10 @@
 import { Capacitor } from '@capacitor/core';
-import { PushNotifications } from '@capacitor/push-notifications';
+import { FirebaseMessaging } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { User } from 'firebase/auth';
 import { navigateTo } from './navigationRef';
+import { requestAlarmTakeoverPermission } from './alarmClock';
+import { registerMedicineActionTypes, snoozeMedicineReminder } from './medicineReminders';
 
 let registered = false;
 // The most recently FCM-registered token for this device, so removeCurrentDeviceToken (called on
@@ -88,8 +90,15 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo(`/health/glucose${params.toString() ? `?${params.toString()}` : ''}`);
   } else if (data.type === 'bp_reminder' || data.type === 'bp_logged') {
     navigateTo('/health/blood-pressure');
-  } else if (data.type === 'medicine_reminder' || data.type === 'medicine_logged') {
+  } else if (data.type === 'medicine_reminder' || data.type === 'medicine_logged' || data.type === 'medicine_missed') {
     navigateTo('/health/medicines');
+  } else if (data.type === 'shared_reminder') {
+    // The scheduled-trigger local notification always carries a reminderId (opens that specific
+    // reminder's card directly); the "someone shared a reminder with you" group-activity push
+    // fired at creation time doesn't thread one through /api/notify-group-activity, so it just
+    // opens the hub list instead — a reasonable fallback rather than adding a param for a single
+    // notification type.
+    navigateTo(data.reminderId ? `/reminders?open=${data.reminderId}` : '/reminders');
   } else if (data.type === 'spread_word_reminder' || data.type === 'birthday_wish') {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {
@@ -135,24 +144,66 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
   }
 }
 
+// Only asked once ever (per device) — declining shouldn't mean getting nagged with a Settings
+// redirect on every single app open. If the user later wants it, the reminder screens themselves
+// (Medicines, Blood Pressure, Reminders hub, etc.) can surface the same "why are my reminders
+// late" explanation and call this again; for now this is the one proactive ask.
+const EXACT_ALARM_ASKED_KEY = 'familyledger_exact_alarm_asked';
+
+// See the SCHEDULE_EXACT_ALARM comment in AndroidManifest.xml for the full root cause. This is
+// Android-only (iOS has no equivalent concept — local notifications there fire exactly as
+// scheduled) and only relevant from Android 12 (API 31) up; `checkExactNotificationSetting`
+// itself already reports 'granted' on older OS versions, so no separate version check is needed
+// here. `changeExactNotificationSetting()` sends the user to a real system Settings screen — a
+// bigger interruption than an in-app permission dialog — so it's gated behind a plain confirm
+// explaining why, rather than firing silently.
+async function requestExactAlarmPermission() {
+  if (Capacitor.getPlatform() !== 'android') return;
+  try {
+    if (localStorage.getItem(EXACT_ALARM_ASKED_KEY)) return;
+    const status = await LocalNotifications.checkExactNotificationSetting();
+    if (status.exact_alarm === 'granted') {
+      localStorage.setItem(EXACT_ALARM_ASKED_KEY, '1');
+      return;
+    }
+    localStorage.setItem(EXACT_ALARM_ASKED_KEY, '1');
+    const proceed = window.confirm(
+      'To make sure medicine and other reminders arrive exactly on time (not just "sometime soon"), FamilyLedger needs the "Alarms & reminders" permission. Open Settings to allow it now?'
+    );
+    if (proceed) await LocalNotifications.changeExactNotificationSetting();
+  } catch (err) {
+    console.error('Failed to check/request exact alarm permission:', err);
+  }
+}
+
 // Requests permission, registers for FCM, and sends the resulting device token to the
 // backend so it can be used to push notifications (reminders + group activity alerts).
 // No-ops on web (push notifications here are native-only) and only wires listeners once
 // per app session.
+//
+// Uses @capacitor-firebase/messaging, not @capacitor/push-notifications — the latter registers
+// directly with each platform's native push service, which on iOS means the token it hands back
+// is a RAW APNS DEVICE TOKEN, not an FCM token. server.ts's sendPush sends through Firebase Admin
+// SDK (admin.messaging().sendEachForMulticast), which only accepts genuine FCM tokens — Android
+// was fine (Android's native push IS FCM, so its token already was one), but every push to an iOS
+// device was silently rejected as an "invalid" token and pruned as stale, meaning NO push
+// notification of any kind (chat, reminders, group activity, everything) ever reached an iPhone.
+// @capacitor-firebase/messaging's iOS side exchanges the APNs token for a real FCM token via
+// Firebase's own backend (see AppDelegate.swift's forwarding of didRegisterForRemoteNotifications-
+// WithDeviceToken) — this is the actual fix, not just a workaround. Still requires an APNs Auth
+// Key uploaded to Firebase Console (Project Settings > Cloud Messaging > Apple app configuration)
+// for Firebase's backend to reach Apple's push servers at all — no code change substitutes for
+// that manual step.
 export async function initPushNotifications(user: User) {
   if (!Capacitor.isNativePlatform() || registered) return;
   registered = true;
 
   try {
-    let permStatus = await PushNotifications.checkPermissions();
-    if (permStatus.receive === 'prompt') {
-      permStatus = await PushNotifications.requestPermissions();
-    }
-    if (permStatus.receive !== 'granted') return;
-
-    // Local notifications share the same Android OS permission as push, but Capacitor tracks
-    // it separately per-plugin — request it too so LocalNotifications.schedule() below is
-    // actually allowed to show anything.
+    // Local notifications (medicine/BP/glucose/shared/todo reminders) are a distinct OS permission
+    // from push, and a distinct FEATURE conceptually — a user who declines "push notifications"
+    // (server-triggered: group activity, chat, etc.) very reasonably still expects their on-device
+    // medicine alarm to work. Request/check it independent of the push permission outcome below,
+    // so declining push can never silently take every local reminder down with it.
     try {
       let localPerm = await LocalNotifications.checkPermissions();
       if (localPerm.display === 'prompt') {
@@ -162,39 +213,73 @@ export async function initPushNotifications(user: User) {
       console.error('LocalNotifications permission request failed:', err);
     }
 
-    PushNotifications.addListener('registration', async (token) => {
-      currentDeviceToken = token.value;
+    // Getting *shown* a notification (above) is separate from getting it *on time*. Every
+    // scheduled reminder in this app (medicine, BP, glucose, shared reminders, todos) asks
+    // AlarmManager for an exact alarm; on Android 12+ that silently downgrades to an inexact one
+    // — deliverable whenever Doze next wakes the app, sometimes much later than the set time —
+    // unless the user has separately granted "Alarms & reminders" for this app. Nudge for it once.
+    requestExactAlarmPermission();
+
+    // Same idea, separate Android permission — medicine reminders' alarm-clock-style takeover
+    // (see alarmClock.ts) additionally needs "Full screen notifications" to actually take over the
+    // screen rather than just post a normal notification.
+    requestAlarmTakeoverPermission();
+
+    // iOS-only (no-ops on Android, where medicine reminders bypass this plugin entirely) — lets
+    // the scheduled reminder show Dismiss/Snooze buttons directly on the lock-screen notification.
+    registerMedicineActionTypes();
+
+    let permStatus = await FirebaseMessaging.checkPermissions();
+    if (permStatus.receive === 'prompt') {
+      permStatus = await FirebaseMessaging.requestPermissions();
+    }
+    if (permStatus.receive !== 'granted') return;
+
+    const registerToken = async (token: string) => {
+      currentDeviceToken = token;
       try {
         const idToken = await user.getIdToken();
         await fetch('/api/register-device-token', {
           method: 'POST',
           headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: token.value, platform: Capacitor.getPlatform() }),
+          body: JSON.stringify({ token, platform: Capacitor.getPlatform() }),
         });
       } catch (err) {
         console.error('Failed to register device token:', err);
       }
+    };
+
+    // Fires on later token refreshes (the OS/Firebase can rotate the token at any time); the
+    // initial token below is fetched directly since this plugin has no separate one-time
+    // "registration" event the way @capacitor/push-notifications did.
+    FirebaseMessaging.addListener('tokenReceived', (event) => {
+      registerToken(event.token);
     });
 
-    PushNotifications.addListener('registrationError', (err) => {
-      console.error('Push registration error:', err);
-    });
+    try {
+      const { token } = await FirebaseMessaging.getToken();
+      await registerToken(token);
+    } catch (err) {
+      console.error('Failed to get FCM token:', err);
+    }
 
     // A push whose payload has a `notification` block (every push this app sends does) only
-    // auto-displays in the system tray when the app is backgrounded or killed — that's Android/
-    // FCM's own behavior, not something this app controls. When the app is in the *foreground*,
-    // Android instead delivers it here, silently, and shows nothing unless the app does — so
-    // without this listener, any reminder/notification that arrives while FamilyLedger happens
-    // to be open never appears at all. Re-display it ourselves as a local notification.
-    PushNotifications.addListener('pushNotificationReceived', async (notification) => {
+    // auto-displays in the system tray when the app is backgrounded or killed — that's each
+    // platform's own native behavior, not something this app controls. When the app is in the
+    // *foreground*, Android instead delivers it here, silently, and shows nothing unless the app
+    // does — so without this, any reminder/notification that arrives while FamilyLedger happens to
+    // be open never appears at all. iOS handles this natively instead (see capacitor.config.ts's
+    // FirebaseMessaging.presentationOptions), so re-displaying it here too would double it up.
+    FirebaseMessaging.addListener('notificationReceived', async (event) => {
+      if (Capacitor.getPlatform() !== 'android') return;
       try {
         await LocalNotifications.schedule({
           notifications: [
             {
               id: Math.floor(Math.random() * 2147483647),
-              title: notification.title || 'FamilyLedger',
-              body: notification.body || '',
-              extra: notification.data,
+              title: event.notification.title || 'FamilyLedger',
+              body: event.notification.body || '',
+              extra: event.notification.data,
             },
           ],
         });
@@ -206,17 +291,23 @@ export async function initPushNotifications(user: User) {
     // Deep-links a tapped notification to the relevant screen instead of just opening the
     // app to wherever it was left. Capacitor buffers the tap event that launched the app
     // (if any) until this listener is registered, so this also covers a cold start.
-    PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-      routeNotificationTap(action.notification.data as Record<string, string> | undefined);
+    FirebaseMessaging.addListener('notificationActionPerformed', (event) => {
+      routeNotificationTap(event.notification.data as Record<string, string> | undefined);
     });
 
     // Tapping the local notification we showed for a foreground-arrived push should route the
-    // same way as tapping a real (backgrounded) push notification.
+    // same way as tapping a real (backgrounded) push notification. A medicine reminder's own
+    // "Snooze 10 min" action (iOS only — see medicineReminders.ts's registerMedicineActionTypes;
+    // Android's medicine reminders don't go through this plugin at all) is handled here instead of
+    // navigating anywhere, since snoozing isn't a request to open the app.
     LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
-      routeNotificationTap(action.notification.extra as Record<string, string> | undefined);
+      const extra = action.notification.extra as Record<string, any> | undefined;
+      if (extra?.type === 'medicine_reminder' && action.actionId === 'snooze') {
+        snoozeMedicineReminder(action.notification.id, action.notification.title || 'Medicine reminder', action.notification.body || '');
+        return;
+      }
+      routeNotificationTap(extra as Record<string, string> | undefined);
     });
-
-    await PushNotifications.register();
   } catch (err) {
     console.error('initPushNotifications failed:', err);
   }

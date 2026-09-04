@@ -89,3 +89,34 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+// Plain-text sharing (no file involved) — e.g. AccountsHub's "Share account details". Same native
+// vs. web split as shareOrDownloadFile above, but text-only sharing IS reliably supported by both
+// the Capacitor Share plugin and a browser's navigator.share, so there's no file-specific WebView
+// workaround needed here — just a plain three-tier fallback. Returns which path actually happened
+// so the caller can tell the user (e.g. "Copied to clipboard" when there was no share sheet to
+// hand off to at all).
+export async function shareText(title: string, text: string): Promise<'shared' | 'copied' | 'cancelled'> {
+  if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Share')) {
+    try {
+      await Share.share({ title, text });
+      return 'shared';
+    } catch (err: any) {
+      if (typeof err?.message === 'string' && /cancel/i.test(err.message)) return 'cancelled';
+      console.error('Native text share failed:', err);
+      // fall through to the web/clipboard fallback below
+    }
+  }
+  try {
+    const nav = navigator as any;
+    if (nav.share) {
+      await nav.share({ title, text });
+      return 'shared';
+    }
+  } catch (err) {
+    if ((err as any)?.name === 'AbortError') return 'cancelled';
+    console.error('shareText navigator.share failed, falling back to clipboard:', err);
+  }
+  await navigator.clipboard.writeText(text);
+  return 'copied';
+}

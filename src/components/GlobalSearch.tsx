@@ -140,7 +140,10 @@ export default function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onC
     if (!q || !expensesValue) return [];
     return expensesValue.docs
       .map((d) => ({ id: d.id, ...d.data() } as any))
-      .filter((e) => (e.description || '').toLowerCase().includes(q) || (e.category || '').toLowerCase().includes(q))
+      // Amount match is a plain substring check against the raw number (e.g. "500" also matches
+      // 1500) — same forgiving substring approach already used for description/category, not an
+      // exact-equals, so a partial amount still finds something.
+      .filter((e) => (e.description || '').toLowerCase().includes(q) || (e.category || '').toLowerCase().includes(q) || String(e.amount ?? '').includes(q))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
       .slice(0, 8);
   }, [queryText, expensesValue]);

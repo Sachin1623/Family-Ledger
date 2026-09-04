@@ -61,8 +61,29 @@ export default function PersonalLoans() {
   // perspective (positive = they owe me). For contacts where I'm the linked counterparty, the
   // stored balance is the *owner's* perspective, so mine is the negation of it.
   const myPerspectiveBalance = (c: any) => (c.isOwner ? c.balance : -c.balance);
-  const totalOwedToMe = allContacts.reduce((sum, c) => sum + Math.max(0, myPerspectiveBalance(c)), 0);
-  const totalIOwe = allContacts.reduce((sum, c) => sum + Math.max(0, -myPerspectiveBalance(c)), 0);
+  // Bucketed by each contact's OWN currency (a loan contact picks its currency at creation, see
+  // the `currency` field above) rather than a single blended sum — contacts aren't all
+  // necessarily in the same currency, and summing raw numbers across currencies then hardcoding
+  // '₹' on top (the old behavior here) mislabels the total exactly like Settlements.tsx's own
+  // "Overall" summary used to (same bug, same fix, two different screens).
+  const owedToMeByCurrency = React.useMemo(() => {
+    const byCurrency: Record<string, number> = {};
+    allContacts.forEach((c: any) => {
+      const amt = Math.max(0, myPerspectiveBalance(c));
+      if (amt > 0.01) byCurrency[c.currency || 'INR'] = (byCurrency[c.currency || 'INR'] || 0) + amt;
+    });
+    return Object.entries(byCurrency).map(([currencyCode, amount]) => ({ currencyCode, amount }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myContactsValue, theirContactsValue]);
+  const iOweByCurrency = React.useMemo(() => {
+    const byCurrency: Record<string, number> = {};
+    allContacts.forEach((c: any) => {
+      const amt = Math.max(0, -myPerspectiveBalance(c));
+      if (amt > 0.01) byCurrency[c.currency || 'INR'] = (byCurrency[c.currency || 'INR'] || 0) + amt;
+    });
+    return Object.entries(byCurrency).map(([currencyCode, amount]) => ({ currencyCode, amount }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myContactsValue, theirContactsValue]);
 
   React.useEffect(() => {
     if (userSearchTimerRef.current) clearTimeout(userSearchTimerRef.current);
@@ -237,15 +258,39 @@ export default function PersonalLoans() {
         <div className="grid grid-cols-2 gap-3" data-tour="loans-summary">
           <div className="bg-white rounded-2xl border border-border-subtle p-4">
             <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('loans.owedToYou')}</p>
-            <p className="text-xl font-black text-[#0F7A38] mt-0.5">
-              {getCurrencySymbol('INR')}{totalOwedToMe.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </p>
+            {owedToMeByCurrency.length === 0 ? (
+              <p className="text-xl font-black text-[#0F7A38] mt-0.5">{getCurrencySymbol('INR')}0</p>
+            ) : owedToMeByCurrency.length === 1 ? (
+              <p className="text-xl font-black text-[#0F7A38] mt-0.5">
+                {getCurrencySymbol(owedToMeByCurrency[0].currencyCode)}{owedToMeByCurrency[0].amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </p>
+            ) : (
+              <div className="mt-0.5">
+                {owedToMeByCurrency.map(({ currencyCode, amount }) => (
+                  <p key={currencyCode} className="text-base font-black text-[#0F7A38]">
+                    {getCurrencySymbol(currencyCode)}{amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
           <div className="bg-white rounded-2xl border border-border-subtle p-4">
             <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('loans.youOweLabel')}</p>
-            <p className="text-xl font-black text-error mt-0.5">
-              {getCurrencySymbol('INR')}{totalIOwe.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </p>
+            {iOweByCurrency.length === 0 ? (
+              <p className="text-xl font-black text-error mt-0.5">{getCurrencySymbol('INR')}0</p>
+            ) : iOweByCurrency.length === 1 ? (
+              <p className="text-xl font-black text-error mt-0.5">
+                {getCurrencySymbol(iOweByCurrency[0].currencyCode)}{iOweByCurrency[0].amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </p>
+            ) : (
+              <div className="mt-0.5">
+                {iOweByCurrency.map(({ currencyCode, amount }) => (
+                  <p key={currencyCode} className="text-base font-black text-error">
+                    {getCurrencySymbol(currencyCode)}{amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

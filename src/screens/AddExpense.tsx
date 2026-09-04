@@ -17,6 +17,7 @@ import { FrequencyConfig, nextOccurrenceAfter, sanitizeFrequencyConfig } from '.
 import { todayLocalDateString, currentLocalMonthKey } from '../lib/dateUtils';
 import { getParentPath } from '../lib/navigationParents';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
+import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
 
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification } from '../lib/constants';
 import { useLanguage } from '../context/LanguageContext';
@@ -45,6 +46,7 @@ export default function AddExpense() {
   const paymentMethod = 'cash';
   const [date, setDate] = useState(todayLocalDateString());
   const [loading, setLoading] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [showSuccess, setShowSuccess] = useState(false);
   const [showKeypad, setShowKeypad] = useState(false);
 
@@ -90,7 +92,11 @@ export default function AddExpense() {
   );
 
   const groups = groupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
-  
+  // Archived groups stay fully usable if one is already selected (a deep link, or a favorite that
+  // happened to get archived later) — only the picker's own option list hides them, so you can't
+  // newly pick one to log an expense against.
+  const selectableGroups = groups.filter((g: any) => !g.archived);
+
   React.useEffect(() => {
     if (groups.length === 1 && !groupId) {
       setGroupId(groups[0].id);
@@ -124,6 +130,7 @@ export default function AddExpense() {
       }
     }
   }, [user, paidBy, groupMembers, splitMembers, settleWith, amount]);
+
 
   const selectedGroup = groups.find(g => g.id === groupId);
   // Blank (not a "$" default) until a group is actually selected, since there's no currency
@@ -169,6 +176,16 @@ export default function AddExpense() {
       .filter((e: any) => typeof e.date === 'string' && e.date.startsWith(monthKey) && e.type !== 'income')
       .reduce((sum, e: any) => sum + (e.amount || 0), 0);
   }, [groupExpensesForBudgetValue, monthKey]);
+  // Same idea, scoped to whichever category is currently selected — only meaningful if that
+  // category actually has a % of the budget set aside for it (ManageGroup's Split by Category);
+  // otherwise there's no per-category cap to preview against.
+  const categoryBudgetPct = (budget?.categoryAllocations as Record<string, number> | undefined)?.[category] || 0;
+  const categorySpendSoFar = React.useMemo(() => {
+    return (groupExpensesForBudgetValue?.docs || [])
+      .map((d) => d.data())
+      .filter((e: any) => typeof e.date === 'string' && e.date.startsWith(monthKey) && e.type !== 'income' && e.category === category)
+      .reduce((sum, e: any) => sum + (e.amount || 0), 0);
+  }, [groupExpensesForBudgetValue, monthKey, category]);
 
   // Browse-and-reuse favorites — shared across every group the user belongs to (any member's
   // favorite, `favoritedBy` non-empty, regardless of WHICH member(s) starred it or who originally
@@ -239,11 +256,19 @@ export default function AddExpense() {
       .slice(0, 5);
   }, [description, historicDescriptions]);
 
-  const handleSave = async () => {
-    if (!groupId || !amount || !evaluatedAmount || evaluatedAmount <= 0 || !description || loading || !user) {
-      alert('Please fill all fields correctly');
-      return;
-    }
+  // `keepOpen` (Save & Add More) resets the form and stays on this screen for another entry;
+  // otherwise (plain Save) it closes back to wherever this screen was opened from right after —
+  // either way, markExpenseAdded() below hands the just-saved id off to Dashboard.tsx so the
+  // group tile can highlight it (and auto-expand to show it) the moment the user actually gets
+  // back there, whether that's this same save or after several more "Save & Add More" rounds.
+  const handleSave = async (keepOpen: boolean) => {
+    if (loading || !user) return;
+    const nextErrors: Record<string, string> = {};
+    if (!amount || !evaluatedAmount || evaluatedAmount <= 0) nextErrors.amount = t('addExpense.errorAmount');
+    if (!groupId) nextErrors.group = t('addExpense.errorGroup');
+    if (!description.trim()) nextErrors.description = t('addExpense.errorDescription');
+    setFormErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
 
     const isIncome = entryType === 'income';
 
@@ -253,12 +278,20 @@ export default function AddExpense() {
         return;
       }
       if (splitType === 'percentage') {
+        if (splitMembers.some((uid) => (memberSplits[uid] || 0) < 0)) {
+          alert('Split percentages cannot be negative.');
+          return;
+        }
         const totalPct = splitMembers.reduce((sum, uid) => sum + (memberSplits[uid] || 0), 0);
         if (Math.abs(totalPct - 100) > 0.001) {
           alert(`Total percentage must be exactly 100%. Current: ${totalPct}%`);
           return;
         }
       } else if (splitType === 'amount') {
+        if (splitMembers.some((uid) => (memberSplits[uid] || 0) < 0)) {
+          alert('Split amounts cannot be negative.');
+          return;
+        }
         const totalAmt = splitMembers.reduce((sum, uid) => sum + (memberSplits[uid] || 0), 0);
         const parsedAmount = evaluatedAmount;
         if (Math.abs(totalAmt - parsedAmount) > 0.01) {
@@ -328,6 +361,9 @@ export default function AddExpense() {
         'add expense',
       );
       trackEvent(isIncome ? 'income_added' : 'expense_added', { category, value: evaluatedAmount });
+      // expenseRef.id is already known client-side (doc() generates it locally before the write
+      // even lands) — no need to wait on fireWrite's promise for this hand-off.
+      markExpenseAdded(groupId, expenseRef.id);
 
       // Income is tracked on a separate `totalIncome` field rather than folded (signed) into
       // `totalSpending` — that field is read/written in many places across this app (Dashboard,
@@ -418,8 +454,11 @@ export default function AddExpense() {
       setImages([]);
       setMakeRecurring(false);
       setIsFavorite(false);
+      setFormErrors({});
 
       setTimeout(() => setShowSuccess(false), 3000);
+
+      if (!keepOpen) handleClose();
     } catch (error) {
       console.error('Error saving expense:', error);
       alert('Failed to save expense');
@@ -508,9 +547,31 @@ export default function AddExpense() {
               const signedEntryAmount = entryType === 'income' ? 0 : (evaluatedAmount || 0);
               const projectedRemaining = budget.amount - monthSpendSoFar - signedEntryAmount;
               const isOver = projectedRemaining < 0;
+              // Category line only shows once that category actually has a % of the budget set
+              // aside for it — otherwise there's nothing to project against.
+              // Rounded to the nearest rupee before comparing — categoryBudgetPct is stored to 4
+              // decimal places (see ManageGroup.tsx's handleSaveCategoryBudget) precisely so an
+              // exact amount entry like ₹68,000 round-trips back to ₹68,000, but the raw
+              // reconstruction (budget × pct ÷ 100) can still land a fraction of a rupee off
+              // (e.g. ₹67,999.95) — comparing that unrounded showed "₹0.05 over" against a
+              // category that was actually exactly on budget.
+              const categoryBudgetAmount = Math.round((budget.amount * categoryBudgetPct) / 100);
+              const categoryProjectedRemaining = categoryBudgetAmount - categorySpendSoFar - signedEntryAmount;
+              const isCategoryOver = categoryProjectedRemaining < 0;
               return (
-                <span className={clsx('text-[10px] font-bold text-right shrink-0', isOver ? 'text-error' : 'text-success')}>
-                  {isOver ? t('addExpense.overBudgetBy') : t('addExpense.remainingBudget')} {currencySymbol}{Math.abs(projectedRemaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <span className="text-right shrink-0">
+                  <span className={clsx('block text-[10px] font-bold', isOver ? 'text-error' : 'text-success')}>
+                    {isOver ? t('addExpense.overBudgetBy') : t('addExpense.remainingBudget')} {currencySymbol}{Math.abs(projectedRemaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                  {entryType === 'expense' && categoryBudgetPct > 0 && (
+                    <span className={clsx('block text-[10px] font-bold', isCategoryOver ? 'text-error' : 'text-primary')}>
+                      {t('addExpense.categoryBudgetLine', {
+                        category: t(`category.${category}`),
+                        label: isCategoryOver ? t('addExpense.overBudgetBy') : t('addExpense.remainingBudget'),
+                        amount: `${currencySymbol}${Math.abs(categoryProjectedRemaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                      })}
+                    </span>
+                  )}
                 </span>
               );
             })()}
@@ -544,6 +605,7 @@ export default function AddExpense() {
               </span>
             )}
           </div>
+          {formErrors.amount && <p className="text-xs text-error font-bold text-center mt-1">{formErrors.amount}</p>}
         </section>
 
         <div className="flex items-start gap-2">
@@ -552,7 +614,7 @@ export default function AddExpense() {
               <div className="flex items-center justify-between bg-white px-3 h-11 rounded-xl border border-border-subtle">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="material-symbols-outlined text-primary text-[18px] shrink-0">{selectedGroup.icon || 'home'}</span>
-                  <span className="text-sm font-bold text-primary truncate">{t('addExpense.addingTo', { name: selectedGroup.name })}</span>
+                  <span className="text-sm font-bold text-primary truncate">{selectedGroup.name}</span>
                 </div>
                 <button
                   type="button"
@@ -567,14 +629,15 @@ export default function AddExpense() {
                 <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.group')} <span className="text-error">*</span></label>
                 <select
                   value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
-                  className="w-full h-11 bg-white px-3 rounded-xl border border-border-subtle outline-none focus:ring-2 focus:ring-primary/20 text-sm font-bold text-primary"
+                  onChange={(e) => { setGroupId(e.target.value); if (formErrors.group) setFormErrors((prev) => ({ ...prev, group: '' })); }}
+                  className={clsx('w-full h-11 bg-white px-3 rounded-xl border outline-none focus:ring-2 focus:ring-primary/20 text-sm font-bold text-primary', formErrors.group ? 'border-error' : 'border-border-subtle')}
                 >
                   <option value="">{t('addExpense.selectGroup')}</option>
-                  {groups.map((group: any) => (
+                  {selectableGroups.map((group: any) => (
                     <option key={group.id} value={group.id}>{group.name}</option>
                   ))}
                 </select>
+                {formErrors.group && <p className="text-xs text-error font-bold px-1 mt-1">{formErrors.group}</p>}
               </div>
             )}
           </div>
@@ -602,6 +665,12 @@ export default function AddExpense() {
                 {favorites.map((fav) => {
                   const favCat = (fav.type === 'income' ? INCOME_CATEGORIES : CATEGORIES).find((c) => c.id === fav.category);
                   const favGroup = groups.find((g) => g.id === fav.groupId);
+                  // The "x" only ever removes MY OWN vote (see handleRemoveFavorite's own doc
+                  // comment) — showing it unconditionally on a favorite someone ELSE in the group
+                  // starred meant tapping it silently did nothing (their uid was never in
+                  // favoritedBy to remove), which read as "I can't remove this favorite" with no
+                  // visible reason why, especially confusing when it was the only one left.
+                  const isMyFavorite = !!user && (fav.favoritedBy || []).includes(user.uid);
                   return (
                     <div
                       key={fav.id}
@@ -611,15 +680,25 @@ export default function AddExpense() {
                       onKeyDown={(e) => { if (e.key === 'Enter') handlePickFavorite(fav); }}
                       className="relative shrink-0 w-32 text-left bg-surface p-2.5 rounded-xl border border-border-subtle hover:border-primary/40 active:scale-[0.97] transition-all cursor-pointer"
                     >
-                      <button
-                        type="button"
-                        onClick={(e) => handleRemoveFavorite(fav, e)}
-                        className="absolute top-1 right-1 p-0.5 rounded-full text-text-muted/50 hover:text-error hover:bg-error/10"
-                        aria-label={t('addExpense.removeFavorite')}
-                        title={t('addExpense.removeFavorite')}
-                      >
-                        <span className="material-symbols-outlined text-[14px] block">close</span>
-                      </button>
+                      {isMyFavorite ? (
+                        <button
+                          type="button"
+                          onClick={(e) => handleRemoveFavorite(fav, e)}
+                          className="absolute top-1 right-1 p-0.5 rounded-full text-text-muted/50 hover:text-error hover:bg-error/10"
+                          aria-label={t('addExpense.removeFavorite')}
+                          title={t('addExpense.removeFavorite')}
+                        >
+                          <span className="material-symbols-outlined text-[14px] block">close</span>
+                        </button>
+                      ) : (
+                        <span
+                          className="absolute top-1 right-1 material-symbols-outlined text-[14px] text-warning/60"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                          title={t('addExpense.favoritedByOther')}
+                        >
+                          star
+                        </span>
+                      )}
                       <span className="text-lg block">{favCat?.icon || '🧾'}</span>
                       <span className="block text-xs font-bold text-on-surface truncate mt-1 pr-3">{fav.description || t('addExpense.untitled')}</span>
                       <span className={clsx('block text-[11px] font-bold', fav.type === 'income' ? 'text-success' : 'text-primary')}>
@@ -641,13 +720,14 @@ export default function AddExpense() {
             <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.description')} <span className="text-error">*</span></label>
             <input
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); if (formErrors.description) setFormErrors((prev) => ({ ...prev, description: '' })); }}
               onFocus={() => setDescriptionFocused(true)}
               onBlur={() => setDescriptionFocused(false)}
               type="text"
               placeholder={t('addExpense.descriptionPlaceholder')}
-              className="w-full h-10 bg-white px-3 rounded-lg border border-border-subtle focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-text-muted/40 text-sm font-medium"
+              className={clsx('w-full h-10 bg-white px-3 rounded-lg border focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-text-muted/40 text-sm font-medium', formErrors.description ? 'border-error' : 'border-border-subtle')}
             />
+            {formErrors.description && <p className="text-xs text-error font-bold px-1 mt-1">{formErrors.description}</p>}
             {descriptionFocused && descriptionSuggestions.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-border-subtle shadow-lg z-20 overflow-hidden">
                 {descriptionSuggestions.map((d) => (
@@ -940,25 +1020,43 @@ export default function AddExpense() {
       </div>
 
       {/* Floats within this modal card (not the viewport) — absolute, not fixed, since the card
-          itself is the "add expense section" the button should stay pinned to, and on wider
+          itself is the "add expense section" the buttons should stay pinned to, and on wider
           screens the card is centered and narrower than the viewport. Shifts up above the
           AmountKeypad when it's open so the two never overlap, mirroring the scroll container's
-          own pb-64 reserved for the same reason. */}
-      <button
-        onClick={handleSave}
-        disabled={loading}
-        data-tour="expense-save"
-        className={clsx(
-          'absolute right-4 z-[95] flex items-center gap-1.5 pl-4 pr-5 h-12 bg-primary text-white rounded-full font-bold text-sm shadow-lg active:scale-95 transition-all disabled:opacity-50',
-          showKeypad ? 'bottom-64' : 'bottom-4',
-        )}
-      >
-        <span className="material-symbols-outlined text-[20px]">{loading ? 'progress_activity' : 'check'}</span>
-        {loading ? t('addExpense.saving') : t('common.save')}
-      </button>
+          own pb-64 reserved for the same reason. Two buttons: "Save & Add More" resets the form
+          and stays here for another entry; plain "Save" closes back to wherever this screen was
+          opened from. Either way, markExpenseAdded() inside handleSave hands the id(s) off to
+          Dashboard.tsx so the group tile highlights (and auto-expands to show) whatever was just
+          added, the moment the user actually gets back there. */}
+      <div className={clsx(
+        'absolute left-4 right-4 z-[95] flex items-center justify-end gap-2',
+        showKeypad ? 'bottom-64' : 'bottom-4',
+      )}>
+        <button
+          onClick={() => handleSave(true)}
+          disabled={loading}
+          className="flex items-center gap-1.5 pl-4 pr-4 h-12 bg-white border-2 border-primary text-primary rounded-full font-bold text-sm shadow-lg active:scale-95 transition-all disabled:opacity-50 shrink-0"
+        >
+          <span className="material-symbols-outlined text-[18px]">add</span>
+          {t('addExpense.saveAddMore')}
+        </button>
+        <button
+          onClick={() => handleSave(false)}
+          disabled={loading}
+          data-tour="expense-save"
+          className="flex items-center gap-1.5 pl-4 pr-5 h-12 bg-primary text-white rounded-full font-bold text-sm shadow-lg active:scale-95 transition-all disabled:opacity-50 shrink-0"
+        >
+          <span className="material-symbols-outlined text-[20px]">{loading ? 'progress_activity' : 'check'}</span>
+          {loading ? t('addExpense.saving') : t('common.save')}
+        </button>
+      </div>
 
       {showKeypad && (
-        <AmountKeypad value={amount} onChange={setAmount} onDone={() => setShowKeypad(false)} />
+        <AmountKeypad
+          value={amount}
+          onChange={(v) => { setAmount(v); if (formErrors.amount) setFormErrors((prev) => ({ ...prev, amount: '' })); }}
+          onDone={() => setShowKeypad(false)}
+        />
       )}
       </div>
     </div>

@@ -2,7 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- interactive-widget=resizes-content: without windowSoftInputMode="adjustResize" set natively
+         (this app doesn't, and changing that needs a new APK build, not just a web deploy), the
+         on-screen keyboard would otherwise just draw on top of the page without the WebView's
+         layout viewport ever shrinking — so vh/dvh units and `fixed`-positioned bottom sheets have
+         no way to know the visible area got smaller, and content near the bottom (e.g. a modal's
+         Save button) can end up hidden behind the keyboard with no way to scroll to it. This meta
+         value (Chrome/WebView 108+) achieves the same effect purely at the web layer: the layout
+         viewport itself shrinks when the keyboard opens, so `85vh`-capped modals and `fixed
+         inset-0` overlays resize correctly without any native change. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="FamilyLedger">

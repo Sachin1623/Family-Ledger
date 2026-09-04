@@ -415,6 +415,9 @@ async function sendPush(
     if (staleTokens.length > 0) {
       pruneStaleTokens(adminDb, staleTokens).catch((err) => console.error('pruneStaleTokens failed:', err));
     }
+    // TEMP diagnostic (2026-08-29): logging full per-token results while tracking down a shared-
+    // reminder push that isn't reaching a recipient — remove once resolved.
+    console.log(`sendPush "${title}": ${response.successCount}/${tokens.length} succeeded`, response.responses.map((r, i) => r.success ? 'ok' : `${tokens[i].slice(0, 8)}…:${r.error?.code}`));
 
     return response.successCount;
   } catch (error) {
@@ -1934,6 +1937,113 @@ async function processHabitReminders(db: Firestore): Promise<number> {
   return sentCount;
 }
 
+// Alerts whoever a medicine is SHARED with (the medicine doc's own `groupId`/`sharedFriendUids` —
+// same audience as the existing "dose logged as taken" notification in HealthMedicines.tsx) when a
+// scheduled dose has gone unmarked (neither taken nor skipped) for more than a grace period.
+// Deliberately NOT gated on the medicine's own `remindersEnabled` — that only controls the
+// PATIENT's own on-device alarm-clock-style reminder (see medicineReminders.ts); a caregiver who's
+// been shared this medicine still wants to know even if the patient turned their own reminder off.
+// This is also the only reason this needs to be server-side at all: the patient's own device is
+// exactly the one place that CAN'T be trusted to notice its own inaction.
+//
+// One push per (medicine, dose, calendar day) — a `medicineMissedAlerts/{medicineId}_{doseTimeId}_
+// {dateStr}` marker doc makes this idempotent across cron ticks, same pattern as this file's other
+// "*Sent" reminder flags. A gap older than a few hours past the grace window is skipped rather than
+// alerted on — most likely a stale/irrelevant dose (schedule just changed, or the cron itself was
+// down for a while) rather than something a caregiver still needs paged about now.
+const MEDICINE_MISSED_GRACE_MINUTES = 45;
+const MEDICINE_MISSED_STALE_MINUTES = MEDICINE_MISSED_GRACE_MINUTES + 180;
+
+async function processMissedMedicineDoses(db: Firestore): Promise<number> {
+  let sentCount = 0;
+  const snap = await db.collection('medicines').where('active', '==', true).get();
+
+  for (const medDoc of snap.docs) {
+    const med = medDoc.data();
+    const hasShareTarget = !!med.groupId || (Array.isArray(med.sharedFriendUids) && med.sharedFriendUids.length > 0);
+    if (!hasShareTarget || !Array.isArray(med.times) || med.times.length === 0) continue;
+
+    try {
+      const tz = (await getUserTimezone(db, med.userId)) || 'UTC';
+      const nowLocal = nowInTimeZone(tz);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const dateStr = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth() + 1)}-${pad(nowLocal.getDate())}`;
+
+      // Inline mirror of isMedicineDueOn (src/lib/medicines.ts) — duplicated deliberately, same
+      // reasoning as every other client/server logic split in this file (see rummy.ts's header
+      // comment): server.ts and the client bundle don't share a module graph.
+      if (dateStr < med.startDate) continue;
+      if (med.durationMode === 'endDate' && med.endDate && dateStr > med.endDate) continue;
+      if (med.durationMode === 'dayCount' && med.dayCount) {
+        const [y, mo, d] = String(med.startDate).split('-').map(Number);
+        const end = new Date(y, mo - 1, d);
+        end.setDate(end.getDate() + med.dayCount - 1);
+        const endStr = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`;
+        if (dateStr > endStr) continue;
+      }
+      // intervalDays (e.g. "alternate days" = 2) takes priority over weekdays when set — same
+      // mutual-exclusivity rule as isMedicineDueOn's own intervalDays comment in medicines.ts.
+      if (typeof med.intervalDays === 'number' && med.intervalDays > 1) {
+        const [sy, sm, sd] = String(med.startDate).split('-').map(Number);
+        const start = new Date(sy, sm - 1, sd);
+        const today = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate());
+        const daysSince = Math.round((today.getTime() - start.getTime()) / 86400000);
+        if (daysSince < 0 || daysSince % med.intervalDays !== 0) continue;
+      } else {
+        const weekdays: number[] = Array.isArray(med.weekdays) ? med.weekdays : [];
+        if (weekdays.length > 0 && weekdays.length < 7) {
+          const weekday = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate()).getDay();
+          if (!weekdays.includes(weekday)) continue;
+        }
+      }
+
+      const nowMinutesOfDay = nowLocal.getHours() * 60 + nowLocal.getMinutes();
+
+      for (const slot of med.times) {
+        if (!slot?.time || !slot?.id) continue;
+        const [h, mi] = String(slot.time).split(':').map(Number);
+        const minutesLate = nowMinutesOfDay - (h * 60 + mi);
+        if (minutesLate < MEDICINE_MISSED_GRACE_MINUTES || minutesLate > MEDICINE_MISSED_STALE_MINUTES) continue;
+
+        const logId = `${med.userId}_${medDoc.id}_${slot.id}_${dateStr}`;
+        const alertId = `${medDoc.id}_${slot.id}_${dateStr}`;
+        const [logSnap, alertSnap] = await Promise.all([
+          db.collection('medicineLogs').doc(logId).get(),
+          db.collection('medicineMissedAlerts').doc(alertId).get(),
+        ]);
+        if (logSnap.exists || alertSnap.exists) continue;
+
+        const notifyUids = new Set<string>();
+        if (Array.isArray(med.sharedFriendUids)) med.sharedFriendUids.forEach((uid: string) => notifyUids.add(uid));
+        if (med.groupId) {
+          const membersSnap = await db.collection('members').where('groupId', '==', med.groupId).get();
+          membersSnap.docs.forEach((m) => notifyUids.add(m.data().userId));
+        }
+        notifyUids.delete(med.userId);
+        if (notifyUids.size === 0) continue;
+
+        const tokens = await collectPushTokens(db, Array.from(notifyUids), 'notificationsEnabled');
+        const sent = await sendPush(
+          tokens,
+          'Missed medicine dose',
+          `${med.name} (${slot.label}) hasn't been marked taken yet.`,
+          { type: 'medicine_missed', medicineId: medDoc.id, doseTimeId: slot.id },
+        );
+        // Marked regardless of `sent` count — 0 tokens (no caregiver has push enabled) is a
+        // legitimate steady state, not a transient failure worth retrying every 15 min forever.
+        await db.collection('medicineMissedAlerts').doc(alertId).set({
+          medicineId: medDoc.id, doseTimeId: slot.id, dateStr, sentAt: new Date().toISOString(), notifiedCount: sent,
+        });
+        if (sent > 0) sentCount++;
+      }
+    } catch (err) {
+      console.error(`processMissedMedicineDoses failed for medicine ${medDoc.id}:`, err);
+    }
+  }
+
+  return sentCount;
+}
+
 // Carries a group's budget forward into the current month if nothing's been set for it yet
 // (budgets stay in effect "until manually changed" — see ManageGroup.tsx's handleSaveBudget),
 // then nudges members to set a budget for the current month: once when the month begins
@@ -2811,6 +2921,50 @@ async function startServer() {
     }
   });
 
+  // ===================== Currency conversion =====================
+
+  // Live exchange rates, proxied (not called directly from the client) so a key-less rate limit or
+  // an outage on the upstream provider never becomes a CORS/client-side problem, and so repeated
+  // calls from many users/screens don't hammer it — cached in Firestore (not just in-memory, since
+  // Cloud Run can run multiple instances/cold-start) for FX_CACHE_TTL_MS, comfortably longer than
+  // how often the source actually updates (ECB rates refresh once a day on weekdays). Frankfurter
+  // (api.frankfurter.dev, ECB-sourced) needs no API key and has no rate limit — chosen specifically
+  // so this never becomes a paid dependency or a "renew the key" chore later. Used by
+  // src/lib/fx.ts, currently only consumed by GoalsHub.tsx's Net Savings This Month conversion —
+  // this app has no other currency-conversion feature yet.
+  const FX_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+  app.get('/api/fx-rates', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const base = String(req.query.base || '').toUpperCase();
+    if (!/^[A-Z]{3}$/.test(base)) return res.status(400).json({ error: 'Invalid base currency.' });
+
+    const cacheRef = adminDb.collection('app_config').doc(`fxRates_${base}`);
+    try {
+      const cacheSnap = await cacheRef.get();
+      const cached = cacheSnap.exists ? cacheSnap.data()! : null;
+      if (cached && Date.now() - new Date(cached.fetchedAt).getTime() < FX_CACHE_TTL_MS) {
+        return res.json({ base: cached.base, date: cached.date, rates: cached.rates });
+      }
+
+      const upstream = await fetch(`https://api.frankfurter.dev/v1/latest?base=${base}`);
+      if (!upstream.ok) {
+        // Serve a stale cache rather than nothing at all if the upstream is down or rejects this
+        // particular base currency (it only tracks a fixed set — an unrecognized code 404s).
+        if (cached) return res.json({ base: cached.base, date: cached.date, rates: cached.rates });
+        return res.status(502).json({ error: 'Exchange rate service unavailable for this currency.' });
+      }
+      const data = (await upstream.json()) as { base: string; date: string; rates: Record<string, number> };
+      await cacheRef.set({ base: data.base, date: data.date, rates: data.rates, fetchedAt: new Date().toISOString() });
+      return res.json({ base: data.base, date: data.date, rates: data.rates });
+    } catch (error) {
+      console.error('fx-rates error:', error);
+      return res.status(500).json({ error: 'Unable to fetch exchange rates.' });
+    }
+  });
+
   // ===================== Admin API =====================
   // Every route below requires a signed-in primary or secondary admin (requireAdmin), except
   // /api/admin/manage-admin which is further restricted to sachin.rajputs@gmail.com only.
@@ -3219,7 +3373,14 @@ async function startServer() {
   });
 
   // Full wipe of every record tied to an email: Auth account, profile, memberships, owned
-  // groups (and their members), expenses (added or paid by them), activities.
+  // groups (and their members), expenses (added or paid by them), activities, and — added
+  // alongside Goals/Accounts/Health-tracking/Shared-Reminders (features that didn't exist when
+  // this endpoint was first written, so their collections were simply never added here) — every
+  // goal and its ledger, every financial account and its log, every medicine/medical
+  // incident/medicine log, every blood pressure/glucose log, every reminder this user created
+  // (plus its responses/acknowledgments), and this user's own response/acknowledgment left on
+  // anyone ELSE's reminder (found via a collectionGroup query on the `uid` field those subcollection
+  // docs already carry, since a collectionGroup can't filter by "last path segment" directly).
   app.post('/api/admin/wipe-by-email', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminAuth || !adminDb) return;
@@ -3258,6 +3419,72 @@ async function startServer() {
         addedExpensesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
         paidExpensesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
         activitiesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+
+        // Goals (+ each one's ledger) and Financial Accounts (+ each one's log) — both owned
+        // outright by `userId`, never co-owned, so deleting every one this uid owns is safe (a
+        // shared goal a group/friend merely VIEWS isn't touched — they never owned it).
+        const [ownedGoalsSnap, ownedAccountsSnap] = await Promise.all([
+          db.collection('goals').where('userId', '==', uid).get(),
+          db.collection('financialAccounts').where('userId', '==', uid).get(),
+        ]);
+        for (const g of ownedGoalsSnap.docs) {
+          const ledgerSnap = await g.ref.collection('ledger').get();
+          ledgerSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+          ops.push((batch) => batch.delete(g.ref));
+        }
+        for (const a of ownedAccountsSnap.docs) {
+          const logSnap = await a.ref.collection('log').get();
+          logSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+          ops.push((batch) => batch.delete(a.ref));
+        }
+
+        // Health tracking — Medicines/Medical Incidents/Medicine Logs/Blood Pressure/Glucose are
+        // all owned by `userId` (whose data it is), not `loggedBy` (who entered it) — a delegate's
+        // own logged-on-your-behalf entries stay with YOUR account, so only entries this uid
+        // actually owns get deleted here, never ones they merely logged for someone else.
+        const [medicinesSnap, medicalIncidentsSnap, medicineLogsSnap, bpLogsSnap, glucoseLogsSnap] = await Promise.all([
+          db.collection('medicines').where('userId', '==', uid).get(),
+          db.collection('medicalIncidents').where('userId', '==', uid).get(),
+          db.collection('medicineLogs').where('userId', '==', uid).get(),
+          db.collection('bloodPressureLogs').where('userId', '==', uid).get(),
+          db.collection('glucoseLogs').where('userId', '==', uid).get(),
+        ]);
+        medicinesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        medicalIncidentsSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        medicineLogsSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        bpLogsSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        glucoseLogsSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+
+        // Shared Reminders this uid created (+ every response/acknowledgment on them from
+        // whoever it was shared with), plus this uid's OWN response/acknowledgment left on
+        // reminders created by someone else — found via collectionGroup on the `uid` field those
+        // subcollection docs carry, since a collectionGroup query can't match "just the last path
+        // segment" the way a direct subcollection reference can.
+        const ownedRemindersSnap = await db.collection('sharedReminders').where('createdBy', '==', uid).get();
+        for (const r of ownedRemindersSnap.docs) {
+          const [responsesSnap, acksSnap] = await Promise.all([
+            r.ref.collection('responses').get(),
+            r.ref.collection('acknowledgments').get(),
+          ]);
+          responsesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+          acksSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+          ops.push((batch) => batch.delete(r.ref));
+        }
+        // A collectionGroup query needs a one-time Firestore index (this project doesn't manage
+        // indexes as code — see the missing firestore.indexes.json) before it can run; the very
+        // first call after this ships may throw with a direct "create this index" console link.
+        // Caught narrowly so that ONE missing index degrades to "your own ack/response on someone
+        // else's reminder wasn't cleaned up" rather than failing account deletion outright.
+        try {
+          const [ownResponsesSnap, ownAcksSnap] = await Promise.all([
+            db.collectionGroup('responses').where('uid', '==', uid).get(),
+            db.collectionGroup('acknowledgments').where('uid', '==', uid).get(),
+          ]);
+          ownResponsesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+          ownAcksSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        } catch (err) {
+          console.error(`wipe-by-email: collectionGroup response/ack cleanup failed for ${uid} (likely a missing Firestore index — see the error for a console link to create it):`, err);
+        }
 
         ops.push((batch) => batch.delete(db.collection('users').doc(uid).collection('private').doc('info')));
         ops.push((batch) => batch.delete(db.collection('users').doc(uid)));
@@ -4072,6 +4299,7 @@ async function startServer() {
         glucose_logged: 'logged a glucose reading',
         bp_logged: 'logged a blood pressure reading',
         medicine_logged: 'logged a medicine dose',
+        reminder_set: 'set a reminder',
       };
 
       let title: string;
@@ -4118,6 +4346,11 @@ async function startServer() {
         title = `${groupName}: Medicine dose`;
         body = `${actorName || 'Someone'} ${actionText.medicine_logged}${contextLabel ? `: ${contextLabel}` : ''}`;
         pushType = 'medicine_logged';
+      } else if (action === 'reminder_set') {
+        title = `${groupName}: New reminder`;
+        body = `${actorName || 'Someone'} ${actionText.reminder_set}${contextLabel ? `: "${contextLabel}"` : ''} — tap to accept or decline`;
+        // Distinct pushType so tapping opens the Reminders hub directly, not the group page.
+        pushType = 'shared_reminder';
       } else {
         // Only 'added'/'updated'/'deleted'/'income_added' reach here (every other action has its
         // own branch above) — all genuinely expense-list activity, so this gets its own pushType
@@ -4154,7 +4387,7 @@ async function startServer() {
     // omitted (as HealthGlucose.tsx's existing calls do) defaults to glucose for backward compat.
     // `readingLabel` is the pre-formatted reading text (e.g. "120" or "120/80" or "Metformin —
     // Morning"); the older `value` (numeric-only) is still accepted as an alias for it.
-    const { friendUids, value, readingLabel, kind, contextLabel, actorName } = req.body || {};
+    const { friendUids, value, readingLabel, kind, contextLabel, actorName, reminderId, time } = req.body || {};
     const label = readingLabel !== undefined ? String(readingLabel) : typeof value === 'number' ? String(value) : undefined;
     if (!Array.isArray(friendUids) || friendUids.length === 0 || label === undefined) {
       return res.status(400).json({ error: 'friendUids and value/readingLabel are required.' });
@@ -4168,15 +4401,152 @@ async function startServer() {
         glucose: { title: 'Glucose reading shared', verb: 'logged a glucose reading', unit: ' mg/dL', pushType: 'glucose_logged' },
         bp: { title: 'Blood pressure reading shared', verb: 'logged a blood pressure reading', unit: ' mmHg', pushType: 'bp_logged' },
         medicine: { title: 'Medicine dose shared', verb: 'logged a medicine dose', unit: '', pushType: 'medicine_logged' },
+        reminder: { title: 'Reminder shared', verb: 'set a reminder', unit: '', pushType: 'shared_reminder' },
       };
       const info = KIND_INFO[kind] || KIND_INFO.glucose;
-      const body = `${actorName || 'Someone'} ${info.verb}: ${label}${info.unit}${contextLabel ? ` (${contextLabel})` : ''}`;
+      const body = `${actorName || 'Someone'} ${info.verb}: ${label}${info.unit}${contextLabel ? ` (${contextLabel})` : ''}${kind === 'reminder' ? ' — tap to accept or decline' : ''}`;
       const tokens = await collectPushTokens(adminDb, recipientUids, 'notificationsEnabled');
-      const sent = await sendPush(tokens, info.title, body, { type: info.pushType });
+      const pushData: Record<string, string> = { type: info.pushType };
+      if (kind === 'reminder' && reminderId) pushData.reminderId = String(reminderId);
+      const sent = await sendPush(tokens, info.title, body, pushData);
+
+      // Reminders shared with a friend (no group) previously never appeared in ANYONE's Feed —
+      // notifyGroupActivity's activity-doc write only fires for the group-shareGroupId path, and
+      // this endpoint (the friend-only path) was push-only. Log a personal (`personal: true`,
+      // no groupId) 'reminder_set' entry for the actor themselves AND for each recipient, reusing
+      // FeedList.tsx's existing reminder_set rendering — same `logFeedActivity` shape already used
+      // for pokes/DMs/payment reminders. Scoped to kind==='reminder' only; glucose/BP/medicine
+      // friend-shares keep their existing push-only behavior since that wasn't reported as an issue.
+      if (kind === 'reminder') {
+        const feedData = { contextLabel: label, ...(reminderId ? { reminderId: String(reminderId) } : {}), ...(time ? { time: String(time) } : {}) };
+        await Promise.all([
+          logFeedActivity(adminDb, { userId: decoded.uid, type: 'reminder_set', description: label, userName: actorName, data: feedData }),
+          ...recipientUids.map((uid: string) =>
+            logFeedActivity(adminDb, { userId: uid, type: 'reminder_set', description: label, userName: actorName, data: feedData }),
+          ),
+        ]);
+      }
+
       return res.json({ sent });
     } catch (error) {
       console.error('notify-glucose-shared error:', error);
       return res.status(500).json({ error: 'Unable to send notification.' });
+    }
+  });
+
+  // Broadcasts a single recipient's action on a shared reminder (accept/decline, mark done, or —
+  // once completionMode's math actually closes the occurrence — the "this is now complete for
+  // everyone" version of that) to every OTHER recipient, as both a push and a Feed entry. The
+  // recipient set is re-derived here from the reminder doc itself (createdBy + friendUids + live
+  // group membership), never trusted from the client, mirroring reminderRecipientUids() client-side.
+  app.post('/api/reminders/notify-action', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const { reminderId, action, actorName } = req.body || {};
+    if (typeof reminderId !== 'string' || !reminderId || typeof action !== 'string') {
+      return res.status(400).json({ error: 'reminderId and action are required.' });
+    }
+
+    try {
+      const reminderSnap = await adminDb.collection('sharedReminders').doc(reminderId).get();
+      if (!reminderSnap.exists) return res.json({ sent: 0 });
+      const reminder = reminderSnap.data()!;
+
+      const recipientUids = new Set<string>([reminder.createdBy, ...(Array.isArray(reminder.friendUids) ? reminder.friendUids : [])]);
+      if (reminder.groupId) {
+        const membersSnap = await adminDb.collection('members').where('groupId', '==', reminder.groupId).get();
+        membersSnap.docs.forEach((d) => recipientUids.add(d.data().userId));
+      }
+      recipientUids.delete(decoded.uid);
+      const uids = Array.from(recipientUids);
+      if (uids.length === 0) return res.json({ sent: 0 });
+
+      const ACTION_TEXT: Record<string, string> = {
+        accepted: 'accepted',
+        declined: 'declined',
+        marked_done: 'marked done',
+        task_completed: 'is done — completed by',
+      };
+      const verb = ACTION_TEXT[action] || 'updated';
+      const name = actorName || 'Someone';
+      const title = action === 'task_completed' ? `Reminder complete: ${reminder.title}` : `Reminder: ${reminder.title}`;
+      const body = action === 'task_completed'
+        ? `"${reminder.title}" is done — completed by ${name}`
+        : `${name} ${verb}: "${reminder.title}"`;
+
+      const tokens = await collectPushTokens(adminDb, uids, 'notificationsEnabled');
+      const sent = await sendPush(tokens, title, body, { type: 'shared_reminder', reminderId });
+
+      await Promise.all(
+        uids.map((uid) =>
+          logFeedActivity(adminDb, { userId: uid, type: 'reminder_activity', description: body, userName: name, data: { contextLabel: reminder.title, reminderId, action, time: reminder.time } }),
+        ),
+      );
+
+      return res.json({ sent });
+    } catch (error) {
+      console.error('reminders/notify-action error:', error);
+      return res.status(500).json({ error: 'Unable to send notification.' });
+    }
+  });
+
+  // Derives and hands out a field-encryption key for one document (a goal, a financial account,
+  // or the caller's own user-level scope) — see src/lib/fieldCrypto.ts for the full design. The
+  // key itself is never stored anywhere; it's deterministically re-derived on every request via
+  // HMAC-SHA256(FIELD_ENCRYPTION_SECRET, "scopeType:scopeId"), so there's nothing to persist or
+  // leak beyond the one master secret (an env var, never in Firestore or the repo). This endpoint
+  // is the ONLY gate: it re-checks the exact same authorization Firestore rules already enforce
+  // for reading that document before ever handing out its key, so a caller who couldn't read the
+  // Firestore doc can't get its key either, and vice versa — someone who legitimately can read
+  // the (encrypted) doc via Firestore can always also fetch the key to actually decrypt it.
+  app.post('/api/crypto/key', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+
+    const { scopeType, scopeId } = req.body || {};
+    if (typeof scopeType !== 'string' || typeof scopeId !== 'string' || !scopeId) {
+      return res.status(400).json({ error: 'scopeType and scopeId are required.' });
+    }
+    const masterSecret = process.env.FIELD_ENCRYPTION_SECRET;
+    if (!masterSecret) {
+      console.error('FIELD_ENCRYPTION_SECRET is not configured — refusing to derive any key.');
+      return res.status(500).json({ error: 'Encryption is not configured on this server.' });
+    }
+
+    try {
+      let authorized = false;
+      if (scopeType === 'user') {
+        authorized = scopeId === decoded.uid;
+      } else if (scopeType === 'account') {
+        const snap = await db.collection('financialAccounts').doc(scopeId).get();
+        authorized = snap.exists && snap.data()?.userId === decoded.uid;
+      } else if (scopeType === 'goal') {
+        const snap = await db.collection('goals').doc(scopeId).get();
+        if (snap.exists) {
+          const goal = snap.data()!;
+          if (goal.userId === decoded.uid) {
+            authorized = true;
+          } else if (Array.isArray(goal.friendUids) && goal.friendUids.includes(decoded.uid)) {
+            authorized = true;
+          } else if (goal.groupId) {
+            const memberSnap = await db.collection('members')
+              .where('groupId', '==', goal.groupId).where('userId', '==', decoded.uid).limit(1).get();
+            authorized = !memberSnap.empty;
+          }
+        }
+      } else {
+        return res.status(400).json({ error: 'Unknown scopeType.' });
+      }
+
+      if (!authorized) return res.status(403).json({ error: 'Not authorized for this scope.' });
+
+      const key = crypto.createHmac('sha256', masterSecret).update(`${scopeType}:${scopeId}`).digest('base64');
+      return res.json({ key });
+    } catch (error) {
+      console.error('crypto/key error:', error);
+      return res.status(500).json({ error: 'Unable to derive key.' });
     }
   });
 
@@ -4259,6 +4629,31 @@ async function startServer() {
       return res.json({ sent });
     } catch (error) {
       console.error('notify-loan-activity error:', error);
+      return res.status(500).json({ error: 'Unable to send notification.' });
+    }
+  });
+
+  // Fired client-side by src/lib/accountAllocations.ts's applyAccountChange() right after an
+  // account allocation pushes a goal to (or past) its target and auto-completes it — a
+  // self-notification (the caller IS the goal owner), unlike notify-loan-activity's cross-user
+  // case, so there's no separate targetUserId to trust from the request body.
+  app.post('/api/notify-goal-met', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const goalId = String(req.body?.goalId || '');
+    const goalName = String(req.body?.goalName || 'Your goal');
+    const amount = req.body?.amount != null ? String(req.body.amount) : '';
+    if (!goalId) return res.status(400).json({ error: 'goalId is required.' });
+
+    try {
+      const title = `Goal met: ${goalName}`;
+      const body = amount ? `"${goalName}" reached its target (${amount}) from a linked account.` : `"${goalName}" reached its target from a linked account.`;
+      const tokens = await collectPushTokens(adminDb, [decoded.uid], 'notificationsEnabled');
+      const sent = await sendPush(tokens, title, body, { type: 'goal_met', goalId });
+      return res.json({ sent });
+    } catch (error) {
+      console.error('notify-goal-met error:', error);
       return res.status(500).json({ error: 'Unable to send notification.' });
     }
   });
@@ -4578,6 +4973,10 @@ async function startServer() {
     const allSameSuit = suitCounts.size === 1;
     const allDistinctSuits = suitCounts.size === naturals.length;
     if (!allSameSuit && !allDistinctSuits) return false;
+    // A joker may only fill a genuinely MISSING suit (completing a one-of-each-suit set up to 4),
+    // never pad out a same-suit duplicate run — see the matching comment in src/lib/rummy.ts's
+    // isValidSet for the full reasoning (e.g. D4, D4, joker is invalid; D4, D4, D4 alone is fine).
+    if (wilds.length > 0 && !allDistinctSuits) return false;
     return true;
   }
 
@@ -9182,6 +9581,7 @@ async function startServer() {
       const habitRemindersSent = await processHabitReminders(db);
       const loanRemindersSent = await processLoanReminders(db);
       const scheduledBroadcastsSent = await processScheduledBroadcasts(db);
+      const missedMedicineDosesAlerted = await processMissedMedicineDoses(db);
 
       return res.json({
         ok: true,
@@ -9194,6 +9594,7 @@ async function startServer() {
         habitRemindersSent,
         loanRemindersSent,
         scheduledBroadcastsSent,
+        missedMedicineDosesAlerted,
       });
     } catch (error) {
       console.error('cron/send-reminders error:', error);

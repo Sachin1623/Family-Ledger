@@ -27,8 +27,19 @@ export interface Medicine {
   sharedFriendUids: string[];
   name: string;
   dosage: string; // freeform, e.g. "500mg", "1 tablet"
+  // Which MedicalIncident (medicalIncidents.ts) this medicine is grouped under — HealthMedicines.tsx
+  // groups the Medicines tab by this, and filters both the Log and Dashboard tabs by it. `null`
+  // means it belongs to the General bucket (see GENERAL_INCIDENT_ID), never hidden.
+  incidentId: string | null;
   times: MedicineDoseTime[];
   weekdays: number[]; // 0=Sun..6=Sat — which days this schedule applies; every day by default
+  // An interval-based repeat ("every other day" = 2, "every 3rd day" = 3, etc.), counted from
+  // startDate — mutually exclusive with `weekdays`: when set (>1), it's what isMedicineDueOn()
+  // actually checks, and `weekdays` is ignored. `null`/1 means the plain weekdays-based schedule
+  // above. Kept as a general N (not just a Boolean "alternate days" flag) since the UI's single
+  // "Alternate days" toggle is just intervalDays=2 — no reason to close the door on other
+  // intervals later for the cost of one extra field.
+  intervalDays: number | null;
   startDate: string; // yyyy-mm-dd
   durationMode: MedicineDurationMode;
   endDate: string | null; // set when durationMode === 'endDate'
@@ -58,13 +69,27 @@ export function medicineEndDateStr(med: Pick<Medicine, 'durationMode' | 'startDa
   return null;
 }
 
+// Local-date (not UTC) day difference — both inputs are 'yyyy-mm-dd' wall-clock dates, so this
+// stays correct across a DST transition day the same way medicineEndDateStr's own date math does.
+function daysBetween(startDateStr: string, dateStr: string): number {
+  const [sy, sm, sd] = startDateStr.split('-').map(Number);
+  const [dy, dm, dd] = dateStr.split('-').map(Number);
+  const start = new Date(sy, sm - 1, sd);
+  const date = new Date(dy, dm - 1, dd);
+  return Math.round((date.getTime() - start.getTime()) / 86400000);
+}
+
 // Whether this medicine has a dose scheduled on the given yyyy-mm-dd, factoring in the pause
-// flag, the start/end bounds, and the weekday selection.
+// flag, the start/end bounds, and the repeat pattern (an interval count from startDate, or a
+// weekday selection — see intervalDays' own comment for why these are mutually exclusive).
 export function isMedicineDueOn(med: Medicine, dateStr: string): boolean {
   if (!med.active) return false;
   if (dateStr < med.startDate) return false;
   const end = medicineEndDateStr(med);
   if (end && dateStr > end) return false;
+  if (med.intervalDays && med.intervalDays > 1) {
+    return daysBetween(med.startDate, dateStr) % med.intervalDays === 0;
+  }
   if (med.weekdays.length === 0 || med.weekdays.length === 7) return true;
   const [y, m, d] = dateStr.split('-').map(Number);
   const weekday = new Date(y, m - 1, d).getDay();

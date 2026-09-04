@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { updateGlobalStats } from '../services/statsService';
 import { fireWrite } from '../lib/offlineWrite';
+import { resizeImageFile } from '../lib/imageUtils';
 
 import { CURRENCY_SYMBOLS } from '../lib/constants';
 import { GROUP_ICONS } from '../lib/groupIcons';
@@ -25,53 +26,28 @@ export default function CreateGroup() {
   const [icon, setIcon] = useState('🏠');
   const [loading, setLoading] = useState(false);
   const [photoURL, setPhotoURL] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [incomeEnabled, setIncomeEnabled] = useState(false);
   const [groupType, setGroupType] = useState<'regular' | 'event'>('regular');
 
   const ICONS = GROUP_ICONS;
 
-  const resizeImage = (file: File, maxWidth = 800, maxHeight = 800): Promise<string> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxWidth) {
-              height *= maxWidth / width;
-              width = maxWidth;
-            }
-          } else {
-            if (height > maxHeight) {
-              width *= maxHeight / height;
-              height = maxHeight;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        };
-      };
-    });
-  };
-
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    setPhotoError(null);
     try {
-      const resized = await resizeImage(file);
+      // See Profile.tsx's own handleFileChange for the full story: this used to be a local,
+      // hand-rolled resize with no reader.onerror/img.onerror wired up, so an undecodable image
+      // (HEIC/HEIF straight off an Android camera, most commonly) hung the Promise forever
+      // instead of failing — resizeImageFile actually rejects, so this can surface an error now.
+      const resized = await resizeImageFile(file, 800, 800, 0.6);
       setPhotoURL(resized);
     } catch (error) {
       console.error('Photo resize error:', error);
+      setPhotoError("Couldn't read that photo — try a different one (some camera formats like HEIC aren't supported).");
     }
   };
 
@@ -157,7 +133,8 @@ export default function CreateGroup() {
                     <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
                   </label>
                 </div>
-                
+                {photoError && <p className="text-xs text-error font-bold text-center">{photoError}</p>}
+
                 {!photoURL && (
                   <div className="w-full">
                     <label className="text-[9px] font-bold text-text-muted uppercase tracking-wider mb-1 block text-center">{t('createGroup.selectIcon')}</label>

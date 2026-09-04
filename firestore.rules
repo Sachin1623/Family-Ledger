@@ -38,6 +38,15 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // A financial amount field is either a legacy plain integer (minor units, written before
+    // field-level encryption existed — see src/lib/fieldCrypto.ts) or an "enc:v1:<iv>:<ciphertext>"
+    // string. Rules can't decrypt, so this is a structural check only — the real range/positivity
+    // validation that used to live here (e.g. "targetAmountMinor > 0") is lost for encrypted
+    // writes; that's an explicit, known tradeoff of encrypting the field at all, not an oversight.
+    function isValidAmountField(v) {
+      return v is int || (v is string && v.matches('^enc:v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$'));
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -520,7 +529,11 @@ service cloud.firestore {
     // own CRUD on its rules.
     function isValidFrequency(data) {
       return data.keys().hasAll(['frequency', 'nextRunDate']) &&
-             data.frequency in ['daily', 'alternate_day', 'weekly', 'monthly', 'quarterly', 'half_yearly', 'annually'] &&
+             // 'alternate_month' ("Every 2 Months") was missing from this list — a genuine
+             // pre-existing gap, not intentional: FrequencyPicker.tsx offers it as a real option
+             // and src/lib/frequency.ts's own Frequency type includes it, so any rule actually
+             // saved with it would have failed this validator.
+             data.frequency in ['daily', 'alternate_day', 'weekly', 'monthly', 'alternate_month', 'quarterly', 'half_yearly', 'annually'] &&
              data.nextRunDate is string;
     }
 
@@ -785,7 +798,9 @@ service cloud.firestore {
                (!data.keys().hasAll(['sharedFriendUids']) || data.sharedFriendUids is list) &&
                (!data.keys().hasAll(['endDate']) || data.endDate == null || data.endDate is string) &&
                (!data.keys().hasAll(['dayCount']) || data.dayCount == null || data.dayCount is number) &&
-               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+               (!data.keys().hasAll(['incidentId']) || data.incidentId == null || (data.incidentId is string && data.incidentId.size() > 0)) &&
+               (!data.keys().hasAll(['intervalDays']) || data.intervalDays == null || (data.intervalDays is number && data.intervalDays >= 1));
       }
 
       function isSelfOrAuthorizedMedicineDelegate(data) {
@@ -807,6 +822,32 @@ service cloud.firestore {
         (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId)) &&
         (incoming().userId == existing().userId || incoming().userId == request.auth.uid || isMedicineDelegateFor(incoming().userId)) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId));
+    }
+
+    // A named health incident/illness that medicines.medicines can be grouped under (see
+    // medicalIncidents.ts) — same delegate access model as medicines itself, just simpler (no
+    // sharing settings of its own; a medicine that references it is what carries any sharing).
+    match /medicalIncidents/{incidentId} {
+      function isValidMedicalIncident(data) {
+        return data.keys().hasAll(['userId', 'loggedBy', 'name', 'createdAt']) &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['description']) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
+               (!data.keys().hasAll(['endDate']) || data.endDate == null || data.endDate is string);
+      }
+
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        isMedicineDelegateFor(resource.data.userId)
+      );
+      allow create: if isSignedIn() && isValidMedicalIncident(incoming()) &&
+        incoming().loggedBy == request.auth.uid &&
+        (incoming().userId == request.auth.uid || isMedicineDelegateFor(incoming().userId));
+      allow update: if isSignedIn() && isValidMedicalIncident(incoming()) &&
+        incoming().loggedBy == request.auth.uid &&
+        (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId)) &&
+        incoming().userId == existing().userId;
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId));
     }
 
@@ -861,6 +902,92 @@ service cloud.firestore {
         resource.data.medicine.friendUids.hasAny([request.auth.uid])
       );
       allow write: if isSignedIn() && request.auth.uid == uid && isValidMedicineDelegateSettings(incoming());
+    }
+
+    // --- Shared Reminders (Galarm-style: create once, share with a group and/or friends, each
+    // recipient's own device schedules its own local notification — no server push at trigger
+    // time). List queries (three separate ones client-side: createdBy == me, groupId in my
+    // groups, friendUids array-contains me) each map onto exactly one OR-branch below, same
+    // provably-safe pattern already used for friendships/health-tracker sharing. ---
+    match /sharedReminders/{reminderId} {
+      function isRecipient() {
+        return isSignedIn() && (
+          resource.data.createdBy == request.auth.uid ||
+          (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
+        );
+      }
+      function isValidReminder(data) {
+        return data.keys().hasAll(['title', 'createdBy', 'createdByName', 'createdAt', 'startDate', 'time', 'cadence', 'weekdays', 'requireAck', 'active']) &&
+               data.createdBy == request.auth.uid &&
+               data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+               data.createdByName is string &&
+               data.cadence is string && data.cadence in ['once', 'daily', 'weekly', 'monthly'] &&
+               data.weekdays is list &&
+               data.requireAck is bool &&
+               data.active is bool &&
+               data.startDate is string &&
+               data.time is string &&
+               data.createdAt is string &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['friendUids']) || data.friendUids is list) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 1000)) &&
+               (!data.keys().hasAll(['completionMode']) || data.completionMode in ['all', 'any']);
+      }
+
+      allow read: if isRecipient();
+      allow create: if isSignedIn() && isValidReminder(incoming()) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && existing().createdBy == request.auth.uid && isValidReminder(incoming()) &&
+        incoming().createdBy == existing().createdBy &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow delete: if isSignedIn() && existing().createdBy == request.auth.uid;
+
+      // One doc per (recipient, occurrence) — self-written only, readable by every recipient so
+      // the creator (and everyone else) can see who's confirmed.
+      match /acknowledgments/{ackId} {
+        function isParentRecipient() {
+          let parent = get(/databases/$(database)/documents/sharedReminders/$(reminderId)).data;
+          return isSignedIn() && (
+            parent.createdBy == request.auth.uid ||
+            (parent.groupId != null && canModifyGroup(parent.groupId)) ||
+            (parent.keys().hasAll(['friendUids']) && parent.friendUids.hasAny([request.auth.uid]))
+          );
+        }
+        function isValidAck(data) {
+          return data.keys().hasAll(['uid', 'occurrenceDate', 'acknowledgedAt']) &&
+                 data.uid == request.auth.uid &&
+                 data.occurrenceDate is string &&
+                 data.acknowledgedAt is string;
+        }
+        allow read: if isParentRecipient();
+        allow create: if isParentRecipient() && isValidAck(incoming());
+        allow delete: if isSignedIn() && existing().uid == request.auth.uid;
+      }
+
+      // One doc per recipient (doc id == their own uid, upserted in place — not per-occurrence
+      // like acknowledgments above) recording whether they've accepted or declined this reminder
+      // altogether. Self-written only, readable by every recipient (so the creator's checklist can
+      // show everyone's status) via the same isParentRecipient() shape as acknowledgments.
+      match /responses/{uid} {
+        function isParentRecipient() {
+          let parent = get(/databases/$(database)/documents/sharedReminders/$(reminderId)).data;
+          return isSignedIn() && (
+            parent.createdBy == request.auth.uid ||
+            (parent.groupId != null && canModifyGroup(parent.groupId)) ||
+            (parent.keys().hasAll(['friendUids']) && parent.friendUids.hasAny([request.auth.uid]))
+          );
+        }
+        function isValidResponse(data) {
+          return data.keys().hasAll(['uid', 'status', 'respondedAt']) &&
+                 data.uid == request.auth.uid &&
+                 data.status is string && data.status in ['accepted', 'declined'] &&
+                 data.respondedAt is string;
+        }
+        allow read: if isParentRecipient();
+        allow create, update: if isSignedIn() && request.auth.uid == uid && isValidResponse(incoming());
+        allow delete: if isSignedIn() && existing().uid == request.auth.uid;
+      }
     }
 
     // --- Shopping lists ---
@@ -932,13 +1059,197 @@ service cloud.firestore {
                data.groupId is string && data.groupId.size() > 0 &&
                data.month is string && data.month.matches('^[0-9]{4}-[0-9]{2}$') &&
                data.amount is number && data.amount > 0 &&
-               data.createdAt is string;
+               data.createdAt is string &&
+               // Per-category % of the overall budget (need not sum to 100, capped there
+               // client-side — same reduce-over-a-map limitation as every other per-entry-sum
+               // check in this file, e.g. goalAllocations/nominees).
+               (!data.keys().hasAll(['categoryAllocations']) || data.categoryAllocations is map);
       }
 
       allow read: if isSignedIn() && canModifyGroup(resource.data.groupId);
       allow create: if isSignedIn() && canModifyGroup(incoming().groupId) && isValidBudget(incoming());
       allow update: if isSignedIn() && canModifyGroup(existing().groupId) && isValidBudget(incoming());
       allow delete: if isSignedIn() && canModifyGroup(existing().groupId);
+    }
+
+    // --- Goal-Based Fractional Savings Allocation Engine ---
+    // Goals are USER-level (owned by userId), not group-level — see the header comment in
+    // lib/goals.ts for why. A goal can optionally be shared with a group and/or specific friends
+    // (same dual-sharing shape as sharedReminders below); shared viewers can read and post a
+    // 'boost' but can never touch anything else about someone else's goal.
+    match /goals/{goalId} {
+      function isGoalViewer() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
+        );
+      }
+      function isValidGoal(data) {
+        return data.keys().hasAll(['userId', 'name', 'targetAmountMinor', 'currentAmountMinor', 'status', 'currency', 'createdBy', 'createdByName', 'createdAt', 'updatedAt']) &&
+               data.userId is string && data.userId.size() > 0 &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 60 &&
+               isValidAmountField(data.targetAmountMinor) &&
+               isValidAmountField(data.currentAmountMinor) &&
+               // Optional (not required like currentAmountMinor) so goals created before this
+               // field existed still pass validation on their next unrelated edit — the client
+               // always decrypts a missing value as 0 (see goals.ts's decryptGoalAmounts).
+               (!data.keys().hasAll(['accountAllocatedMinor']) || isValidAmountField(data.accountAllocatedMinor)) &&
+               // allocationPct is retired (goals no longer fund from monthly savings — see
+               // goals.ts's header comment) but stays optional/untyped here so legacy goal docs
+               // that still carry it aren't broken by their next unrelated edit.
+               (!data.keys().hasAll(['allocationPct']) || data.allocationPct is int) &&
+               data.status is string && data.status in ['active', 'paused', 'completed', 'archived'] &&
+               data.currency is string &&
+               data.createdBy is string && data.createdByName is string &&
+               data.createdAt is string && data.updatedAt is string &&
+               (!data.keys().hasAll(['targetDate']) || data.targetDate == null || data.targetDate is string) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+               (!data.keys().hasAll(['icon']) || data.icon is string) &&
+               (!data.keys().hasAll(['imageUrl']) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 1000000)) &&
+               (!data.keys().hasAll(['completedAt']) || data.completedAt == null || data.completedAt is string) &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['friendUids']) || data.friendUids is list) &&
+               (!data.keys().hasAll(['isCashHolding']) || data.isCashHolding is bool);
+      }
+
+      allow read: if isGoalViewer();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().createdBy == request.auth.uid && isValidGoal(incoming()) &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && (
+        // Owner: full edit, including boosts/withdrawals/auto-postings bumping currentAmountMinor.
+        (existing().userId == request.auth.uid && isValidGoal(incoming()) && incoming().userId == existing().userId &&
+          (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId))) ||
+        // Shared viewer posting a boost: may ONLY touch currentAmountMinor + updatedAt, nothing
+        // else about someone else's goal. The "must only move upward" check below is only
+        // enforceable while the field is still a legacy plaintext int — once it's ciphertext,
+        // rules have no way to compare two encrypted values, so that specific guarantee becomes
+        // convention (the client only ever encrypts a larger amount) rather than a DB-enforced
+        // invariant. A known, deliberate tradeoff of encrypting this field, not an oversight.
+        (isGoalViewer() && existing().userId != request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['currentAmountMinor', 'updatedAt']) &&
+          isValidAmountField(incoming().currentAmountMinor) &&
+          (!(incoming().currentAmountMinor is int) || incoming().currentAmountMinor >= existing().currentAmountMinor))
+      );
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+
+      // Append-only contribution history — never updated or deleted once written, matching the
+      // spec's "immutable ledger" requirement; a correction is a NEW entry, not an edit to an old
+      // one. `amountMinor` can be negative (withdrawal / merge_out).
+      match /ledger/{entryId} {
+        function parentGoal() { return get(/databases/$(database)/documents/goals/$(goalId)).data; }
+        function isParentViewer() {
+          let g = parentGoal();
+          return isSignedIn() && (
+            g.userId == request.auth.uid ||
+            (g.groupId != null && canModifyGroup(g.groupId)) ||
+            (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid]))
+          );
+        }
+        function isValidLedgerEntry(data) {
+          return data.keys().hasAll(['type', 'amountMinor', 'createdBy', 'createdByName', 'createdAt']) &&
+                 data.type is string && data.type in ['auto', 'boost', 'withdrawal', 'merge_in', 'merge_out', 'reconciliation', 'undo', 'completed', 'account_alloc', 'account_dealloc', 'reset'] &&
+                 isValidAmountField(data.amountMinor) &&
+                 data.createdBy is string && data.createdByName is string && data.createdAt is string &&
+                 (!data.keys().hasAll(['monthKey']) || data.monthKey == null || data.monthKey is string) &&
+                 (!data.keys().hasAll(['note']) || data.note == null || (data.note is string && data.note.size() <= 500)) &&
+                 (!data.keys().hasAll(['relatedGoalId']) || data.relatedGoalId is string);
+        }
+        allow read: if isParentViewer();
+        // The owner can post any entry type; a non-owner shared viewer can only ever post 'boost'.
+        allow create: if isSignedIn() && isValidLedgerEntry(incoming()) && incoming().createdBy == request.auth.uid &&
+          (parentGoal().userId == request.auth.uid || (isParentViewer() && incoming().type == 'boost'));
+        // Ledger entries are otherwise immutable (see comment above) — this exists solely so the
+        // owner can wipe a goal's ledger as part of GoalsHub.tsx's "Delete Permanently" action on
+        // an already-archived goal (which then also deletes the goal doc itself in the same
+        // batch). Never exposed as a way to edit history in place; only ever a full-goal teardown.
+        allow delete: if isSignedIn() && parentGoal().userId == request.auth.uid;
+      }
+    }
+
+    // Idempotency guard for month-end closure — doc ID is deterministic (`${uid}_${monthKey}`) so
+    // "have I already posted this month" is a plain existence check, and a retried/duplicate-
+    // tapped closure request is a safe no-op rather than a double-posting.
+    match /userGoalMonths/{monthDocId} {
+      function isValidGoalMonth(data) {
+        return data.keys().hasAll(['userId', 'monthKey', 'closedAt', 'closedBy', 'netSavingsMinor', 'allocations', 'unallocatedMinor']) &&
+               data.userId is string && data.monthKey is string &&
+               data.closedAt is string && data.closedBy is string &&
+               isValidAmountField(data.netSavingsMinor) &&
+               // `allocations` (goalId -> that goal's contribution this month) has its per-key
+               // value type unchecked here too, same structural-only tradeoff as elsewhere.
+               data.allocations is map && isValidAmountField(data.unallocatedMinor);
+      }
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      // No update — once a month is closed it's closed for good (corrections happen via a new
+      // ledger entry on the affected goal(s), never by rewriting this doc). Delete IS allowed,
+      // owner-only: that's what "Undo This Month's Posting" actually does — retracting the
+      // closure guard entirely re-opens the month for posting again, rather than leaving a
+      // half-closed "undone but still exists" state to reason about. The reversal itself still
+      // shows up honestly in each affected goal's own immutable ledger as an 'undo' entry — this
+      // delete only removes the idempotency guard, never the history of what happened.
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().closedBy == request.auth.uid && isValidGoalMonth(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- Financial Accounts ---
+    // Strictly personal — never shared, unlike goals themselves (a bank balance is far more
+    // sensitive than a savings goal's progress bar). Balances change only via an explicit user
+    // edit or Transfer Funds — see src/lib/accountAllocations.ts.
+    match /financialAccounts/{accountId} {
+      function isValidAccount(data) {
+        return data.keys().hasAll(['userId', 'name', 'type', 'currency', 'currentBalanceMinor', 'archived', 'createdAt', 'updatedAt']) &&
+               data.userId is string && data.userId.size() > 0 &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 60 &&
+               data.type is string && data.type in ['bank', 'mutual_fund', 'broker', 'real_estate', 'cash', 'other'] &&
+               data.currency is string &&
+               isValidAmountField(data.currentBalanceMinor) &&
+               data.archived is bool &&
+               data.createdAt is string && data.updatedAt is string &&
+               (!data.keys().hasAll(['purpose']) || data.purpose in ['expense', 'investment']) &&
+               (!data.keys().hasAll(['interestRatePct']) || data.interestRatePct == null || data.interestRatePct is number) &&
+               (!data.keys().hasAll(['compoundFrequency']) || data.compoundFrequency == null || data.compoundFrequency in ['daily', 'weekly', 'monthly', 'bimonthly', 'quarterly', 'half_yearly', 'yearly']) &&
+               // goalAllocations' per-entry pct total isn't enforced here (Firestore rules can't
+               // reduce over a list) — client-enforced only, same tradeoff already accepted for
+               // GoalDetail's Merge-to-other-goals % total.
+               (!data.keys().hasAll(['goalAllocations']) || data.goalAllocations is list) &&
+               (!data.keys().hasAll(['allocatedGoalIds']) || data.allocatedGoalIds is list) &&
+               // accountNumber is ciphertext (or, defensively, a plain string) — never a bare
+               // number, so it can't reuse isValidAmountField's int branch.
+               (!data.keys().hasAll(['accountNumber']) || data.accountNumber == null || data.accountNumber is string) &&
+               // Nominees' per-entry pct total (must sum to 100 once there's more than one) isn't
+               // enforced here, same reduce-over-a-list limitation as goalAllocations above —
+               // client-enforced only.
+               (!data.keys().hasAll(['nominees']) || data.nominees is list) &&
+               (!data.keys().hasAll(['contributionAmountMinor']) || data.contributionAmountMinor == null || isValidAmountField(data.contributionAmountMinor)) &&
+               (!data.keys().hasAll(['contributionFrequency']) || data.contributionFrequency == null || data.contributionFrequency in ['weekly', 'monthly', 'quarterly', 'yearly']) &&
+               (!data.keys().hasAll(['contributionNextDate']) || data.contributionNextDate == null || data.contributionNextDate is string) &&
+               (!data.keys().hasAll(['interestNextDate']) || data.interestNextDate == null || data.interestNextDate is string);
+      }
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidAccount(incoming());
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && isValidAccount(incoming()) && incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+
+      // Append-only history of every balance/allocation change applyAccountChange() makes — the
+      // "History" button on AccountsHub. Never updated or deleted, same immutability as a goal's
+      // own ledger.
+      match /log/{entryId} {
+        function isValidAccountLog(data) {
+          return data.keys().hasAll(['balanceBeforeMinor', 'balanceAfterMinor', 'createdBy', 'createdByName', 'createdAt']) &&
+                 isValidAmountField(data.balanceBeforeMinor) && isValidAmountField(data.balanceAfterMinor) &&
+                 data.createdBy is string && data.createdByName is string && data.createdAt is string &&
+                 (!data.keys().hasAll(['allocationChanges']) || data.allocationChanges is list) &&
+                 (!data.keys().hasAll(['note']) || data.note == null || data.note is string) &&
+                 // Proof-of-transfer photos (base64 data URIs, same convention as every other
+                 // image field in this app — see ImageAttachments.tsx) — structural only, no
+                 // Storage bucket exists to point at instead.
+                 (!data.keys().hasAll(['images']) || data.images is list);
+        }
+        allow read: if isSignedIn() && get(/databases/$(database)/documents/financialAccounts/$(accountId)).data.userId == request.auth.uid;
+        allow create: if isSignedIn() && isValidAccountLog(incoming()) && incoming().createdBy == request.auth.uid &&
+          get(/databases/$(database)/documents/financialAccounts/$(accountId)).data.userId == request.auth.uid;
+      }
     }
 
     // --- Pending recurring-expense confirmations ---

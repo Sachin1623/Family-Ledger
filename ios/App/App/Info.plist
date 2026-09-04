@@ -34,8 +34,25 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- @capacitor-firebase/messaging's own recommended setup — prevents Firebase's SDK from
+	     auto-initializing (and requesting a token) before this app has actually asked for
+	     notification permission; getToken() (see pushNotifications.ts) explicitly re-enables
+	     auto-init itself once called. -->
+	<key>FirebaseMessagingAutoInitEnabled</key>
+	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Answers App Store Connect's export-compliance question at upload time, instead of it
+	     prompting on every single build. FamilyLedger only uses standard, exempt encryption —
+	     HTTPS for all network traffic, and AES-256-GCM via the platform's own WebCrypto API for
+	     field-level encryption of financial/goal amounts (see src/lib/fieldCrypto.ts) — never a
+	     proprietary or non-standard algorithm, and encryption isn't the app's own core purpose. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>FamilyLedger uses Face ID to unlock the app when App Lock is enabled in your settings.</string>
 	<key>UIApplicationSceneManifest</key>

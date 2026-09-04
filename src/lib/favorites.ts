@@ -22,6 +22,7 @@ export const FAVORITABLE_ITEMS: FavoritableItem[] = [
   { key: 'game-sequence', to: '/games/sequence', icon: '🔴', label: 'Sequence' },
   { key: 'todo', to: '/todo', icon: '✅', label: 'To-Do List' },
   { key: 'expense-reminders', to: '/expense-reminders', icon: '🔔', label: 'Expense Reminders' },
+  { key: 'shared-reminders', to: '/reminders', icon: '⏰', label: 'Shared Reminders' },
   { key: 'shopping-lists', to: '/shopping-lists', icon: '🛒', label: 'Shopping Lists' },
   { key: 'personal-loans', to: '/personal-loans', icon: '🤝', label: 'Personal Loans' },
   { key: 'calculator', to: '/calculator', icon: '🧮', label: 'Calculator' },

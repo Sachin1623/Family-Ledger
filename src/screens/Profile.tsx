@@ -16,6 +16,9 @@ import { getAppLockSettings, enablePinLock, enableBiometricLock, disableAppLock 
 import { removeCurrentDeviceToken } from '../lib/pushNotifications';
 import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from '../context/LanguageContext';
 import { DEFAULT_PUBLIC_PROFILE_SETTINGS, PublicProfileSettings } from '../lib/pointsApi';
+import { clearFieldCryptoCache } from '../lib/fieldCrypto';
+import { resizeImageFile } from '../lib/imageUtils';
+import { CURRENCY_SYMBOLS, getCurrencySymbol } from '../lib/constants';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -474,9 +477,11 @@ export default function Profile() {
   const { user, profile, admin } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [updating, setUpdating] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [generatingRecap, setGeneratingRecap] = useState(false);
   const [exportingData, setExportingData] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -606,6 +611,7 @@ export default function Profile() {
 
   const handleLogout = async () => {
     if (user) await removeCurrentDeviceToken(user);
+    clearFieldCryptoCache(); // a shared device shouldn't let the next signed-in account decrypt this one's cached keys
     await auth.signOut();
     navigate('/login');
   };
@@ -711,38 +717,6 @@ export default function Profile() {
     }
   };
 
-  const resizeImage = (file: File, maxWidth = 600, maxHeight = 600): Promise<string> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxWidth) {
-              height *= maxWidth / width;
-              width = maxWidth;
-            }
-          } else {
-            if (height > maxHeight) {
-              width *= maxHeight / height;
-              height = maxHeight;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
-        };
-      };
-    });
-  };
 
   const updateMemberships = async (updates: { displayName?: string, photoURL?: string }) => {
     if (!user) return;
@@ -761,13 +735,20 @@ export default function Profile() {
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be picked again after an error, same as ImageAttachments
     if (!file || !user) return;
 
     setUpdating('photoURL');
+    setPhotoError(null);
     try {
-      const resizedBase64 = await resizeImage(file);
-      const path = `users/${user.uid}`;
-      
+      // resizeImageFile (unlike this screen's old inline copy) actually wires reader.onerror/
+      // img.onerror to reject — the old version left both unhandled, so a file the browser
+      // couldn't decode (HEIC/HEIF straight off an Android camera is the common case — Chrome's
+      // WebView has no built-in HEIC decoder) just hung the Promise forever: no error, no photo
+      // saved, "updating" spinner cleared on the next remount with nothing to show for it. That's
+      // the "photo doesn't take, silently" symptom — device/gallery-format-dependent, so it only
+      // shows up for whichever users' phones happen to hand over HEIC by default.
+      const resizedBase64 = await resizeImageFile(file, 600, 600, 0.6);
       await updateDoc(doc(db, 'users', user.uid), {
         photoURL: resizedBase64
       });
@@ -775,7 +756,11 @@ export default function Profile() {
       await updateMemberships({ photoURL: resizedBase64 });
     } catch (error) {
       console.error('Error uploading profile photo:', error);
-      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+      setPhotoError(
+        error instanceof Error && /read file|load image/i.test(error.message)
+          ? "Couldn't read that photo — try a different one (some camera formats like HEIC aren't supported)."
+          : 'Failed to save your photo. Please try again.',
+      );
     } finally {
       setUpdating(null);
     }
@@ -812,6 +797,25 @@ export default function Profile() {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
       setUpdating(null);
+    }
+  };
+
+  // A personal display/conversion preference, not something anyone else needs to see — stored
+  // alongside notificationsEnabled etc. in the private doc, not the public users/{uid} one. Read
+  // as profile.currency (the merged public+private view AuthContext already exposes) by anything
+  // that needs to show a total across multiple currencies — currently just GoalsHub.tsx's Net
+  // Savings This Month figure (see src/lib/fx.ts for the actual conversion).
+  const handleSetCurrency = async (code: string) => {
+    if (!user) return;
+    setShowCurrencyPicker(false);
+    const path = `users/${user.uid}/private/info`;
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'private', 'info'), {
+        currency: code,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
     }
   };
 
@@ -889,11 +893,13 @@ export default function Profile() {
       // Note: This may fail if the user hasn't logged in recently (auth/requires-recent-login)
       try {
         await user.delete();
+        clearFieldCryptoCache();
         navigate('/login');
       } catch (authError: any) {
         if (authError.code === 'auth/requires-recent-login') {
           // If re-authentication is needed, we log them out and they can try again after logging in
           alert('For security reasons, you must have logged in recently to delete your account. Please log in again and click delete.');
+          clearFieldCryptoCache();
           await auth.signOut();
           navigate('/login');
         } else {
@@ -941,7 +947,8 @@ export default function Profile() {
               />
             </label>
           </div>
-          
+          {photoError && <p className="text-xs text-error font-bold text-center max-w-xs -mt-2 mb-2">{photoError}</p>}
+
           {isEditingName ? (
             <div className="flex flex-col items-center gap-2">
               <input
@@ -1144,6 +1151,60 @@ export default function Profile() {
                             )}
                           >
                             {l.nativeLabel}
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowCurrencyPicker((v) => !v)}
+                  className="w-full p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                      <span className="material-symbols-outlined">payments</span>
+                    </div>
+                    <div className="text-left">
+                      <p className="font-bold text-sm text-on-surface">{t('profile.currency')}</p>
+                      <p className="text-xs text-text-muted">{t('profile.chooseCurrency')}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-text-muted shrink-0">
+                    <span className="text-sm font-bold text-primary">
+                      {profile?.currency ? `${getCurrencySymbol(profile.currency)} ${profile.currency}` : t('profile.currencyNotSet')}
+                    </span>
+                    <span className="material-symbols-outlined text-[20px]">
+                      {showCurrencyPicker ? 'expand_less' : 'expand_more'}
+                    </span>
+                  </div>
+                </button>
+                <AnimatePresence>
+                  {showCurrencyPicker && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden bg-surface/50"
+                    >
+                      <p className="px-4 pt-2 text-[11px] text-text-muted">{t('profile.currencyHint')}</p>
+                      <div className="p-2 grid grid-cols-2 gap-1.5">
+                        {Object.keys(CURRENCY_SYMBOLS).map((code) => (
+                          <button
+                            key={code}
+                            type="button"
+                            onClick={() => handleSetCurrency(code)}
+                            className={clsx(
+                              'px-3 py-2.5 rounded-xl text-left text-sm font-bold transition-all border',
+                              code === profile?.currency
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white text-on-surface border-border-subtle hover:bg-surface-container',
+                            )}
+                          >
+                            {CURRENCY_SYMBOLS[code]} {code}
                           </button>
                         ))}
                       </div>

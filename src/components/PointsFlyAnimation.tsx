@@ -13,7 +13,7 @@ let burstIdCounter = 0;
 
 // Globally mounted (see App.tsx) — listens for every points award via pointsToastRef.ts and
 // spawns a small shower of coin/star particles flying from a fixed near-top origin (roughly where
-// the toast notification lands) toward HeaderPointsPill's live screen position, so an award reads
+// the toast notification lands) toward HeaderProfileBadge's live screen position, so an award reads
 // as "this flew into your total" rather than just a number changing silently.
 export default function PointsFlyAnimation() {
   const [bursts, setBursts] = useState<Burst[]>([]);

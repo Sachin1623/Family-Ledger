@@ -34,6 +34,7 @@ import {
   medicineStatusLabel,
   medicineLogId,
 } from '../lib/medicines';
+import { MedicalIncident, GENERAL_INCIDENT_ID, isIncidentEnded } from '../lib/medicalIncidents';
 
 const DATE_PRESETS = ['all', '7d', '14d', '30d', 'custom'] as const;
 type DatePreset = (typeof DATE_PRESETS)[number];
@@ -59,6 +60,50 @@ function newDoseTimeId(): string {
   return `dose_${Date.now()}_${nextDoseTimeId++}`;
 }
 
+// Plain, unlocalized default text — matches this app's existing precedent for dose-time labels
+// (the original hardcoded "Morning" default for a brand-new medicine's first slot was never
+// localized either), so what gets auto-filled here is consistent with what's already saved for
+// medicines created before this feature existed.
+function autoDoseLabel(time: string): string {
+  const hour = Number(time.split(':')[0]);
+  if (hour < 12) return 'Morning';
+  if (hour < 17) return 'Afternoon';
+  if (hour < 21) return 'Evening';
+  return 'Night';
+}
+
+// 'HH:mm' (24h, the stored/native-input format) -> '8:00 AM' for the read-only dose-time rows —
+// the editable row still uses the native time input directly, which already renders 12h/24h per
+// the device's own locale, so this is only needed once a slot collapses to plain text.
+function formatDoseTimeDisplay(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const period = h < 12 ? 'AM' : 'PM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+// Always fully auto-derived from each slot's time now — the label is display-only (see the dose-
+// time row's read-only <span> instead of an <input>), so there's no "did the user customize this"
+// question to track anymore. Numbered ("Morning 1"/"Morning 2") when two or more slots land in the
+// same period — in TIME order, not insertion order, which is also why this sorts the whole list by
+// time first: a dose time added out of order (e.g. 09:08 PM added after two later ones already
+// exist) should both display AND number itself where it chronologically belongs, not get tacked
+// onto the end just because it was the last one typed.
+function withAutoDoseLabels(times: MedicineDoseTime[]): MedicineDoseTime[] {
+  const sorted = [...times].sort((a, b) => a.time.localeCompare(b.time));
+  const totalPerBase: Record<string, number> = {};
+  sorted.forEach((s) => {
+    const base = autoDoseLabel(s.time);
+    totalPerBase[base] = (totalPerBase[base] || 0) + 1;
+  });
+  const seenSoFar: Record<string, number> = {};
+  return sorted.map((s) => {
+    const base = autoDoseLabel(s.time);
+    seenSoFar[base] = (seenSoFar[base] || 0) + 1;
+    return { ...s, label: totalPerBase[base] > 1 ? `${base} ${seenSoFar[base]}` : base };
+  });
+}
+
 interface DueInstance {
   dateStr: string;
   medicine: Medicine;
@@ -66,6 +111,167 @@ interface DueInstance {
   log: MedicineLog | null;
   status: MedicineLogStatus | 'missed' | 'pending';
 }
+
+// Walks forward from `now` (up to a week out) for the next scheduled dose that's still ahead of
+// it — pure schedule math, no Firestore read needed (unlike lastTaken/history below, which need
+// actual log data).
+function computeNextDue(med: Medicine, now: Date): { dateStr: string; time: string } | null {
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    const dateStr = toLocalDateString(d);
+    if (!isMedicineDueOn(med, dateStr)) continue;
+    for (const time of med.times.map((slot) => slot.time).sort()) {
+      const [h, mi] = time.split(':').map(Number);
+      const slotInstant = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, mi);
+      if (slotInstant > now) return { dateStr, time };
+    }
+  }
+  return null;
+}
+
+// One medicine row on the Medicines tab — pulled out to its own component so the incident
+// grouping above (medicinesByIncident.map) can render it identically whether a medicine sits
+// under a colored incident section or (single-section case) in a plain flat list. Collapsible in
+// its own right: collapsed shows just name/dosage/status; expanded additionally computes and
+// shows last-taken/next-due/recent history, entirely from already-loaded data (allLogs) — no
+// extra Firestore query per tile.
+interface MedicineCardProps {
+  med: Medicine;
+  status: 'active' | 'paused' | 'ended' | 'upcoming';
+  canManage: boolean;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onEdit: (med: Medicine) => void;
+  onTogglePause: (med: Medicine) => void;
+  onDelete: (med: Medicine) => void;
+  doseTimeSummary: (med: Medicine) => string;
+  durationSummary: (med: Medicine) => string;
+  allLogs: MedicineLog[];
+  today: string;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}
+
+const MedicineCard: React.FC<MedicineCardProps> = ({
+  med, status, canManage, expanded, onToggleExpand, onEdit, onTogglePause, onDelete, doseTimeSummary, durationSummary, allLogs, today, t,
+}) => {
+  const logsForMed = useMemo(() => (expanded ? allLogs.filter((l) => l.medicineId === med.id) : []), [expanded, allLogs, med.id]);
+
+  const lastTaken = useMemo(() => {
+    if (!expanded) return null;
+    const taken = logsForMed.filter((l) => l.status === 'taken').sort((a, b) => b.loggedAt.localeCompare(a.loggedAt));
+    return taken[0] || null;
+  }, [expanded, logsForMed]);
+
+  const nextDue = useMemo(() => (expanded ? computeNextDue(med, new Date()) : null), [expanded, med]);
+
+  // Last 7 days of scheduled doses for this medicine, newest first — reconstructed the same way
+  // the Dashboard tab builds its own history (schedule × date range, cross-referenced against
+  // actual logs), just scoped to one medicine and a short fixed window instead of a user-chosen one.
+  const recentHistory = useMemo(() => {
+    if (!expanded) return [];
+    const out: { dateStr: string; doseTime: MedicineDoseTime; status: MedicineLogStatus | 'missed' | 'pending' }[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = toLocalDateString(d);
+      if (!isMedicineDueOn(med, dateStr)) continue;
+      med.times.forEach((slot) => {
+        const log = logsForMed.find((l) => l.dateStr === dateStr && l.doseTimeId === slot.id);
+        out.push({ dateStr, doseTime: slot, status: log ? log.status : dateStr < today ? 'missed' : 'pending' });
+      });
+    }
+    return out.sort((a, b) => (b.dateStr + b.doseTime.time).localeCompare(a.dateStr + a.doseTime.time));
+  }, [expanded, logsForMed, med, today]);
+
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
+      <button type="button" onClick={onToggleExpand} className="w-full p-3 flex items-start justify-between gap-2 text-left">
+        <div className="min-w-0">
+          <p className="font-bold text-primary text-sm truncate">{med.name}{med.dosage ? <span className="text-text-muted font-semibold"> · {med.dosage}</span> : null}</p>
+          <p className="text-[11px] text-text-muted mt-0.5">{doseTimeSummary(med)}</p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <span
+            className={clsx(
+              'text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full',
+              status === 'active' && 'bg-success/10 text-success',
+              status === 'paused' && 'bg-surface-container text-text-muted',
+              status === 'ended' && 'bg-error/10 text-error',
+              status === 'upcoming' && 'bg-primary/10 text-primary',
+            )}
+          >
+            {t(`medicine.status${status.charAt(0).toUpperCase()}${status.slice(1)}`)}
+          </span>
+          <span className={clsx('material-symbols-outlined text-[18px] text-text-muted transition-transform', expanded && 'rotate-180')}>expand_more</span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 space-y-2.5 border-t border-border-subtle pt-2.5">
+          <p className="text-[11px] text-text-muted">{durationSummary(med)}</p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-surface rounded-xl p-2.5">
+              <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.lastTaken')}</p>
+              <p className="text-xs font-bold text-primary mt-0.5">
+                {lastTaken ? t('medicine.lastTakenValue', { date: lastTaken.dateStr, time: lastTaken.scheduledTime }) : t('medicine.noneYet')}
+              </p>
+            </div>
+            <div className="bg-surface rounded-xl p-2.5">
+              <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.nextDue')}</p>
+              <p className="text-xs font-bold text-primary mt-0.5">
+                {nextDue ? `${nextDue.dateStr} · ${nextDue.time}` : t('medicine.noUpcomingDose')}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.recentHistory')}</p>
+            {recentHistory.length === 0 ? (
+              <p className="text-[11px] text-text-muted italic">{t('medicine.noRecentDoses')}</p>
+            ) : (
+              <div className="space-y-1">
+                {recentHistory.map((h) => (
+                  <div key={`${h.dateStr}_${h.doseTime.id}`} className="flex items-center justify-between text-[11px]">
+                    <span className="text-text-muted">{h.dateStr} · {h.doseTime.label}</span>
+                    <span
+                      className={clsx(
+                        'font-bold',
+                        h.status === 'taken' && 'text-success',
+                        h.status === 'missed' && 'text-error',
+                        h.status === 'skipped' && 'text-text-muted',
+                        h.status === 'pending' && 'text-primary',
+                      )}
+                    >
+                      {h.status === 'taken' ? t('medicine.doseStatusTaken')
+                        : h.status === 'missed' ? t('medicine.doseStatusMissed')
+                        : h.status === 'skipped' ? t('medicine.doseStatusSkipped')
+                        : t('medicine.doseStatusPending')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {canManage && (
+            <div className="flex items-center gap-1 pt-1 border-t border-border-subtle">
+              <button type="button" onClick={() => onEdit(med)} className="flex-1 py-1.5 text-[11px] font-bold text-primary flex items-center justify-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">edit</span>{t('common.edit')}
+              </button>
+              <button type="button" onClick={() => onTogglePause(med)} className="flex-1 py-1.5 text-[11px] font-bold text-text-muted flex items-center justify-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">{med.active ? 'pause' : 'play_arrow'}</span>
+                {med.active ? t('medicine.pause') : t('medicine.resume')}
+              </button>
+              <button type="button" onClick={() => onDelete(med)} className="flex-1 py-1.5 text-[11px] font-bold text-error flex items-center justify-center gap-1">
+                <span className="material-symbols-outlined text-[14px]">delete</span>{t('common.delete')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function HealthMedicines() {
   const { user, profile } = useAuth();
@@ -134,6 +340,22 @@ export default function HealthMedicines() {
     delegatedMedicinesValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
     return Array.from(byId.values());
   }, [ownMedicinesValue, sharedMedByGroupValue, sharedMedByFriendValue, delegatedMedicinesValue]);
+
+  // Incidents — simpler sharing model than medicines themselves (own + delegate access only, no
+  // separate group/friend incident-sharing yet; that can be added later the same way medicines'
+  // was, if ever asked for).
+  const [ownIncidentsValue] = useCollection(
+    user ? query(collection(db, 'medicalIncidents'), where('userId', '==', user.uid)) : null,
+  );
+  const [delegatedIncidentsValue] = useCollection(
+    delegatorUids.length > 0 ? query(collection(db, 'medicalIncidents'), where('userId', 'in', delegatorUids.slice(0, 30))) : null,
+  );
+  const incidents: MedicalIncident[] = useMemo(() => {
+    const byId = new Map<string, MedicalIncident>();
+    ownIncidentsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
+    delegatedIncidentsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
+    return Array.from(byId.values());
+  }, [ownIncidentsValue, delegatedIncidentsValue]);
 
   // Own medicine LOGS — needed to compute due/adherence for "my" medicines everywhere.
   const [ownLogsValue] = useCollection(
@@ -279,7 +501,7 @@ export default function HealthMedicines() {
   useEffect(() => {
     scheduleMedicineReminders(myActiveMedicines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(myActiveMedicines.map((m) => [m.id, m.active, m.remindersEnabled, m.times, m.weekdays, m.startDate, m.durationMode, m.endDate, m.dayCount]))]);
+  }, [JSON.stringify(myActiveMedicines.map((m) => [m.id, m.active, m.remindersEnabled, m.times, m.weekdays, m.intervalDays, m.startDate, m.durationMode, m.endDate, m.dayCount]))]);
 
   // --- "Managing for" — who Medicines/Log tabs act on behalf of (me, or someone who's granted
   // delegate access) — distinct from Dashboard's "viewing" picker below, which is read-only and
@@ -292,24 +514,49 @@ export default function HealthMedicines() {
   const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
   const [formName, setFormName] = useState('');
   const [formDosage, setFormDosage] = useState('');
+  const [formIncidentId, setFormIncidentId] = useState(''); // '' = General (no incident)
   const [formTimes, setFormTimes] = useState<MedicineDoseTime[]>([{ id: newDoseTimeId(), label: 'Morning', time: '08:00', foodTiming: 'after' }]);
+  // Only ONE dose-time slot is ever interactive at a time — this is its id. Every other slot
+  // renders read-only (plain text + an Edit button that switches focus here instead). The
+  // underlying values in `formTimes` are always live regardless of which slot has focus — "Save"
+  // on the focused slot is a pure UI toggle (defocus it), not a separate write; there's no draft
+  // copy to reconcile.
+  const [editingDoseTimeId, setEditingDoseTimeId] = useState<string | null>(null);
+  // Snapshot of which slot ids already existed when this form was opened — lets the focused
+  // slot's badge say "New" for one truly just created (via + Add dose time, or the very first
+  // slot on a brand-new medicine) versus "Editing" for an existing one the user tapped Edit on.
+  const [originalDoseTimeIds, setOriginalDoseTimeIds] = useState<Set<string>>(new Set());
   const [formWeekdays, setFormWeekdays] = useState<number[]>([]);
+  // 'daily' and 'specific' both save as weekdays (empty = every day); 'alternate' saves as
+  // intervalDays: 2 instead — see intervalDays' own comment in medicines.ts for why the two are
+  // mutually exclusive rather than combined.
+  const [formRepeatMode, setFormRepeatMode] = useState<'daily' | 'specific' | 'alternate'>('daily');
   const [formStartDate, setFormStartDate] = useState(todayLocalDateString());
-  const [formDurationMode, setFormDurationMode] = useState<'ongoing' | 'endDate' | 'dayCount'>('ongoing');
+  const [formDurationMode, setFormDurationMode] = useState<'ongoing' | 'endDate' | 'dayCount'>('dayCount');
   const [formEndDate, setFormEndDate] = useState('');
   const [formDayCount, setFormDayCount] = useState('30');
   const [formReminders, setFormReminders] = useState(true);
   const [formNotes, setFormNotes] = useState('');
   const [savingMed, setSavingMed] = useState(false);
 
-  const openAddMedicine = () => {
+  // `presetIncidentId` is set when opened from a specific incident section's own "Add Medicine"
+  // button, so the new medicine lands in that section without the user having to pick it again.
+  const openAddMedicine = (presetIncidentId?: string) => {
     setEditingMedicine(null);
     setFormName('');
     setFormDosage('');
-    setFormTimes([{ id: newDoseTimeId(), label: 'Morning', time: '08:00', foodTiming: 'after' }]);
+    setFormIncidentId(presetIncidentId || '');
+    // A brand-new medicine's very first dose time is just as much "the one being added right now"
+    // as anything created via the + button below — it gets focus (and the "New" badge) too, not
+    // just ones added after it. originalDoseTimeIds stays empty, since nothing exists yet.
+    const firstDoseId = newDoseTimeId();
+    setFormTimes([{ id: firstDoseId, label: 'Morning', time: '08:00', foodTiming: 'after' }]);
+    setEditingDoseTimeId(firstDoseId);
+    setOriginalDoseTimeIds(new Set());
     setFormWeekdays([]);
+    setFormRepeatMode('daily');
     setFormStartDate(todayLocalDateString());
-    setFormDurationMode('ongoing');
+    setFormDurationMode('dayCount');
     setFormEndDate('');
     setFormDayCount('30');
     setFormReminders(true);
@@ -320,8 +567,18 @@ export default function HealthMedicines() {
     setEditingMedicine(med);
     setFormName(med.name);
     setFormDosage(med.dosage);
-    setFormTimes(med.times.length > 0 ? med.times : [{ id: newDoseTimeId(), label: 'Morning', time: '08:00', foodTiming: 'after' }]);
+    setFormIncidentId(med.incidentId || '');
+    // Re-derived through withAutoDoseLabels even for an existing medicine — label is purely a
+    // computed display of the time now (see that function's own comment), so this keeps it
+    // consistent immediately on open rather than only once a time is next touched.
+    const loadedTimes = withAutoDoseLabels(med.times.length > 0 ? med.times : [{ id: newDoseTimeId(), label: 'Morning', time: '08:00', foodTiming: 'after' }]);
+    setFormTimes(loadedTimes);
+    // Every already-saved dose time starts read-only (none in focus) — opening Edit on a medicine
+    // shouldn't drop the user straight into editing an arbitrary slot.
+    setEditingDoseTimeId(null);
+    setOriginalDoseTimeIds(new Set(loadedTimes.map((s) => s.id)));
     setFormWeekdays(med.weekdays);
+    setFormRepeatMode(med.intervalDays && med.intervalDays > 1 ? 'alternate' : med.weekdays.length > 0 && med.weekdays.length < 7 ? 'specific' : 'daily');
     setFormStartDate(med.startDate);
     setFormDurationMode(med.durationMode);
     setFormEndDate(med.endDate || '');
@@ -344,8 +601,10 @@ export default function HealthMedicines() {
       const fields = {
         name: formName.trim(),
         dosage: formDosage.trim(),
+        incidentId: formIncidentId || null,
         times: formTimes,
-        weekdays: formWeekdays,
+        weekdays: formRepeatMode === 'specific' ? formWeekdays : [],
+        intervalDays: formRepeatMode === 'alternate' ? 2 : null,
         startDate: formStartDate,
         durationMode: formDurationMode,
         endDate: formDurationMode === 'endDate' ? formEndDate || null : null,
@@ -379,6 +638,59 @@ export default function HealthMedicines() {
     fireWrite(deleteDoc(doc(db, 'medicines', med.id)), 'delete medicine');
   };
 
+  // --- Incidents ---
+  const [incidentForm, setIncidentForm] = useState(false);
+  const [editingIncident, setEditingIncident] = useState<MedicalIncident | null>(null);
+  const [incidentFormName, setIncidentFormName] = useState('');
+  const [incidentFormDescription, setIncidentFormDescription] = useState('');
+  const [incidentFormEndDate, setIncidentFormEndDate] = useState('');
+  const [savingIncident, setSavingIncident] = useState(false);
+
+  const openAddIncident = () => {
+    setEditingIncident(null);
+    setIncidentFormName('');
+    setIncidentFormDescription('');
+    setIncidentFormEndDate('');
+    setIncidentForm(true);
+  };
+  const openEditIncident = (inc: MedicalIncident) => {
+    setEditingIncident(inc);
+    setIncidentFormName(inc.name);
+    setIncidentFormDescription(inc.description || '');
+    setIncidentFormEndDate(inc.endDate || '');
+    setIncidentForm(true);
+  };
+  const handleSaveIncident = async () => {
+    if (!user || !incidentFormName.trim()) return;
+    setSavingIncident(true);
+    try {
+      const targetUid = manageTargetUid || user.uid;
+      const fields = { name: incidentFormName.trim(), description: incidentFormDescription.trim() || null, endDate: incidentFormEndDate || null };
+      if (editingIncident) {
+        fireWrite(updateDoc(doc(db, 'medicalIncidents', editingIncident.id), fields), 'update incident');
+      } else {
+        fireWrite(
+          setDoc(doc(collection(db, 'medicalIncidents')), { userId: targetUid, loggedBy: user.uid, createdAt: new Date().toISOString(), ...fields }),
+          'add incident',
+        );
+      }
+      setIncidentForm(false);
+      setEditingIncident(null);
+    } finally {
+      setSavingIncident(false);
+    }
+  };
+  // Deleting an incident never deletes or orphans its medicines — they move to the General
+  // bucket (incidentId: null), same "close it, don't destroy what's under it" reasoning already
+  // applied elsewhere in this app (e.g. discontinuing a goal never touches its funds).
+  const handleDeleteIncident = (inc: MedicalIncident) => {
+    if (!window.confirm(t('medicine.confirmDeleteIncident'))) return;
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'medicalIncidents', inc.id));
+    manageMedicines.filter((m) => m.incidentId === inc.id).forEach((m) => batch.update(doc(db, 'medicines', m.id), { incidentId: null }));
+    fireWrite(batch.commit(), 'delete incident');
+  };
+
   const manageMedicines = useMemo(
     () =>
       medicines
@@ -389,6 +701,111 @@ export default function HealthMedicines() {
         }),
     [medicines, manageTargetUid],
   );
+
+  // Every incident belonging to whoever manageTargetUid currently points at — the add/edit
+  // medicine form's incident picker and the Medicines tab's sections both key off this.
+  const manageIncidents = useMemo(
+    () => incidents.filter((inc) => inc.userId === manageTargetUid).sort((a, b) => a.name.localeCompare(b.name)),
+    [incidents, manageTargetUid],
+  );
+
+  // The Add/Edit Medicine form's own incident picker, further trimmed to exclude ended incidents
+  // (endDate in the past) — an incident list only ever grows over the years, and offering every
+  // long-resolved one as a tappable chip forever would make that picker unusable. The incident
+  // currently selected on the medicine being edited is always kept in, even if it has since ended,
+  // so opening Edit on an old medicine never silently loses/hides its existing association.
+  const activeIncidentsForForm = useMemo(() => {
+    const todayStr = todayLocalDateString();
+    return manageIncidents.filter((inc) => inc.id === formIncidentId || !isIncidentEnded(inc, todayStr));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manageIncidents, formIncidentId]);
+
+  // Medicines tab groups by incident — a medicine with no incidentId still shows, just under the
+  // General bucket, never hidden. Sections sort alphabetically by incident name; General always
+  // sorts last so it doesn't visually compete with the deliberately-named incidents above it.
+  const medicinesByIncidentAll = useMemo(() => {
+    const map = new Map<string, Medicine[]>();
+    manageMedicines.forEach((med) => {
+      const key = med.incidentId || GENERAL_INCIDENT_ID;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(med);
+    });
+    // Every incident shows even if it currently has zero medicines — it was just created and
+    // needs somewhere for its own "Add Medicine" button to live. General always shows too, even
+    // with nothing in it yet, so there's always at least one section to add a medicine through.
+    manageIncidents.forEach((inc) => { if (!map.has(inc.id)) map.set(inc.id, []); });
+    if (!map.has(GENERAL_INCIDENT_ID)) map.set(GENERAL_INCIDENT_ID, []);
+    return Array.from(map.entries()).sort(([a], [b]) => {
+      if (a === GENERAL_INCIDENT_ID) return 1;
+      if (b === GENERAL_INCIDENT_ID) return -1;
+      const nameA = incidents.find((i) => i.id === a)?.name || '';
+      const nameB = incidents.find((i) => i.id === b)?.name || '';
+      return nameA.localeCompare(nameB);
+    });
+  }, [manageMedicines, manageIncidents, incidents]);
+
+  // Split out ended incidents (General is never "ended" — it has no end date at all) into their
+  // own tucked-away group at the bottom of the tab, so a long-resolved illness from years ago
+  // doesn't clutter the main list the same way it's already kept out of the Add Medicine picker.
+  const todayForIncidents = todayLocalDateString();
+  const medicinesByIncident = useMemo(
+    () => medicinesByIncidentAll.filter(([key]) => key === GENERAL_INCIDENT_ID || !isIncidentEnded(incidents.find((i) => i.id === key) || { endDate: null }, todayForIncidents)),
+    [medicinesByIncidentAll, incidents, todayForIncidents],
+  );
+  const historicMedicinesByIncident = useMemo(
+    () => medicinesByIncidentAll.filter(([key]) => key !== GENERAL_INCIDENT_ID && isIncidentEnded(incidents.find((i) => i.id === key) || { endDate: null }, todayForIncidents)),
+    [medicinesByIncidentAll, incidents, todayForIncidents],
+  );
+
+  // Which incident sections are expanded — opt-in (a Set of expanded incident ids, not collapsed
+  // ones) so sections default to COLLAPSED, same "expanded" naming convention Dashboard.tsx's
+  // archived-groups section already established for the identical reason: a brand-new section (an
+  // incident nobody's toggled yet) should start tucked away, not sprawled open. No animation on
+  // the toggle — Dashboard's own archived-groups history is exactly why (see that file's
+  // comments): an animated collapse/expand tied to a value that can legitimately change on an
+  // ordinary re-render risks looking like it's firing on its own, so this is a plain conditional
+  // render instead.
+  const [expandedIncidents, setExpandedIncidents] = useState<Set<string>>(new Set());
+  // The "Historic Illnesses" umbrella section itself (holding every ended incident) — default
+  // collapsed, same reasoning as everything else that defaults collapsed on this tab.
+  const [historicExpanded, setHistoricExpanded] = useState(false);
+  const toggleIncidentExpanded = (incidentId: string) => {
+    setExpandedIncidents((prev) => {
+      const next = new Set(prev);
+      if (next.has(incidentId)) next.delete(incidentId); else next.add(incidentId);
+      return next;
+    });
+  };
+  // Individual medicine tiles within a section are separately collapsible (dosage/schedule/last-
+  // taken/next-due/history only compute and render once a tile is actually opened).
+  const [expandedMedicineIds, setExpandedMedicineIds] = useState<Set<string>>(new Set());
+  const toggleMedicineExpanded = (medId: string) => {
+    setExpandedMedicineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(medId)) next.delete(medId); else next.add(medId);
+      return next;
+    });
+  };
+
+  // An incident's color/icon are derived from its name (a simple string hash into a small fixed
+  // palette) rather than stored anywhere — so the same name always renders the same way without
+  // needing a color picker in the incident form or a migration if the palette ever changes.
+  // `light` is the section's own tinted "shell" background (holding its medicine tiles) — a
+  // literal class string per color, not a runtime-built one (`` `${bg}/10` ``), since Tailwind's
+  // build-time scanner only picks up class names it can see written out in the source.
+  const INCIDENT_PALETTE = [
+    { bg: 'bg-teal-600', light: 'bg-teal-50', icon: 'healing' },
+    { bg: 'bg-blue-600', light: 'bg-blue-50', icon: 'psychology' },
+    { bg: 'bg-emerald-600', light: 'bg-emerald-50', icon: 'vaccines' },
+    { bg: 'bg-amber-600', light: 'bg-amber-50', icon: 'medical_services' },
+    { bg: 'bg-rose-600', light: 'bg-rose-50', icon: 'sick' },
+    { bg: 'bg-violet-600', light: 'bg-violet-50', icon: 'emergency' },
+  ];
+  const incidentStyle = (name: string) => {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+    return INCIDENT_PALETTE[Math.abs(hash) % INCIDENT_PALETTE.length];
+  };
 
   const foodTimingLabel = (ft: FoodTiming) => t(`medicine.foodTiming.${ft}`);
   const doseTimeSummary = (med: Medicine) =>
@@ -405,12 +822,28 @@ export default function HealthMedicines() {
 
   // --- Log tab ---
   const [logDate, setLogDate] = useState(todayLocalDateString());
+  const [logFilterIncident, setLogFilterIncident] = useState('all');
+  // Which log rows have their Mark Taken/Skipped/Undo action revealed — tapping the row's pencil
+  // toggles membership. Collapsed by default so the list reads as a compact status report (per the
+  // redesign) rather than every row carrying its own always-visible button row.
+  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
+  const toggleLogExpanded = (id: string) =>
+    setExpandedLogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const formatLoggedTime = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  };
   const dueToday = useMemo(
     () =>
       manageMedicines
         .filter((m) => isMedicineDueOn(m, logDate))
+        .filter((m) => logFilterIncident === 'all' || (m.incidentId || GENERAL_INCIDENT_ID) === logFilterIncident)
         .flatMap((m) => m.times.map((slot) => ({ medicine: m, doseTime: slot }))),
-    [manageMedicines, logDate],
+    [manageMedicines, logDate, logFilterIncident],
   );
   const dueTodayIds = useMemo(
     () => dueToday.map(({ medicine, doseTime }) => medicineLogId(manageTargetUid, medicine.id, doseTime.id, logDate)),
@@ -425,10 +858,39 @@ export default function HealthMedicines() {
     return map;
   }, [dueLogsValue]);
 
-  const handleMarkDose = async (medicine: Medicine, doseTime: MedicineDoseTime, status: MedicineLogStatus) => {
+  // --- Medicines tab: "due today, not yet taken" banner ---
+  // Deliberately independent of `logDate`/`dueToday` above (the Log tab lets the user pick a past
+  // date to log for) — this list must always reflect *today*, regardless of what date the Log tab
+  // happens to be scrolled to.
+  const todayStr = todayLocalDateString();
+  const dueTodayAll = useMemo(
+    () => manageMedicines.filter((m) => isMedicineDueOn(m, todayStr)).flatMap((m) => m.times.map((slot) => ({ medicine: m, doseTime: slot }))),
+    [manageMedicines, todayStr],
+  );
+  const dueTodayAllIds = useMemo(
+    () => dueTodayAll.map(({ medicine, doseTime }) => medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr)),
+    [dueTodayAll, manageTargetUid, todayStr],
+  );
+  const [dueTodayAllLogsValue] = useCollection(
+    dueTodayAllIds.length > 0 ? query(collection(db, 'medicineLogs'), where(documentId(), 'in', dueTodayAllIds.slice(0, 30))) : null,
+  );
+  const dueTodayAllLogsById = useMemo(() => {
+    const map = new Map<string, MedicineLog>();
+    dueTodayAllLogsValue?.docs.forEach((d) => map.set(d.id, { id: d.id, ...(d.data() as any) } as MedicineLog));
+    return map;
+  }, [dueTodayAllLogsValue]);
+  const pendingDueToday = useMemo(
+    () =>
+      dueTodayAll
+        .filter(({ medicine, doseTime }) => !dueTodayAllLogsById.has(medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr)))
+        .sort((a, b) => a.doseTime.time.localeCompare(b.doseTime.time)),
+    [dueTodayAll, dueTodayAllLogsById, manageTargetUid, todayStr],
+  );
+
+  const handleMarkDose = async (medicine: Medicine, doseTime: MedicineDoseTime, status: MedicineLogStatus, dateStr: string = logDate) => {
     if (!user) return;
     const targetUid = manageTargetUid || user.uid;
-    const id = medicineLogId(targetUid, medicine.id, doseTime.id, logDate);
+    const id = medicineLogId(targetUid, medicine.id, doseTime.id, dateStr);
     const loggedAt = new Date().toISOString();
     fireWrite(
       setDoc(doc(db, 'medicineLogs', id), {
@@ -442,7 +904,7 @@ export default function HealthMedicines() {
         doseLabel: doseTime.label,
         scheduledTime: doseTime.time,
         status,
-        dateStr: logDate,
+        dateStr,
         loggedAt,
         notes: null,
         createdAt: loggedAt,
@@ -469,8 +931,8 @@ export default function HealthMedicines() {
       }
     }
   };
-  const handleUndoDose = (medicine: Medicine, doseTime: MedicineDoseTime) => {
-    const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, logDate);
+  const handleUndoDose = (medicine: Medicine, doseTime: MedicineDoseTime, dateStr: string = logDate) => {
+    const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, dateStr);
     fireWrite(deleteDoc(doc(db, 'medicineLogs', id)), 'undo medicine dose');
   };
 
@@ -482,6 +944,7 @@ export default function HealthMedicines() {
   const [customEnd, setCustomEnd] = useState('');
   const [filterMedicineId, setFilterMedicineId] = useState('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'taken' | 'skipped' | 'missed'>('all');
+  const [filterIncident, setFilterIncident] = useState('all');
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [tableCollapsed, setTableCollapsed] = useState(false);
 
@@ -492,6 +955,7 @@ export default function HealthMedicines() {
   }, [medicines, allMembers, friendUsersByUid, user]);
 
   const viewMedicines = useMemo(() => medicines.filter((m) => m.userId === viewTargetUid), [medicines, viewTargetUid]);
+  const viewIncidents = useMemo(() => incidents.filter((inc) => inc.userId === viewTargetUid), [incidents, viewTargetUid]);
   const { start: rangeStart, end: rangeEnd } = presetBounds(datePreset, customStart, customEnd);
   const today = todayLocalDateString();
 
@@ -519,6 +983,7 @@ export default function HealthMedicines() {
       const dateStr = toLocalDateString(d);
       viewMedicines.forEach((med) => {
         if (filterMedicineId !== 'all' && med.id !== filterMedicineId) return;
+        if (filterIncident !== 'all' && (med.incidentId || GENERAL_INCIDENT_ID) !== filterIncident) return;
         if (!isMedicineDueOn(med, dateStr)) return;
         med.times.forEach((slot) => {
           const id = medicineLogId(viewTargetUid, med.id, slot.id, dateStr);
@@ -529,7 +994,7 @@ export default function HealthMedicines() {
       });
     }
     return out.sort((a, b) => (b.dateStr + b.doseTime.time).localeCompare(a.dateStr + a.doseTime.time));
-  }, [viewMedicines, rangeStart, rangeEnd, today, filterMedicineId, viewTargetUid, logsById]);
+  }, [viewMedicines, rangeStart, rangeEnd, today, filterMedicineId, filterIncident, viewTargetUid, logsById]);
 
   const filteredInstances = useMemo(
     () => dueInstances.filter((i) => filterStatus === 'all' || i.status === filterStatus),
@@ -546,6 +1011,7 @@ export default function HealthMedicines() {
     setCustomEnd('');
     setFilterMedicineId('all');
     setFilterStatus('all');
+    setFilterIncident('all');
   };
 
   const viewingName =
@@ -694,6 +1160,90 @@ export default function HealthMedicines() {
     return { cls: 'text-text-muted', text: t('medicine.doseStatusPending'), icon: '⏳' };
   };
 
+  // One incident's card — colored header, tinted "shell" holding its medicines, Edit/Delete +
+  // Add Medicine. Shared by the main Medicines tab list and the Historic Illnesses umbrella
+  // section below, since an ended incident's own card looks identical to an active one once
+  // you've actually opened the umbrella to see it — only WHERE it's grouped differs.
+  // `forceSolo` mirrors the original "a lone General bucket renders as a plain flat list, no
+  // colored header" behavior — passed as true only when this is the single section in its list.
+  const renderIncidentSection = (incidentId: string, meds: Medicine[], forceSolo: boolean) => {
+    const isGeneral = incidentId === GENERAL_INCIDENT_ID;
+    const incident = isGeneral ? null : incidents.find((i) => i.id === incidentId) || null;
+    const style = isGeneral ? { bg: 'bg-surface-container-high', light: 'bg-surface-container', icon: 'medication' } : incidentStyle(incident?.name || '');
+    const sectionLabel = isGeneral ? t('medicine.generalIncident') : incident?.name || '';
+    const expanded = forceSolo || expandedIncidents.has(incidentId);
+    const canManageIncident = isGeneral ? true : incident?.userId === user?.uid || incident?.loggedBy === user?.uid;
+    return (
+      <div key={incidentId} className={clsx(forceSolo ? 'space-y-2' : 'rounded-2xl overflow-hidden shadow-sm border border-border-subtle')}>
+        {!forceSolo && (
+          <button
+            type="button"
+            onClick={() => toggleIncidentExpanded(incidentId)}
+            className={clsx('w-full flex items-center gap-2 px-3 py-2.5', style.bg, isGeneral ? 'text-text-muted' : 'text-white')}
+          >
+            <span className="material-symbols-outlined text-[18px] shrink-0">{style.icon}</span>
+            <span className="flex-1 min-w-0 text-left text-sm font-bold truncate">{sectionLabel}</span>
+            <span className={clsx('shrink-0 text-[10px] font-black rounded-full px-2 py-0.5', isGeneral ? 'bg-surface text-text-muted' : 'bg-white/25')}>{meds.length}</span>
+            <span className={clsx('material-symbols-outlined text-[18px] shrink-0 transition-transform', expanded && 'rotate-180')}>expand_more</span>
+          </button>
+        )}
+        {expanded && (
+          // The tinted "shell" is what makes the medicines underneath read as BELONGING TO this
+          // incident (not just sitting below an unrelated header) — same light-tint-of-the-
+          // header-color idea for every section, General included (using a neutral gray tint
+          // rather than a hue, since General isn't color-themed).
+          <div className={clsx('space-y-2', !forceSolo && ['p-2.5', style.light])}>
+            {!isGeneral && incident?.description && (
+              <p className="text-[11px] text-text-muted px-1">{incident.description}</p>
+            )}
+            <div className="flex items-center justify-between gap-2 px-1">
+              {!isGeneral && canManageIncident && incident ? (
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => openEditIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[12px]">edit</span>{t('common.edit')}
+                  </button>
+                  <button type="button" onClick={() => handleDeleteIncident(incident)} className="text-[10px] font-bold text-error flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[12px]">delete</span>{t('medicine.deleteIncident')}
+                  </button>
+                </div>
+              ) : <span />}
+              <button
+                type="button"
+                onClick={() => openAddMedicine(isGeneral ? undefined : incidentId)}
+                className="py-1.5 px-3 bg-primary/5 border border-primary/20 text-primary font-bold text-[11px] rounded-lg flex items-center justify-center gap-1 shrink-0"
+              >
+                <span className="material-symbols-outlined text-[14px]">add</span>
+                {t('medicine.addMedicine')}
+              </button>
+            </div>
+            {meds.length === 0 ? (
+              <p className="text-xs text-text-muted text-center py-4">{t('medicine.noMedicinesInSection')}</p>
+            ) : (
+              meds.map((med) => (
+                <MedicineCard
+                  key={med.id}
+                  med={med}
+                  status={medicineStatusLabel(med, today)}
+                  canManage={med.userId === user?.uid || med.loggedBy === user?.uid}
+                  expanded={expandedMedicineIds.has(med.id)}
+                  onToggleExpand={() => toggleMedicineExpanded(med.id)}
+                  onEdit={openEditMedicine}
+                  onTogglePause={handleTogglePause}
+                  onDelete={handleDeleteMedicine}
+                  doseTimeSummary={doseTimeSummary}
+                  durationSummary={durationSummary}
+                  allLogs={allLogs}
+                  today={today}
+                  t={t}
+                />
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24">
@@ -702,14 +1252,16 @@ export default function HealthMedicines() {
             <h1 className="text-lg font-black text-primary leading-tight">{t('medicine.tracker')}</h1>
             <p className="text-[11px] text-text-muted leading-tight">{t('medicine.trackerDesc')}</p>
           </div>
-          <button
-            type="button"
-            onClick={openSettingsMenu}
-            className="shrink-0 w-9 h-9 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
-            title={t('health.settings')}
-          >
-            <span className="material-symbols-outlined text-[18px]">settings</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={openSettingsMenu}
+              className="w-9 h-9 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
+              title={t('health.settings')}
+            >
+              <span className="material-symbols-outlined text-[18px]">settings</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
@@ -741,56 +1293,72 @@ export default function HealthMedicines() {
         )}
 
         {tab === 'medicines' && (
-          <div className="space-y-3">
-            <button type="button" onClick={openAddMedicine} className="w-full py-2.5 bg-primary text-white font-bold rounded-xl flex items-center justify-center gap-1.5">
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              {t('medicine.addMedicine')}
-            </button>
-
-            {manageMedicines.length === 0 ? (
-              <p className="text-sm text-text-muted text-center py-8">{t('medicine.noMedicinesYet')}</p>
-            ) : (
-              <div className="space-y-2">
-                {manageMedicines.map((med) => {
-                  const status = medicineStatusLabel(med, today);
-                  const canManage = med.userId === user?.uid || med.loggedBy === user?.uid;
-                  return (
-                    <div key={med.id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-bold text-primary text-sm truncate">{med.name}{med.dosage ? <span className="text-text-muted font-semibold"> · {med.dosage}</span> : null}</p>
-                          <p className="text-[11px] text-text-muted mt-0.5">{doseTimeSummary(med)}</p>
-                          <p className="text-[10px] text-text-muted mt-0.5">{durationSummary(med)}</p>
-                        </div>
-                        <span
-                          className={clsx(
-                            'shrink-0 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full',
-                            status === 'active' && 'bg-success/10 text-success',
-                            status === 'paused' && 'bg-surface-container text-text-muted',
-                            status === 'ended' && 'bg-error/10 text-error',
-                            status === 'upcoming' && 'bg-primary/10 text-primary',
-                          )}
-                        >
-                          {t(`medicine.status${status.charAt(0).toUpperCase()}${status.slice(1)}`)}
+          <div className="space-y-4">
+            {pendingDueToday.length > 0 && (
+              <div className="rounded-2xl overflow-hidden shadow-sm border border-warning/30 bg-warning/5">
+                <div className="flex items-center gap-2 px-3 py-2.5 bg-warning/10">
+                  <span className="material-symbols-outlined text-[18px] text-warning shrink-0">notifications_active</span>
+                  <span className="flex-1 min-w-0 text-sm font-bold text-primary truncate">{t('medicine.dueTodayTitle')}</span>
+                  <span className="shrink-0 text-[10px] font-black rounded-full px-2 py-0.5 bg-warning/20 text-warning">{pendingDueToday.length}</span>
+                </div>
+                <div className="p-2.5 space-y-2">
+                  {pendingDueToday.map(({ medicine, doseTime }) => {
+                    const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr);
+                    return (
+                      <div key={id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-2.5 flex items-center gap-2.5">
+                        <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                          <span className="material-symbols-outlined text-[18px]">medication</span>
                         </span>
-                      </div>
-                      {canManage && (
-                        <div className="flex items-center gap-1 pt-1 border-t border-border-subtle">
-                          <button type="button" onClick={() => openEditMedicine(med)} className="flex-1 py-1.5 text-[11px] font-bold text-primary flex items-center justify-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">edit</span>{t('common.edit')}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
+                          <p className="text-[13px] font-bold text-text truncate">{formatDoseTimeDisplay(doseTime.time)} · {foodTimingLabel(doseTime.foodTiming)}</p>
+                        </div>
+                        <div className="shrink-0 flex items-center gap-2.5">
+                          <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markTaken')}>
+                            <span className="w-9 h-9 rounded-full bg-success/15 text-success flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[20px]">check</span>
+                            </span>
+                            <span className="text-[9px] font-bold text-success">{t('medicine.doseStatusTaken')}</span>
                           </button>
-                          <button type="button" onClick={() => handleTogglePause(med)} className="flex-1 py-1.5 text-[11px] font-bold text-text-muted flex items-center justify-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">{med.active ? 'pause' : 'play_arrow'}</span>
-                            {med.active ? t('medicine.pause') : t('medicine.resume')}
-                          </button>
-                          <button type="button" onClick={() => handleDeleteMedicine(med)} className="flex-1 py-1.5 text-[11px] font-bold text-error flex items-center justify-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">delete</span>{t('common.delete')}
+                          <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markSkipped')}>
+                            <span className="w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[20px]">close</span>
+                            </span>
+                            <span className="text-[9px] font-bold text-text-muted">{t('medicine.doseStatusSkipped')}</span>
                           </button>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={openAddIncident}
+              className="w-full py-2.5 rounded-xl text-xs font-bold text-primary bg-white border border-dashed border-primary/30 hover:bg-primary/5 transition-colors flex items-center justify-center gap-1"
+            >
+              <span className="material-symbols-outlined text-[16px]">add</span>
+              {t('medicine.addIncident')}
+            </button>
+            {medicinesByIncident.map(([incidentId, meds]) => renderIncidentSection(incidentId, meds, medicinesByIncident.length <= 1))}
+            {historicMedicinesByIncident.length > 0 && (
+              <div className="rounded-2xl overflow-hidden shadow-sm border border-border-subtle">
+                <button
+                  type="button"
+                  onClick={() => setHistoricExpanded((v) => !v)}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 bg-surface-container-high text-text-muted"
+                >
+                  <span className="material-symbols-outlined text-[18px] shrink-0">history</span>
+                  <span className="flex-1 min-w-0 text-left text-sm font-bold truncate">{t('medicine.historicIllnesses')}</span>
+                  <span className="shrink-0 text-[10px] font-black rounded-full px-2 py-0.5 bg-surface text-text-muted">{historicMedicinesByIncident.length}</span>
+                  <span className={clsx('material-symbols-outlined text-[18px] shrink-0 transition-transform', historicExpanded && 'rotate-180')}>expand_more</span>
+                </button>
+                {historicExpanded && (
+                  <div className="p-2.5 bg-surface-container space-y-3">
+                    {historicMedicinesByIncident.map(([incidentId, meds]) => renderIncidentSection(incidentId, meds, false))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -809,49 +1377,90 @@ export default function HealthMedicines() {
               />
             </div>
 
+            {manageIncidents.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.incident')}</label>
+                <select value={logFilterIncident} onChange={(e) => setLogFilterIncident(e.target.value)} className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none">
+                  <option value="all">{t('medicine.allIncidents')}</option>
+                  {manageIncidents.map((inc) => <option key={inc.id} value={inc.id}>{inc.name}</option>)}
+                  <option value={GENERAL_INCIDENT_ID}>{t('medicine.generalIncident')}</option>
+                </select>
+              </div>
+            )}
+
             {dueToday.length === 0 ? (
               <p className="text-sm text-text-muted text-center py-8">{t('medicine.noDosesDue')}</p>
             ) : (
-              <div className="space-y-2">
-                {dueToday
-                  .slice()
-                  .sort((a, b) => a.doseTime.time.localeCompare(b.doseTime.time))
-                  .map(({ medicine, doseTime }) => {
-                    const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, logDate);
-                    const log = dueLogsById.get(id);
-                    return (
-                      <div key={id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
-                            <p className="text-[11px] text-text-muted">{doseTime.label} · {doseTime.time} · {foodTimingLabel(doseTime.foodTiming)}</p>
+              (() => {
+                const sortedDueToday = dueToday.slice().sort((a, b) => a.doseTime.time.localeCompare(b.doseTime.time));
+                const isPastDate = logDate < todayLocalDateString();
+                const takenCount = sortedDueToday.filter(
+                  ({ medicine, doseTime }) => dueLogsById.get(medicineLogId(manageTargetUid, medicine.id, doseTime.id, logDate))?.status === 'taken',
+                ).length;
+                const adherencePct = Math.round((takenCount / sortedDueToday.length) * 100);
+                return (
+                  <>
+                    <div className="rounded-2xl overflow-hidden border border-border-subtle shadow-sm divide-y divide-border-subtle">
+                      {sortedDueToday.map(({ medicine, doseTime }, idx) => {
+                        const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, logDate);
+                        const log = dueLogsById.get(id);
+                        const expanded = expandedLogIds.has(id);
+                        return (
+                          <div key={id} className={clsx(idx % 2 === 1 && 'bg-surface-container')}>
+                            <div className="flex items-center gap-2.5 p-3">
+                              <span className="shrink-0 w-8 h-8 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                                <span className="material-symbols-outlined text-[16px]">medication</span>
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
+                                <p className="text-[11px] text-text-muted truncate">{doseTime.label} {doseTime.time} · {foodTimingLabel(doseTime.foodTiming)}</p>
+                              </div>
+                              <div className="shrink-0 flex items-center gap-1.5">
+                                {log ? (
+                                  <span className={clsx('text-[11px] font-bold text-right', log.status === 'taken' ? 'text-success' : 'text-warning')}>
+                                    {log.status === 'taken' ? t('medicine.statusTakenAt', { time: formatLoggedTime(log.loggedAt) }) : t('medicine.statusSkippedAt', { time: formatLoggedTime(log.loggedAt) })}
+                                  </span>
+                                ) : (
+                                  <span className={clsx('text-[11px] font-bold text-right', isPastDate ? 'text-error' : 'text-text-muted')}>
+                                    {isPastDate ? t('medicine.statusMissedNoAction') : t('medicine.doseStatusPending')}
+                                  </span>
+                                )}
+                                <button type="button" onClick={() => toggleLogExpanded(id)} className="w-7 h-7 rounded-full flex items-center justify-center text-text-muted hover:bg-surface-container-high" aria-label={t('common.edit')}>
+                                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                                </button>
+                              </div>
+                            </div>
+                            {expanded && (
+                              <div className="px-3 pb-3">
+                                {log ? (
+                                  <button type="button" onClick={() => { handleUndoDose(medicine, doseTime, logDate); toggleLogExpanded(id); }} className="w-full py-1.5 text-[11px] font-bold text-text-muted border border-border-subtle rounded-lg bg-white">
+                                    {t('medicine.undo')}
+                                  </button>
+                                ) : (
+                                  <div className="flex gap-1.5">
+                                    <button type="button" onClick={() => { handleMarkDose(medicine, doseTime, 'taken', logDate); toggleLogExpanded(id); }} className="flex-1 py-1.5 bg-success/10 text-success text-[11px] font-bold rounded-lg">
+                                      {t('medicine.markTaken')}
+                                    </button>
+                                    <button type="button" onClick={() => { handleMarkDose(medicine, doseTime, 'skipped', logDate); toggleLogExpanded(id); }} className="flex-1 py-1.5 bg-white text-text-muted text-[11px] font-bold rounded-lg border border-border-subtle">
+                                      {t('medicine.markSkipped')}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          {log ? (
-                            <span className={clsx('shrink-0 text-[10px] font-bold flex items-center gap-1', log.status === 'taken' ? 'text-success' : 'text-warning')}>
-                              {log.status === 'taken' ? '✅' : '⏭️'} {log.status === 'taken' ? t('medicine.doseStatusTaken') : t('medicine.doseStatusSkipped')}
-                            </span>
-                          ) : (
-                            <span className="shrink-0 text-[10px] font-bold text-text-muted">{t('medicine.doseStatusPending')}</span>
-                          )}
-                        </div>
-                        {log ? (
-                          <button type="button" onClick={() => handleUndoDose(medicine, doseTime)} className="w-full py-1.5 text-[11px] font-bold text-text-muted border border-border-subtle rounded-lg">
-                            {t('medicine.undo')}
-                          </button>
-                        ) : (
-                          <div className="flex gap-1.5">
-                            <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken')} className="flex-1 py-1.5 bg-success/10 text-success text-[11px] font-bold rounded-lg">
-                              {t('medicine.markTaken')}
-                            </button>
-                            <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped')} className="flex-1 py-1.5 bg-surface text-text-muted text-[11px] font-bold rounded-lg border border-border-subtle">
-                              {t('medicine.markSkipped')}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
+                        );
+                      })}
+                    </div>
+                    <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-1">
+                      <p className="font-bold text-primary text-sm">{t('medicine.adherenceSummary')}</p>
+                      <p className="text-xs text-text-muted">
+                        {t(isPastDate ? 'medicine.adherenceLineDate' : 'medicine.adherenceLineToday', { pct: adherencePct, taken: takenCount, total: sortedDueToday.length })}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()
             )}
           </div>
         )}
@@ -908,6 +1517,13 @@ export default function HealthMedicines() {
                   <option value="missed">{t('medicine.doseStatusMissed')}</option>
                 </select>
               </div>
+              {viewIncidents.length > 0 && (
+                <select value={filterIncident} onChange={(e) => setFilterIncident(e.target.value)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
+                  <option value="all">{t('medicine.allIncidents')}</option>
+                  {viewIncidents.map((inc) => <option key={inc.id} value={inc.id}>{inc.name}</option>)}
+                  <option value={GENERAL_INCIDENT_ID}>{t('medicine.generalIncident')}</option>
+                </select>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -1016,80 +1632,186 @@ export default function HealthMedicines() {
               <button type="button" onClick={() => setMedForm(false)} className="text-text-muted shrink-0"><span className="material-symbols-outlined">close</span></button>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.name')}</label>
-              <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder={t('medicine.namePlaceholder')} className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none" />
+            <div className="flex gap-2">
+              <div className="flex-1 space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.name')}</label>
+                <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder={t('medicine.namePlaceholder')} className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none" />
+              </div>
+              <div className="w-28 shrink-0 space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.dosage')}</label>
+                <input type="text" value={formDosage} onChange={(e) => setFormDosage(e.target.value)} placeholder={t('medicine.dosagePlaceholder')} className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none" />
+              </div>
             </div>
+
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.dosage')}</label>
-              <input type="text" value={formDosage} onChange={(e) => setFormDosage(e.target.value)} placeholder={t('medicine.dosagePlaceholder')} className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none" />
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.incident')}</label>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setFormIncidentId('')}
+                  className={clsx('px-3 py-1.5 rounded-full text-xs font-bold border transition-all', formIncidentId === '' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
+                >
+                  {t('medicine.generalIncident')}
+                </button>
+                {activeIncidentsForForm.map((inc) => (
+                  <button
+                    key={inc.id}
+                    type="button"
+                    onClick={() => setFormIncidentId(inc.id)}
+                    className={clsx('px-3 py-1.5 rounded-full text-xs font-bold border transition-all', formIncidentId === inc.id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
+                  >
+                    {inc.name}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.doseTimes')}</label>
-              {formTimes.map((slot) => (
-                <div key={slot.id} className="flex items-center gap-1.5 bg-surface rounded-lg p-2 border border-border-subtle">
-                  <input
-                    type="text"
-                    value={slot.label}
-                    onChange={(e) => setFormTimes((ts) => ts.map((s) => (s.id === slot.id ? { ...s, label: e.target.value } : s)))}
-                    placeholder={t('medicine.doseLabelPlaceholder')}
-                    className="flex-1 min-w-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
-                  />
-                  <input
-                    type="time"
-                    value={slot.time}
-                    onChange={(e) => setFormTimes((ts) => ts.map((s) => (s.id === slot.id ? { ...s, time: e.target.value } : s)))}
-                    className="w-24 shrink-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
-                  />
-                  <select
-                    value={slot.foodTiming}
-                    onChange={(e) => setFormTimes((ts) => ts.map((s) => (s.id === slot.id ? { ...s, foodTiming: e.target.value as FoodTiming } : s)))}
-                    className="w-28 shrink-0 bg-white border border-border-subtle rounded-md px-1.5 py-1 text-[11px] font-bold text-primary outline-none"
+              {/* formTimes is already sorted+labeled — every setter below pipes through
+                  withAutoDoseLabels. Read-only rows render in that (chronological) order; the one
+                  slot in focus (if any) is pulled out of that flow and always shown last, directly
+                  above "+ Add dose time" — its own position doesn't need to reflect its time,
+                  since it's a staging area, not part of the settled list. */}
+              {formTimes.filter((s) => s.id !== editingDoseTimeId).map((slot) => (
+                <div key={slot.id} className="flex items-center gap-1.5 bg-surface border border-border-subtle rounded-lg p-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-primary">{formatDoseTimeDisplay(slot.time)} <span className="text-text-muted font-semibold">· {slot.label}</span></p>
+                    <p className="text-[10px] text-text-muted mt-0.5">{foodTimingLabel(slot.foodTiming)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingDoseTimeId(slot.id)}
+                    className="shrink-0 px-2.5 py-1 rounded-md text-[10px] font-bold text-primary border border-primary/30"
                   >
-                    {FOOD_TIMING_OPTIONS.map((ft) => (
-                      <option key={ft} value={ft}>{foodTimingLabel(ft)}</option>
-                    ))}
-                  </select>
+                    {t('common.edit')}
+                  </button>
                   {formTimes.length > 1 && (
-                    <button type="button" onClick={() => setFormTimes((ts) => ts.filter((s) => s.id !== slot.id))} className="shrink-0 p-1 text-text-muted hover:text-error transition-colors">
+                    <button
+                      type="button"
+                      onClick={() => setFormTimes((ts) => withAutoDoseLabels(ts.filter((s) => s.id !== slot.id)))}
+                      className="shrink-0 p-1 text-text-muted hover:text-error transition-colors"
+                    >
                       <span className="material-symbols-outlined text-[16px]">close</span>
                     </button>
                   )}
                 </div>
               ))}
+              {(() => {
+                const slot = formTimes.find((s) => s.id === editingDoseTimeId);
+                if (!slot) return null;
+                const isNew = !originalDoseTimeIds.has(slot.id);
+                return (
+                  <div className="relative rounded-lg p-2 pt-4 space-y-1.5 bg-blue-50 border border-dashed border-blue-300">
+                    <span className="absolute -top-2 right-2 bg-blue-500 text-white text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">
+                      {isNew ? t('medicine.newBadge') : t('medicine.editingBadge')}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="time"
+                        value={slot.time}
+                        onClick={(e) => {
+                          // Native time inputs are supposed to open their picker on any tap, but
+                          // that isn't reliable on every WebView — calling showPicker() explicitly
+                          // guarantees it rather than depending on exactly where inside the field
+                          // was tapped. showPicker() is itself guarded (older WebView versions
+                          // don't have it) — the input still works as a normal tappable field
+                          // either way.
+                          const el = e.currentTarget;
+                          try { el.showPicker?.(); } catch { /* unsupported — plain tap-to-open still applies */ }
+                        }}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormTimes((ts) => withAutoDoseLabels(ts.map((s) => (s.id === slot.id ? { ...s, time: val } : s))));
+                        }}
+                        className="w-28 shrink-0 bg-white border border-border-subtle rounded-md px-2 py-1 text-xs font-bold text-primary outline-none"
+                      />
+                      {/* Label is purely computed from the time above — see withAutoDoseLabels —
+                          never directly editable, so this is plain text, not an input. */}
+                      <span className="flex-1 min-w-0 text-right text-xs font-bold text-text-muted truncate px-1">{slot.label}</span>
+                      {formTimes.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormTimes((ts) => withAutoDoseLabels(ts.filter((s) => s.id !== slot.id)));
+                            setEditingDoseTimeId(null);
+                          }}
+                          className="shrink-0 p-1 text-text-muted hover:text-error transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex gap-1">
+                      {FOOD_TIMING_OPTIONS.map((ft) => (
+                        <button
+                          key={ft}
+                          type="button"
+                          onClick={() => setFormTimes((ts) => ts.map((s) => (s.id === slot.id ? { ...s, foodTiming: ft } : s)))}
+                          className={clsx('flex-1 py-1 rounded-md text-[9px] font-bold border transition-all', slot.foodTiming === ft ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
+                        >
+                          {foodTimingLabel(ft)}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingDoseTimeId(null)}
+                      className="w-full py-1.5 rounded-md text-xs font-bold text-white bg-primary flex items-center justify-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">check</span>
+                      {t('common.save')}
+                    </button>
+                  </div>
+                );
+              })()}
               <button
                 type="button"
-                onClick={() => setFormTimes((ts) => [...ts, { id: newDoseTimeId(), label: '', time: '12:00', foodTiming: 'any' }])}
+                onClick={() => {
+                  const newId = newDoseTimeId();
+                  setFormTimes((ts) => withAutoDoseLabels([...ts, { id: newId, label: '', time: '12:00', foodTiming: 'any' }]));
+                  setEditingDoseTimeId(newId);
+                }}
                 className="w-full py-2 rounded-lg text-xs font-bold text-primary border border-dashed border-primary/30 hover:bg-primary/5 transition-colors"
               >
                 + {t('medicine.addDoseTime')}
               </button>
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('medicine.repeatsOn')}</label>
-              <div className="flex gap-1">
-                {WEEKDAY_LABELS.map((label, idx) => {
-                  const selected = formWeekdays.length === 0 || formWeekdays.includes(idx);
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() =>
-                        setFormWeekdays((prev) => {
-                          const base = prev.length === 0 ? [0, 1, 2, 3, 4, 5, 6] : prev;
-                          return base.includes(idx) ? base.filter((d) => d !== idx) : [...base, idx];
-                        })
-                      }
-                      className={clsx('flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition-all', selected ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
-                    >
-                      {label.slice(0, 1)}
-                    </button>
-                  );
-                })}
+              <div className="flex gap-1.5">
+                {(['daily', 'specific', 'alternate'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setFormRepeatMode(mode)}
+                    className={clsx('flex-1 py-2 rounded-lg text-[10px] font-bold border transition-all', formRepeatMode === mode ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
+                  >
+                    {t(`medicine.repeat${mode.charAt(0).toUpperCase()}${mode.slice(1)}`)}
+                  </button>
+                ))}
               </div>
-              <p className="text-[10px] text-text-muted px-1">{formWeekdays.length === 0 || formWeekdays.length === 7 ? t('medicine.everyDay') : ''}</p>
+              {formRepeatMode === 'specific' && (
+                <div className="flex gap-1">
+                  {WEEKDAY_LABELS.map((label, idx) => {
+                    const selected = formWeekdays.includes(idx);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setFormWeekdays((prev) => (prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx]))}
+                        className={clsx('flex-1 py-1.5 rounded-lg text-[10px] font-bold border transition-all', selected ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
+                      >
+                        {label.slice(0, 1)}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {formRepeatMode === 'alternate' && (
+                <p className="text-[10px] text-text-muted px-1">{t('medicine.alternateHint')}</p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1100,7 +1822,7 @@ export default function HealthMedicines() {
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('medicine.duration')}</label>
               <div className="flex gap-1.5">
-                {(['ongoing', 'endDate', 'dayCount'] as const).map((mode) => (
+                {(['dayCount', 'endDate', 'ongoing'] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -1135,6 +1857,50 @@ export default function HealthMedicines() {
 
             <button type="button" onClick={handleSaveMedicine} disabled={savingMed || !formName.trim()} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
               {savingMed ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {incidentForm && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setIncidentForm(false)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-black text-primary flex-1">{editingIncident ? t('medicine.editIncident') : t('medicine.addIncident')}</h2>
+              <button type="button" onClick={() => setIncidentForm(false)} className="text-text-muted shrink-0"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.incidentName')}</label>
+              <input
+                type="text"
+                value={incidentFormName}
+                onChange={(e) => setIncidentFormName(e.target.value)}
+                placeholder={t('medicine.incidentNamePlaceholder')}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.incidentDescription')}</label>
+              <textarea
+                value={incidentFormDescription}
+                onChange={(e) => setIncidentFormDescription(e.target.value)}
+                placeholder={t('medicine.incidentDescriptionPlaceholder')}
+                rows={3}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm text-primary outline-none resize-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.incidentEndDate')}</label>
+              <input
+                type="date"
+                value={incidentFormEndDate}
+                onChange={(e) => setIncidentFormEndDate(e.target.value)}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+              />
+              <p className="text-[10px] text-text-muted px-1">{t('medicine.incidentEndDateHint')}</p>
+            </div>
+            <button type="button" onClick={handleSaveIncident} disabled={savingIncident || !incidentFormName.trim()} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
+              {savingIncident ? t('common.saving') : t('common.save')}
             </button>
           </div>
         </div>

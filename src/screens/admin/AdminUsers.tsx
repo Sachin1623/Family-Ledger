@@ -244,7 +244,7 @@ export default function AdminUsers() {
 
       {wipeEmail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-red-600">Wipe all data for {wipeEmail}?</h3>
             <p className="text-sm text-text-muted">
               This permanently deletes the account, profile, group memberships, owned groups (and

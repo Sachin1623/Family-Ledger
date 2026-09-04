@@ -4,7 +4,7 @@ import { addDoc, collection } from 'firebase/firestore';
 type GroupActivityAction =
   | 'added' | 'updated' | 'deleted' | 'commented' | 'recurring_created' | 'recurring_changed'
   | 'recurring_deleted' | 'shopping_list_created' | 'member_left' | 'todo_created' | 'todo_completed'
-  | 'budget_set' | 'income_added' | 'glucose_logged' | 'bp_logged' | 'medicine_logged';
+  | 'budget_set' | 'income_added' | 'glucose_logged' | 'bp_logged' | 'medicine_logged' | 'reminder_set';
 
 // Actions that already write their own purpose-built doc to `activities` at the call site
 // (add_expense/edit_expense/delete_expense, add_income, leave) — logging here too would
@@ -24,6 +24,7 @@ const ACTIVITY_TYPE: Partial<Record<GroupActivityAction, string>> = {
   glucose_logged: 'glucose_logged',
   bp_logged: 'bp_logged',
   medicine_logged: 'medicine_logged',
+  reminder_set: 'reminder_set',
 };
 
 // Fire-and-forget push notification (and, for actions not already logged elsewhere, a matching
@@ -38,6 +39,8 @@ export function notifyGroupActivity(params: {
   contextLabel?: string;
   listId?: string;
   expenseId?: string;
+  reminderId?: string;
+  reminderTime?: string; // 'HH:mm' — lets the Feed tile show when a shared reminder is actually due
   // budget_set only — the month the budget applies to, as a raw Date.getMonth()/getFullYear()
   // pair rather than a pre-formatted label, so FeedList.tsx can render the month name in
   // whichever language the *viewer* (not the actor) has selected.
@@ -71,6 +74,8 @@ export function notifyGroupActivity(params: {
     if (params.contextLabel !== undefined) data.contextLabel = params.contextLabel;
     if (params.listId !== undefined) data.listId = params.listId;
     if (params.expenseId !== undefined) data.expenseId = params.expenseId;
+    if (params.reminderId !== undefined) data.reminderId = params.reminderId;
+    if (params.reminderTime !== undefined) data.time = params.reminderTime;
     if (params.month !== undefined) data.month = params.month;
     if (params.year !== undefined) data.year = params.year;
 

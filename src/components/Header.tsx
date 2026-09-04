@@ -11,7 +11,8 @@ import GlobalSearch from './GlobalSearch';
 import FeedPanel from './FeedPanel';
 import { getParentPath } from '../lib/navigationParents';
 import { setOpenFeedPanelFn } from '../lib/feedPanelRef';
-import HeaderPointsPill from './HeaderPointsPill';
+import HeaderProfileBadge from './HeaderProfileBadge';
+import { useAppUpdateAvailable, hardReloadApp } from '../lib/appUpdate';
 
 export default function Header() {
   const navigate = useNavigate();
@@ -71,6 +72,13 @@ export default function Header() {
     return new Set([...groupUnread, ...personalUnread]).size;
   }, [activitiesValue, personalActivitiesValue, profile?.lastFeedViewedAt, user?.uid]);
 
+  // Red header reload button: unlike UpdateBanner (a dismissible bottom nudge, still shown for
+  // the same signal), this is deliberately always-visible and un-dismissable — it disappears on
+  // its own the moment this tab's JS actually matches the latest deployed Cloud Run revision,
+  // rather than staying dismissed while still running stale code.
+  const { available: updateAvailable } = useAppUpdateAvailable();
+  const [reloadingFromHeader, setReloadingFromHeader] = React.useState(false);
+
   const [isInIframe, setIsInIframe] = React.useState(false);
 
   React.useEffect(() => {
@@ -109,7 +117,16 @@ export default function Header() {
       // what makes the notch/status-bar icons overlap plain top-0 content in the first place —
       // padding-top adds the safe-area inset on top of the normal 0.5rem breathing room instead
       // of replacing it. Evaluates to just that 0.5rem on Android/web, where the inset is 0.
-      "sticky top-0 z-50 border-b px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 flex items-center justify-between min-h-[60px] transition-colors",
+      //
+      // Both direct children below are `shrink-0` (deliberately — see the comment on the left one),
+      // so on a narrow enough device their combined natural width (back button + logo on the left,
+      // up to 5 icon buttons + the profile badge on the right) can exceed the viewport. Without
+      // `overflow-x-auto` that just silently clips whatever's rightmost — the profile badge, since
+      // it's the last child — off the edge of the screen with no way to reach it. `no-scrollbar`
+      // (index.css) hides the scrollbar so this reads as "everything fits" on every device that
+      // genuinely has room, and only reveals a swipeable row on the few narrow ones that don't —
+      // same idiom already used elsewhere in this app for horizontal-scroll strips.
+      "sticky top-0 z-50 border-b px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 flex items-center justify-between min-h-[60px] transition-colors overflow-x-auto no-scrollbar",
       shopMode ? "bg-[#7C3AED]/5 border-[#7C3AED]/20" : "bg-white border-border-subtle",
     )}>
       {/* `shrink-0` here is load-bearing — without it, this side has no protection against the
@@ -144,10 +161,36 @@ export default function Header() {
         )}
       </div>
 
-      {/* Search/Shop/Feed live inside the overflow menu below now (see menuOpen) instead of as
-          their own icons here — this row only ever holds the menu trigger, the points pill, and
-          the profile avatar, so it can never crowd the logo regardless of screen width. */}
+      {/* Shop/Feed live inside the overflow menu below now (see menuOpen); search has its own
+          icon next to the bell (moved out of the menu per feedback — it's used often enough to
+          deserve one tap, not two). This row's remaining elements are the reload nudge, search,
+          the bell, the menu trigger, and the combined profile/level/coins badge. */}
       <div className="flex items-center gap-1.5 shrink-0">
+        {user && updateAvailable && (
+          <button
+            onClick={async () => {
+              setReloadingFromHeader(true);
+              await hardReloadApp();
+            }}
+            disabled={reloadingFromHeader}
+            className="w-10 h-10 rounded-full bg-error text-white flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-60 animate-pulse"
+            title={t('update.available')}
+          >
+            <span className={clsx('material-symbols-outlined', reloadingFromHeader && 'animate-spin')}>
+              {reloadingFromHeader ? 'sync' : 'refresh'}
+            </span>
+          </button>
+        )}
+        {user && !shopMode && (
+          <button
+            data-tour="header-search"
+            onClick={() => setSearchOpen(true)}
+            className="w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+            title={t('header.search')}
+          >
+            <span className="material-symbols-outlined">search</span>
+          </button>
+        )}
         {user && (
           <button
             onClick={() => {
@@ -169,7 +212,6 @@ export default function Header() {
         {user && (
           <div className="relative">
             <button
-              data-tour="header-search"
               onClick={() => setMenuOpen((v) => !v)}
               className="relative w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
               title="Menu"
@@ -182,13 +224,6 @@ export default function Header() {
                     stays fully visible while the menu is open. */}
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
                 <div className="absolute right-0 top-12 z-50 w-56 bg-white rounded-2xl border border-border-subtle shadow-xl py-1.5 overflow-hidden">
-                  <button
-                    onClick={() => { setMenuOpen(false); setSearchOpen(true); }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
-                  >
-                    <span className="material-symbols-outlined text-[20px] text-text-muted">search</span>
-                    {t('header.search')}
-                  </button>
                   {hasShopAccess && (
                     <button
                       data-tour="header-shop-toggle"
@@ -213,10 +248,9 @@ export default function Header() {
             )}
           </div>
         )}
-        {user && !shopMode && <HeaderPointsPill />}
-        {user && (
+        {user && !shopMode && <HeaderProfileBadge />}
+        {user && shopMode && (
           <button
-            data-tour="header-profile"
             onClick={() => navigate('/profile')}
             className="w-10 h-10 rounded-full bg-primary/5 flex items-center justify-center text-primary hover:bg-primary/10 transition-all overflow-hidden border border-primary/20 active:scale-95 shrink-0"
             title="View Profile"

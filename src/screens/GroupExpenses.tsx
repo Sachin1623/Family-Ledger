@@ -10,7 +10,7 @@ import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHO
 import { updateGlobalStats } from '../services/statsService';
 import Comments from '../components/Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
-import { parseLocalDate } from '../lib/dateUtils';
+import { parseLocalDate, currentLocalMonthKey } from '../lib/dateUtils';
 import ImageAttachments from '../components/ImageAttachments';
 import ExpenseQuickView from '../components/ExpenseQuickView';
 import FrequencyPicker from '../components/FrequencyPicker';
@@ -152,6 +152,27 @@ export default function GroupExpenses() {
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue, groupId, allGroups]);
 
+  // Live remaining-budget preview while editing — same idea as AddExpense.tsx's, but this
+  // expense's OWN current amount must be excluded from monthSpendSoFar/categorySpendSoFar first
+  // (it's already counted in the group's historical totals), or the preview would double-subtract
+  // it once for "what's already spent" and again for "what this edit is about to change it to".
+  const editMonthKey = currentLocalMonthKey();
+  const [editBudgetValue] = useDocument(editingExpense ? doc(db, 'groupBudgets', `${editingExpense.groupId}_${editMonthKey}`) : null);
+  const editBudget = editBudgetValue?.data();
+  const editMonthSpendSoFar = useMemo(() => {
+    if (!editingExpense) return 0;
+    return allExpenses
+      .filter((e: any) => e.id !== editingExpense.id && e.groupId === editingExpense.groupId && typeof e.date === 'string' && e.date.startsWith(editMonthKey) && e.type !== 'income')
+      .reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+  }, [allExpenses, editingExpense, editMonthKey]);
+  const editCategoryBudgetPct = editingExpense ? ((editBudget?.categoryAllocations as Record<string, number> | undefined)?.[editingExpense.category] || 0) : 0;
+  const editCategorySpendSoFar = useMemo(() => {
+    if (!editingExpense) return 0;
+    return allExpenses
+      .filter((e: any) => e.id !== editingExpense.id && e.groupId === editingExpense.groupId && typeof e.date === 'string' && e.date.startsWith(editMonthKey) && e.type !== 'income' && e.category === editingExpense.category)
+      .reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+  }, [allExpenses, editingExpense, editMonthKey]);
+
   // Deep-link support: arriving from a "latest spend" line on the Dashboard (via router state)
   // or an expense-comment notification/Feed tap (via `?expenseId=`, since a plain URL string —
   // needed for push notification payloads and the Feed — can't carry router state) opens that
@@ -283,6 +304,37 @@ export default function GroupExpenses() {
       alert(t('common.enterValidAmount'));
       return;
     }
+
+    // Unlike AddExpense.tsx, this edit path previously wrote whatever was in editingExpense's
+    // custom-split fields straight into the transaction below with no check at all — not even
+    // that the splits summed to the (possibly just-edited) total, let alone that no one's share
+    // went negative. That's how a save like "200" + "-100" for a 100 expense could go through:
+    // the sum matched, but a negative share makes no real-world sense as anyone's split.
+    if (editingExpense.splitInfo && editingExpense.type !== 'income') {
+      const { splitType, splits } = editingExpense.splitInfo as { splitType: string; splits: any[] };
+      if (splitType === 'amount') {
+        if (splits.some((s) => (s.amount || 0) < 0)) {
+          alert('Split amounts cannot be negative.');
+          return;
+        }
+        const totalSplit = splits.reduce((sum, s) => sum + (s.amount || 0), 0);
+        if (Math.abs(totalSplit - finalAmount) > 0.01) {
+          alert(`Total split amount must equal the expense amount (${finalAmount.toFixed(2)}). Current split total: ${totalSplit.toFixed(2)}`);
+          return;
+        }
+      } else if (splitType === 'percentage') {
+        if (splits.some((s) => (s.percentage || 0) < 0)) {
+          alert('Split percentages cannot be negative.');
+          return;
+        }
+        const totalPct = splits.reduce((sum, s) => sum + (s.percentage || 0), 0);
+        if (Math.abs(totalPct - 100) > 0.001) {
+          alert(`Total percentage must be exactly 100%. Current: ${totalPct}%`);
+          return;
+        }
+      }
+    }
+
     setEditLoading(true);
 
     try {
@@ -1137,7 +1189,37 @@ export default function GroupExpenses() {
                 )}
 
                 <div className="space-y-1 relative z-[10]">
-                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.amountWithCurrency', { currency: allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency || 'USD' })} <span className="text-error">*</span></label>
+                  <div className="flex items-start justify-between gap-2 px-1">
+                    <label className="text-[10px] font-bold text-text-muted uppercase">{t('addExpense.amountWithCurrency', { currency: allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency || 'USD' })} <span className="text-error">*</span></label>
+                    {editBudget && (() => {
+                      const editCurrencySymbol = getCurrencySymbol(allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency);
+                      const signedEntryAmount = editingExpense.type === 'income' ? 0 : (editingExpense.amount || 0);
+                      const projectedRemaining = editBudget.amount - editMonthSpendSoFar - signedEntryAmount;
+                      const isOver = projectedRemaining < 0;
+                      // Rounded to the nearest rupee before comparing — see the matching comment
+                      // in AddExpense.tsx for why the raw (unrounded) reconstruction from a stored
+                      // 4-decimal % can land a fraction of a rupee off an exact amount entry.
+                      const categoryBudgetAmount = Math.round((editBudget.amount * editCategoryBudgetPct) / 100);
+                      const categoryProjectedRemaining = categoryBudgetAmount - editCategorySpendSoFar - signedEntryAmount;
+                      const isCategoryOver = categoryProjectedRemaining < 0;
+                      return (
+                        <span className="text-right shrink-0">
+                          <span className={clsx('block text-[10px] font-bold', isOver ? 'text-error' : 'text-success')}>
+                            {isOver ? t('addExpense.overBudgetBy') : t('addExpense.remainingBudget')} {editCurrencySymbol}{Math.abs(projectedRemaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                          {editingExpense.type !== 'income' && editCategoryBudgetPct > 0 && (
+                            <span className={clsx('block text-[10px] font-bold', isCategoryOver ? 'text-error' : 'text-primary')}>
+                              {t('addExpense.categoryBudgetLine', {
+                                category: t(`category.${editingExpense.category}`),
+                                label: isCategoryOver ? t('addExpense.overBudgetBy') : t('addExpense.remainingBudget'),
+                                amount: `${editCurrencySymbol}${Math.abs(categoryProjectedRemaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                              })}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   <div className="relative flex items-center gap-2">
                     <div className="relative flex-1">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-primary">

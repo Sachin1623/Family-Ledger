@@ -113,6 +113,13 @@ export default function Settlements() {
 
     const settlements: SettlementInfo[] = [];
     const globalBalances: Record<string, number> = {};
+    // Same "never net across groups" reasoning as the comment above applies here too — the
+    // current user's own balance, bucketed by each contributing group's OWN currency code, so the
+    // Overall summary cards can show "you're owed ₹100.00 + A$50.00" instead of silently adding a
+    // ₹ figure to an A$ one and calling the blended result ₹150 (see the bug this fixes: the old
+    // code hardcoded a single '₹' symbol over `currentBalance`, a plain sum across every group's
+    // raw numbers regardless of currency).
+    const userBalanceByCurrency: Record<string, number> = {};
 
     relevantGroupIds.forEach((gid: string) => {
       const groupExpenses = expenses.filter(e => e.groupId === gid);
@@ -136,6 +143,12 @@ export default function Settlements() {
           }
         });
       });
+
+      const userGroupBalance = groupBalances[user?.uid || ''] || 0;
+      if (userGroupBalance !== 0) {
+        const currencyCode = groups.find((g: any) => g.id === gid)?.currency || '';
+        userBalanceByCurrency[currencyCode] = (userBalanceByCurrency[currencyCode] || 0) + userGroupBalance;
+      }
 
       const groupName = groups.find((g: any) => g.id === gid)?.name || 'Group';
       const owers = Object.entries(groupBalances)
@@ -173,21 +186,34 @@ export default function Settlements() {
       }
     });
 
-    const currentBalance = globalBalances[user?.uid || ''] || 0;
+    // Per-currency only now — a single blended currentBalance (summed across every group
+    // regardless of currency) is exactly the shape that produced the mislabeled-total bug this
+    // fix addresses, so there's no safe single number left to derive here.
+    const owedByCurrency = Object.entries(userBalanceByCurrency)
+      .filter(([, amt]) => amt > 0.01)
+      .map(([currencyCode, amount]) => ({ currencyCode, amount }));
+    const oweByCurrency = Object.entries(userBalanceByCurrency)
+      .filter(([, amt]) => amt < -0.01)
+      .map(([currencyCode, amount]) => ({ currencyCode, amount: Math.abs(amount) }));
 
     return {
       balances: globalBalances,
       settlements,
       summary: {
-        totalOwed: currentBalance > 0 ? currentBalance : 0,
-        totalOwe: currentBalance < 0 ? Math.abs(currentBalance) : 0,
-        currentBalance
+        owedByCurrency,
+        oweByCurrency,
       }
     };
   }, [selectedGroupId, expenses, allMembers, user, splitEnabledGroupIds, groups]);
 
+  // Only meaningful as a single figure when exactly one currency is actually in play — the
+  // "Overall" balance cards below use owedByCurrency/oweByCurrency instead, precisely because
+  // Overall can span groups in different currencies (this was hardcoded to '₹' here before,
+  // silently mislabeling a mixed- or non-INR total as Rupees — see the fix on those cards).
+  // Still correct as-is for every OTHER currencySymbol usage in this file (settlement rows, the
+  // detail modal, etc.), which are all scoped to one specific group already.
   const currencySymbol = useMemo(() => {
-    if (selectedGroupId === 'overall') return '₹';
+    if (selectedGroupId === 'overall') return getCurrencySymbol(undefined);
     const group = groups.find(g => g.id === selectedGroupId);
     return getCurrencySymbol(group?.currency);
   }, [selectedGroupId, groups]);
@@ -259,15 +285,39 @@ export default function Settlements() {
           </div>
         </header>
 
-        {/* User Balance Cards */}
+        {/* User Balance Cards — "Overall" can span groups in different currencies (INR debt in
+            one, AUD in another), so a single blended number would either be meaningless (raw sum
+            of two different currencies) or mislabeled (this used to hardcode '₹' over that sum
+            regardless of what currencies actually made it up). One line per currency instead —
+            almost always just one line in practice, since most people's groups share a currency. */}
         <div className="grid grid-cols-2 gap-3" data-tour="settlements-summary">
           <div className="bg-white p-4 rounded-3xl border border-border-subtle shadow-sm flex flex-col items-center">
             <span className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">{t('settlements.youAreOwed')}</span>
-            <span className="text-2xl font-black text-success">{currencySymbol}{summary.totalOwed.toFixed(2)}</span>
+            {summary.owedByCurrency.length === 0 ? (
+              <span className="text-2xl font-black text-success">{currencySymbol}0.00</span>
+            ) : summary.owedByCurrency.length === 1 ? (
+              <span className="text-2xl font-black text-success">{getCurrencySymbol(summary.owedByCurrency[0].currencyCode)}{summary.owedByCurrency[0].amount.toFixed(2)}</span>
+            ) : (
+              <div className="flex flex-col items-center gap-0.5">
+                {summary.owedByCurrency.map(({ currencyCode, amount }) => (
+                  <span key={currencyCode} className="text-base font-black text-success">{getCurrencySymbol(currencyCode)}{amount.toFixed(2)}</span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="bg-white p-4 rounded-3xl border border-border-subtle shadow-sm flex flex-col items-center">
             <span className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">{t('settlements.youOwe')}</span>
-            <span className="text-2xl font-black text-error">{currencySymbol}{summary.totalOwe.toFixed(2)}</span>
+            {summary.oweByCurrency.length === 0 ? (
+              <span className="text-2xl font-black text-error">{currencySymbol}0.00</span>
+            ) : summary.oweByCurrency.length === 1 ? (
+              <span className="text-2xl font-black text-error">{getCurrencySymbol(summary.oweByCurrency[0].currencyCode)}{summary.oweByCurrency[0].amount.toFixed(2)}</span>
+            ) : (
+              <div className="flex flex-col items-center gap-0.5">
+                {summary.oweByCurrency.map(({ currencyCode, amount }) => (
+                  <span key={currencyCode} className="text-base font-black text-error">{getCurrencySymbol(currencyCode)}{amount.toFixed(2)}</span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

@@ -9,7 +9,7 @@ export default function PrivacyPolicy() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Privacy Policy</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: August 23, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: September 3, 2026</p>
           <p>
             FamilyLedger ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our mobile application and services.
           </p>
@@ -67,6 +67,22 @@ export default function PrivacyPolicy() {
             <p>
               You control exactly what appears on your own public profile from Profile → Public Profile: level/XP, streaks, and badges are shown by default (matching how this page has always worked); per-game win/loss stats, your rank among your own friends, your active habits and their streaks, and your birthday (month and day only — we never show the year) are off by default and only appear if you turn them on yourself.
             </p>
+            <h3 className="font-semibold text-primary">J. Goals &amp; Savings Data</h3>
+            <p>
+              If you use the Goals feature, we store the target amount, current progress, target date, and notes you enter for each savings goal, along with the running history of contributions ("ledger") behind it. These amounts are encrypted before being stored (see Section 3). A goal stays private to you unless you explicitly turn on sharing for it — you can share an individual goal with a specific group and/or specific friends, in which case those people can see its name, progress, and target, and can add manual contributions ("boosts") to it; they can never see or touch the linked accounts funding it.
+            </p>
+            <h3 className="font-semibold text-primary">K. Financial Accounts Data</h3>
+            <p>
+              If you use the Accounts feature to track a real bank, investment, or broker account's balance, we store the balance, account type, account number (if you choose to add one), nominee name(s) and their allocation percentage, interest rate and compounding schedule, and any recurring contribution ("SIP") amount/schedule you set up. Balances and account numbers are encrypted before being stored (see Section 3). Financial Accounts are strictly personal — unlike Goals, an account and everything in it (including its balance, account number, and nominees) is never shared with anyone else through the app, including your own groups or friends; only you, signed in as yourself, can see it. The one exception is if you use the "Share Account Details" action yourself — that composes a summary (which fields it includes is your choice, shown to you before sending) and hands it to your device's own share sheet or clipboard, the same way a Personal Loans reminder is sent (see Section 1.C); we do not see or store where you send it.
+            </p>
+            <h3 className="font-semibold text-primary">L. Health Tracking Data</h3>
+            <p>
+              If you use Blood Pressure, Glucose, or Medicine tracking, we store the readings, dose logs, and (for medicines) the illness/incident grouping and schedule you enter. This data stays private to you by default. You can choose to share it with a specific group and/or specific friends (visible to them the same way a shared goal is), and/or grant a delegate (e.g. a family caregiver) permission to log entries on your behalf — a delegate you've added can add and view entries for you, exactly as if they were you, until you remove that permission.
+            </p>
+            <h3 className="font-semibold text-primary">M. Shared Reminders Data</h3>
+            <p>
+              If you create a Shared Reminder, we store its text, schedule, and (if you enable it) who has acknowledged or completed it. A reminder is visible to whichever group and/or specific friends you choose to share it with when you create it.
+            </p>
           </div>
         </section>
 
@@ -88,6 +104,9 @@ export default function PrivacyPolicy() {
           <p>
             FamilyLedger uses industry-standard cloud services (Firebase) to store and synchronize your data in real-time across your devices and with group, loan, or shop members as applicable. Your data is stored securely and access is restricted according to our security rules. App Lock settings are the one exception — they are stored only on your local device, never in the cloud.
           </p>
+          <p>
+            Goal amounts and Financial Account balances/account numbers (Sections 1.J–K) get an extra layer on top of that: they're individually encrypted before being written to our database, using a key scoped to that specific goal or account. Even someone with direct database access sees only unreadable ciphertext, not the real number — only you, authenticated as yourself (or someone you've explicitly shared that specific goal with, for that goal only), can ever have it decrypted.
+          </p>
         </section>
 
         <section className="space-y-3">
@@ -102,10 +121,15 @@ export default function PrivacyPolicy() {
             <li>With the owner and staff of a shop you belong to, if you use Shopkeeper mode</li>
             <li>With any other signed-in FamilyLedger user who views your public profile — your level, XP, streaks, and badges only, never your coin balance or points activity log</li>
             <li>With your friends and members of your groups, on leaderboards that additionally show your coin balance</li>
+            <li>With a group and/or specific friends you choose to share a savings goal, health reading, or reminder with — off by default, only shared if you explicitly turn sharing on for that item</li>
+            <li>With a delegate/caregiver you've granted permission to log health data on your behalf, and vice versa if someone has granted that permission to you</li>
             <li>With our team, if you or someone else reports a chat message for review</li>
             <li>With service providers who assist us in operating the app</li>
             <li>If required by law or to protect our rights</li>
           </ul>
+          <p>
+            Financial Accounts (Section 1.K) are the one exception to all of the above — an account's balance, account number, and nominees are never shared with anyone through the app, including your own groups or friends, unless you yourself use its "Share Account Details" action to hand a summary to your device's own share sheet or clipboard.
+          </p>
         </section>
 
         <section className="space-y-3">

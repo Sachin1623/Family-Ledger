@@ -38,7 +38,7 @@ export default function FeedPanel({
             // sibling backdrop div (onClick={onClose}) spans the full screen behind this panel,
             // so that exposed strip — including where header buttons sit underneath it — already
             // closes the panel on tap, same as tapping the explicit X.
-            className="absolute inset-y-0 left-0 w-[70%] max-w-[380px] bg-surface shadow-2xl flex flex-col"
+            className="absolute inset-y-0 left-0 w-[91%] max-w-[494px] bg-surface shadow-2xl flex flex-col"
           >
             <div className="px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] border-b border-border-subtle flex items-center justify-between shrink-0 bg-white">
               <div>

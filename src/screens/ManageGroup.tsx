@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { doc, collection, query, where, updateDoc, deleteDoc, addDoc, getDocs, writeBatch, setDoc } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, deleteDoc, addDoc, getDoc, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -17,6 +17,7 @@ import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
+import { resizeImageFile } from '../lib/imageUtils';
 import { useLanguage } from '../context/LanguageContext';
 import { Capacitor } from '@capacitor/core';
 import { Contacts, type ContactPayload } from '@capacitor-community/contacts';
@@ -75,6 +76,17 @@ export default function ManageGroup() {
   // trackers' Sharing/Delegates panels).
   const [showCategoryPanel, setShowCategoryPanel] = useState(false);
   const [showRecurringPanel, setShowRecurringPanel] = useState(false);
+  // Budget-by-category — same floating-panel idiom as Spend Categories above. Stored as a
+  // percentage of the overall monthly budget (0-100 per category, need not sum to 100 — see
+  // handleSaveCategoryBudget) rather than a raw amount, so it stays meaningful even if the overall
+  // budget itself is later edited. `categoryPcts` is the single source of truth while the panel is
+  // open; the %/amount toggle below only changes how each row DISPLAYS and is TYPED INTO it, never
+  // what's actually stored.
+  const [showBudgetCategoryPanel, setShowBudgetCategoryPanel] = useState(false);
+  const [categoryInputMode, setCategoryInputMode] = useState<'pct' | 'amount'>('pct');
+  const [categoryPcts, setCategoryPcts] = useState<Record<string, number>>({});
+  const [savingCategoryBudget, setSavingCategoryBudget] = useState(false);
+  const [categoryBudgetError, setCategoryBudgetError] = useState<string | null>(null);
   // Invite tab used to show all four invite methods (WhatsApp/SMS, email, user search, friends)
   // stacked and always expanded — now a picker menu, each method opening its own focused panel.
   const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | 'contacts' | null>(null);
@@ -140,6 +152,12 @@ export default function ManageGroup() {
   // plain upsert. Month-to-date spend is computed client-side from this group's expenses.
   const monthKey = currentLocalMonthKey();
   const budgetDocId = `${groupId}_${monthKey}`;
+  // For rolling last month's category split forward — see openBudgetCategoryPanel below.
+  const previousMonthKey = React.useMemo(() => {
+    const [y, m] = monthKey.split('-').map(Number);
+    const d = new Date(y, m - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }, [monthKey]);
   const [budgetValue] = useDocument(doc(db, 'groupBudgets', budgetDocId));
   const budget = budgetValue?.data();
   const [showBudgetForm, setShowBudgetForm] = useState(false);
@@ -225,50 +243,88 @@ export default function ManageGroup() {
     }
   };
 
+  const categoryPctTotal: number = (Object.values(categoryPcts) as number[]).reduce((s: number, v: number) => s + (v || 0), 0);
+
+  const [rolledOverFromLastMonth, setRolledOverFromLastMonth] = useState(false);
+  const openBudgetCategoryPanel = async () => {
+    const thisMonthAllocations = budget?.categoryAllocations as Record<string, number> | undefined;
+    setCategoryInputMode('pct');
+    setCategoryBudgetError(null);
+    setRolledOverFromLastMonth(false);
+    if (thisMonthAllocations && Object.keys(thisMonthAllocations).length > 0) {
+      // Already split for this month — edit what's actually saved, never silently overwrite it
+      // with last month's ratio.
+      setCategoryPcts(thisMonthAllocations);
+      setShowBudgetCategoryPanel(true);
+      return;
+    }
+    // Nothing split yet this month — roll last month's split forward IN THE SAME RATIO (it's
+    // already stored as a % of budget, so the ratio carries over unchanged regardless of what
+    // this month's actual budget amount is). Pre-filled only, not auto-saved — Save still
+    // requires an explicit tap, so a deliberately-cleared month stays clearable.
+    setShowBudgetCategoryPanel(true);
+    try {
+      const prevSnap = await getDoc(doc(db, 'groupBudgets', `${groupId}_${previousMonthKey}`));
+      const prevAllocations = prevSnap.data()?.categoryAllocations as Record<string, number> | undefined;
+      if (prevAllocations && Object.keys(prevAllocations).length > 0) {
+        setCategoryPcts(prevAllocations);
+        setRolledOverFromLastMonth(true);
+      } else {
+        setCategoryPcts({});
+      }
+    } catch (err) {
+      console.error('Failed to roll forward last month\'s category split:', err);
+      setCategoryPcts({});
+    }
+  };
+
+  const handleSaveCategoryBudget = async () => {
+    if (!groupId || !budget || savingCategoryBudget) return;
+    // A tiny epsilon above 100 tolerates float drift from amount-mode entries (e.g. three
+    // categories each converted from a rupee amount can land at 33.34+33.33+33.33 = 100.0001)
+    // without rejecting a save that's genuinely at exactly 100%.
+    if (categoryPctTotal > 100.5) { setCategoryBudgetError(t('manageGroup.categoryBudgetOver100')); return; }
+    setSavingCategoryBudget(true);
+    setCategoryBudgetError(null);
+    try {
+      // Rounded to 4 decimal places for storage, NOT a whole percent — a whole-percent-only
+      // ManageGroup used to store here made a precise amount-mode entry (e.g. exactly ₹68,000 of
+      // a ₹150,000 budget = 45.3333...%) silently snap to the nearest 1% (₹1,500 here) on save,
+      // even though the field showed the exact amount right up until Save was tapped. 4 decimals
+      // keeps the stored number sane while reconstructing any real-world amount back to the
+      // nearest rupee. Zero/blank entries are dropped rather than stored as an explicit 0%, so an
+      // unallocated category has no doc entry at all.
+      const rounded: Record<string, number> = {};
+      Object.entries(categoryPcts).forEach(([catId, pct]: [string, number]) => {
+        const r = Math.round(pct * 10000) / 10000;
+        if (r > 0) rounded[catId] = r;
+      });
+      await setDoc(doc(db, 'groupBudgets', budgetDocId), { categoryAllocations: rounded }, { merge: true });
+      setShowBudgetCategoryPanel(false);
+    } catch (err) {
+      console.error('Failed to save category budget:', err);
+      setCategoryBudgetError(t('manageGroup.failedToSaveBudget'));
+    } finally {
+      setSavingCategoryBudget(false);
+    }
+  };
+
   React.useEffect(() => {
     if (group?.icon) setGroupIcon(group.icon);
   }, [group?.icon]);
 
-  const resizeImage = (file: File, maxWidth = 800, maxHeight = 800): Promise<string> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxWidth) {
-              height *= maxWidth / width;
-              width = maxWidth;
-            }
-          } else {
-            if (height > maxHeight) {
-              width *= maxHeight / height;
-              height = maxHeight;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        };
-      };
-    });
-  };
-
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file || !groupId) return;
 
     setUploadingPhoto(true);
     try {
-      const resized = await resizeImage(file);
+      // See Profile.tsx's handleFileChange for the full story: the old local resize here never
+      // wired reader.onerror/img.onerror, so an undecodable image (HEIC/HEIF off an Android
+      // camera, most commonly) hung the Promise forever instead of failing — this catch below
+      // never even ran. resizeImageFile actually rejects, so a real failure now reaches the alert.
+      const resized = await resizeImageFile(file, 800, 800, 0.6);
       await updateDoc(doc(db, 'groups', groupId), {
         photoURL: resized
       });
@@ -918,12 +974,17 @@ export default function ManageGroup() {
               {t('manageGroup.budgetHeader', { month: new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) })}
             </h3>
             {budget && (
-              <button
-                onClick={() => { setBudgetInput(String(budget.amount)); setShowBudgetForm(true); }}
-                className="text-[11px] font-bold text-primary underline"
-              >
-                {t('common.edit')}
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">
+                  {t('manageGroup.budgetByCategory')}
+                </button>
+                <button
+                  onClick={() => { setBudgetInput(String(budget.amount)); setShowBudgetForm(true); }}
+                  className="text-[11px] font-bold text-primary underline"
+                >
+                  {t('common.edit')}
+                </button>
+              </div>
             )}
           </div>
 
@@ -960,6 +1021,24 @@ export default function ManageGroup() {
                   />
                 </div>
                 <p className={clsx("text-[10px] font-bold text-right", status.textClass)}>{t('manageGroup.percentUsed', { percent: Math.round(status.percent) })}</p>
+                {Object.keys(budget.categoryAllocations || {}).length > 0 && (() => {
+                  const allocatedPct = Object.values(budget.categoryAllocations as Record<string, number>).reduce((s, v) => s + (v || 0), 0);
+                  return (
+                    <div className="pt-1.5 border-t border-border-subtle space-y-1">
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(budget.categoryAllocations as Record<string, number>).map(([catId, catPct]) => {
+                          const cat = EXPENSE_CATEGORIES.find((c) => c.id === catId);
+                          return (
+                            <span key={catId} className="text-[10px] font-bold text-text-muted bg-surface rounded-full px-2 py-0.5">
+                              {cat?.icon} {Math.round(catPct)}%
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-text-muted">{t('manageGroup.budgetUnallocatedPct', { pct: Math.max(0, 100 - Math.round(allocatedPct)) })}</p>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -1548,6 +1627,158 @@ export default function ManageGroup() {
                     </div>
                   );
                 })}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Budget by Category — floating panel, opened from the Monthly Budget section. Splits the
+          overall budget across expense categories by % (need not add up to 100 — an unallocated
+          remainder just means "no per-category cap for that money," and any category can be left
+          at 0 entirely); the total is hard-capped at 100 on save, never more. The %/amount toggle
+          only changes how each row is typed into — categoryPcts (the actual saved value) is
+          always a percentage regardless of which mode was used to arrive at it. */}
+      <AnimatePresence>
+        {showBudgetCategoryPanel && budget && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setShowBudgetCategoryPanel(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-2xl max-h-[85vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Fixed header — title, description, %/amount toggle, and the running
+                  allocated/remaining stat all stay in view while the category list below scrolls. */}
+              <div className="p-5 pb-3 space-y-3 shrink-0 border-b border-border-subtle">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-primary">{t('manageGroup.budgetByCategory')}</h3>
+                  <button type="button" onClick={() => setShowBudgetCategoryPanel(false)} className="text-text-muted">
+                    <span className="material-symbols-outlined text-[18px]">close</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-text-muted">{t('manageGroup.budgetByCategoryDesc')}</p>
+                {rolledOverFromLastMonth && (
+                  <p className="text-[11px] font-bold text-primary bg-primary/5 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[14px] shrink-0">history</span>
+                    {t('manageGroup.categoryBudgetRolledOver')}
+                  </p>
+                )}
+
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 w-fit shrink-0">
+                    {(['pct', 'amount'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setCategoryInputMode(mode)}
+                        className={clsx(
+                          'px-3 py-1 rounded-md text-[10px] font-bold transition-all',
+                          categoryInputMode === mode ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                        )}
+                      >
+                        {mode === 'pct' ? '%' : getCurrencySymbol(group.currency)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-[10px] font-bold text-text-muted">
+                      {t('manageGroup.categoryBudgetAllocated', { amount: `${getCurrencySymbol(group.currency)}${Math.round((budget.amount * categoryPctTotal) / 100).toLocaleString()}` })}
+                    </p>
+                    <p className={clsx('text-xs font-black', categoryPctTotal > 100.5 ? 'text-error' : 'text-primary')}>
+                      {t('manageGroup.categoryBudgetRemaining', { amount: `${getCurrencySymbol(group.currency)}${Math.round((budget.amount * Math.max(0, 100 - categoryPctTotal)) / 100).toLocaleString()}` })}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scrollable category list — the only part of this panel that scrolls. */}
+              <div className="flex-1 overflow-y-auto p-5 py-3 space-y-3">
+                {EXPENSE_CATEGORIES.map((cat) => {
+                  const pct = categoryPcts[cat.id] || 0;
+                  // Each category can grow up to whatever's currently unallocated PLUS its own
+                  // current share — so dragging its slider (or typing a bigger number) can never
+                  // push the overall total past 100%, without needing to touch any other
+                  // category's value first.
+                  const maxForThis = Math.max(0, Math.min(100, 100 - (categoryPctTotal - pct)));
+                  const displayValue =
+                    pct <= 0 ? '' : categoryInputMode === 'pct' ? String(Math.round(pct)) : String(Math.round((budget.amount * pct) / 100));
+                  const setPct = (nextPct: number) => {
+                    setCategoryPcts((prev) => ({ ...prev, [cat.id]: Math.max(0, Math.min(maxForThis, nextPct)) }));
+                    setCategoryBudgetError(null);
+                  };
+                  // The slider always operates in whichever unit is currently on screen — % mode
+                  // drags in whole percentage points, amount mode drags in whole rupees (paise-
+                  // level precision would be pointless for a real budget). Locking the slider to
+                  // percent-only regardless of mode was the actual bug: dragging in ₹ mode could
+                  // only ever land on a whole-percent amount (e.g. ₹67,500 or ₹69,000 on a
+                  // ₹150,000 budget), never the ₹68,000 actually wanted, which the text field to
+                  // its right can still enter exactly.
+                  const sliderMax = categoryInputMode === 'pct' ? 100 : Math.round((budget.amount * maxForThis) / 100);
+                  const sliderValue = categoryInputMode === 'pct' ? Math.round(Math.min(pct, maxForThis)) : Math.round((budget.amount * Math.min(pct, maxForThis)) / 100);
+                  const handleSliderChange = (raw: number) => {
+                    setPct(categoryInputMode === 'pct' ? raw : budget.amount > 0 ? (raw / budget.amount) * 100 : 0);
+                  };
+                  return (
+                    <div key={cat.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex-1 min-w-0 text-xs font-bold text-on-surface flex items-center gap-1.5">
+                          <span>{cat.icon}</span>
+                          <span className="truncate">{t(`category.${cat.id}`)}</span>
+                        </span>
+                        <div className="relative shrink-0 w-24">
+                          {categoryInputMode === 'amount' && (
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">{getCurrencySymbol(group.currency)}</span>
+                          )}
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={displayValue}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value.replace(/[^0-9.]/g, '')) || 0;
+                              setPct(categoryInputMode === 'pct' ? raw : budget.amount > 0 ? (raw / budget.amount) * 100 : 0);
+                            }}
+                            placeholder="0"
+                            className={clsx(
+                              'w-full h-9 bg-surface border border-border-subtle rounded-lg text-xs font-bold text-primary outline-none text-right',
+                              categoryInputMode === 'amount' ? 'pl-6 pr-2' : 'pr-6 pl-2',
+                            )}
+                          />
+                          {categoryInputMode === 'pct' && (
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">%</span>
+                          )}
+                        </div>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={sliderMax}
+                        step={1}
+                        value={sliderValue}
+                        onChange={(e) => handleSliderChange(Number(e.target.value))}
+                        className="w-full accent-primary h-1.5"
+                        aria-label={t('manageGroup.categoryBudgetSliderLabel', { category: t(`category.${cat.id}`) })}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Fixed footer — always reachable without scrolling past every category. */}
+              <div className="p-5 pt-3 space-y-2 shrink-0 border-t border-border-subtle">
+                <p className={clsx('text-xs font-bold text-center', categoryPctTotal > 100.5 ? 'text-error' : 'text-text-muted')}>
+                  {t('manageGroup.categoryBudgetTotal', { pct: Math.round(categoryPctTotal) })}
+                </p>
+                {categoryBudgetError && <p className="text-xs text-error font-bold text-center">{categoryBudgetError}</p>}
+                <button
+                  type="button"
+                  onClick={handleSaveCategoryBudget}
+                  disabled={savingCategoryBudget}
+                  className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm disabled:opacity-50"
+                >
+                  {savingCategoryBudget ? t('common.saving') : t('common.save')}
+                </button>
               </div>
             </motion.div>
           </div>

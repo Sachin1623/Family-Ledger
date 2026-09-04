@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The native "alarm is ringing" takeover screen (see AlarmActivity.java). Deliberately plain
+     Android widgets, not a WebView — this has to render instantly and reliably regardless of
+     network conditions or whether the app's JS bundle has loaded, since it's shown at the exact
+     moment an alarm fires, possibly straight from a locked/idle device. Colors match the app's own
+     brand tokens (see src/index.css's color-primary token etc.) rather than Material defaults, so it
+     still reads as FamilyLedger even though it isn't rendered by the WebView. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#003044"
+    android:gravity="center"
+    android:padding="32dp">
+
+    <ImageView
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:layout_marginBottom="24dp"
+        android:src="@mipmap/ic_launcher_round"
+        android:contentDescription="@string/app_name" />
+
+    <TextView
+        android:id="@+id/alarmTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#FFFFFF"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp"
+        tools:text="Medicine reminder" />
+
+    <TextView
+        android:id="@+id/alarmBody"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#CCE3EC"
+        android:textSize="17sp"
+        android:gravity="center"
+        android:layout_marginBottom="48dp"
+        tools:text="Metformin (500mg) — Morning" />
+
+    <Button
+        android:id="@+id/alarmDismissButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginBottom="12dp"
+        android:text="Dismiss"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:textStyle="bold"
+        android:backgroundTint="#DC2626" />
+
+    <Button
+        android:id="@+id/alarmSnoozeButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginBottom="12dp"
+        android:text="Snooze 10 min"
+        android:textColor="#003044"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:textStyle="bold"
+        android:backgroundTint="#F59E0B" />
+
+    <Button
+        android:id="@+id/alarmOpenButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="Open FamilyLedger"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:backgroundTint="#0F4761" />
+
+</LinearLayout>

@@ -33,6 +33,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
     }
 
+    // Required by @capacitor-firebase/messaging: forwards the raw APNs device token (and any
+    // registration failure / incoming remote notification) to the plugin via NotificationCenter,
+    // which is how it exchanges the APNs token for a real FCM token — without these three methods,
+    // Firebase never learns the device's APNs token at all, and getToken() on the JS side would
+    // never resolve. See src/lib/pushNotifications.ts's header comment for the bug this fixes
+    // (every push notification silently failing on iOS because the OLD plugin handed the raw APNs
+    // token straight to Firebase Admin SDK, which only accepts FCM tokens).
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
+    }
+
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        NotificationCenter.default.post(name: Notification.Name("didReceiveRemoteNotification"), object: completionHandler, userInfo: userInfo)
+    }
+
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {

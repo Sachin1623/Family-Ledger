@@ -43,6 +43,9 @@ export default function DataDeletion() {
           <ul className="list-disc pl-5 text-text-secondary space-y-2">
             <li><strong>Personal Identity:</strong> Your name, email address, and profile picture.</li>
             <li><strong>Financial Records:</strong> All expenses, ledger entries, and group participation history created by you.</li>
+            <li><strong>Goals &amp; Financial Accounts:</strong> Every savings goal and financial account you own, including their full history (contribution ledger / balance log).</li>
+            <li><strong>Health Tracking:</strong> Your blood pressure, glucose, and medicine records, including any medical incidents/illnesses you created.</li>
+            <li><strong>Shared Reminders:</strong> Every reminder you created, and your own response/completion status on reminders others created.</li>
             <li><strong>Usage History:</strong> Activity logs and interaction data.</li>
           </ul>
         </section>

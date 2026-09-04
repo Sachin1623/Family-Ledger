@@ -10,6 +10,7 @@ import { getCurrencySymbol, EXPENSE_CATEGORIES } from '../lib/constants';
 import { useLanguage } from '../context/LanguageContext';
 import { useAppUpdateAvailable, hardReloadApp } from '../lib/appUpdate';
 import { MONTH_KEYS } from './MonthCalendar';
+import { formatTimeOfDay } from '../lib/frequency';
 
 // The activity list itself (data-fetching + rendering), shared by the full-page /feed route
 // (ActivityFeed.tsx, kept for direct navigation/deep links) and the Header's slide-over FeedPanel
@@ -181,6 +182,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'glucose_logged': return 'bloodtype';
       case 'bp_logged': return 'monitor_heart';
       case 'medicine_logged': return 'medication';
+      case 'reminder_set': case 'reminder_activity': return 'notifications_active';
       case 'recurring_created': case 'recurring_changed': return 'autorenew';
       case 'recurring_deleted': return 'event_busy';
       case 'recurring_confirm_pending': return 'pending_actions';
@@ -209,6 +211,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
     if (type === 'weekly_summary') return 'bg-accent';
     if (type === 'recurring_confirm_pending' || type === 'budget_reminder' || type === 'expense_reminder' || type === 'settlement_reminder' || type === 'todo_reminder' || type === 'loan_reminder' || type === 'loan_installment_due') return 'bg-warning';
     if (type === 'system_update') return 'bg-primary';
+    if (type === 'reminder_set' || type === 'reminder_activity') return 'bg-primary';
     if (type === 'feedback_resolved') return 'bg-success';
     if (type === 'admin_feedback' || type === 'feedback_reply') return 'bg-primary';
     if (type === 'made_admin') return 'bg-success';
@@ -435,6 +438,49 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
             </p>
           </div>
         );
+      case 'reminder_set':
+        // Compact, not boxed — the outer row already carries an avatar + notification-bell badge
+        // icon, so a second icon chip and border here duplicated it without adding information.
+        // Keeps only what the plain row style doesn't already give: the due time, which is the
+        // one thing a reminder tile is useless without.
+        return (
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">{t('feed.reminderSetLabel')}</p>
+            <p className="text-sm font-bold text-on-surface truncate">{activity.data?.contextLabel || ''}</p>
+            {activity.data?.time && (
+              <p className="text-[11px] text-text-muted flex items-center gap-1">
+                <span className="material-symbols-outlined text-[13px]">schedule</span>
+                {formatTimeOfDay(...activity.data.time.split(':').map(Number) as [number, number])}
+              </p>
+            )}
+          </div>
+        );
+      case 'reminder_activity': {
+        // Composed in the viewer's own language from `data.action` rather than reusing the
+        // server's English `description`, same reasoning as every other Feed type here.
+        const activityAction = activity.data?.action;
+        const isTaskComplete = activityAction === 'task_completed';
+        const sentenceKey = activityAction === 'accepted' ? 'feed.reminderAcceptedActivity'
+          : activityAction === 'declined' ? 'feed.reminderDeclinedActivity'
+          : isTaskComplete ? 'feed.reminderCompletedActivity'
+          : 'feed.reminderMarkedDoneActivity';
+        return (
+          <div className="space-y-0.5">
+            <p className={clsx('text-[10px] font-bold uppercase tracking-wider', isTaskComplete ? 'text-success' : 'text-primary')}>
+              {t('feed.reminderActivityLabel')}
+            </p>
+            <p className="text-sm font-bold text-on-surface truncate">
+              {t(sentenceKey, { name: activity.userName || t('common.someone'), title: activity.data?.contextLabel || '' })}
+            </p>
+            {activity.data?.time && (
+              <p className="text-[11px] text-text-muted flex items-center gap-1">
+                <span className="material-symbols-outlined text-[13px]">schedule</span>
+                {formatTimeOfDay(...activity.data.time.split(':').map(Number) as [number, number])}
+              </p>
+            )}
+          </div>
+        );
+      }
       case 'recurring_confirm_pending':
         return (
           <div className="space-y-1">
@@ -627,6 +673,8 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
               goTo('/friends');
             } else if (type === 'invite_received' && data.groupId) {
               goTo(`/join/${data.groupId}`);
+            } else if (type === 'reminder_set' || type === 'reminder_activity') {
+              goTo(data.reminderId ? `/reminders?open=${data.reminderId}` : '/reminders');
             } else if (type === 'recurring_confirm_pending') {
               goTo('/recurring-approvals');
             } else if ((type === 'recurring_created' || type === 'recurring_changed' || type === 'recurring_deleted') && activity.groupId) {

@@ -22,6 +22,7 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -48,6 +49,27 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Medicine reminders' alarm-clock-style takeover — see the AlarmScheduler.java doc
+             comment for why this is all custom native code rather than @capacitor/local-notifications. -->
+        <receiver android:name=".AlarmReceiver" android:exported="false" />
+        <receiver android:name=".AlarmBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".AlarmRingingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <activity
+            android:name=".AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@style/AppTheme.NoActionBar" />
     </application>
 
     <!-- Package visibility (Android 11+ / API 30+): without this, PackageManager.
@@ -74,4 +96,27 @@
          forwards the WebView's mic permission prompt to these, no custom native code needed. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- BP/glucose/shared/todo reminders are scheduled as native local notifications with
+         @capacitor/local-notifications (see healthReminders.ts etc.), which asks AlarmManager for
+         an EXACT alarm at each time. On Android 12+ (API 31+), an exact alarm silently falls
+         back to an inexact one — delivered whenever Doze/battery-saving next wakes the app, which
+         can be minutes to hours late — unless this permission is declared AND the user has granted
+         it (Settings > Alarms & reminders; see requestExactAlarmPermission() in pushNotifications.ts
+         for the in-app prompt that sends them there). Declaring it here is what makes
+         canScheduleExactAlarms()/checkExactNotificationSetting() possible at all; without it every
+         reminder in the app is inexact for every user, regardless of that in-app prompt. This same
+         permission is also what AlarmScheduler.java (below) uses directly for medicine reminders'
+         alarm-clock-style takeover — one shared Android capability, two different call sites. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Medicine reminders' alarm-clock-style takeover (see AlarmReceiver/AlarmRingingService/
+         AlarmActivity/AlarmClockPlugin under android/app/src/main/java/com/familyledger/app) — a
+         custom native feature, since @capacitor/local-notifications has no concept of a
+         full-screen, rings-over-silent-mode takeover the way a real alarm clock does. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 </manifest>

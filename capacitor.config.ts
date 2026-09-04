@@ -30,6 +30,14 @@ const config: CapacitorConfig = {
       skipNativeAuth: true,
       providers: ['google.com', 'apple.com'],
     },
+    // iOS-only: without this, a push that arrives while the app is in the FOREGROUND shows
+    // nothing at all on iOS (the OS assumes the app will display it itself). Android has the
+    // opposite gap — it always shows backgrounded pushes natively but needs manual re-display in
+    // the foreground — handled instead by pushNotifications.ts's own notificationReceived
+    // listener, guarded to Android only so this doesn't double up with that native iOS display.
+    FirebaseMessaging: {
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
   },
 };
 

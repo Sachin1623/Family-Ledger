@@ -8,6 +8,7 @@ const TOOLS = [
   { to: '/friends', favKey: 'friends', icon: '🧑‍🤝‍🧑', titleKey: 'tools.friends', descKey: 'tools.friendsDesc' },
   { to: '/todo', favKey: 'todo', icon: '✅', titleKey: 'tools.todo', descKey: 'tools.todoDesc' },
   { to: '/expense-reminders', favKey: 'expense-reminders', icon: '🔔', titleKey: 'tools.expenseReminders', descKey: 'tools.expenseRemindersDesc' },
+  { to: '/reminders', favKey: 'shared-reminders', icon: '⏰', titleKey: 'tools.sharedReminders', descKey: 'tools.sharedRemindersDesc' },
   { to: '/shopping-lists', favKey: 'shopping-lists', icon: '🛒', titleKey: 'tools.shoppingLists', descKey: 'tools.shoppingListsDesc' },
   { to: '/personal-loans', favKey: 'personal-loans', icon: '🤝', titleKey: 'tools.personalLoans', descKey: 'tools.personalLoansDesc' },
   { to: '/calculator', favKey: 'calculator', icon: '🧮', titleKey: 'tools.calculator', descKey: 'tools.calculatorDesc' },

@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { motion, Reorder } from 'motion/react';
+import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact, getCategoryClassification } from '../lib/constants';
 import ExpenseQuickView from '../components/ExpenseQuickView';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
@@ -13,9 +13,9 @@ import { getBudgetStatus } from '../lib/budget';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { clsx } from 'clsx';
 import { currentLocalMonthKey } from '../lib/dateUtils';
-import { openFeedPanel } from '../lib/feedPanelRef';
 import { useLanguage } from '../context/LanguageContext';
 import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
+import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -81,6 +81,21 @@ export default function Dashboard() {
 
   const memberships = membershipsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [];
 
+  // Just enough group data (archived status only) to split memberships into active vs archived
+  // BEFORE rendering — each GroupCard still fetches its own full group doc independently, this is
+  // only for deciding which of the two sections below a given group belongs in. Same `in`-query
+  // cap (30) already accepted elsewhere in this codebase for the same "one query per dashboard
+  // load" shape.
+  const membershipGroupIds = useMemo(() => (memberships as any[]).map((m) => m.groupId), [memberships]);
+  const [groupsMetaValue] = useCollection(
+    membershipGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', membershipGroupIds.slice(0, 30))) : null
+  );
+  const archivedGroupIds = useMemo(() => {
+    const set = new Set<string>();
+    groupsMetaValue?.docs.forEach((d) => { if (d.data().archived) set.add(d.id); });
+    return set;
+  }, [groupsMetaValue]);
+
   // Direct 1:1 chat with a group co-member — opened from anywhere via `setActiveDmUid` (a member
   // row's chat button, or the `?dm=` deep link above). Reuses the exact same ChatPanel/comments
   // shape as group/game chat (see /api/chat/send's 'dm' surface), just scoped to a
@@ -118,13 +133,37 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [membershipsValue, groupOrder.join(',')]);
 
+  // Archived groups drop out of the main grid entirely and into their own collapsed section
+  // below it — separate reorder scope too (archived groups aren't part of the drag-to-reorder
+  // list, there's nothing to arrange in a section that's collapsed by default).
+  const activeMemberships = useMemo(
+    () => orderedMemberships.filter((m: any) => !archivedGroupIds.has(m.groupId)),
+    [orderedMemberships, archivedGroupIds],
+  );
+  const archivedMemberships = useMemo(
+    () => orderedMemberships.filter((m: any) => archivedGroupIds.has(m.groupId)),
+    [orderedMemberships, archivedGroupIds],
+  );
+
   const [favoritesCollapsed, setFavoritesCollapsed] = useState(true);
+  const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [showReorderModal, setShowReorderModal] = useState(false);
   const [dragOrder, setDragOrder] = useState<string[]>([]);
   const [savingOrder, setSavingOrder] = useState(false);
 
+  // There used to be an effect here that tried to detect "a group was JUST archived" (by diffing
+  // archivedGroupIds against its own previous value) and would auto-expand + auto-scroll to the
+  // Archived section, plus play an entrance animation on the newly-added row. Removed — it kept
+  // misfiring on a completely ordinary page load: this screen's Firestore listeners often deliver
+  // a fast cache snapshot before the real one, so the very first render could see an empty
+  // archivedGroupIds, then a moment later the real one with the group already in it — read by the
+  // old effect as "newly archived," even though nothing had actually changed. That's what looked
+  // like "the group keeps going to archive" every time the page was opened. An archived group now
+  // stays exactly where it is — plain, static, in the collapsed section — until the user
+  // explicitly taps Resume. No auto-expand, no auto-scroll, no animation tied to the transition.
+
   const openReorderModal = () => {
-    setDragOrder(orderedMemberships.map((m: any) => m.groupId));
+    setDragOrder(activeMemberships.map((m: any) => m.groupId));
     setShowReorderModal(true);
   };
 
@@ -141,7 +180,23 @@ export default function Dashboard() {
     }
   };
 
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(loadExpandedGroups);
+  // A group with expense(s) just added via AddExpense.tsx's "Save"/"Save & Add More" should be
+  // visibly expanded when we land back here, or the highlighted rows below would have nowhere to
+  // show. Read once, synchronously, before first paint (lazy useState initializer — same pattern
+  // loadExpandedGroups already uses) rather than in an effect, so the very first render already
+  // has the right groups expanded instead of a collapsed-then-expanded flash. Cleared right after
+  // so a later reload doesn't keep re-highlighting the same entries.
+  const [pendingHighlights] = useState<Record<string, string[]>>(() => peekRecentlyAdded());
+  useEffect(() => {
+    if (Object.keys(pendingHighlights).length > 0) clearRecentlyAdded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(() => {
+    const base = loadExpandedGroups();
+    Object.keys(pendingHighlights).forEach((gid) => base.add(gid));
+    return base;
+  });
   const toggleCollapse = (groupId: string) => {
     setExpandedGroupIds((prev) => {
       const next = new Set(prev);
@@ -196,7 +251,7 @@ export default function Dashboard() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-2xl font-bold text-primary">{t('nav.groups')}</h3>
           <div className="flex items-center gap-2">
-            {memberships.length > 1 && (
+            {activeMemberships.length > 1 && (
               <button
                 onClick={openReorderModal}
                 title={t('dashboard.reorderGroups')}
@@ -220,8 +275,8 @@ export default function Dashboard() {
         {membershipsLoading ? (
           <div className="col-span-full py-20 text-center text-text-muted">{t('dashboard.loading')}</div>
         ) : (
-          <>
-            {orderedMemberships.map((membership, index) => (
+          <AnimatePresence mode="popLayout">
+            {activeMemberships.map((membership, index) => (
               <GroupCard
                 key={membership.id}
                 groupId={membership.groupId}
@@ -229,12 +284,41 @@ export default function Dashboard() {
                 isFirst={index === 0}
                 collapsed={!expandedGroupIds.has(membership.groupId)}
                 onToggleCollapse={() => toggleCollapse(membership.groupId)}
+                highlightExpenseIds={pendingHighlights[membership.groupId]}
               />
             ))}
-          </>
+          </AnimatePresence>
         )}
       </div>
       </section>
+
+      {archivedMemberships.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={() => setArchivedCollapsed((c) => !c)}
+            className="w-full flex items-center justify-between mb-3"
+          >
+            <h3 className="text-sm font-black text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px]">archive</span>
+              {t('dashboard.archivedGroups')} ({archivedMemberships.length})
+            </h3>
+            <span className={clsx('material-symbols-outlined text-text-muted transition-transform', archivedCollapsed && '-rotate-90')}>expand_more</span>
+          </button>
+          <motion.div
+            initial={false}
+            animate={{ height: archivedCollapsed ? 0 : 'auto', opacity: archivedCollapsed ? 0 : 1 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-2">
+              {archivedMemberships.map((membership: any) => (
+                <ArchivedGroupRow key={membership.id} groupId={membership.groupId} />
+              ))}
+            </div>
+          </motion.div>
+        </section>
+      )}
 
       {showReorderModal && (
         <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -305,7 +389,69 @@ const ReorderRow: React.FC<{ groupId: string }> = ({ groupId }) => {
   );
 };
 
-function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any) {
+// Deliberately lighter than GroupCard — an archived group is tucked away in a collapsed section
+// most people rarely open, so it gets a plain row (icon, name, member count, Resume) rather than
+// the full spending-chart/budget/expense-list treatment, which would mean fetching and rendering
+// all of that for groups the user has specifically said they're done actively using.
+function ArchivedGroupRow({ groupId }: any) {
+  const [groupDoc] = useDocument(doc(db, 'groups', groupId));
+  const group = groupDoc?.data() as any;
+  const [membersValue] = useCollection(query(collection(db, 'members'), where('groupId', '==', groupId)));
+  const memberCount = membersValue?.docs.length || 0;
+  const [resuming, setResuming] = useState(false);
+
+  const handleResume = async () => {
+    setResuming(true);
+    try {
+      await updateDoc(doc(db, 'groups', groupId), { archived: false, archivedAt: null });
+    } catch (err) {
+      console.error('Failed to resume group:', err);
+      setResuming(false);
+    }
+  };
+
+  if (!group) return null;
+
+  return (
+    // Plain, static row — no entrance/exit animation. An archived group stays exactly as it
+    // rendered on the previous visit; there's no "just landed here" moment to sell, and no
+    // "squeeze" out on resume either (see the note above ArchivedGroupRow's declaration).
+    <div className="flex items-center gap-3 bg-white rounded-xl border border-border-subtle p-3 opacity-80">
+      <div className="w-9 h-9 rounded-lg bg-surface-container-high flex items-center justify-center shrink-0 overflow-hidden">
+        {group.photoURL ? (
+          <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+        ) : (
+          <span className="text-lg">{groupIconEmoji(group.icon)}</span>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-sm text-text-muted truncate">{group.name}</p>
+        <p className="text-[10px] text-text-muted">{memberCount} {memberCount === 1 ? 'member' : 'members'}</p>
+      </div>
+      <button
+        onClick={handleResume}
+        disabled={resuming}
+        className="text-xs font-bold text-primary px-3 py-1.5 rounded-lg bg-primary/10 disabled:opacity-50 shrink-0 active:scale-95 transition-all"
+      >
+        {resuming ? '…' : 'Resume'}
+      </button>
+    </div>
+  );
+}
+
+function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highlightExpenseIds }: any) {
+  // Fades the highlight after a few seconds rather than leaving it on indefinitely — it's meant
+  // to draw the eye to what was just added, not become a permanent marker. `highlightExpenseIds`
+  // itself never changes after Dashboard's initial mount (see peekRecentlyAdded there), so this
+  // only needs to run once.
+  const [showHighlight, setShowHighlight] = useState(!!highlightExpenseIds?.length);
+  useEffect(() => {
+    if (!highlightExpenseIds?.length) return;
+    const timer = setTimeout(() => setShowHighlight(false), 5000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const highlightedIds = useMemo(() => new Set<string>(highlightExpenseIds || []), [highlightExpenseIds]);
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -350,7 +496,11 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
   const [membersValue] = useCollection(
     query(collection(db, 'members'), where('groupId', '==', groupId))
   );
-  const members = membersValue?.docs.map(d => d.data()) || [];
+  // `id: d.id` matters here, not just the field data — GroupQuickActionsMenu's Leave/Delete Group
+  // flows both do `deleteDoc(doc(db, 'members', currentMember.id))`, and without the doc id spread
+  // in, that was always `undefined` (silently producing an invalid Firestore path), which is what
+  // actually surfaced as "Failed to leave group."
+  const members = membersValue?.docs.map(d => ({ id: d.id, ...(d.data() as any) })) || [];
   // Self first, then everyone else in their existing order — for the member-filter avatar row.
   const spendFilterMembers = useMemo(() => {
     const self = members.find((m: any) => m.userId === user?.uid);
@@ -367,7 +517,22 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
     const exps = expensesValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue]);
-  const monthKey = currentLocalMonthKey();
+  // Which month this card's stats are scoped to — defaults to (and, on every fresh mount, always
+  // starts back at) the real current month; see the month-picker button group's own comment for
+  // why this is deliberately local, unpersisted state rather than something remembered across
+  // visits.
+  const todayMonthKey = currentLocalMonthKey();
+  const [selectedMonthKey, setSelectedMonthKey] = useState(todayMonthKey);
+  const monthKey = selectedMonthKey;
+  const isCurrentMonth = monthKey === todayMonthKey;
+  const stepMonth = (delta: number) => {
+    setSelectedMonthKey((prev) => {
+      const [y, m] = prev.split('-').map(Number);
+      const d = new Date(y, m - 1 + delta, 1);
+      const next = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return next > todayMonthKey ? todayMonthKey : next; // never navigate into the future
+    });
+  };
   // "Aug'26" style badge shown right next to the section label, so the month-scoping is explicit
   // rather than something a user has to infer.
   const monthLabel = useMemo(() => {
@@ -417,6 +582,22 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
       .filter((e: any) => typeof e.date === 'string' && e.date.startsWith(monthKey) && e.type !== 'income')
       .reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
   }, [expenses, monthKey]);
+  // What share of this month's real spend (expenses only, never income) is classified essential
+  // — shown next to the Essential/Optional filter buttons so the split is visible even before
+  // tapping either one.
+  const monthEssentialSpend = useMemo(() => {
+    return expenses
+      .filter((e: any) => typeof e.date === 'string' && e.date.startsWith(monthKey) && e.type !== 'income' && getCategoryClassification(group, e.category) === 'essential')
+      .reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+  }, [expenses, monthKey, group]);
+  const essentialSpendPct = monthExpense > 0 ? Math.round((monthEssentialSpend / monthExpense) * 100) : 0;
+  // Net total (income offsets, same convention as monthSpend) of whatever's currently visible
+  // below once a member and/or essential/optional filter is applied — shown only then, since it'd
+  // just duplicate monthSpend otherwise.
+  const filteredSpendTotal = useMemo(
+    () => latestSpendExpenses.reduce((sum: number, e: any) => sum + (e.type === 'income' ? -(e.amount || 0) : (e.amount || 0)), 0),
+    [latestSpendExpenses],
+  );
   const previousMonthIncome = useMemo(() => {
     return expenses
       .filter((e: any) => typeof e.date === 'string' && e.date.startsWith(previousMonthKey) && e.type === 'income')
@@ -451,7 +632,11 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
       data-tour={isFirst ? 'dashboard-group-card' : undefined}
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      transition={{ delay: index * 0.05 }}
+      // Archiving removes this card from `activeMemberships` — it now just disappears on the next
+      // render along with the rest of the list re-flowing, no "squeeze" exit tied to the transition
+      // (see the note on ArchivedGroupRow for why: it read as the group repeatedly "going to
+      // archive" on ordinary page loads, which is exactly what this was meant to avoid).
+      transition={{ delay: index * 0.05, duration: 0.3 }}
       className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
       onClick={() => navigate(`/groups/${groupId}`)}
     >
@@ -479,8 +664,8 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            <button onClick={stopAnd(() => openFeedPanel(groupId))} title={t('dashboard.groupFeedTooltip')} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
-              <span className="material-symbols-outlined text-[20px] block">history</span>
+            <button onClick={stopAnd(() => setShowQuickActions(true))} title="Group actions" className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
+              <span className="material-symbols-outlined text-[20px] block">more_vert</span>
             </button>
             <button onClick={stopAnd(onToggleCollapse)} title={collapsed ? t('dashboard.expandTooltip') : t('dashboard.collapseTooltip')} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
               <span className="material-symbols-outlined text-[20px] block">{collapsed ? 'expand_more' : 'expand_less'}</span>
@@ -508,8 +693,30 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
             <span className="text-[18px] leading-none block">🧾</span>
           </button>
           <span className="w-px h-5 bg-border-subtle mx-0.5 shrink-0" />
-          <button onClick={stopAnd(() => setShowQuickActions(true))} title="Group actions" className="p-2 hover:bg-surface-container rounded-full transition-colors">
-            <span className="material-symbols-outlined text-[20px] block">more_vert</span>
+          {/* Month picker — every stat below this row (Latest Spend, budget bar, Income/Expense/
+              Net) is scoped to whichever month is selected here, not always "the real current
+              month". Local to this card, never persisted — a fresh page load (or just navigating
+              away and back) always starts back on the actual current month, exactly like every
+              stat here worked before this existed. Capped from stepping past the real current
+              month — there's nothing to show for a month that hasn't happened yet. */}
+          <button onClick={stopAnd(() => stepMonth(-1))} title={t('dashboard.previousMonth')} className="p-1.5 hover:bg-primary/10 rounded-full transition-colors text-text-muted shrink-0">
+            <span className="material-symbols-outlined text-[16px] block">chevron_left</span>
+          </button>
+          <button
+            onClick={stopAnd(() => setSelectedMonthKey(todayMonthKey))}
+            disabled={isCurrentMonth}
+            title={isCurrentMonth ? undefined : t('dashboard.backToCurrentMonth')}
+            className={clsx('text-[11px] font-bold px-0.5 shrink-0 whitespace-nowrap', isCurrentMonth ? 'text-text-muted' : 'text-primary underline decoration-dotted')}
+          >
+            {monthLabel}
+          </button>
+          <button
+            onClick={stopAnd(() => stepMonth(1))}
+            disabled={isCurrentMonth}
+            title={t('dashboard.nextMonth')}
+            className="p-1.5 hover:bg-primary/10 rounded-full transition-colors text-text-muted shrink-0 disabled:opacity-30 disabled:pointer-events-none"
+          >
+            <span className="material-symbols-outlined text-[16px] block">chevron_right</span>
           </button>
         </div>
 
@@ -581,29 +788,41 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
               </div>
             </div>
             {/* Essential/Optional — same tap-to-toggle-off pattern as the member avatars above,
-                combines with it (AND) rather than replacing it. */}
-            <div className="flex items-center gap-1.5 mb-3">
-              {(['essential', 'optional'] as const).map((opt) => (
-                <button
-                  key={opt}
-                  onClick={stopAnd(() => setSpendClassificationFilter((prev) => (prev === opt ? null : opt)))}
-                  className={clsx(
-                    'px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all',
-                    spendClassificationFilter === opt
-                      ? 'bg-primary text-white border-primary'
-                      : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
-                  )}
-                >
-                  {opt === 'essential' ? t('common.essential') : t('common.optional')}
-                </button>
-              ))}
+                combines with it (AND) rather than replacing it. The essential-spend % sits next
+                to the buttons always (a running stat, not filter-dependent); the filtered total
+                only appears once a member and/or essential/optional filter narrows what's below. */}
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-1.5 shrink-0">
+                {(['essential', 'optional'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={stopAnd(() => setSpendClassificationFilter((prev) => (prev === opt ? null : opt)))}
+                    className={clsx(
+                      'px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all',
+                      spendClassificationFilter === opt
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
+                    )}
+                  >
+                    {opt === 'essential' ? t('common.essential') : t('common.optional')}
+                  </button>
+                ))}
+              </div>
+              <div className="text-right min-w-0">
+                <p className="text-[10px] font-bold text-text-muted truncate">{t('dashboard.essentialPct', { pct: essentialSpendPct })}</p>
+                {(spendMemberFilter || spendClassificationFilter) && (
+                  <p className="text-[10px] font-black text-primary truncate">
+                    {t('dashboard.filteredTotal', { amount: `${currencySymbol}${filteredSpendTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
+                  </p>
+                )}
+              </div>
             </div>
             {/* Scrolls internally (rather than letting the tile itself grow further) once there
-                are enough entries to need it — shows up to the last 20, not just 5, without
+                are enough entries to need it — every expense for the month, not capped, without
                 pushing every other group tile below it down the page. */}
             <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
               {latestSpendExpenses.length > 0 ? (
-                latestSpendExpenses.slice(0, 20).map((expense: any, idx: number) => {
+                latestSpendExpenses.map((expense: any, idx: number) => {
                   const payer = members.find((m: any) => m.userId === expense.paidBy);
                   const isIncomeRow = expense.type === 'income';
                   const icon = (isIncomeRow ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === expense.category)?.icon || '🧾';
@@ -612,6 +831,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
                   // group-wide bookmark here, not a personal-only one; see AddExpense.tsx's
                   // favorites picker).
                   const isGroupFavorite = (expense.favoritedBy || []).length > 0;
+                  const isHighlighted = showHighlight && highlightedIds.has(expense.id);
 
                   return (
                     <div
@@ -621,7 +841,10 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
                         e.stopPropagation();
                         setQuickViewExpense(expense);
                       }}
-                      className="flex items-center justify-between bg-surface-container/30 p-2 rounded-xl hover:bg-surface-container/60 transition-colors cursor-pointer"
+                      className={clsx(
+                        'flex items-center justify-between p-2 rounded-xl transition-colors cursor-pointer',
+                        isHighlighted ? 'bg-success/15 ring-1 ring-success/50 hover:bg-success/20' : 'bg-surface-container/30 hover:bg-surface-container/60',
+                      )}
                     >
                       <div className="flex items-center gap-2 truncate">
                         <div className="w-6 h-6 rounded-full overflow-hidden bg-surface-container-high shrink-0 border border-border-subtle">
@@ -633,6 +856,11 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse }: any
                             </div>
                           )}
                         </div>
+                        {typeof expense.date === 'string' && expense.date.length >= 10 && (
+                          <span className="shrink-0 text-[9px] font-bold text-text-muted bg-surface-container-high rounded px-1 py-0.5 leading-none" title={expense.date}>
+                            {Number(expense.date.slice(8, 10))}
+                          </span>
+                        )}
                         <span className="text-sm">{icon}</span>
                         {isGroupFavorite && (
                           <span className="material-symbols-outlined text-[13px] text-warning shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} title="Favorite">star</span>

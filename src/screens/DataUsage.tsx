@@ -64,6 +64,50 @@ const CATEGORIES: DataCategory[] = [
     ],
   },
   {
+    icon: 'savings',
+    title: 'Goals & Savings',
+    rows: [
+      {
+        data: 'Target amount, current progress, target date, notes, contribution history — encrypted',
+        why: 'Track progress toward a savings goal and project when it will be met',
+        sharedWith: "Nobody by default — only a group and/or specific friends you explicitly turn sharing on for, per goal",
+      },
+    ],
+  },
+  {
+    icon: 'account_balance',
+    title: 'Financial Accounts',
+    rows: [
+      {
+        data: 'Balance, account type, account number, nominee name(s) and split, interest rate/compounding, recurring contribution ("SIP") amount and schedule — balance and account number encrypted',
+        why: 'Track your real bank/investment/broker balances and let you allocate them to goals',
+        sharedWith: 'Nobody — strictly personal, never shared with your groups or friends, unless you yourself use "Share Account Details" to send a summary via your own device\'s share sheet or clipboard',
+      },
+    ],
+  },
+  {
+    icon: 'monitor_heart',
+    title: 'Health Tracking (Blood Pressure, Glucose, Medicines)',
+    rows: [
+      {
+        data: 'Readings, dose logs, illness/incident grouping and medicine schedule',
+        why: 'Track your own health readings and medicine adherence over time',
+        sharedWith: 'Nobody by default — only a group and/or specific friends you choose to share it with, and any delegate/caregiver you grant permission to log on your behalf',
+      },
+    ],
+  },
+  {
+    icon: 'campaign',
+    title: 'Shared Reminders',
+    rows: [
+      {
+        data: 'Reminder text, schedule, and (if enabled) who has acknowledged/completed it',
+        why: 'Notify everyone it\'s shared with at the scheduled time',
+        sharedWith: 'The group and/or specific friends you choose to share it with when you create it',
+      },
+    ],
+  },
+  {
     icon: 'stadium',
     title: 'Games (Ludo, Rummy, Business, Sweep, Sudoku)',
     rows: [
