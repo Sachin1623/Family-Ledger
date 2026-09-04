@@ -14,13 +14,12 @@ import { useDmChats } from '../lib/useDmChats';
 // "Add Expense" used to live here as the 7th tab (a special big-plus styled one — see git
 // history) — it's now a floating action button instead (below), always reachable without
 // competing for space with the rest of the nav.
-// Goals/Accounts: temporarily re-enabled for local/mobile testing only (2026-08-31) — the
-// money-tracking invariant across Accounts, Goals, and monthly savings posting still isn't fixed
-// (see memory: project_goals_accounts_shelved), so this should go back out before any real publish
-// to Cloud Run/Play Store until that's resolved.
-// "Add Expense" used to live here as the 7th tab (a special big-plus styled one — see git
-// history) — it's now a floating action button instead (below), always reachable without
-// competing for space with the rest of the nav.
+// Goals/Accounts: pulled from nav on 2026-08-31 over a money-tracking invariant that didn't hold
+// (goals could be credited both by Post-This-Month's-Savings AND by real account-balance sync,
+// independently — see accountAllocations.ts's header comment for the full "Reserve-on-target-met,
+// accounts-only funding" rework that fixed it). Goals now only ever gain money through
+// applyAccountChange() — Post Month's Savings only ever credits Cash Savings — so re-enabled here
+// for good on 2026-09-04.
 const PERSONAL_LINKS = [
   { to: '/', icon: '👥', labelKey: 'nav.groups' },
   { to: '/settlements', icon: '💰', labelKey: 'nav.balances', tour: 'nav-settlements' },

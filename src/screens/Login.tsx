@@ -18,7 +18,7 @@ import {
   signInWithEmailAndPassword,
   getAdditionalUserInfo,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useNavigate, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from "../context/LanguageContext";
@@ -77,18 +77,35 @@ export default function Login() {
     const userDocRef = doc(db, "users", loggedInUser.uid);
     const privateDocRef = doc(db, "users", loggedInUser.uid, "private", "info");
 
+    // Don't blindly overwrite displayName/photoURL from the OAuth provider on every login — Google
+    // (and, on its one-time grant, Apple) hands back its own current name/photo on every sign-in,
+    // and this used to unconditionally write both, silently clobbering a name edit or custom photo
+    // upload (Profile.tsx, same users/{uid} fields) the next time the user logged back in. Only
+    // seed those two fields — and joinedAt — the first time this user document is ever created;
+    // every later login only refreshes uid/email, which should always track the provider.
+    const existingSnap = await getDoc(userDocRef).catch(() => null);
+    const existingData = existingSnap?.exists() ? (existingSnap.data() as any) : null;
+
+    const userUpdate: Record<string, any> = {
+      uid: loggedInUser.uid,
+      email: loggedInUser.email || "",
+    };
+    if (!existingData) {
+      userUpdate.joinedAt = new Date().toISOString();
+    }
+    if (!existingData?.displayName) {
+      userUpdate.displayName =
+        loggedInUser.displayName ||
+        loggedInUser.email?.split("@")[0] ||
+        "User";
+    }
+    if (!existingData?.photoURL) {
+      userUpdate.photoURL = loggedInUser.photoURL || "";
+    }
+
     await setDoc(
       userDocRef,
-      {
-        displayName:
-          loggedInUser.displayName ||
-          loggedInUser.email?.split("@")[0] ||
-          "User",
-        photoURL: loggedInUser.photoURL || "",
-        joinedAt: new Date().toISOString(),
-        uid: loggedInUser.uid,
-        email: loggedInUser.email || "",
-      },
+      userUpdate,
       { merge: true },
     ).catch((err) => {
       handleFirestoreError(

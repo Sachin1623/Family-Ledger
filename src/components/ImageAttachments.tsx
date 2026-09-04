@@ -27,7 +27,7 @@ export default function ImageAttachments({ images, onChange, maxImages = 3, labe
   const [lightboxSrc, setLightboxSrc] = React.useState<string | null>(null);
 
   const handleFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files: File[] = Array.from(e.target.files || []);
     e.target.value = '';
     if (files.length === 0) return;
     setError(null);
