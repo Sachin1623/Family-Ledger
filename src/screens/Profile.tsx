@@ -206,6 +206,46 @@ function BrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'x' | 'l
   }
 }
 
+// The image half of "Spread the Word" — captured off-screen via html2canvas (see
+// captureShareBannerImage below) and attached to the share alongside the text message, same
+// pattern as WeeklySummary.tsx's RecapTile. Built from JSX rather than a static asset so the
+// feature list here always matches whatever the app actually does — the old approach (5 hand-made
+// PNG slides in public/) had gone stale (no Goals slide at all) and needed re-exporting by hand
+// every time the feature set changed; this regenerates itself from the same code that renders the
+// rest of the screen.
+const SHARE_BANNER_FEATURES: { icon: string; label: string; sub: string }[] = [
+  { icon: 'call_split', label: 'Split Expenses', sub: 'Equally, %, or exact' },
+  { icon: 'pie_chart', label: 'Real Budgets', sub: 'By category, splitting optional' },
+  { icon: 'autorenew', label: 'Recurring Bills', sub: 'Rent & wifi log themselves' },
+  { icon: 'flag', label: 'Goals', sub: 'Savings targets & real accounts' },
+  { icon: 'forum', label: 'Group Chat', sub: 'Friends, no separate app' },
+  { icon: 'sports_esports', label: 'Games', sub: 'Ludo, Rummy & more' },
+];
+const ShareBanner = React.forwardRef<HTMLDivElement, {}>((_props, ref) => (
+  <div ref={ref} style={{ width: 1080, background: 'linear-gradient(135deg, #003044, #0f4761)' }}>
+    <div className="p-14 space-y-8">
+      <div className="flex items-center gap-5">
+        <img src="/logo.svg" alt="" className="w-20 h-20 rounded-2xl bg-white/15 p-3" />
+        <div>
+          <p className="text-5xl font-black text-white leading-none">FamilyLedger</p>
+          <p className="text-xl text-white/70 font-bold mt-3">Split bills. Track budgets. Stay sane.</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-5">
+        {SHARE_BANNER_FEATURES.map((f) => (
+          <div key={f.label} className="bg-white/10 rounded-2xl p-6">
+            <span className="material-symbols-outlined text-white text-[36px]">{f.icon}</span>
+            <p className="text-2xl font-black text-white mt-3 leading-tight">{f.label}</p>
+            <p className="text-base text-white/70 font-bold mt-1 leading-snug">{f.sub}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-center text-white/80 text-lg font-bold">Free on Android — play.google.com/store/apps/details?id=com.familyledger.app</p>
+    </div>
+  </div>
+));
+ShareBanner.displayName = 'ShareBanner';
+
 // Self-contained App Lock settings block — manages its own local state (device-local, see
 // lib/appLock.ts) rather than lifting it into Profile's own state, since nothing else on this
 // screen needs to know about it. Native-only: app-lock is a device-security feature with no
@@ -535,6 +575,7 @@ export default function Profile() {
   // instead means the very next tap — a genuine, in-the-moment click on the Share button — is what
   // actually triggers it, which works everywhere.
   const shareCardRef = useRef<HTMLDivElement>(null);
+  const shareBannerRef = useRef<HTMLDivElement>(null);
   const [highlightShareCard, setHighlightShareCard] = useState(false);
   useEffect(() => {
     if (searchParams.get('share') !== '1') return;
@@ -665,24 +706,55 @@ export default function Profile() {
     }
   };
 
-  // Personal promo message + a 5-image feature carousel for the "Spread the Word" share
-  // feature. `shareUrl` is the Play Store listing directly (per explicit request — an earlier
-  // version pointed at the backend's /share landing page instead, which carried custom Open
-  // Graph tags for a nicer Facebook/LinkedIn preview card; that richer preview is traded away
-  // here in favor of sending people straight to the real install page).
-  //
-  // None of Facebook/LinkedIn/Twitter's web share intents can accept pre-attached images or
-  // custom captions from an arbitrary external caller — that's a real platform restriction, not
-  // something fixable with a different URL param. The only way to actually get multiple images
-  // into a post on any of these apps from a web page is the Web Share API's `files` support
-  // (Level 2): it hands real image files to the OS share sheet, and whichever app the user picks
-  // (WhatsApp, Gallery, ...) receives them exactly like a native "share from Photos" — full
-  // images, not a link preview. "native" uses this (feature-detected via canShare, since not
-  // every browser/WebView supports file sharing; falls back to text+link share, then to
-  // clipboard). "whatsapp"/"twitter" carry the caption text reliably via their own official
-  // intents (no images, but at least the words are right). "facebook"/"linkedin" pull whatever
-  // preview card Google Play's own listing page provides.
-  const handleShareApp = (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
+  // Renders the off-screen ShareBanner to a PNG File via html2canvas — same capture pattern as
+  // WeeklySummary.tsx's RecapTile, just lazy-imported (html2canvas-pro is a genuinely heavy
+  // dependency, and unlike the weekly-recap modal — opened specifically to view/share stats —
+  // most Profile visits never touch sharing at all, so this matches the Health screens' lazy-load
+  // convention for the same library rather than WeeklySummary's static one). Returns null on any
+  // failure so callers can fall back to a text-only share instead of hard-failing.
+  const captureShareBannerImage = async (): Promise<File | null> => {
+    if (!shareBannerRef.current) return null;
+    try {
+      const { default: html2canvas } = await import('html2canvas-pro');
+      const canvas = await html2canvas(shareBannerRef.current, { backgroundColor: null, scale: 2, useCORS: true });
+      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
+      if (!blob) return null;
+      return new File([blob], 'familyledger-features.png', { type: 'image/png' });
+    } catch (err) {
+      console.error('Failed to capture share banner image:', err);
+      return null;
+    }
+  };
+
+  // Tries the OS share sheet WITH the feature banner image first, for every target — including
+  // the per-platform buttons, not just "native" — before falling back to that platform's own
+  // text-only link. This is a deliberate improvement over routing platform buttons straight to
+  // their web intents: WhatsApp/Facebook/X's own NATIVE apps (unlike their web share intents) can
+  // receive an image fine via the OS's standard share mechanism, so picking e.g. "Facebook" from
+  // the OS sheet after tapping the Facebook button can actually carry the banner through, where
+  // Facebook's web-only sharer.php intent flatly cannot. Mirrors WeeklySummary.tsx's
+  // shareViaOsSheet for the same reason it works there.
+  const shareViaOsSheetWithBanner = async (message: string): Promise<boolean> => {
+    const nav = navigator as any;
+    if (!nav.share) return false;
+    const image = await captureShareBannerImage();
+    if (image && nav.canShare?.({ files: [image] })) {
+      try {
+        await nav.share({ title: 'FamilyLedger', text: message, files: [image] });
+        return true;
+      } catch (err) {
+        if ((err as any)?.name === 'AbortError') return true; // user cancelled — don't fall through to a platform link
+        console.error('Image share failed, falling back:', err);
+      }
+    }
+    return false;
+  };
+
+  // `shareUrl` is the Play Store listing directly (per explicit request — an earlier version
+  // pointed at the backend's /share landing page instead, which carried custom Open Graph tags for
+  // a nicer Facebook/LinkedIn preview card; that richer preview is traded away here in favor of
+  // sending people straight to the real install page).
+  const handleShareApp = async (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
     const shareUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
     // WhatsApp/native have no length limit and WhatsApp renders *bold*/dividers as real
     // formatting, so this "banner" version leans into that — a bold title line, a divider, and
@@ -693,6 +765,9 @@ export default function Profile() {
     const message = `*💰 FamilyLedger*\n_Split bills. Track budgets. Stay sane._\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\nTired of chasing "who owes who"? I've been using this with my family and it's actually fixed it.\n\n✅ *Split expenses* — equally, by %, or exact amounts\n📊 *Real budgets* — set one per category (rent, food, bills...); splitting is optional, so it also works if you just want to track family spending\n🔄 *Recurring bills* — rent, wifi, subscriptions log themselves every month\n🎯 *Goals* — set savings targets, link real accounts, see when you'll hit them\n💬 *Group chat & friends* — no separate thread just for money talk\n🎮 *Bonus* — a few games built in too\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n👉 Try it — free on Android:\n${shareUrl}`;
     const shortMessage = `💰 Tired of chasing who-owes-who? FamilyLedger splits bills, tracks budgets & recurring expenses — free on Android. Give it a try 👇\n${shareUrl}`;
 
+    if (await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message)) return;
+
+    // Image sharing unsupported (or no share sheet at all) — same text-only fallbacks as before.
     if (target === 'whatsapp') {
       window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
       return;
@@ -709,43 +784,9 @@ export default function Profile() {
       window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, '_blank');
       return;
     }
-
-    shareCarousel(message, shareUrl);
-  };
-
-  const CAROUSEL_IMAGES = [
-    'slide-1-hero.png',
-    'slide-2-splitting.png',
-    'slide-3-recurring-budgets.png',
-    'slide-4-reminders.png',
-    'slide-5-cta.png',
-  ];
-
-  const shareCarousel = async (message: string, shareUrl: string) => {
-    try {
-      const nav = navigator as any;
-      const files = await Promise.all(
-        CAROUSEL_IMAGES.map(async (name) => {
-          const res = await fetch(`/${name}`);
-          const blob = await res.blob();
-          return new File([blob], name, { type: 'image/png' });
-        }),
-      );
-      if (nav.share && nav.canShare?.({ files })) {
-        await nav.share({ title: 'FamilyLedger', text: message, files });
-        return;
-      }
-      if (nav.share) {
-        await nav.share({ title: 'FamilyLedger', text: message, url: shareUrl });
-        return;
-      }
-      throw new Error('navigator.share unavailable');
-    } catch (err) {
-      if ((err as any)?.name === 'AbortError') return; // user cancelled the share sheet
-      console.error('shareCarousel failed:', err);
-      navigator.clipboard.writeText(message).catch(() => {});
-      alert('Share message copied! (Image sharing is not supported on this device/browser.)');
-    }
+    // "native" with no share API at all (very old browser) — copy to clipboard as a last resort.
+    navigator.clipboard?.writeText(message).catch(() => {});
+    alert('Share message copied! (Sharing is not supported on this device/browser.)');
   };
 
 
@@ -1630,6 +1671,16 @@ export default function Profile() {
           </button>
         </div>
       </main>
+
+      {/* Rendered but invisible (not display:none — html2canvas needs a real layout to capture)
+          purely so captureShareBannerImage() above has something to screenshot. A zero-size,
+          overflow-hidden, zero-opacity wrapper rather than parking it far off-screen — html2canvas
+          reads the child's own uncapped layout regardless of the parent's visual clipping, and
+          this avoids relying on extreme coordinates rendering/painting reliably on every browser
+          engine and WebView. */}
+      <div className="absolute top-0 left-0 h-0 w-0 overflow-hidden opacity-0 pointer-events-none" aria-hidden="true">
+        <ShareBanner ref={shareBannerRef} />
+      </div>
 
       <AnimatePresence>
         {showDeleteConfirm && (
