@@ -12,14 +12,16 @@
 	<array>
 		<string>applinks:familyledger.thirteenapps.com</string>
 	</array>
-	<!-- Not yet effective on its own — Apple must separately grant this app's App ID the Critical
-	     Alerts capability (via https://developer.apple.com/contact/request/notifications-critical-alerts-entitlement/,
-	     filed manually, outside Xcode/this repo) before this entitlement does anything. Until then
-	     it's inert scaffolding: medicineReminders.ts's MEDICINE_INTERRUPTION_LEVEL stays
-	     'timeSensitive' (works today, no approval needed) rather than 'critical' (silently
-	     downgrades to a WORSE level than 'timeSensitive' without the grant — see that file's
-	     comment) — flip that one constant once Apple confirms the grant. -->
-	<key>com.apple.developer.usernotifications.critical-alerts</key>
-	<true/>
+	<!-- com.apple.developer.usernotifications.critical-alerts REMOVED for now — it requires Apple
+	     to separately grant this app's App ID the Critical Alerts capability (via
+	     https://developer.apple.com/contact/request/notifications-critical-alerts-entitlement/,
+	     filed manually, outside Xcode/this repo) before the App ID actually has it. Until that
+	     grant comes through, DECLARING it here (even though it's functionally inert —
+	     medicineReminders.ts's MEDICINE_INTERRUPTION_LEVEL already stays 'timeSensitive' without
+	     it) makes automatic provisioning-profile matching fail at export time, since Xcode can't
+	     find/generate a profile satisfying an entitlement the App ID doesn't have — this is what
+	     broke the Xcode Cloud "Export archive" step across all three distribution methods at
+	     once. Re-add this key (and flip MEDICINE_INTERRUPTION_LEVEL to 'critical') once Apple
+	     confirms the grant. -->
 </dict>
 </plist>
