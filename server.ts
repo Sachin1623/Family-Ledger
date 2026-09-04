@@ -9661,7 +9661,10 @@ async function startServer() {
       const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
       const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
       const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
-      const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+      // Twice a week, on a rolling elapsed-time basis (not pinned to specific weekdays) — same
+      // gate shape as every other reminder here, just a shorter threshold. 3.5 days averages out
+      // to 2x/7 days without needing calendar-day-of-week bookkeeping.
+      const SPREAD_WORD_INTERVAL = 3.5 * 24 * 60 * 60 * 1000;
       const ONE_DAY = 24 * 60 * 60 * 1000;
 
       const usersSnap = await db
@@ -9723,8 +9726,8 @@ async function startServer() {
             }
           }
 
-          // Spread-the-word reminder: nudges every 14 days.
-          if (privateData.spreadWordReminderEnabled !== false && now - lastSpreadWordReminder >= FOURTEEN_DAYS) {
+          // Spread-the-word reminder: nudges twice a week.
+          if (privateData.spreadWordReminderEnabled !== false && now - lastSpreadWordReminder >= SPREAD_WORD_INTERVAL) {
             const sent = await sendPush(fcmTokens, 'FamilyLedger', pick(SPREAD_WORD_MESSAGES), { type: 'spread_word_reminder' });
             if (sent > 0) {
               await privateRef.set({ lastSpreadWordReminderSentAt: new Date().toISOString() }, { merge: true });

@@ -188,7 +188,7 @@ function PublicProfileSettingsSection() {
 // this app has no licensed brand-asset kit to pull exact vector logos from, so these are
 // simplified color+mark badges (brand color + the platform's recognizable letter/glyph) rather
 // than pixel-perfect reproductions.
-function BrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'x' | 'linkedin' | 'instagram' }) {
+function BrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'x' | 'linkedin' }) {
   const base = 'w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-white leading-none';
   switch (platform) {
     case 'whatsapp':
@@ -203,12 +203,6 @@ function BrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'x' | 'l
       return <span className={clsx(base, 'bg-black font-black text-[10px]')}>X</span>;
     case 'linkedin':
       return <span className={clsx(base, 'bg-[#0A66C2] font-black text-[8px]')}>in</span>;
-    case 'instagram':
-      return (
-        <span className={base} style={{ background: 'linear-gradient(45deg, #F58529, #DD2A7B, #8134AF, #515BD4)' }}>
-          <span className="material-symbols-outlined text-[11px]">photo_camera</span>
-        </span>
-      );
   }
 }
 
@@ -477,6 +471,10 @@ export default function Profile() {
   const { user, profile, admin } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  // Splits the long settings list into tabs (same tab-bar pattern as HealthMedicines.tsx) so the
+  // page isn't one long scroll — Header and "Spread the Word" stay above the tabs (always
+  // visible, not buried), everything else is grouped under one of these four.
+  const [profileTab, setProfileTab] = useState<'general' | 'social' | 'security' | 'more'>('general');
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -521,6 +519,33 @@ export default function Profile() {
       setDobSeeded(true);
     }
   }, [profile, dobSeeded]);
+
+  // Birthday now lives inside the "General" tab (see profileTab below) — force that tab open so
+  // the prompted banner is actually visible instead of hidden behind whichever tab happens to be
+  // selected.
+  useEffect(() => {
+    if (promptDob) setProfileTab('general');
+  }, [promptDob]);
+
+  // Twice-weekly "spread the word" push (see server.ts's cron/send-daily-reminders) deep-links
+  // here as `?share=1` — same reactive-to-the-param pattern as promptDob above, not a mount-only
+  // effect. Doesn't auto-fire the native share sheet itself: browsers require navigator.share() to
+  // be called from within a real user gesture, and a route-driven effect after a notification tap
+  // doesn't reliably still count as one on every platform. Scrolling to and highlighting the card
+  // instead means the very next tap — a genuine, in-the-moment click on the Share button — is what
+  // actually triggers it, which works everywhere.
+  const shareCardRef = useRef<HTMLDivElement>(null);
+  const [highlightShareCard, setHighlightShareCard] = useState(false);
+  useEffect(() => {
+    if (searchParams.get('share') !== '1') return;
+    shareCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightShareCard(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('share');
+    setSearchParams(next, { replace: true });
+    const timer = setTimeout(() => setHighlightShareCard(false), 3000);
+    return () => clearTimeout(timer);
+  }, [searchParams]);
 
   const clearPromptDob = () => {
     if (!searchParams.get('promptDob')) return;
@@ -651,15 +676,22 @@ export default function Profile() {
   // something fixable with a different URL param. The only way to actually get multiple images
   // into a post on any of these apps from a web page is the Web Share API's `files` support
   // (Level 2): it hands real image files to the OS share sheet, and whichever app the user picks
-  // (Instagram, Twitter, LinkedIn, WhatsApp, Gallery, ...) receives them exactly like a native
-  // "share from Photos" — full images, not a link preview. "native" and "instagram" both use
-  // this (feature-detected via canShare, since not every browser/WebView supports file sharing;
-  // falls back to text+link share, then to clipboard). "whatsapp"/"twitter" carry the caption
-  // text reliably via their own official intents (no images, but at least the words are right).
-  // "facebook"/"linkedin" pull whatever preview card Google Play's own listing page provides.
-  const handleShareApp = (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin' | 'instagram') => {
+  // (WhatsApp, Gallery, ...) receives them exactly like a native "share from Photos" — full
+  // images, not a link preview. "native" uses this (feature-detected via canShare, since not
+  // every browser/WebView supports file sharing; falls back to text+link share, then to
+  // clipboard). "whatsapp"/"twitter" carry the caption text reliably via their own official
+  // intents (no images, but at least the words are right). "facebook"/"linkedin" pull whatever
+  // preview card Google Play's own listing page provides.
+  const handleShareApp = (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
     const shareUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
-    const message = `💰 Tired of chasing who-owes-who? I'm using FamilyLedger to split expenses, track recurring bills, and stick to a budget with my family — all in one app! 🙌\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n📊 Budgets, smart reminders & to-do/shopping lists\n\nGive it a try 👇\n${shareUrl}`;
+    // WhatsApp/native have no length limit and WhatsApp renders *bold*/dividers as real
+    // formatting, so this "banner" version leans into that — a bold title line, a divider, and
+    // one bold-label line per feature (Splitwise-style expense splitting, budgets that work even
+    // without splitting, goals, chat/friends, and games as a closing bonus). Twitter/X gets a
+    // separate, short version below — its 280-char compose box would just force a manual trim of
+    // the long version anyway, and a mistimed trim can cut the link off entirely.
+    const message = `*💰 FamilyLedger*\n_Split bills. Track budgets. Stay sane._\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\nTired of chasing "who owes who"? I've been using this with my family and it's actually fixed it.\n\n✅ *Split expenses* — equally, by %, or exact amounts\n📊 *Real budgets* — set one per category (rent, food, bills...); splitting is optional, so it also works if you just want to track family spending\n🔄 *Recurring bills* — rent, wifi, subscriptions log themselves every month\n🎯 *Goals* — set savings targets, link real accounts, see when you'll hit them\n💬 *Group chat & friends* — no separate thread just for money talk\n🎮 *Bonus* — a few games built in too\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n👉 Try it — free on Android:\n${shareUrl}`;
+    const shortMessage = `💰 Tired of chasing who-owes-who? FamilyLedger splits bills, tracks budgets & recurring expenses — free on Android. Give it a try 👇\n${shareUrl}`;
 
     if (target === 'whatsapp') {
       window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
@@ -670,7 +702,7 @@ export default function Profile() {
       return;
     }
     if (target === 'twitter') {
-      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(message)}`, '_blank');
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shortMessage)}`, '_blank');
       return;
     }
     if (target === 'linkedin') {
@@ -678,7 +710,6 @@ export default function Profile() {
       return;
     }
 
-    // "native" and "instagram" both want the image carousel via the OS share sheet.
     shareCarousel(message, shareUrl);
   };
 
@@ -1007,6 +1038,88 @@ export default function Profile() {
           )}
         </section>
 
+        {/* Prioritized per explicit request — placed right under the header, ahead of every
+            settings section, with a tinted/bordered card (instead of the plain white cards every
+            other section below uses) so it visually reads as a highlighted callout, not just
+            another settings row. */}
+        <section className="space-y-1">
+          <div
+            ref={shareCardRef}
+            className={clsx(
+              'bg-primary/5 rounded-2xl border border-primary/20 shadow-sm p-4 space-y-3 transition-all',
+              highlightShareCard && 'ring-4 ring-primary/30',
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-lg leading-none">❤️</span>
+              <h3 className="text-sm font-bold text-primary">{t('profile.spreadTheWord')}</h3>
+            </div>
+            <p className="text-xs text-text-muted">
+              {t('profile.knowSomeone')}
+            </p>
+            <button
+              onClick={() => handleShareApp('native')}
+              className="w-full bg-primary text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">{typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}</span>
+              <span>{typeof navigator !== 'undefined' && (navigator as any).share ? t('profile.shareFamilyLedger') : t('profile.copyShareMessage')}</span>
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleShareApp('whatsapp')}
+                className="bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
+              >
+                <BrandBadge platform="whatsapp" />
+                WhatsApp
+              </button>
+              <button
+                onClick={() => handleShareApp('facebook')}
+                className="bg-[#1877F2]/10 text-[#1877F2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#1877F2]/20 active:scale-[0.98] transition-all border border-[#1877F2]/20"
+              >
+                <BrandBadge platform="facebook" />
+                Facebook
+              </button>
+              <button
+                onClick={() => handleShareApp('twitter')}
+                className="bg-[#0F1419]/10 text-[#0F1419] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0F1419]/20 active:scale-[0.98] transition-all border border-[#0F1419]/20"
+              >
+                <BrandBadge platform="x" />
+                X
+              </button>
+              <button
+                onClick={() => handleShareApp('linkedin')}
+                className="bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
+              >
+                <BrandBadge platform="linkedin" />
+                LinkedIn
+              </button>
+            </div>
+            <p className="text-[10px] text-text-muted">
+              {t('profile.forAnyOtherApp')}
+            </p>
+          </div>
+        </section>
+
+        <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
+          {([
+            ['general', 'General'],
+            ['social', 'Social'],
+            ['security', 'Security'],
+            ['more', 'More'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setProfileTab(key)}
+              className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', profileTab === key ? 'bg-primary text-white' : 'text-text-muted')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {profileTab === 'general' && (
+        <>
         <section className="space-y-1">
           <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Birthday</h3>
           <div
@@ -1100,7 +1213,7 @@ export default function Profile() {
 
         <section className="space-y-6">
           <div className="space-y-1">
-            <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.preferences')}</h3>
+            <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">App Settings</h3>
             <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
               <div>
                 <button
@@ -1239,84 +1352,9 @@ export default function Profile() {
                 updating={updating}
                 onToggle={togglePreference}
               />
-              <div
-                onClick={() => navigate('/friends')}
-                className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined">group</span>
-                  </div>
-                  <div>
-                    <p className="font-bold text-primary text-sm">{t('tools.friends')}</p>
-                    <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('tools.friendsDesc')}</p>
-                  </div>
-                </div>
-                <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
-              </div>
-              <div
-                onClick={() => navigate('/about')}
-                className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined">info</span>
-                  </div>
-                  <div>
-                    <p className="font-bold text-primary text-sm">{t('profile.aboutFamilyLedger')}</p>
-                    <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('profile.featuresVersionInfo')}</p>
-                  </div>
-                </div>
-                <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
-              </div>
-              <div
-                onClick={() => navigate('/?tour=dashboard')}
-                className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined">school</span>
-                  </div>
-                  <div>
-                    <p className="font-bold text-primary text-sm">{t('profile.replayAppTour')}</p>
-                    <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('profile.replayAppTourDesc')}</p>
-                  </div>
-                </div>
-                <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
-              </div>
-              <div
-                onClick={() => navigate('/feedback')}
-                className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined">forum</span>
-                  </div>
-                  <div>
-                    <p className="font-bold text-primary text-sm">{t('profile.feedbackSupport')}</p>
-                    <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('profile.feedbackSupportDesc')}</p>
-                  </div>
-                </div>
-                <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
-              </div>
             </div>
           </div>
         </section>
-
-        {((profile?.blockedUsers?.length || 0) > 0 || (profile?.mutedUsers?.length || 0) > 0) && (
-          <section className="space-y-1">
-            <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Blocked &amp; Muted Players</h3>
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
-              {(profile?.blockedUsers || []).map((uid: string) => (
-                <BlockedMutedRow key={`b-${uid}`} uid={uid} kind="blocked" onRemove={() => handleUnblockUser(uid)} />
-              ))}
-              {(profile?.mutedUsers || []).map((uid: string) => (
-                <BlockedMutedRow key={`m-${uid}`} uid={uid} kind="muted" onRemove={() => handleUnmuteUser(uid)} />
-              ))}
-            </div>
-            <p className="px-2 text-[11px] text-text-muted">Applies to game chat, across every game.</p>
-          </section>
-        )}
 
         <section className="space-y-1">
           <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.weeklyRecap')}</h3>
@@ -1341,88 +1379,95 @@ export default function Profile() {
             </button>
           </div>
         </section>
-
-        <section className="space-y-1">
-          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.spreadTheWord')}</h3>
-          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-3">
-            <p className="text-xs text-text-muted">
-              {t('profile.knowSomeone')}
-            </p>
-            <button
-              onClick={() => handleShareApp('native')}
-              className="w-full bg-primary text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-sm"
-            >
-              <span className="material-symbols-outlined text-[18px]">{typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}</span>
-              <span>{typeof navigator !== 'undefined' && (navigator as any).share ? t('profile.shareFamilyLedger') : t('profile.copyShareMessage')}</span>
-            </button>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleShareApp('whatsapp')}
-                className="flex-1 bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
-              >
-                <BrandBadge platform="whatsapp" />
-                WhatsApp
-              </button>
-              <button
-                onClick={() => handleShareApp('facebook')}
-                className="flex-1 bg-[#1877F2]/10 text-[#1877F2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#1877F2]/20 active:scale-[0.98] transition-all border border-[#1877F2]/20"
-              >
-                <BrandBadge platform="facebook" />
-                Facebook
-              </button>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleShareApp('instagram')}
-                className="flex-1 bg-[#E1306C]/10 text-[#C13584] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#E1306C]/20 active:scale-[0.98] transition-all border border-[#E1306C]/20"
-              >
-                <BrandBadge platform="instagram" />
-                Instagram
-              </button>
-              <button
-                onClick={() => handleShareApp('twitter')}
-                className="flex-1 bg-[#0F1419]/10 text-[#0F1419] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0F1419]/20 active:scale-[0.98] transition-all border border-[#0F1419]/20"
-              >
-                <BrandBadge platform="x" />
-                X
-              </button>
-              <button
-                onClick={() => handleShareApp('linkedin')}
-                className="flex-1 bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
-              >
-                <BrandBadge platform="linkedin" />
-                LinkedIn
-              </button>
-            </div>
-            <p className="text-[10px] text-text-muted">
-              {t('profile.forAnyOtherApp')}
-            </p>
-          </div>
-        </section>
-
-        {Capacitor.isNativePlatform() && (
-          <section className="space-y-1">
-            <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">App Lock</h3>
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-              <AppLockSettings />
-            </div>
-          </section>
+        </>
         )}
 
+        {profileTab === 'social' && (
         <section className="space-y-1">
-          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Privacy</h3>
-          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-            <AnalyticsConsentToggle />
+          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Social</h3>
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
+            <div
+              onClick={() => navigate('/friends')}
+              className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined">group</span>
+                </div>
+                <div>
+                  <p className="font-bold text-primary text-sm">{t('tools.friends')}</p>
+                  <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('tools.friendsDesc')}</p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
+            </div>
+            {((profile?.blockedUsers?.length || 0) > 0 || (profile?.mutedUsers?.length || 0) > 0) && (
+              <>
+                {(profile?.blockedUsers || []).map((uid: string) => (
+                  <BlockedMutedRow key={`b-${uid}`} uid={uid} kind="blocked" onRemove={() => handleUnblockUser(uid)} />
+                ))}
+                {(profile?.mutedUsers || []).map((uid: string) => (
+                  <BlockedMutedRow key={`m-${uid}`} uid={uid} kind="muted" onRemove={() => handleUnmuteUser(uid)} />
+                ))}
+              </>
+            )}
           </div>
+          {((profile?.blockedUsers?.length || 0) > 0 || (profile?.mutedUsers?.length || 0) > 0) && (
+            <p className="px-2 text-[11px] text-text-muted">Blocked/muted applies to game chat, across every game.</p>
+          )}
         </section>
+        )}
 
+        {profileTab === 'more' && (
+        <>
         <section className="space-y-1">
-          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Public Profile</h3>
-          <p className="px-2 text-[11px] text-text-muted">
-            Choose what other signed-in FamilyLedger users can see on your public profile page.
-          </p>
-          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-            <PublicProfileSettingsSection />
+          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">More</h3>
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
+            <div
+              onClick={() => navigate('/about')}
+              className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined">info</span>
+                </div>
+                <div>
+                  <p className="font-bold text-primary text-sm">{t('profile.aboutFamilyLedger')}</p>
+                  <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('profile.featuresVersionInfo')}</p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
+            </div>
+            <div
+              onClick={() => navigate('/?tour=dashboard')}
+              className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined">school</span>
+                </div>
+                <div>
+                  <p className="font-bold text-primary text-sm">{t('profile.replayAppTour')}</p>
+                  <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('profile.replayAppTourDesc')}</p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
+            </div>
+            <div
+              onClick={() => navigate('/feedback')}
+              className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined">forum</span>
+                </div>
+                <div>
+                  <p className="font-bold text-primary text-sm">{t('profile.feedbackSupport')}</p>
+                  <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('profile.feedbackSupportDesc')}</p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted group-hover:translate-x-1 transition-transform">chevron_right</span>
+            </div>
           </div>
         </section>
 
@@ -1432,12 +1477,18 @@ export default function Profile() {
             <ShopkeeperAccessSection />
           </div>
         </section>
+        </>
+        )}
 
-        {isPasswordUser && (
-          <section className="space-y-6">
-            <div className="space-y-1">
-              <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.security')}</h3>
-              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden p-4 space-y-4">
+        {profileTab === 'security' && (
+        <>
+        <section className="space-y-1">
+          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.security')}</h3>
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
+            {Capacitor.isNativePlatform() && <AppLockSettings />}
+            <AnalyticsConsentToggle />
+            {isPasswordUser && (
+              <div className="p-4 space-y-4">
                 <div
                   onClick={() => {
                     setShowChangePassword(!showChangePassword);
@@ -1462,7 +1513,7 @@ export default function Profile() {
 
                 <AnimatePresence>
                   {showChangePassword && (
-                    <motion.form 
+                    <motion.form
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
@@ -1520,8 +1571,20 @@ export default function Profile() {
                   )}
                 </AnimatePresence>
               </div>
-            </div>
-          </section>
+            )}
+          </div>
+        </section>
+
+        <section className="space-y-1">
+          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Public Profile</h3>
+          <p className="px-2 text-[11px] text-text-muted">
+            Choose what other signed-in FamilyLedger users can see on your public profile page.
+          </p>
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
+            <PublicProfileSettingsSection />
+          </div>
+        </section>
+        </>
         )}
 
         {admin.isAdmin && (

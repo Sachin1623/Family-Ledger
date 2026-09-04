@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth, db, setAnalyticsUserId } from '../lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, collection, onSnapshot, query, where, getDocs, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firebase';
 import { encryptPII, decryptPII } from '../lib/encryption';
 import { updateGlobalStats } from '../services/statsService';
 import { Capacitor } from '@capacitor/core';
 import { initPushNotifications } from '../lib/pushNotifications';
 import { getApproxCountry } from '../lib/geo';
+import { FrequencyConfig, firstOccurrenceOnOrAfter, sanitizeFrequencyConfig } from '../lib/frequency';
 
 interface AdminStatus {
   isAdmin: boolean;
@@ -293,6 +294,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       document.removeEventListener('visibilitychange', handleVisibility);
       if (interval) clearInterval(interval);
     };
+  }, [user]);
+
+  // Every user gets a standing "log an expense?" nudge at 8pm their own local time, daily —
+  // reusing the existing expenseReminders/processExpenseReminders machinery (ExpenseReminders.tsx,
+  // server.ts's 15-min cron) rather than inventing a parallel one. Seeded once, lazily, the first
+  // time this runs after the user is known — cheapest place to check-and-backfill for both
+  // existing and brand-new accounts without a separate migration script. Marked with
+  // `systemReminderKind` so it's identifiable (and safely re-runnable: this checks for an existing
+  // one before creating another), but it's otherwise a completely ordinary reminder — visible,
+  // editable, and deletable by the user from the Expense Reminders screen like any other, which is
+  // also how they opt back out if they don't want it.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const existing = await getDocs(
+          query(
+            collection(db, 'expenseReminders'),
+            where('userId', '==', user.uid),
+            where('systemReminderKind', '==', 'daily_expense_log'),
+            limit(1),
+          ),
+        );
+        if (cancelled || !existing.empty) return;
+        const config: FrequencyConfig = { frequency: 'daily', hour: 20, minute: 0 };
+        const nextRunDate = firstOccurrenceOnOrAfter(config, new Date()).toISOString();
+        await addDoc(collection(db, 'expenseReminders'), {
+          userId: user.uid,
+          systemReminderKind: 'daily_expense_log',
+          presetGroupId: null,
+          presetCategory: null,
+          presetAmount: null,
+          presetImages: [],
+          oneTime: false,
+          ...sanitizeFrequencyConfig(config),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          nextRunDate,
+          active: true,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Failed to seed the daily expense-log reminder:', err);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [user]);
 
   return (

@@ -99,7 +99,12 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     // opens the hub list instead — a reasonable fallback rather than adding a param for a single
     // notification type.
     navigateTo(data.reminderId ? `/reminders?open=${data.reminderId}` : '/reminders');
-  } else if (data.type === 'spread_word_reminder' || data.type === 'birthday_wish') {
+  } else if (data.type === 'spread_word_reminder') {
+    // Straight to the Spread the Word card (see Profile.tsx's `share` param handling) — one tap
+    // gets there, scrolled to and highlighted, with the actual share button right there for the
+    // very next tap, rather than making the user hunt for the section themselves.
+    navigateTo('/profile?share=1');
+  } else if (data.type === 'birthday_wish') {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {
     navigateTo('/profile?promptDob=1');
