@@ -36,12 +36,19 @@ interface SummaryDoc {
   prevWeek: SummaryBucket;
   month: SummaryBucket;
   prevMonth: SummaryBucket;
+  // Standing snapshot ("as of this recap"), not a this-week-vs-last-week activity count like the
+  // buckets above — undefined on any recap generated before this field existed.
+  goalsTracked?: number;
+  accountsMonitored?: number;
   kudos: string;
 }
 
 function buildShareMessage(summary: SummaryDoc): string {
   const w = summary.week;
-  return `🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${SHARE_LANDING_URL}`;
+  const trackingLine = summary.goalsTracked || summary.accountsMonitored
+    ? ` I'm also tracking ${summary.goalsTracked ?? 0} savings goal${(summary.goalsTracked ?? 0) === 1 ? '' : 's'} across ${summary.accountsMonitored ?? 0} account${(summary.accountsMonitored ?? 0) === 1 ? '' : 's'}.`
+    : '';
+  return `🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!${trackingLine}\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${SHARE_LANDING_URL}`;
 }
 
 function StatRow({ icon, label, current, previous }: { icon: string; label: string; current: number; previous: number }) {
@@ -61,6 +68,22 @@ function StatRow({ icon, label, current, previous }: { icon: string; label: stri
           {Math.abs(diff)}
         </span>
       )}
+    </div>
+  );
+}
+
+// No diff arrow — unlike StatRow's period-over-period rows, goalsTracked/accountsMonitored are a
+// standing count as of this recap, not a this-period-vs-last-period activity delta.
+function SnapshotStat({ icon, label, value }: { icon: string; label: string; value: number }) {
+  return (
+    <div className="bg-surface rounded-xl p-3 flex items-center gap-2.5">
+      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
+        <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-black text-on-surface leading-tight">{value}</p>
+        <p className="text-[10px] text-text-muted font-bold leading-tight">{label}</p>
+      </div>
     </div>
   );
 }
@@ -233,6 +256,16 @@ export default function WeeklySummary() {
             {active && (
               <>
                 <RecapTile ref={recapTileRef} summary={active} />
+
+                {(active.goalsTracked !== undefined || active.accountsMonitored !== undefined) && (
+                  <div>
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-2 px-1">Your Money Tracking</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <SnapshotStat icon="flag" label="Goals tracked" value={active.goalsTracked ?? 0} />
+                      <SnapshotStat icon="account_balance" label="Accounts monitored" value={active.accountsMonitored ?? 0} />
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-2 px-1">This Week vs. Last Week</p>

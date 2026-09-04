@@ -1304,6 +1304,24 @@ function buildWeeklyKudosLine(week: WeeklySummaryBucket, prevWeek: WeeklySummary
 // while testing this feature before the real weekly schedule is registered — deliberately does
 // NOT check that opt-out, since a user pressing a button to try the feature should always work
 // even if they'd previously turned off the automatic weekly push).
+// Goals/Accounts are a standing snapshot ("how many are you tracking right now"), not a
+// this-week-vs-last-week activity count like the WeeklySummaryBucket fields above — a cheap,
+// separate pair of counts rather than folding them into computeUserWeeklyStats's windowed shape,
+// which exists specifically for period-over-period deltas. Cash Savings (isCashHolding) is
+// excluded from goalsTracked — it's an internal auto-created bucket, not a goal the user set.
+async function computeGoalsAndAccountsSnapshot(db: Firestore, uid: string): Promise<{ goalsTracked: number; accountsMonitored: number }> {
+  const [goalsSnap, accountsSnap] = await Promise.all([
+    db.collection('goals').where('userId', '==', uid).select('status', 'isCashHolding').get(),
+    db.collection('financialAccounts').where('userId', '==', uid).select('archived').get(),
+  ]);
+  const goalsTracked = goalsSnap.docs.filter((d) => {
+    const data = d.data();
+    return data.status !== 'archived' && !data.isCashHolding;
+  }).length;
+  const accountsMonitored = accountsSnap.docs.filter((d) => !d.data().archived).length;
+  return { goalsTracked, accountsMonitored };
+}
+
 async function generateAndDeliverWeeklySummary(
   db: Firestore,
   uid: string,
@@ -1312,6 +1330,7 @@ async function generateAndDeliverWeeklySummary(
   const weekStart = isoWeekStartDate(new Date(now));
   const periodLabel = `Week of ${new Date(now).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
   const windows = await computeUserWeeklyStats(db, uid, now);
+  const { goalsTracked, accountsMonitored } = await computeGoalsAndAccountsSnapshot(db, uid);
   const kudos = buildWeeklyKudosLine(windows.week, windows.prevWeek);
   const summaryId = `${uid}_${weekStart}`;
 
@@ -1323,6 +1342,8 @@ async function generateAndDeliverWeeklySummary(
     prevWeek: windows.prevWeek,
     month: windows.month,
     prevMonth: windows.prevMonth,
+    goalsTracked,
+    accountsMonitored,
     kudos,
   });
 
