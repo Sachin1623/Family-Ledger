@@ -750,12 +750,17 @@ export default function Profile() {
     return false;
   };
 
-  // `shareUrl` is the Play Store listing directly (per explicit request — an earlier version
-  // pointed at the backend's /share landing page instead, which carried custom Open Graph tags for
-  // a nicer Facebook/LinkedIn preview card; that richer preview is traded away here in favor of
-  // sending people straight to the real install page).
+  // `shareUrl` is the Play Store listing directly — read by people, in the message text itself,
+  // for WhatsApp/native/X and pasted straight into the message. Facebook/LinkedIn's web share
+  // intents are different: they don't render any caption text or image we hand them at all, ONLY
+  // ever a bare `u=<url>` — so those two point at `webShareUrl` (the backend's /share landing
+  // page) instead, which carries real Open Graph tags (title/description/share-banner.png) that
+  // Facebook/LinkedIn actually read and populate the post preview from. That's the whole
+  // mechanism for a genuine single-click Facebook/LinkedIn share: there's no way to pre-attach an
+  // image/caption to their web intent directly, only to make the URL they fetch describe itself.
   const handleShareApp = async (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
     const shareUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+    const webShareUrl = `${window.location.origin}/share`;
     // WhatsApp/native have no length limit and WhatsApp renders *bold*/dividers as real
     // formatting, so this "banner" version leans into that — a bold title line, a divider, and
     // one bold-label line per feature (Splitwise-style expense splitting, budgets that work even
@@ -773,7 +778,7 @@ export default function Profile() {
       return;
     }
     if (target === 'facebook') {
-      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`, '_blank');
+      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(webShareUrl)}`, '_blank');
       return;
     }
     if (target === 'twitter') {
@@ -781,7 +786,7 @@ export default function Profile() {
       return;
     }
     if (target === 'linkedin') {
-      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, '_blank');
+      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(webShareUrl)}`, '_blank');
       return;
     }
     // "native" with no share API at all (very old browser) — copy to clipboard as a last resort.

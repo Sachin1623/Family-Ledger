@@ -9953,9 +9953,9 @@ async function startServer() {
   app.get('/share', (req, res) => {
     const baseUrl = PUBLIC_APP_URL;
     const playStoreUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
-    const title = 'FamilyLedger — Track & Split Expenses Together';
+    const title = 'FamilyLedger — Split Bills. Track Budgets. Stay Sane.';
     const description =
-      "I'm using FamilyLedger to track and organise my expenses — group splitting, recurring expenses, budgets & alerts. I recommend this app!";
+      "I'm using FamilyLedger with my family — split expenses, track recurring bills, real category budgets, savings goals with linked accounts, group chat & friends. Free on Android.";
     const imageUrl = `${baseUrl}/share-banner.png`;
 
     res.set('Content-Type', 'text/html; charset=utf-8');
