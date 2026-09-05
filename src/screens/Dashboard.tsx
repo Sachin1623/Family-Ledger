@@ -699,27 +699,30 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
             below) instead of the old bare icon-only buttons, plus the month picker set apart on
             the right in its own pill. Same 5 actions, same handlers/tooltips as before — purely a
             visual redesign (inspired by a reference screenshot), not a functional change. */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1">
-            <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+        {/* overflow-x-auto is a fallback, not the primary fix — 5 action icons plus the month
+            pill are sized to fit a typical phone width; on a genuinely narrow device this scrolls
+            instead of clipping the month picker off the right edge of the screen. */}
+        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
               <span className="w-9 h-9 rounded-2xl bg-violet-100 flex items-center justify-center text-base">➕</span>
               <span className="text-[9px] font-bold text-text-muted">Add</span>
             </button>
-            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
               <span className="w-9 h-9 rounded-2xl bg-amber-100 flex items-center justify-center text-base">{poked ? '✅' : '✋'}</span>
               <span className="text-[9px] font-bold text-text-muted">Poke</span>
             </button>
-            <span onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1 px-1 py-0.5">
+            <span onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1 px-0.5 py-0.5">
               <span className="relative w-9 h-9 rounded-2xl bg-pink-100 flex items-center justify-center">
                 <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
               </span>
               <span className="text-[9px] font-bold text-text-muted">Chat</span>
             </span>
-            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
               <span className="w-9 h-9 rounded-2xl bg-blue-100 flex items-center justify-center text-base">📊</span>
               <span className="text-[9px] font-bold text-text-muted">Trends</span>
             </button>
-            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
               <span className="w-9 h-9 rounded-2xl bg-teal-100 flex items-center justify-center text-base">🧾</span>
               <span className="text-[9px] font-bold text-text-muted">Report</span>
             </button>
@@ -978,7 +981,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
                     there's no month-over-month cadence to compare against. Collapsed into one
                     compact line (was its own 3-column grid) — same numbers, less vertical space. */}
                 {!isEventGroup && (
-                  <p className="text-[9px] text-text-muted font-bold text-center truncate">
+                  <p className="text-[9px] text-text-muted font-bold text-center leading-snug">
                     Last Mo. {t('common.income')}: {currencySymbol}{previousMonthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     {' · '}{t('common.expense')}: {currencySymbol}{previousMonthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     {' · '}{previousMonthIncome >= previousMonthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}: {currencySymbol}
