@@ -99,6 +99,9 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     // opens the hub list instead — a reasonable fallback rather than adding a param for a single
     // notification type.
     navigateTo(data.reminderId ? `/reminders?open=${data.reminderId}` : '/reminders');
+  } else if (data.type === 'invite_family_reminder' && data.groupId) {
+    // The every-10-days "still solo?" nudge — see server.ts's cron/send-daily-reminders.
+    navigateTo(`/groups/${data.groupId}/manage?inviteReminder=1`);
   } else if (data.type === 'spread_word_reminder') {
     // Straight to the Spread the Word card (see Profile.tsx's `share` param handling) — one tap
     // gets there, scrolled to and highlighted, with the actual share button right there for the

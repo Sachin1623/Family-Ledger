@@ -5,8 +5,39 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, getDoc, setDoc, updateDoc, increment, collection, addDoc, query, where, getDocs, runTransaction } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
+import { Capacitor } from '@capacitor/core';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { claimPoints } from '../lib/pointsApi';
+
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+
+// Android App Links (see AndroidManifest.xml's autoVerify intent-filter) already open this exact
+// URL directly in the installed app — this banner only ever renders in the fallback case: the
+// link was opened in a plain mobile browser because the app ISN'T installed (or verification
+// hasn't completed on that device yet). Per explicit choice: shown alongside the normal join flow
+// below, not instead of it — this app is a real website too, so joining works fine in-browser;
+// the banner is just steering someone who'd rather have the native app toward installing it.
+// Android-only for now — the iOS App Store listing isn't live yet (still in review as of this
+// build), so there's nowhere useful to send an iPhone user; add an `isIOS` branch with the App
+// Store URL once that clears.
+function GetTheAppBanner() {
+  if (Capacitor.isNativePlatform()) return null;
+  const isAndroid = /android/i.test(navigator.userAgent);
+  if (!isAndroid) return null;
+  return (
+    <a
+      href={PLAY_STORE_URL}
+      className="flex items-center gap-3 bg-primary text-white rounded-2xl p-4 shadow-lg active:scale-[0.98] transition-all"
+    >
+      <img src="/logo.svg" alt="" className="w-10 h-10 rounded-xl bg-white/15 p-1.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold leading-tight">Get the FamilyLedger app</p>
+        <p className="text-[11px] text-white/70 leading-tight">Faster, with reminders &amp; offline support</p>
+      </div>
+      <span className="material-symbols-outlined text-[20px] shrink-0">open_in_new</span>
+    </a>
+  );
+}
 
 export default function JoinGroup() {
   const { groupId } = useParams();
@@ -163,10 +194,12 @@ export default function JoinGroup() {
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center p-6">
-      <motion.div 
+      <div className="w-full max-w-md space-y-4">
+      <GetTheAppBanner />
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white w-full max-w-md p-8 rounded-3xl border border-border-subtle shadow-xl space-y-8"
+        className="bg-white w-full p-8 rounded-3xl border border-border-subtle shadow-xl space-y-8"
       >
         <div className="flex flex-col items-center text-center space-y-4">
           <div className="w-24 h-24 rounded-2xl bg-primary/10 flex items-center justify-center border-2 border-primary/20">
@@ -215,6 +248,7 @@ export default function JoinGroup() {
           </button>
         </div>
       </motion.div>
+      </div>
     </div>
   );
 }

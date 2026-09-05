@@ -105,7 +105,9 @@ export default function CreateGroup() {
       updateGlobalStats({ groups: 1 }).catch((err) => console.error('updateGlobalStats failed:', err));
       trackEvent('group_created', { currency, group_type: groupType });
 
-      navigate(`/groups/${groupRef.id}/manage`);
+      // Invite-flow spec: every group (not just a user's first) gets the one-tap invite prompt
+      // right after creation — see ManageGroup.tsx's `?justCreated=1` handling.
+      navigate(`/groups/${groupRef.id}/manage?justCreated=1`);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'groups');
     } finally {

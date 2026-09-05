@@ -18,6 +18,7 @@ import { todayLocalDateString, currentLocalMonthKey } from '../lib/dateUtils';
 import { getParentPath } from '../lib/navigationParents';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
+import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
 
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification } from '../lib/constants';
 import { useLanguage } from '../context/LanguageContext';
@@ -48,6 +49,12 @@ export default function AddExpense() {
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [showSuccess, setShowSuccess] = useState(false);
+  // Invite-flow spec's second trigger: same one-tap invite prompt as CreateGroup.tsx's
+  // ?justCreated=1, fired instead on a user's genuinely first-ever LOGGED expense (detected below
+  // via profile.lastExpenseAddedAt being unset going into this save — already-active users never
+  // trigger it again, since that field is long since set for them).
+  const [invitePromptGroupId, setInvitePromptGroupId] = useState<string | null>(null);
+  const [closeAfterInvitePrompt, setCloseAfterInvitePrompt] = useState(false);
   const [showKeypad, setShowKeypad] = useState(false);
 
   const [paidBy, setPaidBy] = useState('');
@@ -271,6 +278,7 @@ export default function AddExpense() {
     if (Object.keys(nextErrors).length > 0) return;
 
     const isIncome = entryType === 'income';
+    const isFirstExpenseEver = !isIncome && !profile?.lastExpenseAddedAt && !profile?.hasSeenFirstExpenseInvitePrompt;
 
     if (!isIncome && selectedGroup?.splitEnabled) {
       if (splitMembers.length === 0) {
@@ -458,7 +466,12 @@ export default function AddExpense() {
 
       setTimeout(() => setShowSuccess(false), 3000);
 
-      if (!keepOpen) handleClose();
+      if (isFirstExpenseEver) {
+        setInvitePromptGroupId(groupId);
+        setCloseAfterInvitePrompt(!keepOpen);
+      } else if (!keepOpen) {
+        handleClose();
+      }
     } catch (error) {
       console.error('Error saving expense:', error);
       alert('Failed to save expense');
@@ -1059,6 +1072,18 @@ export default function AddExpense() {
         />
       )}
       </div>
+
+      {invitePromptGroupId && (
+        <AddFamilyMemberPrompt
+          trigger="first_expense"
+          groupId={invitePromptGroupId}
+          groupName={selectedGroup?.name}
+          onDismiss={() => {
+            setInvitePromptGroupId(null);
+            if (closeAfterInvitePrompt) handleClose();
+          }}
+        />
+      )}
     </div>
   );
 }

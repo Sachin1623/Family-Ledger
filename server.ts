@@ -282,6 +282,28 @@ async function mergeUidData(
 ) {
   const summary = { groupsUpdated: 0, membershipsMigrated: 0, expensesUpdated: 0, activitiesUpdated: 0 };
 
+  // 0. Carry forward a couple of "should only ever happen once" flags from the old profile —
+  // expenses get reassigned to newUid below (step 3), but that's the expense DOCS, not this
+  // per-user marker of whether they'd already logged one before; without this, a merged/returning
+  // user reads back as expense-less on their own profile even though their history just came
+  // back, and re-triggers anything gated on "is this genuinely their first ever" (see
+  // AddExpense.tsx's invite-prompt trigger and the daily-reminder cron's spend-gap check, both
+  // keyed off lastExpenseAddedAt). hasSeenFirstExpenseInvitePrompt is carried the same way so
+  // someone who already saw that one-shot prompt pre-deletion doesn't see it again post-recovery
+  // — the other two invite-prompt triggers (group_created, recurring_reminder) have no such flag
+  // to carry since both are meant to fire again on their own condition regardless.
+  const oldUserSnap = await db.collection("users").doc(oldUid).get();
+  if (oldUserSnap.exists) {
+    const oldData = oldUserSnap.data()!;
+    const carryForward: Record<string, any> = {};
+    for (const field of ["lastExpenseAddedAt", "hasSeenFirstExpenseInvitePrompt"]) {
+      if (oldData[field] !== undefined) carryForward[field] = oldData[field];
+    }
+    if (Object.keys(carryForward).length > 0) {
+      await db.collection("users").doc(newUid).set(carryForward, { merge: true });
+    }
+  }
+
   // 1. Group memberships: recreate under newUid, delete the old doc.
   const membersSnap = await db.collection("members").where("userId", "==", oldUid).get();
   const groupIds = new Set<string>();
@@ -2637,9 +2659,10 @@ async function startServer() {
 
   // iOS Universal Links verification file — the same purpose as assetlinks.json above, but for
   // Apple: lets iOS confirm this app is authorized to open links to this domain directly instead
-  // of Safari, so invite links open the app there too. TEAM_ID must be replaced with the real
-  // 10-character Apple Developer Team ID (Apple Developer → Account → Membership) before this
-  // works — it's the prefix of appID, formatted "<TEAMID>.<bundleId>".
+  // of Safari, so invite links open the app there too. appID is "<TEAMID>.<bundleId>" — note the
+  // iOS bundle ID (com.thirteenapps.familyledger, per the Xcode project and its
+  // GoogleService-Info.plist) is genuinely different from Android's (com.familyledger.app,
+  // Capacitor's shared appId) — that's real, not a typo needing reconciliation.
   app.get("/.well-known/apple-app-site-association", (req, res) => {
     res.json({
       applinks: {
@@ -9656,6 +9679,15 @@ async function startServer() {
       "A quick share goes a long way — tell someone about FamilyLedger today.",
       "Loving the app? A recommendation from you means more than any ad.",
     ];
+    // Invite-flow spec's recurring step: keeps nudging every 10 days for as long as EVERY group
+    // the user belongs to is still solo (memberCount 1) — see the hasInvitedAnyone check below.
+    // Stops permanently the moment any one of their groups picks up a second real member; no
+    // separate "seen" flag needed since that condition itself is the natural stopping signal.
+    const INVITE_FAMILY_MESSAGES = [
+      "Splitting works a lot better with someone else in the group — invite your family or a friend?",
+      "Still just you in there! Send a quick invite so expenses actually split both ways.",
+      "A group's more useful shared — invite whoever you're splitting bills with in real life.",
+    ];
     // Weekly nudge to add a birthday — only ever sent to someone with no `dateOfBirth` set yet,
     // and stops entirely (see dobReminderEnabled below) the moment they either add one or say
     // they'd rather not, so this never repeats past the point it's actually useful.
@@ -9686,6 +9718,7 @@ async function startServer() {
       // gate shape as every other reminder here, just a shorter threshold. 3.5 days averages out
       // to 2x/7 days without needing calendar-day-of-week bookkeeping.
       const SPREAD_WORD_INTERVAL = 3.5 * 24 * 60 * 60 * 1000;
+      const TEN_DAYS = 10 * 24 * 60 * 60 * 1000;
       const ONE_DAY = 24 * 60 * 60 * 1000;
 
       const usersSnap = await db
@@ -9700,7 +9733,7 @@ async function startServer() {
           const privateSnap = await db.collection('users').doc(uid).collection('private').doc('info').get();
           const privateData = privateSnap.exists ? privateSnap.data()! : {};
           const fcmTokens: string[] = privateData.fcmTokens || [];
-          if (fcmTokens.length === 0) return { spend: false, inactivity: false, spreadWord: false };
+          if (fcmTokens.length === 0) return { spend: false, inactivity: false, spreadWord: false, inviteFamily: false };
 
           const lastActive = new Date(data.lastActiveAt || data.joinedAt || 0).getTime();
           const lastExpense = data.lastExpenseAddedAt ? new Date(data.lastExpenseAddedAt).getTime() : 0;
@@ -9753,6 +9786,41 @@ async function startServer() {
             if (sent > 0) {
               await privateRef.set({ lastSpreadWordReminderSentAt: new Date().toISOString() }, { merge: true });
               spreadWord = true;
+            }
+          }
+
+          // Invite-family reminder: every 10 days for as long as EVERY group this user belongs
+          // to is still solo (memberCount 1) — stops for good the instant any one of them picks
+          // up a real second member, checked fresh on every run rather than cached.
+          let inviteFamily = false;
+          const lastInviteFamilyReminder = privateData.lastInviteFamilyReminderSentAt
+            ? new Date(privateData.lastInviteFamilyReminderSentAt).getTime()
+            : lastActive;
+          if (privateData.inviteFamilyReminderEnabled !== false && now - lastInviteFamilyReminder >= TEN_DAYS) {
+            const myMembershipsSnap = await db.collection('members').where('userId', '==', uid).select('groupId').get();
+            const myGroupIds = Array.from(new Set(myMembershipsSnap.docs.map((d) => d.data().groupId)));
+            if (myGroupIds.length > 0) {
+              // Live count against `members` itself, not the groups' own denormalized
+              // memberCount field — that field is only ever incremented on the join-LINK path
+              // (JoinGroup.tsx) and isn't reliably kept in sync on leave/removal/direct-add
+              // elsewhere in the app (Dashboard.tsx's own member-count display already computes
+              // it live for the same reason), so it can't be trusted for a decision that gates
+              // whether to nag someone.
+              const memberCounts = await Promise.all(
+                myGroupIds.map((gid) => db.collection('members').where('groupId', '==', gid).count().get()),
+              );
+              const stillSoloGroupId = myGroupIds.find((_, i) => memberCounts[i].data().count <= 1);
+              const hasInvitedAnyone = memberCounts.some((c) => c.data().count > 1);
+              if (!hasInvitedAnyone && stillSoloGroupId) {
+                const sent = await sendPush(fcmTokens, 'FamilyLedger', pick(INVITE_FAMILY_MESSAGES), {
+                  type: 'invite_family_reminder',
+                  groupId: stillSoloGroupId,
+                });
+                if (sent > 0) {
+                  await privateRef.set({ lastInviteFamilyReminderSentAt: new Date().toISOString() }, { merge: true });
+                  inviteFamily = true;
+                }
+              }
             }
           }
 
@@ -9834,13 +9902,14 @@ async function startServer() {
             }
           }
 
-          return { spend, inactivity, spreadWord, dobReminder, birthdayWished, birthdayTodos };
+          return { spend, inactivity, spreadWord, inviteFamily, dobReminder, birthdayWished, birthdayTodos };
         }),
       );
 
       const spendReminders = perUserResults.filter((r) => r.spend).length;
       const inactivityReminders = perUserResults.filter((r) => r.inactivity).length;
       const spreadWordReminders = perUserResults.filter((r) => r.spreadWord).length;
+      const inviteFamilyReminders = perUserResults.filter((r) => r.inviteFamily).length;
       const dobReminders = perUserResults.filter((r) => r.dobReminder).length;
       const birthdaysWished = perUserResults.filter((r) => r.birthdayWished).length;
       const birthdayTodosCreated = perUserResults.reduce((sum, r) => sum + r.birthdayTodos, 0);
@@ -9851,6 +9920,7 @@ async function startServer() {
         spendReminders,
         inactivityReminders,
         spreadWordReminders,
+        inviteFamilyReminders,
         dobReminders,
         birthdaysWished,
         birthdayTodosCreated,

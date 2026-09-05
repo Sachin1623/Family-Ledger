@@ -928,18 +928,22 @@ export default function Profile() {
         const memberData = memberDoc.data();
         
         if (memberData.role === 'owner') {
-          // Find other members in this group to transfer ownership to
-          const othersQuery = query(
-            collection(db, 'members'), 
-            where('groupId', '==', memberData.groupId),
-            where('userId', '!=', user.uid)
-          );
-          const others = await getDocs(othersQuery);
-          
-          if (!others.empty) {
+          // Find other members in this group to transfer ownership to. Filters out the caller
+          // CLIENT-SIDE rather than adding a second `where('userId', '!=', ...)` clause — that
+          // combination needs a composite index (groupId + userId) that was never provisioned in
+          // this project, so this query has been silently throwing FAILED_PRECONDITION and
+          // aborting the whole delete for any account that actually owns a group with other real
+          // members in it (a single-member group never hit this path, which is why it went
+          // unnoticed) ever since this screen was first written. A group's member count is small
+          // enough that filtering here instead of relying on an index is cheap either way, and it
+          // sidesteps needing that index provisioned identically in every environment forever.
+          const othersQuery = query(collection(db, 'members'), where('groupId', '==', memberData.groupId));
+          const others = (await getDocs(othersQuery)).docs.filter((d) => d.data().userId !== user.uid);
+
+          if (others.length > 0) {
             // Randomly select one of the other members
-            const randomIndex = Math.floor(Math.random() * others.docs.length);
-            const newOwnerDoc = others.docs[randomIndex];
+            const randomIndex = Math.floor(Math.random() * others.length);
+            const newOwnerDoc = others[randomIndex];
             batch.update(newOwnerDoc.ref, { role: 'owner' });
           }
         }

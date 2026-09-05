@@ -1,5 +1,18 @@
 import { auth } from './firebase';
 
+// Same join-link + wa.me shape as ManageGroup.tsx's own buildInviteShareMessage/handleSendWhatsApp
+// (kept as a separate small helper rather than having ManageGroup import this — that screen's
+// version also threads an optional recipient phone number through a whole invite-picker UI this
+// doesn't have, and duplicating one three-line function is cheaper than coupling the two).
+// `groupName` personalizes the message when known; omit it to fall back to a generic line.
+export function buildGroupInviteWhatsAppUrl(groupId: string, groupName?: string): string {
+  const link = `${window.location.origin}/join/${groupId}`;
+  const message = groupName
+    ? `Hey! Join our "${groupName}" group on FamilyLedger so we can track and split expenses together: ${link}`
+    : `Hey! I'm using FamilyLedger to track and split expenses with family — join my group: ${link}`;
+  return `https://wa.me/?text=${encodeURIComponent(message)}`;
+}
+
 export type InviteResult =
   | { method: 'push'; sent: number }
   | { method: 'email' }

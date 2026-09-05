@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, updateDoc, deleteDoc, addDoc, getDoc, getDocs, writeBatch, setDoc } from 'firebase/firestore';
@@ -21,10 +21,12 @@ import { resizeImageFile } from '../lib/imageUtils';
 import { useLanguage } from '../context/LanguageContext';
 import { Capacitor } from '@capacitor/core';
 import { Contacts, type ContactPayload } from '@capacitor-community/contacts';
+import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
 
 export default function ManageGroup() {
   const { groupId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [loading, setLoading] = useState(false);
@@ -55,6 +57,35 @@ export default function ManageGroup() {
   const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
 
   const group = groupValue?.data();
+
+  // CreateGroup.tsx deep-links here as `?justCreated=1` right after ANY group is created (every
+  // one, not just a user's first — per explicit request) — reacts to the param itself (not a
+  // mount-only effect), same pattern as Profile.tsx's `?promptDob=1`/`?share=1`, since React
+  // Router can reuse this component instance across a same-pattern navigation. No persisted-flag
+  // gate here (unlike the first_expense trigger) — this is meant to fire again for every new
+  // group, not just once ever.
+  const [showNewGroupInvite, setShowNewGroupInvite] = useState(false);
+  useEffect(() => {
+    if (searchParams.get('justCreated') !== '1') return;
+    setShowNewGroupInvite(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('justCreated');
+    setSearchParams(next, { replace: true });
+  }, [searchParams]);
+
+  // The every-10-days "still solo?" push (server.ts's invite-family reminder check) deep-links
+  // here as `?inviteReminder=1` — same reactive-param pattern as justCreated above, and likewise
+  // no persisted-flag gate, since this trigger is deliberately allowed to show again next time
+  // the server decides to send it (see AddFamilyMemberPrompt's own comment on why).
+  const [showRecurringInvite, setShowRecurringInvite] = useState(false);
+  useEffect(() => {
+    if (searchParams.get('inviteReminder') !== '1') return;
+    setShowRecurringInvite(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('inviteReminder');
+    setSearchParams(next, { replace: true });
+  }, [searchParams]);
+
   const [groupIcon, setGroupIcon] = useState('🏠');
   const [showIconGrid, setShowIconGrid] = useState(false);
   const [recurringTypeFilter, setRecurringTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
@@ -2163,6 +2194,23 @@ export default function ManageGroup() {
           </div>
         )}
       </AnimatePresence>
+
+      {showNewGroupInvite && groupId && (
+        <AddFamilyMemberPrompt
+          trigger="group_created"
+          groupId={groupId}
+          groupName={group?.name}
+          onDismiss={() => setShowNewGroupInvite(false)}
+        />
+      )}
+      {showRecurringInvite && groupId && (
+        <AddFamilyMemberPrompt
+          trigger="recurring_reminder"
+          groupId={groupId}
+          groupName={group?.name}
+          onDismiss={() => setShowRecurringInvite(false)}
+        />
+      )}
     </div>
   );
 }

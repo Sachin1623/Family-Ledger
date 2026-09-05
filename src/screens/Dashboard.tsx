@@ -274,6 +274,27 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {membershipsLoading ? (
           <div className="col-span-full py-20 text-center text-text-muted">{t('dashboard.loading')}</div>
+        ) : activeMemberships.length === 0 && archivedMemberships.length === 0 ? (
+          // Invite-flow spec's first step: a user with literally no group yet can't do anything
+          // else in the app (no expenses to log, nobody to invite), so this replaces the empty
+          // grid with an assertive, always-visible prompt rather than just leaving the "+ New
+          // Group" button in the header to be the only affordance — easy to miss on a first
+          // launch. Deliberately not a dismissible/one-time modal like AddFamilyMemberPrompt: it
+          // should keep showing for as long as the condition (zero groups) is actually true.
+          <div className="col-span-full bg-white rounded-2xl border border-dashed border-primary/30 p-8 text-center space-y-4">
+            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto text-3xl">👋</div>
+            <div className="space-y-1">
+              <h4 className="text-lg font-bold text-primary">Create your first group</h4>
+              <p className="text-sm text-text-muted max-w-xs mx-auto">Start tracking and splitting expenses with your family, roommates, or friends.</p>
+            </div>
+            <button
+              onClick={() => navigate('/create-group')}
+              className="bg-primary text-white px-6 py-3 rounded-xl font-bold inline-flex items-center gap-2 hover:opacity-90 active:scale-95 shadow-md text-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">add</span>
+              Create Group
+            </button>
+          </div>
         ) : (
           <AnimatePresence mode="popLayout">
             {activeMemberships.map((membership, index) => (
