@@ -97,6 +97,80 @@ export const INCOME_CATEGORIES = [
   { id: 'other_income', name: 'Other Income', icon: '💵' },
 ];
 
+export type CategoryType = 'expense' | 'income';
+
+export interface CustomCategory {
+  id: string;
+  name: string;
+  icon: string;
+  type: CategoryType;
+}
+
+export interface CategoryLike {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+export interface GroupCategorySettings {
+  customCategories?: CustomCategory[];
+  hiddenCategories?: string[];
+  categoryNameOverrides?: Record<string, string>;
+}
+
+let customCategoryCounter = 0;
+export function makeCustomCategoryId(): string {
+  customCategoryCounter += 1;
+  return `custom_${Date.now().toString(36)}${customCategoryCounter}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// A group's EFFECTIVE category list for pickers (Add Expense, filters, breakdowns): every built-in
+// AND custom category the group hasn't hidden. hiddenCategories applies uniformly to both kinds —
+// there is deliberately no delete for a category still in use (see the Manage Categories panel in
+// ManageGroup.tsx): hiding is the only way to retire one, so an id already stamped on existing
+// expenses never goes stale. Order matters for the picker grid — built-ins first (familiar, stable
+// positions), customs appended after.
+export function getGroupCategories(group: GroupCategorySettings | undefined, type: CategoryType): CategoryLike[] {
+  const base = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const hidden = new Set(group?.hiddenCategories || []);
+  const visibleBase = base.filter((c) => !hidden.has(c.id));
+  const custom = (group?.customCategories || []).filter((c) => c.type === type && !hidden.has(c.id));
+  return [...visibleBase, ...custom];
+}
+
+// The FULL category list for management UI (ManageGroup's Spend/Income Categories panel) — every
+// built-in and custom category regardless of hidden state, so an admin can toggle a hidden one back
+// on. Pickers/breakdowns should use getGroupCategories above instead, which already excludes hidden.
+export function getAllGroupCategories(group: GroupCategorySettings | undefined, type: CategoryType): CategoryLike[] {
+  const base = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const custom = (group?.customCategories || []).filter((c) => c.type === type);
+  return [...base, ...custom];
+}
+
+// A group can rename ANY category (built-in or custom) for itself via categoryNameOverrides —
+// custom categories could instead just have their `name` field edited in place, but routing every
+// rename through the same override map keeps "does this group call category X something else"
+// a single lookup regardless of which kind of category it is. Returns null when there's no
+// override, so callers fall back to the built-in's own i18n-translated name.
+export function getCategoryNameOverride(group: GroupCategorySettings | undefined, categoryId: string | undefined): string | null {
+  if (!categoryId) return null;
+  const override = group?.categoryNameOverrides?.[categoryId];
+  if (override) return override;
+  const custom = group?.customCategories?.find((c) => c.id === categoryId);
+  return custom ? custom.name : null;
+}
+
+// Icon for a category id that might be custom — built-in icons come from EXPENSE_CATEGORIES/
+// INCOME_CATEGORIES as always; a stale/unknown id (e.g. a custom category since deleted) falls back
+// to a neutral placeholder rather than rendering nothing.
+export function getCategoryIcon(group: GroupCategorySettings | undefined, categoryId: string | undefined, type: CategoryType): string {
+  if (!categoryId) return '❓';
+  const custom = group?.customCategories?.find((c) => c.id === categoryId);
+  if (custom) return custom.icon;
+  const base = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  return base.find((c) => c.id === categoryId)?.icon || '❓';
+}
+
 export const PAYMENT_METHODS = [
   { id: 'upi', name: 'UPI', icon: '📱' },
   { id: 'card', name: 'Card', icon: '💳' },

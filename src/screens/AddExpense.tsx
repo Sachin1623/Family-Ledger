@@ -20,7 +20,7 @@ import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
 import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
 
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
 import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
@@ -145,7 +145,9 @@ export default function AddExpense() {
   // have a group, which isn't true here before the user's picked one.
   const currencySymbol = groupId ? getCurrencySymbol(selectedGroup?.currency) : '';
   const evaluatedAmount = evaluateAmountSum(amount);
-  const activeCategories = entryType === 'income' ? INCOME_CATEGORIES : CATEGORIES;
+  // Group-aware: hides whatever this group's admin has hidden and appends its custom categories —
+  // falls back to the raw global list before a group is picked (nothing to scope it to yet).
+  const activeCategories = groupId ? getGroupCategories(selectedGroup, entryType === 'income' ? 'income' : 'expense') : (entryType === 'income' ? INCOME_CATEGORIES : CATEGORIES);
 
   // Income isn't split, and its categories are a different list — switching type resets the
   // category to the new list's first option (skipped on initial mount, so a category arriving
@@ -450,7 +452,7 @@ export default function AddExpense() {
         notifyGroupActivity({
           groupId,
           action: 'recurring_created',
-          description: description || CATEGORIES.find((c) => c.id === category)?.name,
+          description: description || getCategoryNameOverride(selectedGroup, category) || CATEGORIES.find((c) => c.id === category)?.name,
           amount: evaluatedAmount,
           actorName: profile?.displayName || user.displayName || 'Someone',
         });
@@ -789,7 +791,7 @@ export default function AddExpense() {
           </div>
           <div className="grid grid-cols-5 gap-1.5">
             {activeCategories.map(cat => {
-              const catLabel = t(`${entryType === 'income' ? 'income' : 'category'}.${cat.id}`);
+              const catLabel = getCategoryNameOverride(selectedGroup, cat.id) || t(`${entryType === 'income' ? 'income' : 'category'}.${cat.id}`);
               return (
                 <button
                   key={cat.id}

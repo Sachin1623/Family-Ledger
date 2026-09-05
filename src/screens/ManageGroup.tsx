@@ -7,7 +7,10 @@ import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification } from '../lib/constants';
+import {
+  EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification,
+  getAllGroupCategories, getCategoryNameOverride, makeCustomCategoryId, CustomCategory,
+} from '../lib/constants';
 import { inviteToGroup, inviteUserToGroup, searchUsers, FoundUser } from '../lib/inviteApi';
 import { useFriendships } from '../lib/useFriendships';
 import { claimPoints, getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
@@ -451,6 +454,72 @@ export default function ManageGroup() {
     }
   };
 
+  // Category editing — rename works identically for a built-in or a custom category (both just
+  // write into categoryNameOverrides; a custom category's own `name` field is left as its original
+  // fallback, same idiom as a built-in's untranslated `name` never being read once an override
+  // exists). Adding writes straight into customCategories. There is deliberately no delete for
+  // EITHER kind — a category id can already be stamped on existing expenses, and this app has no
+  // reassign-elsewhere flow for that any more (a prior version did; the user explicitly asked for
+  // hide-only instead). hiddenCategories is the single on/off switch, applying the same way to a
+  // built-in or a custom category, and to income and expense alike.
+  const [renamingCategory, setRenamingCategory] = useState<{ id: string; type: 'expense' | 'income'; currentName: string } | null>(null);
+  const [renameInput, setRenameInput] = useState('');
+  const [categorySaving, setCategorySaving] = useState(false);
+  const [newExpenseCatIcon, setNewExpenseCatIcon] = useState('🏷️');
+  const [newExpenseCatName, setNewExpenseCatName] = useState('');
+  const [newIncomeCatIcon, setNewIncomeCatIcon] = useState('🏷️');
+  const [newIncomeCatName, setNewIncomeCatName] = useState('');
+
+  const handleRenameCategory = async () => {
+    if (!renamingCategory || categorySaving) return;
+    const trimmed = renameInput.trim();
+    if (!trimmed) return;
+    setCategorySaving(true);
+    try {
+      const customIdx = (group?.customCategories || []).findIndex((c: CustomCategory) => c.id === renamingCategory.id);
+      if (customIdx >= 0) {
+        const nextCustom = [...(group!.customCategories as CustomCategory[])];
+        nextCustom[customIdx] = { ...nextCustom[customIdx], name: trimmed };
+        await updateDoc(doc(db, 'groups', groupId!), { customCategories: nextCustom });
+      } else {
+        await updateDoc(doc(db, 'groups', groupId!), { [`categoryNameOverrides.${renamingCategory.id}`]: trimmed });
+      }
+      setRenamingCategory(null);
+    } catch (error) {
+      console.error('Rename category error:', error);
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
+  const handleAddCustomCategory = async (type: 'expense' | 'income') => {
+    const trimmedName = (type === 'expense' ? newExpenseCatName : newIncomeCatName).trim();
+    if (!trimmedName || categorySaving) return;
+    const trimmedIcon = (type === 'expense' ? newExpenseCatIcon : newIncomeCatIcon).trim() || '🏷️';
+    setCategorySaving(true);
+    try {
+      const newCat: CustomCategory = { id: makeCustomCategoryId(), name: trimmedName, icon: trimmedIcon, type };
+      await updateDoc(doc(db, 'groups', groupId!), { customCategories: [...(group?.customCategories || []), newCat] });
+      if (type === 'expense') { setNewExpenseCatName(''); setNewExpenseCatIcon('🏷️'); }
+      else { setNewIncomeCatName(''); setNewIncomeCatIcon('🏷️'); }
+    } catch (error) {
+      console.error('Add custom category error:', error);
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
+  const handleToggleCategoryHidden = async (id: string) => {
+    if (categorySaving) return;
+    const hidden = new Set(group?.hiddenCategories || []);
+    if (hidden.has(id)) hidden.delete(id); else hidden.add(id);
+    try {
+      await updateDoc(doc(db, 'groups', groupId!), { hiddenCategories: Array.from(hidden) });
+    } catch (error) {
+      console.error('Toggle category hidden error:', error);
+    }
+  };
+
   // Debounced live search as the user types their ID/email/name — mirrors the debounce pattern
   // used elsewhere in this app for search-as-you-type (e.g. GlobalSearch.tsx). Declared here,
   // above the loading/not-found early returns below, because hooks must run unconditionally on
@@ -803,6 +872,63 @@ export default function ManageGroup() {
       setLoading(false);
       setShowDeleteConfirm(false);
     }
+  };
+
+  // One row of the Spend/Income Categories panel — same shape for a built-in or a custom category,
+  // since both now go through getCategoryNameOverride/getAllGroupCategories. Rename opens the
+  // shared rename modal below; the eye icon toggles hiddenCategories — there is no delete.
+  const renderCategoryRow = (cat: { id: string; name: string; icon: string }, type: 'expense' | 'income') => {
+    const current = getCategoryClassification(group, cat.id);
+    const overrideName = getCategoryNameOverride(group, cat.id);
+    const displayName = overrideName || t(`${type === 'income' ? 'income' : 'category'}.${cat.id}`);
+    const isHidden = (group?.hiddenCategories || []).includes(cat.id);
+    return (
+      <div key={cat.id} className={clsx('flex items-center justify-between gap-2 py-1.5 border-b border-border-subtle/60 last:border-0', isHidden && 'opacity-50')}>
+        <span className="text-xs font-bold text-on-surface flex items-center gap-1.5 min-w-0">
+          <span>{cat.icon}</span>
+          <span className="truncate">{displayName}</span>
+          {isHidden && (
+            <span className="text-[9px] font-bold text-text-muted bg-surface-container px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">{t('manageGroup.categoryHidden')}</span>
+          )}
+        </span>
+        <div className="flex items-center gap-1 shrink-0">
+          {type === 'expense' && (
+            <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5">
+              {(['essential', 'optional'] as CategoryClassification[]).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => handleSetCategoryClassification(cat.id, opt)}
+                  className={clsx(
+                    'px-2 py-1 rounded-md text-[10px] font-bold transition-all',
+                    current === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
+                  )}
+                >
+                  {opt === 'essential' ? t('common.essential') : t('common.optional')}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => { setRenamingCategory({ id: cat.id, type, currentName: displayName }); setRenameInput(displayName); }}
+            className="p-1 text-text-muted hover:text-primary"
+            aria-label={t('common.rename')}
+          >
+            <span className="material-symbols-outlined text-[15px] block">edit</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleToggleCategoryHidden(cat.id)}
+            className={clsx('p-1', isHidden ? 'text-primary' : 'text-text-muted hover:text-error')}
+            aria-label={isHidden ? t('manageGroup.unhideCategory') : t('manageGroup.hideCategory')}
+            title={isHidden ? t('manageGroup.unhideCategory') : t('manageGroup.hideCategory')}
+          >
+            <span className="material-symbols-outlined text-[15px] block">{isHidden ? 'visibility' : 'visibility_off'}</span>
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -1631,34 +1757,82 @@ export default function ManageGroup() {
                 </button>
               </div>
               <p className="text-[11px] text-text-muted">{t('manageGroup.spendCategoriesDesc')}</p>
-              <div className="space-y-1">
-                {EXPENSE_CATEGORIES.map((cat) => {
-                  const current = getCategoryClassification(group, cat.id);
-                  return (
-                    <div key={cat.id} className="flex items-center justify-between gap-2 py-1">
-                      <span className="text-xs font-bold text-on-surface flex items-center gap-1.5 min-w-0">
-                        <span>{cat.icon}</span>
-                        <span className="truncate">{t(`category.${cat.id}`)}</span>
-                      </span>
-                      <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 shrink-0">
-                        {(['essential', 'optional'] as CategoryClassification[]).map((opt) => (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => handleSetCategoryClassification(cat.id, opt)}
-                            className={clsx(
-                              'px-2 py-1 rounded-md text-[10px] font-bold transition-all',
-                              current === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                            )}
-                          >
-                            {opt === 'essential' ? t('common.essential') : t('common.optional')}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="space-y-0.5">
+                {getAllGroupCategories(group, 'expense').map((cat) => renderCategoryRow(cat, 'expense'))}
               </div>
+              <div className="flex items-center gap-1.5 pt-1">
+                <input
+                  value={newExpenseCatIcon}
+                  onChange={(e) => setNewExpenseCatIcon(e.target.value)}
+                  maxLength={4}
+                  className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
+                  placeholder="🏷️"
+                />
+                <input
+                  value={newExpenseCatName}
+                  onChange={(e) => setNewExpenseCatName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomCategory('expense'); } }}
+                  className="flex-1 h-8 px-2.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  placeholder={t('manageGroup.addCategoryPlaceholder')}
+                />
+                <button type="button" disabled={categorySaving} onClick={() => handleAddCustomCategory('expense')} className="h-8 px-3 rounded-lg bg-primary text-white text-[11px] font-bold shrink-0 disabled:opacity-50">
+                  {t('common.add')}
+                </button>
+              </div>
+
+              {group?.incomeEnabled && (
+                <div className="space-y-2 pt-3 border-t border-border-subtle">
+                  <p className="text-xs font-bold text-primary">{t('manageGroup.incomeCategoriesTitle')}</p>
+                  <div className="space-y-0.5">
+                    {getAllGroupCategories(group, 'income').map((cat) => renderCategoryRow(cat, 'income'))}
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <input
+                      value={newIncomeCatIcon}
+                      onChange={(e) => setNewIncomeCatIcon(e.target.value)}
+                      maxLength={4}
+                      className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
+                      placeholder="🏷️"
+                    />
+                    <input
+                      value={newIncomeCatName}
+                      onChange={(e) => setNewIncomeCatName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomCategory('income'); } }}
+                      className="flex-1 h-8 px-2.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                      placeholder={t('manageGroup.addCategoryPlaceholder')}
+                    />
+                    <button type="button" disabled={categorySaving} onClick={() => handleAddCustomCategory('income')} className="h-8 px-3 rounded-lg bg-primary text-white text-[11px] font-bold shrink-0 disabled:opacity-50">
+                      {t('common.add')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Rename Category — shared by built-in and custom categories (see handleRenameCategory). */}
+      <AnimatePresence>
+        {renamingCategory && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/40" onClick={() => !categorySaving && setRenamingCategory(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-bold text-primary">{t('manageGroup.renameCategoryTitle')}</h3>
+              <input
+                autoFocus
+                value={renameInput}
+                onChange={(e) => setRenameInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleRenameCategory(); }}
+                className="w-full h-10 px-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+              <button type="button" onClick={handleRenameCategory} disabled={categorySaving || !renameInput.trim()} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
+                {categorySaving ? t('common.saving') : t('common.save')}
+              </button>
+              <button type="button" onClick={() => setRenamingCategory(null)} disabled={categorySaving} className="w-full py-2 text-xs font-bold text-text-muted">{t('common.cancel')}</button>
             </motion.div>
           </div>
         )}

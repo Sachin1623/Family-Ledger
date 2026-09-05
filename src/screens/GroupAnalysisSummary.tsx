@@ -7,7 +7,7 @@ import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { PieChart, Pie, Cell, ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { shareWithAi } from '../lib/aiShare';
@@ -182,6 +182,7 @@ export default function GroupAnalysisSummary() {
   const [xSortOrder, setXSortOrder] = useState<'asc' | 'desc' | null>('asc');
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all');
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [showTimeStepDropdown, setShowTimeStepDropdown] = useState(false);
   const [entryTypeFilter, setEntryTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [selectedClassification, setSelectedClassification] = useState<'all' | 'essential' | 'optional'>('all');
@@ -201,6 +202,18 @@ export default function GroupAnalysisSummary() {
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [bookmarks, setBookmarks] = useState<AnalysisBookmark[]>([]);
   const [newBookmarkName, setNewBookmarkName] = useState('');
+  // Splits what used to be one long scroll (chart+filters, essential/optional, favorites,
+  // group/category breakdowns, member contributions, AI analysis) into tabs — same tab-bar
+  // pattern already used on HealthMedicines.tsx and Profile.tsx. Every filter (category/member/
+  // month/year/entry-type/essential-optional) still applies globally across all five tabs' data
+  // exactly as before — only the FILTER CONTROLS themselves stay inside the Trend tab (that's
+  // where they've always lived); the active-filter count + Clear All now sits above the tab bar
+  // instead, so switching to another tab never loses the "something's filtered" signal.
+  // Categories and Groups were originally one combined "Breakdown" tab, split into two per
+  // explicit request — Essential vs Optional rides along with Categories (both are ways of
+  // slicing spend by category), Groups only ever has anything to show in the "All Groups" view
+  // (same pre-existing condition as before, just no longer sharing a 2-column grid with Categories).
+  const [analysisTab, setAnalysisTab] = useState<'trend' | 'categories' | 'groups' | 'members'>('trend');
 
   // Every "view transactions" link on this screen carries the currently-active filters over to
   // Group Expenses as query params (read back by GroupExpenses.tsx), so switching screens doesn't
@@ -286,14 +299,6 @@ export default function GroupAnalysisSummary() {
     persistBookmarks(bookmarks.filter((b) => b.id !== id));
   };
 
-  const CATEGORIES_LIST = entryTypeFilter === 'income' ? INCOME_CATEGORIES : entryTypeFilter === 'all' ? [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES] : EXPENSE_CATEGORIES;
-  // Income and expense categories live under different i18n namespaces (income.* vs category.*)
-  // — this screen shows both once entryTypeFilter is 'income'/'all', so every category label
-  // needs to resolve the right one instead of assuming category.* (which silently rendered the
-  // raw, untranslated key string for an income category id, looking like the category was
-  // missing entirely).
-  const categoryLabel = (id: string) => t(`${INCOME_CATEGORIES.some((c) => c.id === id) ? 'income' : 'category'}.${id}`);
-
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
   const [aiSharing, setAiSharing] = useState(false);
   const [aiShareMessage, setAiShareMessage] = useState<string | null>(null);
@@ -342,6 +347,42 @@ export default function GroupAnalysisSummary() {
     groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null
   );
   const allGroups = allGroupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+
+  // Group-aware: hides whatever the relevant group(s) hid and includes their custom categories —
+  // in "all my groups" mode there's no single group to scope to, so it's the union across every
+  // group the user belongs to (de-duped by id; custom ids can't collide across groups, see
+  // makeCustomCategoryId), same idiom as GroupExpenses.tsx's filterCategoryOptions.
+  const CATEGORIES_LIST = useMemo(() => {
+    const wantExpense = entryTypeFilter !== 'income';
+    const wantIncome = entryTypeFilter !== 'expense';
+    if (selectedGroupId === 'all' || !selectedGroupId) {
+      const map = new Map<string, { id: string; name: string; icon: string }>();
+      allGroups.forEach((g: any) => {
+        if (wantExpense) getGroupCategories(g, 'expense').forEach((c) => { if (!map.has(c.id)) map.set(c.id, c); });
+        if (wantIncome) getGroupCategories(g, 'income').forEach((c) => { if (!map.has(c.id)) map.set(c.id, c); });
+      });
+      return Array.from(map.values());
+    }
+    return [
+      ...(wantExpense ? getGroupCategories(groupData, 'expense') : []),
+      ...(wantIncome ? getGroupCategories(groupData, 'income') : []),
+    ];
+  }, [entryTypeFilter, selectedGroupId, allGroups, groupData]);
+  // Income and expense categories live under different i18n namespaces (income.* vs category.*)
+  // — this screen shows both once entryTypeFilter is 'income'/'all', so every category label
+  // needs to resolve the right one instead of assuming category.* (which silently rendered the
+  // raw, untranslated key string for an income category id, looking like the category was
+  // missing entirely). A renamed/custom category resolves through whichever group actually owns
+  // it — in single-group mode that's simply the viewed group; in "all groups" mode, the one group
+  // (if any) whose customCategories contains this id.
+  const categoryLabel = (id: string) => {
+    const scopeGroup = selectedGroupId !== 'all' && selectedGroupId
+      ? groupData
+      : allGroups.find((g: any) => (g.customCategories || []).some((c: any) => c.id === id));
+    const override = getCategoryNameOverride(scopeGroup, id);
+    if (override) return override;
+    return t(`${INCOME_CATEGORIES.some((c) => c.id === id) ? 'income' : 'category'}.${id}`);
+  };
 
   // Fetch ALL members for relevant groups to have a full map of displays
   const [allRelevantMembersValue] = useCollection(
@@ -455,14 +496,6 @@ export default function GroupAnalysisSummary() {
       { name: t('common.optional'), value: optional, color: '#EAB308' },
     ].filter((d) => d.value > 0);
   }, [expenses, selectedGroupId, allGroups, groupData, t]);
-
-  // Favorited expenses within whatever scope/filters are currently active — any member's
-  // favorite shows here (not just whoever's looking), same as the picker on AddExpense.tsx.
-  const favoriteExpenses = useMemo(() => {
-    return expenses
-      .filter((exp) => (exp.favoritedBy || []).length > 0)
-      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }, [expenses]);
 
   const isArchivedExpense = (exp: any) => !!allGroups.find((g: any) => g.id === exp.groupId)?.archived;
 
@@ -882,62 +915,89 @@ export default function GroupAnalysisSummary() {
           </div>
         ) : (
           <>
-            <motion.section
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-white p-6 rounded-[2rem] border border-border-subtle shadow-sm space-y-4"
-              data-tour="analysis-chart"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-primary">{t('analysis.spendingTrend')}</h2>
-                <button
-                  onClick={() => navigate(buildExpensesLink())}
-                  className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
-                  title={t('analysis.viewTransactions')}
-                >
-                  <span className="material-symbols-outlined text-[18px]">receipt_long</span>
-                </button>
-              </div>
-              
-              <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-                {(['all', 'expense', 'income'] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => { setEntryTypeFilter(opt); setSelectedCategory('all'); }}
-                    className={clsx(
-                      'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
-                      entryTypeFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                    )}
-                  >
-                    {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
-                  </button>
-                ))}
-              </div>
-
-              {/* Essential/Optional — see lib/constants.ts's getCategoryClassification. */}
-              <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-                {(['all', 'essential', 'optional'] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setSelectedClassification(opt)}
-                    className={clsx(
-                      'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
-                      selectedClassification === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                    )}
-                  >
-                    {opt === 'all' ? t('groupExpenses.all') : opt === 'essential' ? t('common.essential') : t('common.optional')}
-                  </button>
-                ))}
+            {/* Global filters — apply to every tab's data (chart, category/group/member
+                breakdowns, favorites), not just Trend, so they live above the tab bar instead of
+                being nested inside the Trend tile. */}
+            <div className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
+              {/* Row 1 — every toggle-style filter (type + essential/optional) packed into one
+                  wrapped row instead of two stacked ones. No explicit "All" pill — tapping the
+                  active filter again clears it back to "all" internally, so the row only ever
+                  shows real choices. */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {([
+                  { group: 'type' as const, key: 'expense', label: t('common.expense'), icon: 'shopping_cart', bubble: 'bg-amber-100 text-amber-600' },
+                  { group: 'type' as const, key: 'income', label: t('common.income'), icon: 'payments', bubble: 'bg-blue-100 text-blue-600' },
+                  { group: 'classification' as const, key: 'essential', label: t('common.essential'), icon: 'verified', bubble: 'bg-green-100 text-green-600' },
+                  { group: 'classification' as const, key: 'optional', label: t('common.optional'), icon: 'sell', bubble: 'bg-orange-100 text-orange-600' },
+                ] as const).map((opt) => {
+                  const active = opt.group === 'type' ? entryTypeFilter === opt.key : selectedClassification === opt.key;
+                  const onClick = () => {
+                    if (opt.group === 'type') { setEntryTypeFilter(entryTypeFilter === opt.key ? 'all' : (opt.key as 'expense' | 'income')); setSelectedCategory('all'); }
+                    else setSelectedClassification(selectedClassification === opt.key ? 'all' : (opt.key as 'essential' | 'optional'));
+                  };
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={onClick}
+                      className={clsx(
+                        'flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full border transition-all',
+                        active ? 'border-primary bg-primary/5 shadow-sm' : 'border-border-subtle bg-white hover:bg-surface-container/40',
+                      )}
+                    >
+                      <span className={clsx('w-7 h-7 rounded-full flex items-center justify-center shrink-0', opt.bubble)}>
+                        <span className="material-symbols-outlined text-[15px]">{opt.icon}</span>
+                      </span>
+                      <span className={clsx('text-xs font-bold', active ? 'text-primary' : 'text-text-muted')}>{opt.label}</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Quick month/year filters — multi-select pills, horizontally scrollable so 12
-                  months and a growing list of years never wrap or crowd the screen. Applies
-                  everywhere on this page (chart, category/group/member breakdowns, favorites),
-                  same as every other filter here. */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              {/* Row 2 — a year dropdown and the category/member dropdowns stay fixed; only the
+                  month strip between them scrolls, so the dropdowns on the right are never pushed
+                  off-screen by however many months are selected/scrolled to. */}
+              <div className="flex items-center gap-1.5">
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowYearDropdown(!showYearDropdown)}
+                    className="bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                  >
+                    <span className="whitespace-nowrap">{selectedYears.length === 0 ? t('analysis.allYears') : selectedYears.slice().sort((a, b) => a - b).join(', ')}</span>
+                    <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
+                  </button>
+                  <AnimatePresence>
+                    {showYearDropdown && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setShowYearDropdown(false)} />
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="absolute left-0 mt-1 w-36 bg-white border border-border-subtle rounded-xl shadow-2xl z-50 py-1 max-h-48 overflow-y-auto"
+                        >
+                          <button onClick={() => { setSelectedYears([]); setShowYearDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allYears')}</button>
+                          {availableYears.map((year) => (
+                            <button
+                              key={year}
+                              onClick={() => toggleYear(year)}
+                              className={clsx(
+                                'w-full flex items-center justify-between gap-2 text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors',
+                                selectedYears.includes(year) && 'text-primary',
+                              )}
+                            >
+                              {year}
+                              {selectedYears.includes(year) && <span className="material-symbols-outlined text-[16px]">check</span>}
+                            </button>
+                          ))}
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 flex-1 min-w-0">
                   {MONTH_LABELS.map((label, idx) => (
                     <button
                       key={label}
@@ -954,57 +1014,22 @@ export default function GroupAnalysisSummary() {
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-                  {availableYears.map((year) => (
-                    <button
-                      key={year}
-                      type="button"
-                      onClick={() => toggleYear(year)}
-                      className={clsx(
-                        'shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all',
-                        selectedYears.includes(year)
-                          ? 'bg-primary text-white border-primary'
-                          : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
-                      )}
-                    >
-                      {year}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Active-filter summary — only ever appears once something is actually filtered,
-                  so it costs nothing when unused, and doubles as a "how do I get back to
-                  everything" escape hatch (a single Clear All) without hunting through each
-                  individual control above/below. */}
-              {activeFilterCount > 0 && (
-                <div className="flex items-center justify-between gap-2 bg-primary/5 px-3 py-2 rounded-xl">
-                  <p className="text-[10px] font-bold text-primary">
-                    {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'} active
-                  </p>
-                  <button onClick={clearAllFilters} className="text-[10px] font-black text-primary uppercase tracking-wide hover:underline">
-                    Clear All
-                  </button>
-                </div>
-              )}
-
-              {/* Filters Row - Reverted to show names */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <div className="relative">
-                  <button 
+                <div className="w-px h-5 bg-border-subtle shrink-0 mx-0.5" />
+                <div className="relative shrink-0">
+                  <button
                     onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
-                    className="w-full bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    className="w-32 bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
                   >
                     <span className="truncate">{selectedCategory === 'all' ? t('analysis.allCategories') : categoryLabel(selectedCategory)}</span>
-                    <span className="material-symbols-outlined text-[16px]">expand_more</span>
+                    <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
                   </button>
                   <AnimatePresence>
                     {showCategoryDropdown && (
-                      <motion.div 
+                      <motion.div
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.95 }}
-                        className="absolute left-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1 max-h-48 overflow-y-auto"
+                        className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1 max-h-48 overflow-y-auto"
                       >
                         <button onClick={() => { setSelectedCategory('all'); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allCategories')}</button>
                         {CATEGORIES_LIST.map(cat => (
@@ -1017,21 +1042,21 @@ export default function GroupAnalysisSummary() {
                   </AnimatePresence>
                 </div>
 
-                <div className="relative">
-                  <button 
+                <div className="relative shrink-0">
+                  <button
                     onClick={() => setShowMemberDropdown(!showMemberDropdown)}
-                    className="w-full bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    className="w-32 bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
                   >
                     <span className="truncate">{selectedMember ? selectedMember.displayName : t('analysis.allMembers')}</span>
-                    <span className="material-symbols-outlined text-[16px]">expand_more</span>
+                    <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
                   </button>
                   <AnimatePresence>
                     {showMemberDropdown && (
-                      <motion.div 
+                      <motion.div
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.95 }}
-                        className="absolute left-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1"
+                        className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1"
                       >
                         <button onClick={() => { setSelectedMemberId(null); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allMembers')}</button>
                         {groupMembers.map(m => (
@@ -1044,7 +1069,57 @@ export default function GroupAnalysisSummary() {
                   </AnimatePresence>
                 </div>
               </div>
+            </div>
 
+            {/* Always visible regardless of tab — a filter set on the Trend tab still narrows
+                every other tab's data, so this stays as the one place that signals "something's
+                filtered" and offers a way out of it, wherever you currently are. */}
+            {activeFilterCount > 0 && (
+              <div className="flex items-center justify-between gap-2 bg-primary/5 px-3 py-2 rounded-xl">
+                <p className="text-[10px] font-bold text-primary">
+                  {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'} active
+                </p>
+                <button onClick={clearAllFilters} className="text-[10px] font-black text-primary uppercase tracking-wide hover:underline">
+                  Clear All
+                </button>
+              </div>
+            )}
+
+            <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
+              {([
+                ['trend', 'Trend'],
+                ['categories', 'Categories'],
+                ['groups', 'Groups'],
+                ['members', 'Members'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setAnalysisTab(key)}
+                  className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', analysisTab === key ? 'bg-primary text-white' : 'text-text-muted')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {analysisTab === 'trend' && (
+            <motion.section
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white p-6 rounded-[2rem] border border-border-subtle shadow-sm space-y-4"
+              data-tour="analysis-chart"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-primary">{t('analysis.spendingTrend')}</h2>
+                <button
+                  onClick={() => navigate(buildExpensesLink())}
+                  className="p-2 bg-primary/5 rounded-xl border border-primary/10 text-primary hover:bg-primary/10 transition-all"
+                  title={t('analysis.viewTransactions')}
+                >
+                  <span className="material-symbols-outlined text-[18px]">receipt_long</span>
+                </button>
+              </div>
 
               {/* Responsive Bar Chart — horizontally scrollable so bars/labels never get squished */}
               <div className="h-[250px] w-full pt-4 overflow-x-auto no-scrollbar">
@@ -1052,6 +1127,20 @@ export default function GroupAnalysisSummary() {
                   <div style={{ height: '100%', width: `${Math.max(trendData.length * 64, 320)}px` }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={trendData} margin={{ top: 25, right: 8, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="gradEssential" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#4ADE80" />
+                          <stop offset="100%" stopColor="#16A34A" />
+                        </linearGradient>
+                        <linearGradient id="gradOptional" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#FDE047" />
+                          <stop offset="100%" stopColor="#EAB308" />
+                        </linearGradient>
+                        <linearGradient id="gradIncome" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#60A5FA" />
+                          <stop offset="100%" stopColor="#2563EB" />
+                        </linearGradient>
+                      </defs>
                       <XAxis
                         dataKey="name"
                         fontSize={10}
@@ -1096,9 +1185,9 @@ export default function GroupAnalysisSummary() {
                           whichever segment is ACTUALLY the topmost non-zero one for each specific
                           bar (varies per period), computed via topStackSegment, instead of
                           assuming it's always the same series. */}
-                      <Bar dataKey="essential" stackId="a" fill="#16A34A" barSize={32} name={t('common.essential')} label={makeStackTotalLabel('essential', trendData, currencySymbol)} />
-                      <Bar dataKey="optional" stackId="a" fill="#EAB308" barSize={32} name={t('common.optional')} label={makeStackTotalLabel('optional', trendData, currencySymbol)} />
-                      <Bar dataKey="income" stackId="a" fill="#2563EB" barSize={32} name={t('common.income')} label={makeStackTotalLabel('income', trendData, currencySymbol)} />
+                      <Bar dataKey="essential" stackId="a" fill="url(#gradEssential)" barSize={32} name={t('common.essential')} label={makeStackTotalLabel('essential', trendData, currencySymbol)} />
+                      <Bar dataKey="optional" stackId="a" fill="url(#gradOptional)" barSize={32} name={t('common.optional')} label={makeStackTotalLabel('optional', trendData, currencySymbol)} />
+                      <Bar dataKey="income" stackId="a" fill="url(#gradIncome)" barSize={32} name={t('common.income')} label={makeStackTotalLabel('income', trendData, currencySymbol)} />
                       {timeStep === 'monthly' && selectedGroupId !== 'all' && (
                         <Line
                           dataKey="budget"
@@ -1203,8 +1292,9 @@ export default function GroupAnalysisSummary() {
                 </div>
               </div>
             </motion.section>
+            )}
 
-            {essentialOptionalData.length > 0 && (
+            {analysisTab === 'categories' && essentialOptionalData.length > 0 && (
               <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3 overflow-hidden">
                 <h3 className="font-bold text-primary">Essential vs Optional</h3>
                 {/* Percentage renders INSIDE each slice (positioned at the ring's own mid-radius,
@@ -1250,42 +1340,13 @@ export default function GroupAnalysisSummary() {
               </section>
             )}
 
-            {favoriteExpenses.length > 0 && (
-              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-                <h3 className="font-bold text-primary flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[18px] text-warning" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                  {t('analysis.favoriteExpenses')}
-                </h3>
-                <div className="divide-y divide-border-subtle">
-                  {favoriteExpenses.map((exp) => {
-                    const cat = CATEGORIES_LIST.find((c) => c.id === exp.category);
-                    const expGroup = selectedGroupId === 'all' ? allGroups.find((g) => g.id === exp.groupId) : null;
-                    return (
-                      <div key={exp.id} className="py-2.5 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-base shrink-0">{cat?.icon || '🧾'}</span>
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-on-surface truncate">{exp.description}</p>
-                            <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider">
-                              {parseLocalDate(exp.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                              {expGroup && ` · ${expGroup.name}`}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="text-sm font-bold text-primary shrink-0">
-                          {getCurrencySymbol(expGroup?.currency || groupData?.currency)}{Number(exp.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            )}
-
-            <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Spending by Group - List view */}
-              {selectedGroupId === 'all' && (
-                <motion.div 
+            {analysisTab === 'groups' && (
+              <section>
+              {/* Spending by Group - List view. Only ever has anything to show in the "All
+                  Groups" view (a single selected group has nothing to compare itself against) —
+                  same pre-existing condition as when this shared a 2-column grid with Categories. */}
+              {selectedGroupId === 'all' ? (
+                <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm flex flex-col min-h-[350px]"
@@ -1358,15 +1419,20 @@ export default function GroupAnalysisSummary() {
                     )}
                   </div>
                 </motion.div>
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-text-muted gap-3">
+                  <span className="material-symbols-outlined text-4xl">group_work</span>
+                  <p className="text-sm font-bold text-center max-w-xs">Switch to "All my groups" above to compare spending across your groups.</p>
+                </div>
               )}
+              </section>
+            )}
 
-              <motion.div 
+            {analysisTab === 'categories' && (
+              <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={clsx(
-                  "bg-white p-6 rounded-2xl border border-border-subtle shadow-sm flex flex-col",
-                  selectedGroupId !== 'all' && "md:col-span-1"
-                )}
+                className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm flex flex-col"
               >
                 <div className="flex justify-between items-start mb-6 gap-2">
                   <div className="min-w-0">
@@ -1441,9 +1507,10 @@ export default function GroupAnalysisSummary() {
                   )}
                 </div>
               </motion.div>
-            </section>
+            )}
 
-            <motion.section 
+            {analysisTab === 'members' && (
+            <motion.section
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
@@ -1543,8 +1610,9 @@ export default function GroupAnalysisSummary() {
                 })}
               </div>
             </motion.section>
+            )}
 
-            {selectedGroupId && selectedGroupId !== 'all' && (
+            {analysisTab === 'trend' && selectedGroupId && selectedGroupId !== 'all' && (
               <motion.section
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}

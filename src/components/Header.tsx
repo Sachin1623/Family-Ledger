@@ -243,6 +243,30 @@ export default function Header() {
                       Open in new window
                     </button>
                   )}
+                  {user && !shopMode && (
+                    <>
+                      <div className="border-t border-border-subtle my-1" />
+                      {/* Quick jumps into Tools.tsx's own category tabs — deep-links via
+                          ?category=, read by Tools.tsx's live (not mount-only) searchParams
+                          effect so this works even when already sitting on /tools. */}
+                      {[
+                        { key: 'games', label: t('nav.games'), icon: 'sports_esports' },
+                        { key: 'health', label: t('nav.health'), icon: 'favorite' },
+                        { key: 'productivity', label: t('nav.productivity'), icon: 'checklist' },
+                        { key: 'finance', label: t('nav.finance'), icon: 'payments' },
+                        { key: 'social', label: t('nav.social'), icon: 'group' },
+                      ].map((cat) => (
+                        <button
+                          key={cat.key}
+                          onClick={() => { setMenuOpen(false); navigate(`/tools?category=${cat.key}`); }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                        >
+                          <span className="material-symbols-outlined text-[20px] text-text-muted">{cat.icon}</span>
+                          {cat.label}
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               </>
             )}

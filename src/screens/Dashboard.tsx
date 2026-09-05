@@ -35,6 +35,7 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 // brand new group, or one from before this feature existed, is collapsed until the user
 // explicitly expands it.
 const EXPANDED_STORAGE_KEY = 'familyledger_expanded_groups';
+const AVATAR_STACK_CAP = 4;
 
 function loadExpandedGroups(): Set<string> {
   try {
@@ -694,69 +695,81 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
           </div>
         </div>
 
-        {/* Action icons — same row, same sizing, always. */}
-        <div className="flex items-center gap-0.5 justify-start">
-          <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="p-2 hover:bg-primary/10 rounded-full transition-colors">
-            <span className="text-[22px] leading-none block">➕</span>
-          </button>
-          <span className="w-px h-5 bg-border-subtle mx-0.5 shrink-0" />
-          <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="p-2 rounded-full transition-colors hover:bg-primary/10">
-            <span className="text-[18px] leading-none block">{poked ? '✅' : '✋'}</span>
-          </button>
-          <span onClick={(e) => e.stopPropagation()}>
-            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="hover:bg-primary/10 rounded-full" />
-          </span>
-          <span className="w-px h-5 bg-border-subtle mx-0.5 shrink-0" />
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="p-2 hover:bg-primary/10 rounded-full transition-colors">
-            <span className="text-[18px] leading-none block">📊</span>
-          </button>
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="p-2 hover:bg-primary/10 rounded-full transition-colors">
-            <span className="text-[18px] leading-none block">🧾</span>
-          </button>
-          <span className="w-px h-5 bg-border-subtle mx-0.5 shrink-0" />
+        {/* Action row — labeled icon "bubbles" (colored background per action, short caption
+            below) instead of the old bare icon-only buttons, plus the month picker set apart on
+            the right in its own pill. Same 5 actions, same handlers/tooltips as before — purely a
+            visual redesign (inspired by a reference screenshot), not a functional change. */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+              <span className="w-9 h-9 rounded-2xl bg-violet-100 flex items-center justify-center text-base">➕</span>
+              <span className="text-[9px] font-bold text-text-muted">Add</span>
+            </button>
+            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+              <span className="w-9 h-9 rounded-2xl bg-amber-100 flex items-center justify-center text-base">{poked ? '✅' : '✋'}</span>
+              <span className="text-[9px] font-bold text-text-muted">Poke</span>
+            </button>
+            <span onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1 px-1 py-0.5">
+              <span className="relative w-9 h-9 rounded-2xl bg-pink-100 flex items-center justify-center">
+                <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
+              </span>
+              <span className="text-[9px] font-bold text-text-muted">Chat</span>
+            </span>
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+              <span className="w-9 h-9 rounded-2xl bg-blue-100 flex items-center justify-center text-base">📊</span>
+              <span className="text-[9px] font-bold text-text-muted">Trends</span>
+            </button>
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex flex-col items-center gap-1 px-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+              <span className="w-9 h-9 rounded-2xl bg-teal-100 flex items-center justify-center text-base">🧾</span>
+              <span className="text-[9px] font-bold text-text-muted">Report</span>
+            </button>
+          </div>
+
           {/* Month picker — every stat below this row (Latest Spend, budget bar, Income/Expense/
               Net) is scoped to whichever month is selected here, not always "the real current
               month". Local to this card, never persisted — a fresh page load (or just navigating
               away and back) always starts back on the actual current month, exactly like every
               stat here worked before this existed. Capped from stepping past the real current
               month — there's nothing to show for a month that hasn't happened yet. */}
-          <button onClick={stopAnd(() => stepMonth(-1))} title={t('dashboard.previousMonth')} className="p-1.5 hover:bg-primary/10 rounded-full transition-colors text-text-muted shrink-0">
-            <span className="material-symbols-outlined text-[16px] block">chevron_left</span>
-          </button>
-          <button
-            onClick={stopAnd(() => setSelectedMonthKey(todayMonthKey))}
-            disabled={isCurrentMonth}
-            title={isCurrentMonth ? undefined : t('dashboard.backToCurrentMonth')}
-            className={clsx('text-[11px] font-bold px-0.5 shrink-0 whitespace-nowrap', isCurrentMonth ? 'text-text-muted' : 'text-primary underline decoration-dotted')}
-          >
-            {monthLabel}
-          </button>
-          <button
-            onClick={stopAnd(() => stepMonth(1))}
-            disabled={isCurrentMonth}
-            title={t('dashboard.nextMonth')}
-            className="p-1.5 hover:bg-primary/10 rounded-full transition-colors text-text-muted shrink-0 disabled:opacity-30 disabled:pointer-events-none"
-          >
-            <span className="material-symbols-outlined text-[16px] block">chevron_right</span>
-          </button>
+          <div className="flex items-center gap-0.5 bg-surface-container/50 rounded-full pl-1 pr-1.5 py-1 shrink-0">
+            <button onClick={stopAnd(() => stepMonth(-1))} title={t('dashboard.previousMonth')} className="p-1 hover:bg-white rounded-full transition-colors text-text-muted shrink-0">
+              <span className="material-symbols-outlined text-[16px] block">chevron_left</span>
+            </button>
+            <button
+              onClick={stopAnd(() => setSelectedMonthKey(todayMonthKey))}
+              disabled={isCurrentMonth}
+              title={isCurrentMonth ? undefined : t('dashboard.backToCurrentMonth')}
+              className={clsx('text-[11px] font-bold px-0.5 shrink-0 whitespace-nowrap', isCurrentMonth ? 'text-on-surface' : 'text-primary underline decoration-dotted')}
+            >
+              {monthLabel}
+            </button>
+            <button
+              onClick={stopAnd(() => stepMonth(1))}
+              disabled={isCurrentMonth}
+              title={t('dashboard.nextMonth')}
+              className="p-1 hover:bg-white rounded-full transition-colors text-text-muted shrink-0 disabled:opacity-30 disabled:pointer-events-none"
+            >
+              <span className="material-symbols-outlined text-[16px] block">chevron_right</span>
+            </button>
+          </div>
         </div>
 
-        {/* Budget bar — same layout, always. */}
+        {/* Budget card — label+amount and the percent now share one row (was a label above a bar
+            with the percent floating over whatever point the fill happened to reach) — simpler,
+            and matches a reference layout: BUDGET amount top-left, percent top-right, spent/
+            remaining below the bar. Same budgetStatus math/thresholds as before throughout. */}
         {budgetStatus && (
-          <div className="space-y-1">
-            <div className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">
-              {t('common.budget')} {currencySymbol}{formatAmountCompact(budget.amount, group?.currency)}
-            </div>
-            <div className="relative pt-3.5">
-              <span
-                className={clsx('absolute -top-0.5 -translate-x-1/2 text-[10px] font-black whitespace-nowrap', budgetStatus.textClass)}
-                style={{ left: `${Math.min(92, Math.max(8, Math.min(100, budgetStatus.percent)))}%` }}
-              >
+          <div className="bg-surface-container/40 rounded-2xl p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">
+                {t('common.budget')} {currencySymbol}{formatAmountCompact(budget.amount, group?.currency)}
+              </span>
+              <span className={clsx('text-xs font-black shrink-0', budgetStatus.textClass)}>
                 {Math.round(budgetStatus.percent)}%
               </span>
-              <div className="h-1.5 bg-surface rounded-full overflow-hidden">
-                <div className={clsx('h-full rounded-full transition-all', budgetStatus.barClass)} style={{ width: `${Math.min(100, budgetStatus.percent)}%` }} />
-              </div>
+            </div>
+            <div className="h-1.5 bg-surface rounded-full overflow-hidden">
+              <div className={clsx('h-full rounded-full transition-all', budgetStatus.barClass)} style={{ width: `${Math.min(100, budgetStatus.percent)}%` }} />
             </div>
             <div className="flex items-center justify-between gap-2 text-[9px] text-text-muted font-bold">
               <span className="truncate">{t('common.spent')} {currencySymbol}{formatAmountCompact(monthExpense, group?.currency)}</span>
@@ -901,84 +914,94 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
           </div>
         </motion.div>
 
-        {/* Footer — avatars + month totals, same layout, always. */}
-        <div className="pt-4 border-t border-gray-50 space-y-3">
-          <div className="flex -space-x-2">
-            {members.slice(0, 3).map((member: any, i: number) => (
-              <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-surface-container-high overflow-hidden shrink-0">
-                {member.photoURL ? (
-                  <img src={member.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-[10px] font-bold">
-                    {member.displayName?.slice(0, 1)}
+        {/* Footer — a narrow 20% column of overlapping member avatars (icons only, no names —
+            back to the original stacked-avatar look) beside an 80% column carrying the month
+            stat tiles and the last-month summary, instead of stacking member chips above the
+            stats full-width. pt-2 (not pt-4) — when Latest Spend is collapsed, its own space-y-2
+            sibling margins already add gap around its now-invisible 0-height div, so a full pt-4
+            here on top of that stacked into a visibly oversized gap between the budget card and
+            this row. */}
+        <div className="pt-2 border-t border-gray-50 flex items-start gap-2">
+          <div className="w-1/5 shrink-0 flex items-center pt-1">
+            <div className="flex -space-x-2.5">
+              {members.slice(0, AVATAR_STACK_CAP).map((member: any, i: number) => (
+                <div
+                  key={i}
+                  className="w-7 h-7 rounded-full border-2 border-white bg-surface-container-high overflow-hidden shrink-0"
+                  style={{ zIndex: AVATAR_STACK_CAP - i }}
+                >
+                  {member.photoURL ? (
+                    <img src={member.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-[10px] font-bold">
+                      {member.displayName?.slice(0, 1)}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {members.length > AVATAR_STACK_CAP && (
+                <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-container flex items-center justify-center text-[9px] font-bold text-text-muted shrink-0">
+                  +{members.length - AVATAR_STACK_CAP}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="w-4/5 min-w-0 space-y-2">
+            {group?.incomeEnabled ? (
+              <>
+                {/* Tinted rounded tiles instead of a plain 3-column text grid — same numbers, more
+                    visually distinct at a glance. */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  <div className="bg-[#0F7A38]/10 rounded-xl py-2 px-1 text-center">
+                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
+                    <p className="text-sm font-bold text-[#0F7A38] truncate">
+                      {currencySymbol}{monthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
                   </div>
+                  <div className="bg-primary/5 rounded-xl py-2 px-1 text-center">
+                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
+                    <p className="text-sm font-bold text-primary truncate">
+                      {currencySymbol}{monthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                  <div className={clsx('rounded-xl py-2 px-1 text-center', monthIncome >= monthExpense ? 'bg-success/10' : 'bg-error/10')}>
+                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">
+                      {monthIncome >= monthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}
+                    </p>
+                    <p className={clsx('text-sm font-bold truncate', monthIncome >= monthExpense ? 'text-success' : 'text-error')}>
+                      {currencySymbol}{Math.abs(monthIncome - monthExpense).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                </div>
+                {/* Event groups (one-off trips/parties) don't have a meaningful "previous month" —
+                    there's no month-over-month cadence to compare against. Collapsed into one
+                    compact line (was its own 3-column grid) — same numbers, less vertical space. */}
+                {!isEventGroup && (
+                  <p className="text-[9px] text-text-muted font-bold text-center truncate">
+                    Last Mo. {t('common.income')}: {currencySymbol}{previousMonthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {' · '}{t('common.expense')}: {currencySymbol}{previousMonthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {' · '}{previousMonthIncome >= previousMonthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}: {currencySymbol}
+                    {Math.abs(previousMonthIncome - previousMonthExpense).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </p>
                 )}
-              </div>
-            ))}
-            {members.length > 3 && (
-              <div className="w-8 h-8 rounded-full border-2 border-white bg-primary text-[10px] text-white flex items-center justify-center font-bold shrink-0">
-                +{members.length - 3}
+              </>
+            ) : (
+              <div className="flex items-center justify-between gap-2">
+                {!isEventGroup ? (
+                  <p className="text-[9px] text-text-muted font-bold uppercase tracking-wider truncate">
+                    {t('dashboard.lastMonth', { amount: `${currencySymbol}${previousMonthSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
+                  </p>
+                ) : <span />}
+                <div className="bg-primary/5 rounded-xl px-3 py-1.5 text-right shrink-0">
+                  <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">This Month</p>
+                  <p className="text-base font-bold text-primary">
+                    {currencySymbol}{monthSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
               </div>
             )}
           </div>
-
-          {group?.incomeEnabled ? (
-            <>
-              <div className="grid grid-cols-3 gap-1 text-center">
-                <div>
-                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
-                  <p className="text-sm font-bold text-[#0F7A38]">
-                    {currencySymbol}{monthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
-                  <p className="text-sm font-bold text-primary">
-                    {currencySymbol}{monthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-wider">
-                    {monthIncome >= monthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}
-                  </p>
-                  <p className={clsx('text-sm font-bold', monthIncome >= monthExpense ? 'text-success' : 'text-error')}>
-                    {currencySymbol}{Math.abs(monthIncome - monthExpense).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </p>
-                </div>
-              </div>
-              {/* Event groups (one-off trips/parties) don't have a meaningful "previous month" —
-                  there's no month-over-month cadence to compare against. */}
-              {!isEventGroup && (
-                <div className="grid grid-cols-3 gap-1 text-center opacity-60">
-                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">
-                    {t('dashboard.lastMoIncome', { amount: `${currencySymbol}${previousMonthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
-                  </p>
-                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">
-                    {t('common.expense')}: {currencySymbol}{previousMonthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </p>
-                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">
-                    {previousMonthIncome >= previousMonthExpense
-                      ? `${t('common.netIncomeLabel')} ${currencySymbol}${(previousMonthIncome - previousMonthExpense).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                      : `${t('common.netExpenseLabel')} ${currencySymbol}${(previousMonthExpense - previousMonthIncome).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-                  </p>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="flex items-center justify-between">
-              {!isEventGroup ? (
-                <p className="text-[9px] text-text-muted font-bold uppercase tracking-wider">
-                  {t('dashboard.lastMonth', { amount: `${currencySymbol}${previousMonthSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
-                </p>
-              ) : <span />}
-              <div className="text-right">
-                <p className="text-[11px] text-text-muted uppercase font-bold tracking-wider">This Month</p>
-                <p className="text-lg font-bold text-primary">
-                  {currencySymbol}{monthSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </motion.div>

@@ -37,7 +37,7 @@ import ImageLightbox from '../components/ImageLightbox';
 // src/lib/accountAllocations.ts's applyAccountChange() — see its own header comment for why that's
 // the only place this ever happens. Every save also writes one entry to this account's own
 // financialAccounts/{id}/log subcollection — the "History" button below shows it.
-export default function AccountsHub() {
+export default function AccountsHub({ embedded = false }: { embedded?: boolean } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -489,13 +489,15 @@ export default function AccountsHub() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-primary">{t('accounts.title')}</h1>
-        <button onClick={() => navigate(-1)} className="p-2 text-text-muted hover:bg-surface rounded-full">
-          <span className="material-symbols-outlined text-[20px] block">close</span>
-        </button>
-      </div>
+    <div className={embedded ? 'space-y-5' : 'p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32'}>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-primary">{t('accounts.title')}</h1>
+          <button onClick={() => navigate(-1)} className="p-2 text-text-muted hover:bg-surface rounded-full">
+            <span className="material-symbols-outlined text-[20px] block">close</span>
+          </button>
+        </div>
+      )}
 
       <button type="button" onClick={() => setShowInfo(true)} className="w-full flex items-center gap-1.5 text-[11px] font-bold text-primary px-1">
         <span className="material-symbols-outlined text-[15px]">info</span>

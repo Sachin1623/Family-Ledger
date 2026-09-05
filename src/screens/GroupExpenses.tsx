@@ -6,7 +6,7 @@ import { collection, query, where, orderBy, doc, setDoc, updateDoc, deleteDoc, d
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS, getCategoryClassification, CategoryClassification } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS, getCategoryClassification, CategoryClassification, getGroupCategories, getCategoryNameOverride, getCategoryIcon } from '../lib/constants';
 import { updateGlobalStats } from '../services/statsService';
 import Comments from '../components/Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
@@ -152,6 +152,25 @@ export default function GroupExpenses() {
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue, groupId, allGroups]);
 
+  // Category filter dropdown's option list — group-aware (hides what a group's admin hid, includes
+  // its custom categories). In "all my groups" mode there's no single group to scope to, so it's
+  // the union of every group's effective list instead, de-duped by id (custom ids are random so
+  // cross-group collisions can't happen — see makeCustomCategoryId).
+  const filterCategoryOptions = useMemo(() => {
+    if (groupId === 'all') {
+      const map = new Map<string, { id: string; name: string; icon: string }>();
+      allGroups.forEach((g: any) => getGroupCategories(g, 'expense').forEach((c) => { if (!map.has(c.id)) map.set(c.id, c); }));
+      return Array.from(map.values());
+    }
+    return getGroupCategories(groupData, 'expense');
+  }, [groupId, allGroups, groupData]);
+  const filterCategoryLabel = (cat: { id: string; name: string }) => {
+    const isBuiltIn = EXPENSE_CATEGORIES.some((c) => c.id === cat.id) || INCOME_CATEGORIES.some((c) => c.id === cat.id);
+    if (!isBuiltIn) return cat.name;
+    if (groupId !== 'all') return getCategoryNameOverride(groupData, cat.id) || t(`category.${cat.id}`);
+    return t(`category.${cat.id}`);
+  };
+
   // Live remaining-budget preview while editing — same idea as AddExpense.tsx's, but this
   // expense's OWN current amount must be excluded from monthSpendSoFar/categorySpendSoFar first
   // (it's already counted in the group's historical totals), or the preview would double-subtract
@@ -265,6 +284,22 @@ export default function GroupExpenses() {
       return matchesSearch && matchesMember && matchesCategory && matchesType && matchesDate && matchesMonth && matchesYear && matchesClassification;
     });
   }, [allExpenses, searchTerm, selectedMemberId, selectedCategory, selectedType, startDate, endDate, selectedMonths, selectedYears, selectedClassification, allGroups, members]);
+
+  // Client-side pagination — the underlying query has no server-side limit/cursor (it's a live
+  // listener feeding heavy client-side search/member/category/date filters), so "50 at a time" is
+  // just a slice of the already-filtered, already-sorted array. Reset to page 1 whenever any filter
+  // changes so the user isn't left staring at an empty later page after narrowing the results.
+  const EXPENSES_PAGE_SIZE = 50;
+  const [expensesPage, setExpensesPage] = useState(0);
+  useEffect(() => {
+    setExpensesPage(0);
+  }, [searchTerm, selectedMemberId, selectedCategory, selectedType, startDate, endDate, selectedMonths, selectedYears, selectedClassification, groupId, selectedGroupIdFilter]);
+  const totalExpensePages = Math.max(1, Math.ceil(filteredExpenses.length / EXPENSES_PAGE_SIZE));
+  const currentExpensePage = Math.min(expensesPage, totalExpensePages - 1);
+  const pagedExpenses = useMemo(
+    () => filteredExpenses.slice(currentExpensePage * EXPENSES_PAGE_SIZE, (currentExpensePage + 1) * EXPENSES_PAGE_SIZE),
+    [filteredExpenses, currentExpensePage],
+  );
 
   // Two-line summary above the table — always both totals (not just whichever `selectedType` is
   // active), computed from the SAME filtered set the table itself shows, so it reflects every
@@ -797,8 +832,8 @@ export default function GroupExpenses() {
                   className="w-full bg-surface-container border border-border-subtle rounded-lg pl-3 pr-8 py-2 text-xs font-bold text-primary appearance-none focus:ring-0 outline-none"
                 >
                   <option value="">{t('groupExpenses.all')}</option>
-                  {CATEGORIES.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{t(`category.${cat.id}`)}</option>
+                  {filterCategoryOptions.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{filterCategoryLabel(cat)}</option>
                   ))}
                 </select>
                 <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-lg pointer-events-none">expand_more</span>
@@ -888,8 +923,8 @@ export default function GroupExpenses() {
           </div>
 
           <div className="divide-y divide-border-subtle">
-            {filteredExpenses.length > 0 ? (
-              filteredExpenses.map((expense: any) => {
+            {pagedExpenses.length > 0 ? (
+              pagedExpenses.map((expense: any) => {
                 const payer = members.find(m => m.userId === expense.paidBy);
                 const isIncomeRow = expense.type === 'income';
                 const category = (isIncomeRow ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === expense.category);
@@ -953,8 +988,8 @@ export default function GroupExpenses() {
                       </div>
                       <div className="flex flex-col gap-1 mt-1">
                         <div className="flex items-center gap-1 text-text-muted">
-                          <span className="text-[10px]">{category?.icon || '🧾'}</span>
-                          <span className="text-[9px] font-bold uppercase tracking-wider">{category?.name || 'Uncategorized'}</span>
+                          <span className="text-[10px]">{getCategoryIcon(group, expense.category, isIncomeRow ? 'income' : 'expense')}</span>
+                          <span className="text-[9px] font-bold uppercase tracking-wider">{getCategoryNameOverride(group, expense.category) || category?.name || 'Uncategorized'}</span>
                           {expense.images?.length > 0 && (
                             <span className="material-symbols-outlined text-[11px] text-text-muted/70" title="Has a photo">photo_camera</span>
                           )}
@@ -1007,22 +1042,60 @@ export default function GroupExpenses() {
             )}
           </div>
 
-          {/* Pagination Mock */}
-          <div className="px-6 py-4 flex flex-col items-center gap-4 border-t border-border-subtle bg-surface-container-low">
-            <p className="text-xs text-text-muted font-bold uppercase tracking-widest">
-              {t('groupExpenses.showing')} <span className="text-primary">{Math.min(1, filteredExpenses.length)}-{filteredExpenses.length}</span> {t('common.of')} {filteredExpenses.length}
-            </p>
-            <div className="flex gap-2 w-full">
-               <button className="flex-1 py-3 px-4 rounded-xl border border-border-subtle bg-white text-sm font-bold text-text-muted flex items-center justify-center gap-2 hover:bg-surface transition-colors active:scale-95 shadow-sm">
-                 <span className="material-symbols-outlined text-[18px]">chevron_left</span>
-                 {t('common.prev')}
-               </button>
-               <button className="flex-1 py-3 px-4 rounded-xl border border-border-subtle bg-white text-sm font-bold text-primary flex items-center justify-center gap-2 hover:bg-surface transition-colors active:scale-95 shadow-sm">
-                 {t('common.next')}
-                 <span className="material-symbols-outlined text-[18px]">chevron_right</span>
-               </button>
+          {/* Pagination — 50 rows per page over the already-filtered/sorted array. */}
+          {filteredExpenses.length > 0 && (
+            <div className="px-6 py-4 flex flex-col items-center gap-4 border-t border-border-subtle bg-surface-container-low">
+              <p className="text-xs text-text-muted font-bold uppercase tracking-widest">
+                {t('groupExpenses.showing')}{' '}
+                <span className="text-primary">
+                  {currentExpensePage * EXPENSES_PAGE_SIZE + 1}-{currentExpensePage * EXPENSES_PAGE_SIZE + pagedExpenses.length}
+                </span>{' '}
+                {t('common.of')} {filteredExpenses.length}
+              </p>
+              <div className="flex gap-2 w-full">
+                {totalExpensePages > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setExpensesPage(0)}
+                    disabled={currentExpensePage === 0}
+                    title={t('common.first')}
+                    className="w-11 py-3 rounded-xl border border-border-subtle bg-white text-text-muted flex items-center justify-center hover:bg-surface transition-colors active:scale-95 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">first_page</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setExpensesPage((p) => Math.max(0, p - 1))}
+                  disabled={currentExpensePage === 0}
+                  className="flex-1 py-3 px-4 rounded-xl border border-border-subtle bg-white text-sm font-bold text-text-muted flex items-center justify-center gap-2 hover:bg-surface transition-colors active:scale-95 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100"
+                >
+                  <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                  {t('common.prev')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpensesPage((p) => Math.min(totalExpensePages - 1, p + 1))}
+                  disabled={currentExpensePage >= totalExpensePages - 1}
+                  className="flex-1 py-3 px-4 rounded-xl border border-border-subtle bg-white text-sm font-bold text-primary flex items-center justify-center gap-2 hover:bg-surface transition-colors active:scale-95 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100"
+                >
+                  {t('common.next')}
+                  <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                </button>
+                {totalExpensePages > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setExpensesPage(totalExpensePages - 1)}
+                    disabled={currentExpensePage >= totalExpensePages - 1}
+                    title={t('common.last')}
+                    className="w-11 py-3 rounded-xl border border-border-subtle bg-white text-primary flex items-center justify-center hover:bg-surface transition-colors active:scale-95 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">last_page</span>
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </section>
       </main>
 
@@ -1455,7 +1528,7 @@ export default function GroupExpenses() {
                     )}
                   </div>
                   <div className="grid grid-cols-5 gap-1.5">
-                    {(editingExpense.type === 'income' ? INCOME_CATEGORIES : CATEGORIES).map(c => (
+                    {getGroupCategories(allGroups.find(g => g.id === editingExpense.groupId), editingExpense.type === 'income' ? 'income' : 'expense').map(c => (
                       <button
                         key={c.id}
                         type="button"
@@ -1467,7 +1540,7 @@ export default function GroupExpenses() {
                       >
                         <span className="text-[15px] leading-none">{c.icon}</span>
                         <span className="text-[9px] font-bold uppercase truncate w-full px-0.5 text-center leading-tight">
-                          {t(`${editingExpense.type === 'income' ? 'income' : 'category'}.${c.id}`)}
+                          {getCategoryNameOverride(allGroups.find(g => g.id === editingExpense.groupId), c.id) || t(`${editingExpense.type === 'income' ? 'income' : 'category'}.${c.id}`)}
                         </span>
                       </button>
                     ))}

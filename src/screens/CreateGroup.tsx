@@ -10,7 +10,7 @@ import { updateGlobalStats } from '../services/statsService';
 import { fireWrite } from '../lib/offlineWrite';
 import { resizeImageFile } from '../lib/imageUtils';
 
-import { CURRENCY_SYMBOLS } from '../lib/constants';
+import { CURRENCY_SYMBOLS, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CustomCategory, makeCustomCategoryId } from '../lib/constants';
 import { GROUP_ICONS } from '../lib/groupIcons';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -30,8 +30,29 @@ export default function CreateGroup() {
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [incomeEnabled, setIncomeEnabled] = useState(false);
   const [groupType, setGroupType] = useState<'regular' | 'event'>('regular');
+  const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
+  const [newExpenseCatIcon, setNewExpenseCatIcon] = useState('🏷️');
+  const [newExpenseCatName, setNewExpenseCatName] = useState('');
+  const [newIncomeCatIcon, setNewIncomeCatIcon] = useState('🏷️');
+  const [newIncomeCatName, setNewIncomeCatName] = useState('');
 
   const ICONS = GROUP_ICONS;
+
+  const toggleHiddenCategory = (categoryId: string) => {
+    setHiddenCategories((prev) => (prev.includes(categoryId) ? prev.filter((id) => id !== categoryId) : [...prev, categoryId]));
+  };
+  const addCustomCategory = (type: 'expense' | 'income') => {
+    const trimmedName = (type === 'expense' ? newExpenseCatName : newIncomeCatName).trim();
+    if (!trimmedName) return;
+    const trimmedIcon = (type === 'expense' ? newExpenseCatIcon : newIncomeCatIcon).trim() || '🏷️';
+    setCustomCategories((prev) => [...prev, { id: makeCustomCategoryId(), name: trimmedName, icon: trimmedIcon, type }]);
+    if (type === 'expense') { setNewExpenseCatName(''); setNewExpenseCatIcon('🏷️'); }
+    else { setNewIncomeCatName(''); setNewIncomeCatIcon('🏷️'); }
+  };
+  const removeCustomCategory = (categoryId: string) => {
+    setCustomCategories((prev) => prev.filter((c) => c.id !== categoryId));
+  };
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -73,6 +94,8 @@ export default function CreateGroup() {
         splitEnabled,
         incomeEnabled,
         groupType,
+        ...(hiddenCategories.length > 0 && { hiddenCategories }),
+        ...(customCategories.length > 0 && { customCategories }),
         createdBy: user.uid,
         createdAt: new Date().toISOString(),
         totalSpending: 0,
@@ -202,6 +225,109 @@ export default function CreateGroup() {
                   ))}
                 </div>
               </div>
+              <div className="space-y-2.5 pt-2 border-t border-border-subtle">
+                <div>
+                  <label className="text-[11px] text-text-muted px-1 font-bold block">{t('createGroup.categoriesTitle')}</label>
+                  <p className="text-[10px] text-text-muted px-1">{t('createGroup.categoriesSubtitle')}</p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {EXPENSE_CATEGORIES.map((cat) => {
+                    const hidden = hiddenCategories.includes(cat.id);
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => toggleHiddenCategory(cat.id)}
+                        className={clsx(
+                          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-bold transition-all',
+                          hidden ? 'bg-surface-container/40 text-text-muted border-border-subtle line-through opacity-60' : 'bg-white text-on-surface border-border-subtle',
+                        )}
+                      >
+                        <span>{cat.icon}</span>{t(`category.${cat.id}`)}
+                      </button>
+                    );
+                  })}
+                  {customCategories.filter((c) => c.type === 'expense').map((cat) => (
+                    <div key={cat.id} className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-[11px] font-bold text-primary">
+                      <span>{cat.icon}</span>{cat.name}
+                      <button type="button" onClick={() => removeCustomCategory(cat.id)} className="w-4 h-4 flex items-center justify-center text-primary/60 hover:text-primary">
+                        <span className="material-symbols-outlined text-[13px]">close</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={newExpenseCatIcon}
+                    onChange={(e) => setNewExpenseCatIcon(e.target.value)}
+                    maxLength={4}
+                    className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
+                    placeholder="🏷️"
+                  />
+                  <input
+                    value={newExpenseCatName}
+                    onChange={(e) => setNewExpenseCatName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCategory('expense'); } }}
+                    className="flex-1 h-8 px-2.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    placeholder={t('createGroup.addCategoryPlaceholder')}
+                  />
+                  <button type="button" onClick={() => addCustomCategory('expense')} className="h-8 px-3 rounded-lg bg-primary text-white text-[11px] font-bold shrink-0">
+                    {t('common.add')}
+                  </button>
+                </div>
+
+                {incomeEnabled && (
+                  <div className="space-y-2.5 pt-2">
+                    <label className="text-[11px] text-text-muted px-1 font-bold block">{t('createGroup.incomeCategoriesTitle')}</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {INCOME_CATEGORIES.map((cat) => {
+                        const hidden = hiddenCategories.includes(cat.id);
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => toggleHiddenCategory(cat.id)}
+                            className={clsx(
+                              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-bold transition-all',
+                              hidden ? 'bg-surface-container/40 text-text-muted border-border-subtle line-through opacity-60' : 'bg-white text-on-surface border-border-subtle',
+                            )}
+                          >
+                            <span>{cat.icon}</span>{t(`income.${cat.id}`)}
+                          </button>
+                        );
+                      })}
+                      {customCategories.filter((c) => c.type === 'income').map((cat) => (
+                        <div key={cat.id} className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-[11px] font-bold text-primary">
+                          <span>{cat.icon}</span>{cat.name}
+                          <button type="button" onClick={() => removeCustomCategory(cat.id)} className="w-4 h-4 flex items-center justify-center text-primary/60 hover:text-primary">
+                            <span className="material-symbols-outlined text-[13px]">close</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={newIncomeCatIcon}
+                        onChange={(e) => setNewIncomeCatIcon(e.target.value)}
+                        maxLength={4}
+                        className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
+                        placeholder="🏷️"
+                      />
+                      <input
+                        value={newIncomeCatName}
+                        onChange={(e) => setNewIncomeCatName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCategory('income'); } }}
+                        className="flex-1 h-8 px-2.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                        placeholder={t('createGroup.addCategoryPlaceholder')}
+                      />
+                      <button type="button" onClick={() => addCustomCategory('income')} className="h-8 px-3 rounded-lg bg-primary text-white text-[11px] font-bold shrink-0">
+                        {t('common.add')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-4 pt-2 border-t border-border-subtle">
                 <div className="space-y-1">
                   <label className="text-[11px] text-text-muted px-1 font-bold">{t('createGroup.groupType')}</label>

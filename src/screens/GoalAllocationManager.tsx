@@ -18,7 +18,7 @@ import { applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
 // inside each account's own edit form. Every edit goes through the same applyAccountChange() used
 // everywhere else an account's allocations change, so it's logged identically (that account's own
 // History) and subject to the same reserve-on-target-met capping.
-export default function GoalAllocationManager() {
+export default function GoalAllocationManager({ embedded = false }: { embedded?: boolean } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -90,14 +90,16 @@ export default function GoalAllocationManager() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-primary">{t('goals.allocationManagerTitle')}</h1>
-        <button onClick={() => navigate(-1)} className="p-2 text-text-muted hover:bg-surface rounded-full">
-          <span className="material-symbols-outlined text-[20px] block">close</span>
-        </button>
-      </div>
-      <p className="text-xs text-text-muted -mt-3">{t('goals.allocationManagerSubtitle')}</p>
+    <div className={embedded ? 'space-y-5' : 'p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32'}>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-primary">{t('goals.allocationManagerTitle')}</h1>
+          <button onClick={() => navigate(-1)} className="p-2 text-text-muted hover:bg-surface rounded-full">
+            <span className="material-symbols-outlined text-[20px] block">close</span>
+          </button>
+        </div>
+      )}
+      <p className={clsx('text-xs text-text-muted', !embedded && '-mt-3')}>{t('goals.allocationManagerSubtitle')}</p>
 
       {goals.length === 0 ? (
         <p className="text-sm text-text-muted text-center py-8">{t('goals.noActiveGoalsForAllocation')}</p>

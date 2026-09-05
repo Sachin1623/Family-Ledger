@@ -24,6 +24,8 @@ import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 import { clearGoalFromAllAccounts } from '../lib/accountAllocations';
 import { useFxRates, fetchFxRates, convertBucketsToCurrency } from '../lib/fx';
 import { computeNetSavingsBuckets } from '../lib/netSavings';
+import AccountsHub from './AccountsHub';
+import GoalAllocationManager from './GoalAllocationManager';
 
 // Goals Dashboard — the home hub. Net savings is the user's own, AGGREGATED ACROSS EVERY GROUP
 // THEY BELONG TO for the current month (not scoped to any single group — see the header comment
@@ -47,6 +49,7 @@ export default function GoalsHub() {
   // with groups that are no longer really "yours" day to day.
   const activeGroupIds = useMemo(() => groups.filter((g: any) => !g.archived).map((g: any) => g.id), [groups]);
 
+  const [goalsTab, setGoalsTab] = useState<'goals' | 'accounts' | 'allocation'>('goals');
   const [showAccountsHelp, setShowAccountsHelp] = useState(false);
 
   // A default currency for new goals — the user's first/most-used group's currency, since there's
@@ -482,21 +485,56 @@ export default function GoalsHub() {
           <h1 className="text-2xl font-bold text-primary">{t('goals.hubTitle')}</h1>
           <p className="text-xs text-text-muted">{t('goals.hubSubtitle')}</p>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button type="button" onClick={() => navigate('/goals/reports')} className="w-10 h-10 rounded-xl border border-border-subtle text-primary flex items-center justify-center hover:bg-surface-container">
-            <span className="material-symbols-outlined text-[20px]">insights</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/goals/new')}
-            className="bg-primary text-white px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all text-sm"
-          >
-            <span className="material-symbols-outlined text-[18px]">add</span>
-            {t('goals.newGoal')}
-          </button>
-        </div>
+        {goalsTab === 'goals' && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button type="button" onClick={() => navigate('/goals/reports')} className="w-10 h-10 rounded-xl border border-border-subtle text-primary flex items-center justify-center hover:bg-surface-container">
+              <span className="material-symbols-outlined text-[20px]">insights</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/goals/new')}
+              className="bg-primary text-white px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all text-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">add</span>
+              {t('goals.newGoal')}
+            </button>
+          </div>
+        )}
       </div>
 
+      <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
+        {([
+          { key: 'goals', label: t('goals.hubTitle') },
+          { key: 'accounts', label: t('accounts.title') },
+          { key: 'allocation', label: t('goals.manageAllocation') },
+        ] as const).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setGoalsTab(tab.key)}
+            className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', goalsTab === tab.key ? 'bg-primary text-white' : 'text-text-muted')}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {goalsTab === 'accounts' && (
+        <>
+          <button
+            type="button" onClick={() => setShowAccountsHelp(true)}
+            className="flex items-center gap-1.5 text-[11px] font-bold text-primary px-1"
+          >
+            <span className="material-symbols-outlined text-[15px]">help</span>
+            {t('goals.accountsHelpTitle')}
+          </button>
+          <AccountsHub embedded />
+        </>
+      )}
+      {goalsTab === 'allocation' && <GoalAllocationManager embedded />}
+
+      {goalsTab === 'goals' && (
+      <>
       {/* Net savings + post-month card */}
       <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-5 space-y-3">
         <div className="flex items-center justify-between">
@@ -538,24 +576,6 @@ export default function GoalsHub() {
         {postError && <p className="text-xs text-error font-bold">{postError}</p>}
       </div>
 
-      <div
-        role="button" tabIndex={0}
-        onClick={() => navigate('/goals/accounts')}
-        onKeyDown={(e) => { if (e.key === 'Enter') navigate('/goals/accounts'); }}
-        className="flex items-center justify-between bg-white rounded-2xl border border-border-subtle shadow-sm p-4 cursor-pointer"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="material-symbols-outlined text-primary shrink-0">account_balance</span>
-          <span className="text-sm font-bold text-primary truncate">{t('accounts.title')}</span>
-        </div>
-        <button
-          type="button" onClick={(e) => { e.stopPropagation(); setShowAccountsHelp(true); }}
-          aria-label={t('goals.accountsHelpTitle')} className="p-1 text-text-muted hover:text-primary shrink-0"
-        >
-          <span className="material-symbols-outlined text-[16px] block">help</span>
-        </button>
-      </div>
-
       {postResult && (
         <div className="bg-success/10 border border-success/30 rounded-2xl p-4 space-y-2">
           <p className="text-sm font-bold text-success flex items-center gap-1.5">
@@ -577,16 +597,6 @@ export default function GoalsHub() {
           </p>
           <button type="button" onClick={() => setCatchUpResult(null)} className="text-[11px] font-bold text-text-muted">{t('common.close')}</button>
         </div>
-      )}
-
-      {ownGoals.length > 0 && (
-        <button type="button" onClick={() => navigate('/goals/allocate')} className="w-full flex items-center justify-between bg-white rounded-2xl border border-border-subtle shadow-sm p-4">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">account_balance</span>
-            <span className="text-sm font-bold text-primary">{t('goals.manageAllocation')}</span>
-          </div>
-          <span className="material-symbols-outlined text-text-muted">chevron_right</span>
-        </button>
       )}
 
       {visibleOwnGoals.length === 0 ? (
@@ -627,6 +637,8 @@ export default function GoalsHub() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
 
       {/* --- "What is Accounts for?" explainer --- */}
