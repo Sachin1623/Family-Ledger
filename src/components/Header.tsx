@@ -13,6 +13,7 @@ import { getParentPath } from '../lib/navigationParents';
 import { setOpenFeedPanelFn } from '../lib/feedPanelRef';
 import HeaderProfileBadge from './HeaderProfileBadge';
 import { useAppUpdateAvailable, hardReloadApp } from '../lib/appUpdate';
+import { openCalculator } from '../lib/calculatorRef';
 
 export default function Header() {
   const navigate = useNavigate();
@@ -245,6 +246,14 @@ export default function Header() {
                   )}
                   {user && !shopMode && (
                     <>
+                      <div className="border-t border-border-subtle my-1" />
+                      <button
+                        onClick={() => { setMenuOpen(false); openCalculator(); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="material-symbols-outlined text-[20px] text-text-muted">calculate</span>
+                        {t('tools.calculator')}
+                      </button>
                       <div className="border-t border-border-subtle my-1" />
                       {/* Quick jumps into Tools.tsx's own category tabs — deep-links via
                           ?category=, read by Tools.tsx's live (not mount-only) searchParams

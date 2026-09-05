@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { useLanguage } from '../context/LanguageContext';
+import { openCalculator } from '../lib/calculatorRef';
 
 interface ToolEntry {
   to: string;
@@ -120,7 +121,7 @@ export default function Tools() {
           {activeTools.map((tool) => (
             <div
               key={tool.to}
-              onClick={() => navigate(tool.to)}
+              onClick={() => (tool.to === '/calculator' ? openCalculator() : navigate(tool.to))}
               className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
             >
               <div className="flex items-center gap-4">

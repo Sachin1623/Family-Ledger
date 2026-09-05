@@ -35,6 +35,30 @@ export const SEARCHABLE_FEATURES: SearchableFeature[] = [
   { id: 'calculator', label: 'Calculator', description: 'Quick everyday math', labelKey: 'tools.calculator', descriptionKey: 'tools.calculatorDesc', icon: 'calculate', route: '/calculator' },
   { id: 'financial-calculators', label: 'Financial Calculators', description: 'Loans, FD/RD, SIP, SWP, NPS & more', labelKey: 'tools.financialCalculators', descriptionKey: 'tools.financialCalculatorsDesc', icon: 'account_balance', route: '/financial-calculators', keywords: ['loan', 'sip', 'fd', 'rd', 'emi'] },
   { id: 'games', label: 'Games', description: 'Sudoku offline, Ludo online multiplayer, more coming soon', labelKey: 'tools.games', descriptionKey: 'search.gamesDesc', icon: 'stadia_controller', route: '/games', keywords: ['sudoku', 'chess', 'ludo', 'business', 'puzzle', 'scramble', 'word'] },
+  // Individual games — child screens of the "Games" hub above, each its own direct route (its
+  // lobby, not the hub) so typing e.g. "chess" jumps straight into that game instead of only
+  // matching the parent hub via keywords.
+  { id: 'game-sudoku', label: 'Sudoku', description: 'Classic number puzzle, offline', labelKey: 'games.sudoku', descriptionKey: 'games.sudokuDesc', icon: 'grid_on', route: '/games/sudoku', keywords: ['puzzle', 'number'] },
+  { id: 'game-scramble', label: 'Word Scramble', description: 'Unscramble the word, solo or multiplayer', labelKey: 'games.scramble', descriptionKey: 'games.scrambleDesc', icon: 'abc', route: '/games/scramble', keywords: ['word', 'puzzle'] },
+  { id: 'game-chess', label: 'Chess', description: 'Play chess online with friends', labelKey: 'games.chess', descriptionKey: 'games.chessDesc', icon: 'stadia_controller', route: '/games/chess' },
+  { id: 'game-ludo', label: 'Ludo', description: 'Classic board game, online multiplayer', labelKey: 'games.ludo', descriptionKey: 'games.ludoDesc', icon: 'casino', route: '/games/ludo', keywords: ['board game', 'dice'] },
+  { id: 'game-rummy', label: '27-Hand Rummy', description: 'Card game, online multiplayer', labelKey: 'games.rummy', descriptionKey: 'games.rummyDesc', icon: 'style', route: '/games/rummy', keywords: ['cards'] },
+  { id: 'game-business', label: 'Business', description: 'Monopoly-style board game', labelKey: 'games.business', descriptionKey: 'games.businessDesc', icon: 'location_city', route: '/games/business', keywords: ['monopoly', 'board game'] },
+  { id: 'game-sweep', label: 'Sweep', description: 'Card game, online multiplayer', labelKey: 'games.sweep', descriptionKey: 'games.sweepDesc', icon: 'style', route: '/games/sweep', keywords: ['cards'] },
+  { id: 'game-sequence', label: 'Sequence', description: 'Board & card game, online multiplayer', labelKey: 'games.sequence', descriptionKey: 'games.sequenceDesc', icon: 'grid_4x4', route: '/games/sequence', keywords: ['board game', 'cards'] },
+  { id: 'health', label: 'Health', description: 'Glucose, blood pressure & medicine tracking', labelKey: 'nav.health', icon: 'favorite', route: '/health', keywords: ['glucose', 'blood pressure', 'medicine', 'medication'] },
+  // Individual health trackers — child screens of the "Health" hub above.
+  { id: 'health-glucose', label: 'Glucose Tracker', description: 'Log & chart blood glucose readings', labelKey: 'health.glucoseTracker', descriptionKey: 'health.glucoseTrackerDesc', icon: 'water_drop', route: '/health/glucose', keywords: ['sugar', 'diabetes'] },
+  { id: 'health-blood-pressure', label: 'Blood Pressure Tracker', description: 'Log & chart blood pressure readings', labelKey: 'bp.tracker', descriptionKey: 'bp.trackerDesc', icon: 'favorite', route: '/health/blood-pressure', keywords: ['bp', 'hypertension'] },
+  { id: 'health-medicines', label: 'Medicine Tracker', description: 'Doses, schedules & reminders', labelKey: 'medicine.tracker', descriptionKey: 'medicine.trackerDesc', icon: 'medication', route: '/health/medicines', keywords: ['pills', 'dose', 'alarm', 'reminder'] },
+  { id: 'reminders', label: 'Shared Reminders', description: 'Reminders shared with your group members', icon: 'alarm', route: '/reminders' },
+  { id: 'goals', label: 'Goals', description: 'Savings goals, linked accounts & allocation', labelKey: 'nav.goals', icon: 'savings', route: '/goals', keywords: ['savings', 'target', 'accounts'] },
+  // Child screens of Goals — Accounts and Allocation are also tabs on /goals itself now, but keep
+  // their own direct routes here too since both are still independently reachable.
+  { id: 'goals-new', label: 'New Goal', description: 'Create a new savings goal', labelKey: 'goals.newGoal', icon: 'add_task', route: '/goals/new' },
+  { id: 'goals-reports', label: 'Goal Reports', description: 'Progress & history across your goals', labelKey: 'search.goalReports', icon: 'insights', route: '/goals/reports' },
+  { id: 'goals-accounts', label: 'Financial Accounts', description: 'Bank/investment accounts linked to your goals', labelKey: 'accounts.title', icon: 'account_balance', route: '/goals/accounts', keywords: ['bank', 'account'] },
+  { id: 'goals-allocate', label: 'Allocation Manager', description: 'Which account funds which goal, and how much', labelKey: 'goals.allocationManagerTitle', icon: 'account_balance', route: '/goals/allocate' },
   { id: 'feed', label: 'Activity Feed', description: 'Recent activity across your groups', labelKey: 'header.feed', icon: 'history', route: '/feed' },
   { id: 'profile', label: 'Profile', description: 'Account settings & notification preferences', labelKey: 'header.profile', descriptionKey: 'search.profileDesc', icon: 'person', route: '/profile', keywords: ['settings', 'account'] },
   { id: 'feedback', label: 'Feedback & Support', description: 'Suggestions, feedback & bug reports', labelKey: 'profile.feedbackSupport', descriptionKey: 'profile.feedbackSupportDesc', icon: 'forum', route: '/feedback', keywords: ['bug', 'support', 'contact'] },

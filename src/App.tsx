@@ -86,6 +86,7 @@ import ShopActivity from './screens/shop/ShopActivity';
 import AdminShopkeeperRequests from './screens/admin/AdminShopkeeperRequests';
 import Navigation from './components/Navigation';
 import Header from './components/Header';
+import FloatingCalculator from './components/FloatingCalculator';
 import AdminDashboard from './screens/admin/AdminDashboard';
 import AdminUsers from './screens/admin/AdminUsers';
 import AdminUserDetail from './screens/admin/AdminUserDetail';
@@ -268,6 +269,7 @@ export default function App() {
           <OnboardingTour />
           <div className="min-h-screen bg-surface font-sans text-on-surface flex flex-col">
             <Header />
+            <FloatingCalculator />
             <Routes>
               {/* Public & Utility Routes */}
               <Route path="/login" element={<Login />} />

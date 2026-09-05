@@ -917,13 +917,21 @@ export default function GroupAnalysisSummary() {
           <>
             {/* Global filters — apply to every tab's data (chart, category/group/member
                 breakdowns, favorites), not just Trend, so they live above the tab bar instead of
-                being nested inside the Trend tile. */}
+                being nested inside the Trend tile. Labeled so the card reads as its own distinct
+                "Filters" section rather than floating unlabeled controls. */}
             <div className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-              {/* Row 1 — every toggle-style filter (type + essential/optional) packed into one
-                  wrapped row instead of two stacked ones. No explicit "All" pill — tapping the
-                  active filter again clears it back to "all" internally, so the row only ever
-                  shows real choices. */}
-              <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-[10px] font-black text-text-muted uppercase tracking-widest flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[14px]">filter_alt</span>
+                {t('analysis.filtersTitle')}
+              </h2>
+
+              {/* Row 1 — every toggle-style filter (type + essential/optional) in one row that
+                  never wraps: sized to fit all four on a typical phone width, with an
+                  overflow-x-auto fallback (not flex-wrap) so a genuinely narrow device scrolls
+                  instead of pushing Essential/Optional onto an ugly second line. No explicit
+                  "All" pill — tapping the active filter again clears it back to "all" internally,
+                  so the row only ever shows real choices. */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                 {([
                   { group: 'type' as const, key: 'expense', label: t('common.expense'), icon: 'shopping_cart', bubble: 'bg-amber-100 text-amber-600' },
                   { group: 'type' as const, key: 'income', label: t('common.income'), icon: 'payments', bubble: 'bg-blue-100 text-blue-600' },
@@ -941,30 +949,33 @@ export default function GroupAnalysisSummary() {
                       type="button"
                       onClick={onClick}
                       className={clsx(
-                        'flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full border transition-all',
+                        'shrink-0 flex items-center gap-1 pl-1 pr-2 py-1 rounded-full border transition-all',
                         active ? 'border-primary bg-primary/5 shadow-sm' : 'border-border-subtle bg-white hover:bg-surface-container/40',
                       )}
                     >
-                      <span className={clsx('w-7 h-7 rounded-full flex items-center justify-center shrink-0', opt.bubble)}>
-                        <span className="material-symbols-outlined text-[15px]">{opt.icon}</span>
+                      <span className={clsx('w-6 h-6 rounded-full flex items-center justify-center shrink-0', opt.bubble)}>
+                        <span className="material-symbols-outlined text-[13px]">{opt.icon}</span>
                       </span>
-                      <span className={clsx('text-xs font-bold', active ? 'text-primary' : 'text-text-muted')}>{opt.label}</span>
+                      <span className={clsx('text-[11px] font-bold whitespace-nowrap', active ? 'text-primary' : 'text-text-muted')}>{opt.label}</span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* Row 2 — a year dropdown and the category/member dropdowns stay fixed; only the
-                  month strip between them scrolls, so the dropdowns on the right are never pushed
-                  off-screen by however many months are selected/scrolled to. */}
-              <div className="flex items-center gap-1.5">
+              {/* Row 2 — year/category/member dropdowns are fixed-width (never collapse to 0 the
+                  way an unconstrained flex-1 sibling could — that's what made the month strip
+                  disappear entirely on a narrow phone before); the month strip gets its own fixed-
+                  width scroll window between them. overflow-x-auto on the OUTER row is a fallback
+                  for a device too narrow to fit all of this even at these sizes — worst case, the
+                  whole row scrolls so the member dropdown is still reachable, never clipped off. */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                 <div className="relative shrink-0">
                   <button
                     type="button"
                     onClick={() => setShowYearDropdown(!showYearDropdown)}
-                    className="bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    className="bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm max-w-[84px]"
                   >
-                    <span className="whitespace-nowrap">{selectedYears.length === 0 ? t('analysis.allYears') : selectedYears.slice().sort((a, b) => a - b).join(', ')}</span>
+                    <span className="whitespace-nowrap truncate">{selectedYears.length === 0 ? t('analysis.allYears') : selectedYears.slice().sort((a, b) => a - b).join(', ')}</span>
                     <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
                   </button>
                   <AnimatePresence>
@@ -997,7 +1008,7 @@ export default function GroupAnalysisSummary() {
                   </AnimatePresence>
                 </div>
 
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-32 shrink-0">
                   {MONTH_LABELS.map((label, idx) => (
                     <button
                       key={label}
@@ -1018,7 +1029,7 @@ export default function GroupAnalysisSummary() {
                 <div className="relative shrink-0">
                   <button
                     onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
-                    className="w-32 bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    className="w-24 bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
                   >
                     <span className="truncate">{selectedCategory === 'all' ? t('analysis.allCategories') : categoryLabel(selectedCategory)}</span>
                     <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
@@ -1045,7 +1056,7 @@ export default function GroupAnalysisSummary() {
                 <div className="relative shrink-0">
                   <button
                     onClick={() => setShowMemberDropdown(!showMemberDropdown)}
-                    className="w-32 bg-surface-container/30 h-8 px-3 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    className="w-24 bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
                   >
                     <span className="truncate">{selectedMember ? selectedMember.displayName : t('analysis.allMembers')}</span>
                     <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
