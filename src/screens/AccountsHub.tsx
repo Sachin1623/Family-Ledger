@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
-import { getCurrencySymbol } from '../lib/constants';
+import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { toMinorUnits, fromMinorUnits } from '../lib/goals';
 import { decryptAmount, encryptAmount, encryptText } from '../lib/fieldCrypto';
@@ -106,7 +106,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
           if (occurrences > 0) {
             balance += addedMinor;
             nextContribDate = cursor;
-            notes.push(`SIP: ${occurrences} contribution(s), +${getCurrencySymbol(a.currency)}${fromMinorUnits(addedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`);
+            notes.push(`SIP: ${occurrences} contribution(s), +${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(addedMinor), a.currency, profile?.numberSystem)}`);
             results.push({ name: a.name, kind: 'sip', occurrences, amountMinor: addedMinor, currency: a.currency });
           }
         }
@@ -124,7 +124,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
           if (occurrences > 0) {
             nextInterestDateVal = cursor;
             const grown = balance - before;
-            notes.push(`Interest: ${occurrences} period(s), +${getCurrencySymbol(a.currency)}${fromMinorUnits(grown).toLocaleString(undefined, { minimumFractionDigits: 2 })}`);
+            notes.push(`Interest: ${occurrences} period(s), +${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(grown), a.currency, profile?.numberSystem)}`);
             results.push({ name: a.name, kind: 'interest', occurrences, amountMinor: grown, currency: a.currency });
           }
         }
@@ -474,7 +474,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
       lines.push(`${t('accounts.accountNumber')}: ${shareIncludeNumber ? a.accountNumber : maskAccountNumber(a.accountNumber)}`);
     }
     if (shareIncludeBalance) {
-      lines.push(`${t('accounts.balance')}: ${getCurrencySymbol(a.currency)}${fromMinorUnits(a.currentBalanceMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })} (${t('accounts.asOf', { date: new Date(a.balanceAsOf || a.updatedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })})`);
+      lines.push(`${t('accounts.balance')}: ${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)} (${t('accounts.asOf', { date: new Date(a.balanceAsOf || a.updatedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })})`);
     }
     if ((a.nominees || []).length > 0) {
       lines.push(`${t('accounts.nominees')}: ${a.nominees!.map((n) => (a.nominees!.length > 1 ? `${n.name} (${n.pct}%)` : n.name)).join(', ')}`);
@@ -512,7 +512,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
           </p>
           {autoApplyResults.map((r, i) => (
             <p key={`${r.name}-${r.kind}-${i}`} className="text-[11px] text-on-surface">
-              {t(r.kind === 'sip' ? 'accounts.sipCatchUpLine' : 'accounts.interestCatchUpLine', { name: r.name, count: r.occurrences, amount: `${getCurrencySymbol(r.currency)}${fromMinorUnits(r.amountMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}` })}
+              {t(r.kind === 'sip' ? 'accounts.sipCatchUpLine' : 'accounts.interestCatchUpLine', { name: r.name, count: r.occurrences, amount: `${getCurrencySymbol(r.currency)}${formatAmountCompact(fromMinorUnits(r.amountMinor), r.currency, profile?.numberSystem)}` })}
             </p>
           ))}
           <button type="button" onClick={() => setAutoApplyResults([])} className="text-[10px] font-bold text-success underline">{t('common.dismiss')}</button>
@@ -521,7 +521,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
 
       <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-5 space-y-2">
         <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('accounts.totalAcrossAccounts')}</p>
-        <p className="text-2xl font-black text-primary">{getCurrencySymbol(defaultCurrency)}{fromMinorUnits(totalMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+        <p className="text-2xl font-black text-primary">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalMinor), defaultCurrency, profile?.numberSystem)}</p>
         {activeAccounts.length > 0 && (
           <div className="flex gap-4 pt-1 border-t border-border-subtle">
             <div className="flex-1 pt-2">
@@ -529,11 +529,11 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                 <span className="material-symbols-outlined text-[12px] text-primary">link</span>
                 {t('accounts.allocatedToGoals')}
               </p>
-              <p className="text-sm font-black text-primary">{getCurrencySymbol(defaultCurrency)}{fromMinorUnits(totalAllocatedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-sm font-black text-primary">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalAllocatedMinor), defaultCurrency, profile?.numberSystem)}</p>
             </div>
             <div className="flex-1 pt-2 border-l border-border-subtle pl-4">
               <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('accounts.unallocated')}</p>
-              <p className="text-sm font-black text-text-muted">{getCurrencySymbol(defaultCurrency)}{fromMinorUnits(totalUnallocatedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-sm font-black text-text-muted">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalUnallocatedMinor), defaultCurrency, profile?.numberSystem)}</p>
             </div>
           </div>
         )}
@@ -588,14 +588,14 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                       </button>
                     )}
                   </div>
-                  <span className="text-sm font-bold text-primary shrink-0">{getCurrencySymbol(a.currency)}{fromMinorUnits(a.currentBalanceMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  <span className="text-sm font-bold text-primary shrink-0">{getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)}</span>
                 </div>
                 {a.contributionFrequency && a.contributionAmountMinor != null && (
                   <div className="pl-9">
                     <p className="text-[10px] font-bold text-primary flex items-center gap-1">
                       <span className="material-symbols-outlined text-[11px]">autorenew</span>
                       {t('accounts.sipBadge', {
-                        amount: `${getCurrencySymbol(a.currency)}${fromMinorUnits(a.contributionAmountMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                        amount: `${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(a.contributionAmountMinor), a.currency, profile?.numberSystem)}`,
                         frequency: t(`accounts.contributionFrequency.${a.contributionFrequency}`),
                         date: a.contributionNextDate ? new Date(a.contributionNextDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
                       })}
@@ -621,7 +621,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                 )}
                 <div className="pl-9">
                   <p className="text-[10px] text-text-muted">
-                    {t('accounts.unallocatedAmount', { amount: `${getCurrencySymbol(a.currency)}${fromMinorUnits(unallocatedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, pct: 100 - allocatedPct })}
+                    {t('accounts.unallocatedAmount', { amount: `${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(unallocatedMinor), a.currency, profile?.numberSystem)}`, pct: 100 - allocatedPct })}
                   </p>
                 </div>
                 <div className="flex items-center justify-end gap-1 pt-1 border-t border-border-subtle">
@@ -662,7 +662,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
               </div>
 
               <div className="bg-surface rounded-xl p-3 space-y-1">
-                <p className="text-2xl font-black text-primary">{getCurrencySymbol(viewAccount.currency)}{fromMinorUnits(viewAccount.currentBalanceMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                <p className="text-2xl font-black text-primary">{getCurrencySymbol(viewAccount.currency)}{formatAmountCompact(fromMinorUnits(viewAccount.currentBalanceMinor), viewAccount.currency, profile?.numberSystem)}</p>
                 <p className="text-[11px] text-text-muted">
                   {t(`accounts.type.${viewAccount.type}`)} · {t('accounts.asOf', { date: new Date(viewAccount.balanceAsOf || viewAccount.updatedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })}
                 </p>
@@ -695,7 +695,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                   <span className="text-text-muted">{t('accounts.contributionOptional')}</span>
                   <span className="font-bold text-primary text-right">
                     {t('accounts.sipBadge', {
-                      amount: `${getCurrencySymbol(viewAccount.currency)}${fromMinorUnits(viewAccount.contributionAmountMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                      amount: `${getCurrencySymbol(viewAccount.currency)}${formatAmountCompact(fromMinorUnits(viewAccount.contributionAmountMinor), viewAccount.currency, profile?.numberSystem)}`,
                       frequency: t(`accounts.contributionFrequency.${viewAccount.contributionFrequency}`),
                       date: viewAccount.contributionNextDate ? new Date(viewAccount.contributionNextDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
                     })}
@@ -720,7 +720,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                     </p>
                   ))}
                   <p className="text-[11px] text-text-muted">
-                    {t('accounts.unallocatedAmount', { amount: `${getCurrencySymbol(viewAccount.currency)}${fromMinorUnits(unallocatedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, pct: 100 - allocatedPct })}
+                    {t('accounts.unallocatedAmount', { amount: `${getCurrencySymbol(viewAccount.currency)}${formatAmountCompact(fromMinorUnits(unallocatedMinor), viewAccount.currency, profile?.numberSystem)}`, pct: 100 - allocatedPct })}
                   </p>
                 </div>
               )}
@@ -967,7 +967,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                 className="w-full h-12 bg-surface px-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none"
               >
                 {activeAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name} ({getCurrencySymbol(a.currency)}{fromMinorUnits(a.currentBalanceMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })})</option>
+                  <option key={a.id} value={a.id}>{a.name} ({getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)})</option>
                 ))}
               </select>
             </div>
@@ -980,7 +980,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.toAccount')}</label>
               <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className="w-full h-12 bg-surface px-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none">
                 {activeAccounts.filter((a) => a.id !== transferFrom).map((a) => (
-                  <option key={a.id} value={a.id}>{a.name} ({getCurrencySymbol(a.currency)}{fromMinorUnits(a.currentBalanceMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })})</option>
+                  <option key={a.id} value={a.id}>{a.name} ({getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)})</option>
                 ))}
               </select>
             </div>
@@ -1102,16 +1102,16 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold text-text-muted">{(e.createdAt || '').slice(0, 16).replace('T', ' ')} · {e.createdByName}</span>
                       <span className="text-xs font-bold text-primary">
-                        {getCurrencySymbol(historyAccount.currency)}{fromMinorUnits(e.balanceBeforeMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        {getCurrencySymbol(historyAccount.currency)}{formatAmountCompact(fromMinorUnits(e.balanceBeforeMinor), historyAccount.currency, profile?.numberSystem)}
                         {' → '}
-                        {getCurrencySymbol(historyAccount.currency)}{fromMinorUnits(e.balanceAfterMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        {getCurrencySymbol(historyAccount.currency)}{formatAmountCompact(fromMinorUnits(e.balanceAfterMinor), historyAccount.currency, profile?.numberSystem)}
                       </span>
                     </div>
                     {e.allocationChanges.filter((c: any) => c.beforePct !== c.afterPct).map((c: any, i: number) => (
                       <p key={i} className="text-[10px] text-text-muted">
-                        {c.goalName}: {c.beforePct}% ({getCurrencySymbol(historyAccount.currency)}{fromMinorUnits(c.beforeAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })})
+                        {c.goalName}: {c.beforePct}% ({getCurrencySymbol(historyAccount.currency)}{formatAmountCompact(fromMinorUnits(c.beforeAmountMinor), historyAccount.currency, profile?.numberSystem)})
                         {' → '}
-                        {c.afterPct}% ({getCurrencySymbol(historyAccount.currency)}{fromMinorUnits(c.afterAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })})
+                        {c.afterPct}% ({getCurrencySymbol(historyAccount.currency)}{formatAmountCompact(fromMinorUnits(c.afterAmountMinor), historyAccount.currency, profile?.numberSystem)})
                       </p>
                     ))}
                     {e.images?.length > 0 && (

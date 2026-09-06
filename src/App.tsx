@@ -109,6 +109,7 @@ import GlobalReminderScheduler from './components/GlobalReminderScheduler';
 import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
 import InviteBanner from './components/InviteBanner';
 import OnboardingTour from './components/OnboardingTour';
+import ProfileSetupWizard from './components/ProfileSetupWizard';
 import LoadingScreen from './components/LoadingScreen';
 
 // Registers the router's navigate function into a module-level ref so code outside React
@@ -266,6 +267,7 @@ export default function App() {
           <GlobalReminderScheduler />
           <GlobalMedicineReminderScheduler />
           <InviteBanner />
+          <ProfileSetupWizard />
           <OnboardingTour />
           <div className="min-h-screen bg-surface font-sans text-on-surface flex flex-col">
             <Header />

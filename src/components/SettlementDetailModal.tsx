@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { parseLocalDate } from '../lib/dateUtils';
-import { EXPENSE_CATEGORIES } from '../lib/constants';
+import { EXPENSE_CATEGORIES, formatAmountCompact } from '../lib/constants';
 
 export interface SettlementDetailInfo {
   owerId: string;
@@ -36,7 +36,7 @@ export default function SettlementDetailModal({
   onClose: () => void;
   onOpenExpense: (expense: any) => void;
 }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [sending, setSending] = useState(false);
@@ -116,7 +116,7 @@ export default function SettlementDetailModal({
               </div>
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <span className="material-symbols-outlined text-2xl text-text-muted">trending_flat</span>
-                <span className="text-lg font-black text-primary whitespace-nowrap">{currencySymbol}{settlement.amount.toFixed(2)}</span>
+                <span className="text-lg font-black text-primary whitespace-nowrap">{currencySymbol}{formatAmountCompact(settlement.amount, undefined, profile?.numberSystem)}</span>
               </div>
               <div className="flex flex-col items-center gap-1.5">
                 <div className="w-14 h-14 rounded-full overflow-hidden bg-primary/10 border-2 border-white shadow-sm shrink-0">
@@ -192,7 +192,7 @@ export default function SettlementDetailModal({
                         </p>
                       </div>
                     </div>
-                    <span className="text-sm font-black text-primary shrink-0 ml-2">{currencySymbol}{expense.amount.toFixed(2)}</span>
+                    <span className="text-sm font-black text-primary shrink-0 ml-2">{currencySymbol}{formatAmountCompact(expense.amount, undefined, profile?.numberSystem)}</span>
                   </button>
                 );
               })

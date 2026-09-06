@@ -462,6 +462,7 @@ export default function ManageGroup() {
   // reassign-elsewhere flow for that any more (a prior version did; the user explicitly asked for
   // hide-only instead). hiddenCategories is the single on/off switch, applying the same way to a
   // built-in or a custom category, and to income and expense alike.
+  const [categoryPanelTab, setCategoryPanelTab] = useState<'expense' | 'income'>('expense');
   const [renamingCategory, setRenamingCategory] = useState<{ id: string; type: 'expense' | 'income'; currentName: string } | null>(null);
   const [renameInput, setRenameInput] = useState('');
   const [categorySaving, setCategorySaving] = useState(false);
@@ -1115,7 +1116,7 @@ export default function ManageGroup() {
               className="text-lg font-bold text-primary mt-0.5 truncate"
               title={`${getCurrencySymbol(group.currency)}${((group.totalSpending || 0) - (group.totalIncome || 0)).toLocaleString()}`}
             >
-              {getCurrencySymbol(group.currency)}{formatAmountCompact((group.totalSpending || 0) - (group.totalIncome || 0), group.currency)}
+              {getCurrencySymbol(group.currency)}{formatAmountCompact((group.totalSpending || 0) - (group.totalIncome || 0), group.currency, profile?.numberSystem)}
             </p>
           </div>
           <div className="bg-white p-3.5 rounded-2xl border border-border-subtle shadow-sm">
@@ -1155,19 +1156,19 @@ export default function ManageGroup() {
                   <div className="min-w-0">
                     <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('common.budget')}</p>
                     <p className="text-sm font-bold text-primary truncate" title={`${getCurrencySymbol(group.currency)}${budget.amount.toLocaleString()}`}>
-                      {getCurrencySymbol(group.currency)}{formatAmountCompact(budget.amount, group.currency)}
+                      {getCurrencySymbol(group.currency)}{formatAmountCompact(budget.amount, group.currency, profile?.numberSystem)}
                     </p>
                   </div>
                   <div className="min-w-0">
                     <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('common.spent')}</p>
                     <p className="text-sm font-bold text-primary truncate" title={`${getCurrencySymbol(group.currency)}${monthSpend.toLocaleString()}`}>
-                      {getCurrencySymbol(group.currency)}{formatAmountCompact(monthSpend, group.currency)}
+                      {getCurrencySymbol(group.currency)}{formatAmountCompact(monthSpend, group.currency, profile?.numberSystem)}
                     </p>
                   </div>
                   <div className="min-w-0">
                     <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{isOver ? t('common.overBy') : t('common.remaining')}</p>
                     <p className={clsx("text-sm font-bold truncate", status.textClass)} title={`${getCurrencySymbol(group.currency)}${Math.abs(remaining).toLocaleString()}`}>
-                      {getCurrencySymbol(group.currency)}{formatAmountCompact(Math.abs(remaining), group.currency)}
+                      {getCurrencySymbol(group.currency)}{formatAmountCompact(Math.abs(remaining), group.currency, profile?.numberSystem)}
                     </p>
                   </div>
                 </div>
@@ -1756,33 +1757,48 @@ export default function ManageGroup() {
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
               </div>
-              <p className="text-[11px] text-text-muted">{t('manageGroup.spendCategoriesDesc')}</p>
-              <div className="space-y-0.5">
-                {getAllGroupCategories(group, 'expense').map((cat) => renderCategoryRow(cat, 'expense'))}
-              </div>
-              <div className="flex items-center gap-1.5 pt-1">
-                <input
-                  value={newExpenseCatIcon}
-                  onChange={(e) => setNewExpenseCatIcon(e.target.value)}
-                  maxLength={4}
-                  className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
-                  placeholder="🏷️"
-                />
-                <input
-                  value={newExpenseCatName}
-                  onChange={(e) => setNewExpenseCatName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomCategory('expense'); } }}
-                  className="flex-1 h-8 px-2.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                  placeholder={t('manageGroup.addCategoryPlaceholder')}
-                />
-                <button type="button" disabled={categorySaving} onClick={() => handleAddCustomCategory('expense')} className="h-8 px-3 rounded-lg bg-primary text-white text-[11px] font-bold shrink-0 disabled:opacity-50">
-                  {t('common.add')}
-                </button>
+
+              <div className="flex bg-surface-container rounded-xl p-1 gap-1">
+                {(['expense', 'income'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setCategoryPanelTab(tab)}
+                    className={clsx('flex-1 py-1.5 rounded-lg text-xs font-bold transition-all', categoryPanelTab === tab ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
+                  >
+                    {tab === 'expense' ? t('manageGroup.spendTab') : t('manageGroup.incomeTab')}
+                  </button>
+                ))}
               </div>
 
-              {group?.incomeEnabled && (
-                <div className="space-y-2 pt-3 border-t border-border-subtle">
-                  <p className="text-xs font-bold text-primary">{t('manageGroup.incomeCategoriesTitle')}</p>
+              {categoryPanelTab === 'expense' ? (
+                <>
+                  <p className="text-[11px] text-text-muted">{t('manageGroup.spendCategoriesDesc')}</p>
+                  <div className="space-y-0.5">
+                    {getAllGroupCategories(group, 'expense').map((cat) => renderCategoryRow(cat, 'expense'))}
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <input
+                      value={newExpenseCatIcon}
+                      onChange={(e) => setNewExpenseCatIcon(e.target.value)}
+                      maxLength={4}
+                      className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
+                      placeholder="🏷️"
+                    />
+                    <input
+                      value={newExpenseCatName}
+                      onChange={(e) => setNewExpenseCatName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomCategory('expense'); } }}
+                      className="flex-1 h-8 px-2.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                      placeholder={t('manageGroup.addCategoryPlaceholder')}
+                    />
+                    <button type="button" disabled={categorySaving} onClick={() => handleAddCustomCategory('expense')} className="h-8 px-3 rounded-lg bg-primary text-white text-[11px] font-bold shrink-0 disabled:opacity-50">
+                      {t('common.add')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
                   <div className="space-y-0.5">
                     {getAllGroupCategories(group, 'income').map((cat) => renderCategoryRow(cat, 'income'))}
                   </div>
@@ -1805,7 +1821,7 @@ export default function ManageGroup() {
                       {t('common.add')}
                     </button>
                   </div>
-                </div>
+                </>
               )}
             </motion.div>
           </div>

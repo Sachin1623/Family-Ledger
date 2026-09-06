@@ -15,18 +15,47 @@ export const getCurrencySymbol = (currencyCode?: string) => {
   return CURRENCY_SYMBOLS[currencyCode || ''] || currencyCode || '$';
 };
 
+export type NumberSystem = 'south_asian' | 'international';
+export const NUMBER_SYSTEMS: { id: NumberSystem; label: string; example: string }[] = [
+  { id: 'south_asian', label: 'South Asian (K, L, Cr)', example: '₹12.5L' },
+  { id: 'international', label: 'International (K, M, B)', example: '$1.25M' },
+];
+
 // Large amounts (crore-plus budgets, big one-off totals, etc.) render as long strings in
 // fixed-width stat cards (e.g. ManageGroup's Budget/Spent/Remaining grid) and visually overflow
 // into neighboring cells since there's no whitespace for the text to wrap on. Above the threshold,
-// abbreviate via Intl's `compact` notation instead — Indian-grouped currencies get L/Cr units,
-// everything else gets K/M/B — so the value always fits without needing to shrink the font or
-// truncate a real number down to something misleading.
+// abbreviate via Intl's `compact` notation instead. `numberSystem` (a user preference — see
+// Profile.tsx/ProfileSetupWizard.tsx) picks the grouping explicitly (South Asian gets L/Cr units,
+// International gets K/M/B); when not supplied (an older call site, or the preference was never
+// set), falls back to the old currency-based guess so nothing regresses. Either way, the value
+// always fits without needing to shrink the font or truncate a real number down to something
+// misleading.
 const COMPACT_AMOUNT_THRESHOLD = 100000; // 1 lakh
-export const formatAmountCompact = (amount: number, currencyCode?: string) => {
+export const formatAmountCompact = (amount: number, currencyCode?: string, numberSystem?: NumberSystem) => {
   if (Math.abs(amount) < COMPACT_AMOUNT_THRESHOLD) return amount.toLocaleString();
-  const locale = currencyCode === 'INR' ? 'en-IN' : 'en-US';
+  const locale = numberSystem
+    ? (numberSystem === 'south_asian' ? 'en-IN' : 'en-US')
+    : (currencyCode === 'INR' ? 'en-IN' : 'en-US');
   return amount.toLocaleString(locale, { notation: 'compact', maximumFractionDigits: 2 });
 };
+
+// A curated (not exhaustive-ISO) list, covering the countries a real user base is likely to pick
+// from — same "good enough for a profile field, not a formal registry" bar as getApproxCountry()
+// in lib/geo.ts.
+export const COUNTRIES: string[] = [
+  'India', 'United States', 'United Kingdom', 'Canada', 'Australia', 'New Zealand',
+  'United Arab Emirates', 'Saudi Arabia', 'Qatar', 'Kuwait', 'Bahrain', 'Oman',
+  'Singapore', 'Malaysia', 'Indonesia', 'Thailand', 'Philippines', 'Vietnam',
+  'Pakistan', 'Bangladesh', 'Sri Lanka', 'Nepal', 'Bhutan', 'Maldives',
+  'China', 'Japan', 'South Korea', 'Hong Kong', 'Taiwan',
+  'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Belgium', 'Switzerland',
+  'Austria', 'Sweden', 'Norway', 'Denmark', 'Finland', 'Ireland', 'Portugal',
+  'Poland', 'Czech Republic', 'Greece', 'Romania', 'Hungary', 'Ukraine', 'Russia',
+  'South Africa', 'Nigeria', 'Kenya', 'Egypt', 'Morocco', 'Ghana',
+  'Brazil', 'Mexico', 'Argentina', 'Chile', 'Colombia', 'Peru',
+  'Israel', 'Turkey', 'Jordan', 'Lebanon',
+  'Other',
+];
 
 // `icon` values are native emoji (not Material Symbols ligature names) — every render site that
 // displays one must NOT wrap it in a `material-symbols-outlined` class, since that font expects a

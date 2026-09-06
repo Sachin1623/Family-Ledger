@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
-import { getCurrencySymbol } from '../lib/constants';
+import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
 import { Goal, fromMinorUnits, decryptGoalsList } from '../lib/goals';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 import { applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
@@ -114,7 +114,7 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
                   <span className="text-xl shrink-0">{g.icon || '🎯'}</span>
                   <span className="flex-1 text-sm font-bold text-on-surface truncate">{g.name}</span>
                   <span className="text-xs font-bold text-text-muted shrink-0">
-                    {sym}{fromMinorUnits(g.accountAllocatedMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })} / {sym}{fromMinorUnits(g.targetAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {sym}{formatAmountCompact(fromMinorUnits(g.accountAllocatedMinor), g.currency, profile?.numberSystem)} / {sym}{formatAmountCompact(fromMinorUnits(g.targetAmountMinor), g.currency, profile?.numberSystem)}
                   </span>
                 </button>
                 {rows.length === 0 ? (
@@ -135,7 +135,7 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
                           )}
                         </div>
                         <p className="text-xs font-bold text-primary pl-[20px]">
-                          {r.pct}% · {getCurrencySymbol(r.account.currency)}{fromMinorUnits(r.amountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          {r.pct}% · {getCurrencySymbol(r.account.currency)}{formatAmountCompact(fromMinorUnits(r.amountMinor), r.account.currency, profile?.numberSystem)}
                         </p>
                       </button>
                     ))}

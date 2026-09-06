@@ -50,6 +50,10 @@ export default function GroupExpenses() {
   const [selectedYears, setSelectedYears] = useState<number[]>([]);
   const toggleMonth = (m: number) => setSelectedMonths((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
   const toggleYear = (y: number) => setSelectedYears((prev) => (prev.includes(y) ? prev.filter((x) => x !== y) : [...prev, y]));
+  // Filter panel dropdowns — same button+panel pattern as GroupAnalysisSummary.tsx's filters card.
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [showMemberDropdown, setShowMemberDropdown] = useState(false);
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
 
   // Tapping a row opens this read-only view first (via the shared ExpenseQuickView, same
   // component the Dashboard uses) — its own "Edit or Delete in Group Expenses" button navigates
@@ -714,28 +718,158 @@ export default function GroupExpenses() {
           />
         </div>
 
-        {/* Compact Filters Card */}
-        <section className="bg-white p-4 rounded-xl border border-border-subtle shadow-sm space-y-4">
-          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-            {(['all', 'expense', 'income'] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => setSelectedType(opt)}
-                className={clsx(
-                  'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
-                  selectedType === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                )}
-              >
-                {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
-              </button>
-            ))}
+        {/* Filters — same layout as GroupAnalysisSummary.tsx's filters card: a "Filters" label
+            sharing its row with the Category/Member dropdowns, a non-wrapping type/classification
+            pill row below it, then a year-dropdown + scrollable-month-strip row. Group and Date
+            Range have no Analysis equivalent (this page can span multiple groups and needs a real
+            date range, Analysis doesn't), so they stay as their own rows underneath. */}
+        <section className="bg-white p-4 rounded-xl border border-border-subtle shadow-sm space-y-3">
+          <div className="flex items-center justify-between gap-1.5">
+            <h2 className="text-[10px] font-black text-text-muted uppercase tracking-widest flex items-center gap-1.5 shrink-0">
+              <span className="material-symbols-outlined text-[14px]">filter_alt</span>
+              {t('analysis.filtersTitle')}
+            </h2>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                  className="w-[105px] bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                >
+                  <span className="truncate">{selectedCategory ? filterCategoryLabel(filterCategoryOptions.find((c) => c.id === selectedCategory) || { id: selectedCategory, name: selectedCategory }) : t('groupExpenses.all')}</span>
+                  <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
+                </button>
+                <AnimatePresence>
+                  {showCategoryDropdown && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowCategoryDropdown(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-50 py-1 max-h-48 overflow-y-auto"
+                      >
+                        <button onClick={() => { setSelectedCategory(null); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('groupExpenses.all')}</button>
+                        {filterCategoryOptions.map((cat) => (
+                          <button key={cat.id} onClick={() => { setSelectedCategory(cat.id); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">
+                            {filterCategoryLabel(cat)}
+                          </button>
+                        ))}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowMemberDropdown(!showMemberDropdown)}
+                  className="w-[105px] bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                >
+                  <span className="truncate">{members.find((m: any) => m.userId === selectedMemberId)?.displayName || t('groupExpenses.allMembers')}</span>
+                  <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
+                </button>
+                <AnimatePresence>
+                  {showMemberDropdown && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowMemberDropdown(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-50 py-1 max-h-48 overflow-y-auto"
+                      >
+                        <button onClick={() => { setSelectedMemberId(null); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('groupExpenses.allMembers')}</button>
+                        {members.map((m: any) => (
+                          <button key={m.userId} onClick={() => { setSelectedMemberId(m.userId); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">
+                            {m.displayName}
+                          </button>
+                        ))}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
           </div>
 
-          {/* Quick month/year filters — multi-select pills, horizontally scrollable, same
-              pattern as GroupAnalysisSummary.tsx's. Applies to the table and the totals below it. */}
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+          {/* Row 1 — type + essential/optional, icon-badge pills in one non-wrapping row. Tapping
+              the active pill again clears it back to "all", same as Analysis. */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+            {([
+              { group: 'type' as const, key: 'expense', label: t('common.expense'), icon: 'shopping_cart', bubble: 'bg-amber-100 text-amber-600' },
+              { group: 'type' as const, key: 'income', label: t('common.income'), icon: 'payments', bubble: 'bg-blue-100 text-blue-600' },
+              { group: 'classification' as const, key: 'essential', label: t('common.essential'), icon: 'verified', bubble: 'bg-green-100 text-green-600' },
+              { group: 'classification' as const, key: 'optional', label: t('common.optional'), icon: 'sell', bubble: 'bg-orange-100 text-orange-600' },
+            ] as const).map((opt) => {
+              const active = opt.group === 'type' ? selectedType === opt.key : selectedClassification === opt.key;
+              const onClick = () => {
+                if (opt.group === 'type') setSelectedType(selectedType === opt.key ? 'all' : (opt.key as 'expense' | 'income'));
+                else setSelectedClassification(selectedClassification === opt.key ? 'all' : (opt.key as 'essential' | 'optional'));
+              };
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={onClick}
+                  className={clsx(
+                    'shrink-0 flex items-center gap-1 pl-1 pr-2 py-1 rounded-full border transition-all',
+                    active ? 'border-primary bg-primary/5 shadow-sm' : 'border-border-subtle bg-white hover:bg-surface-container/40',
+                  )}
+                >
+                  <span className={clsx('w-6 h-6 rounded-full flex items-center justify-center shrink-0', opt.bubble)}>
+                    <span className="material-symbols-outlined text-[13px]">{opt.icon}</span>
+                  </span>
+                  <span className={clsx('text-[11px] font-bold whitespace-nowrap', active ? 'text-primary' : 'text-text-muted')}>{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Row 2 — year dropdown (multi-select) + a fixed-width scrollable month strip, exactly
+              like Analysis's. */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowYearDropdown(!showYearDropdown)}
+                className="bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm max-w-[84px]"
+              >
+                <span className="whitespace-nowrap truncate">{selectedYears.length === 0 ? t('analysis.allYears') : selectedYears.slice().sort((a, b) => a - b).join(', ')}</span>
+                <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
+              </button>
+              <AnimatePresence>
+                {showYearDropdown && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowYearDropdown(false)} />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="absolute left-0 mt-1 w-36 bg-white border border-border-subtle rounded-xl shadow-2xl z-50 py-1 max-h-48 overflow-y-auto"
+                    >
+                      <button onClick={() => { setSelectedYears([]); setShowYearDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allYears')}</button>
+                      {availableYears.map((year) => (
+                        <button
+                          key={year}
+                          onClick={() => toggleYear(year)}
+                          className={clsx(
+                            'w-full flex items-center justify-between gap-2 text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors',
+                            selectedYears.includes(year) && 'text-primary',
+                          )}
+                        >
+                          {year}
+                          {selectedYears.includes(year) && <span className="material-symbols-outlined text-[16px]">check</span>}
+                        </button>
+                      ))}
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-[110px]">
               {MONTH_LABELS.map((label, idx) => (
                 <button
                   key={label}
@@ -752,94 +886,26 @@ export default function GroupExpenses() {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-              {availableYears.map((year) => (
-                <button
-                  key={year}
-                  type="button"
-                  onClick={() => toggleYear(year)}
-                  className={clsx(
-                    'shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all',
-                    selectedYears.includes(year)
-                      ? 'bg-primary text-white border-primary'
-                      : 'bg-surface-container/30 text-text-muted border-border-subtle hover:bg-surface-container',
-                  )}
-                >
-                  {year}
-                </button>
-              ))}
-            </div>
           </div>
 
-          {/* Essential/Optional — see lib/constants.ts's getCategoryClassification. */}
-          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-            {(['all', 'essential', 'optional'] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => setSelectedClassification(opt)}
-                className={clsx(
-                  'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
-                  selectedClassification === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                )}
-              >
-                {opt === 'all' ? t('groupExpenses.all') : opt === 'essential' ? t('common.essential') : t('common.optional')}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            {groupId === 'all' && (
-              <div className="col-span-2 space-y-1">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.group')}</label>
-                <div className="relative">
-                  <select
-                    value={selectedGroupIdFilter || ''}
-                    onChange={(e) => setSelectedGroupIdFilter(e.target.value || null)}
-                    className="w-full bg-surface-container border border-border-subtle rounded-lg pl-3 pr-8 py-2 text-xs font-bold text-primary appearance-none focus:ring-0 outline-none"
-                  >
-                    <option value="">{t('groupExpenses.allGroups')}</option>
-                    {allGroups.map((g: any) => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
-                    ))}
-                  </select>
-                  <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-lg pointer-events-none">expand_more</span>
-                </div>
-              </div>
-            )}
+          {groupId === 'all' && (
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('common.member')}</label>
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.group')}</label>
               <div className="relative">
                 <select
-                  value={selectedMemberId || ''}
-                  onChange={(e) => setSelectedMemberId(e.target.value || null)}
+                  value={selectedGroupIdFilter || ''}
+                  onChange={(e) => setSelectedGroupIdFilter(e.target.value || null)}
                   className="w-full bg-surface-container border border-border-subtle rounded-lg pl-3 pr-8 py-2 text-xs font-bold text-primary appearance-none focus:ring-0 outline-none"
                 >
-                  <option value="">{t('groupExpenses.allMembers')}</option>
-                  {members.map((m: any) => (
-                    <option key={m.userId} value={m.userId}>{m.displayName}</option>
+                  <option value="">{t('groupExpenses.allGroups')}</option>
+                  {allGroups.map((g: any) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
                 </select>
                 <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-lg pointer-events-none">expand_more</span>
               </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.category')}</label>
-              <div className="relative">
-                <select
-                  value={selectedCategory || ''}
-                  onChange={(e) => setSelectedCategory(e.target.value || null)}
-                  className="w-full bg-surface-container border border-border-subtle rounded-lg pl-3 pr-8 py-2 text-xs font-bold text-primary appearance-none focus:ring-0 outline-none"
-                >
-                  <option value="">{t('groupExpenses.all')}</option>
-                  {filterCategoryOptions.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{filterCategoryLabel(cat)}</option>
-                  ))}
-                </select>
-                <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-lg pointer-events-none">expand_more</span>
-              </div>
-            </div>
-          </div>
+          )}
 
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('groupExpenses.dateRange')}</label>

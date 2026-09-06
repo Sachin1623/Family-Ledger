@@ -4,10 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, doc } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
-import { PieChart, Pie, Cell, ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride, formatAmountCompact, NumberSystem } from '../lib/constants';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { shareWithAi } from '../lib/aiShare';
@@ -50,11 +50,13 @@ function MonthComparisonLine({
   thisMonth,
   lastMonth,
   currencySymbol,
+  numberSystem,
   t,
 }: {
   thisMonth: number;
   lastMonth: number;
   currencySymbol: string;
+  numberSystem?: NumberSystem;
   t: (key: string, vars?: Record<string, any>) => string;
 }) {
   if (thisMonth === 0 && lastMonth === 0) return null;
@@ -62,9 +64,9 @@ function MonthComparisonLine({
   const pct = lastMonth > 0 ? Math.round((Math.abs(delta) / lastMonth) * 100) : null;
   return (
     <div className="flex items-center gap-1.5 text-[9px] font-bold text-text-muted mt-0.5 flex-wrap">
-      <span>{t('analysis.thisMonth')} {currencySymbol}{thisMonth.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+      <span>{t('analysis.thisMonth')} {currencySymbol}{formatAmountCompact(thisMonth, undefined, numberSystem)}</span>
       <span className="opacity-40">·</span>
-      <span>{t('analysis.lastMonth')} {currencySymbol}{lastMonth.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+      <span>{t('analysis.lastMonth')} {currencySymbol}{formatAmountCompact(lastMonth, undefined, numberSystem)}</span>
       {pct !== null && delta !== 0 && (
         <span className={delta > 0 ? 'text-error' : 'text-success'}>
           {delta > 0 ? '▲' : '▼'} {pct}%
@@ -74,11 +76,6 @@ function MonthComparisonLine({
   );
 }
 
-// Renders a slice's percentage AT the ring's own mid-radius (halfway between inner and outer),
-// so the text always sits inside the donut itself — never an external leader-line label that
-// could extend past the chart's own container. Recharts calls this with cx/cy/midAngle/radii/
-// percent for every slice automatically when passed as <Pie label={...}>.
-const RADIAN = Math.PI / 180;
 // Attached to all three stacked Bar segments (essential/optional/income) — only the ONE that's
 // actually the topmost non-zero segment for a given bar draws anything, so the total-value label
 // always sits at the real top of that specific bar regardless of which segments happen to be
@@ -89,29 +86,19 @@ function topStackSegment(point: { essential: number; optional: number; income: n
   if (point.optional > 0) return 'optional';
   return 'essential';
 }
-function makeStackTotalLabel(segment: 'essential' | 'optional' | 'income', trendData: any[], currencySymbol: string) {
+function makeStackTotalLabel(segment: 'essential' | 'optional' | 'income', trendData: any[], currencySymbol: string, numberSystem?: NumberSystem) {
   return (props: any) => {
     const { x, y, width, index } = props;
     const point = trendData[index];
     if (!point || !point.value || topStackSegment(point) !== segment) return <g key={`stack-label-empty-${segment}-${index}`} />;
     return (
       <text key={`stack-label-${segment}-${index}`} x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={9} fontWeight="bold" fill="#0F4761">
-        {`${currencySymbol}${Math.round(point.value)}`}
+        {`${currencySymbol}${formatAmountCompact(point.value, undefined, numberSystem)}`}
       </text>
     );
   };
 }
 
-function renderDonutPercentLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  return (
-    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight="bold">
-      {`${Math.round(percent * 100)}%`}
-    </text>
-  );
-}
 
 interface AnalysisBookmark {
   id: string;
@@ -383,6 +370,14 @@ export default function GroupAnalysisSummary() {
     if (override) return override;
     return t(`${INCOME_CATEGORIES.some((c) => c.id === id) ? 'income' : 'category'}.${id}`);
   };
+  // Same "which group actually owns this id" reasoning as categoryLabel above — a built-in income
+  // category is always recognizable from the global list, but a custom one only carries its type
+  // on whichever group created it.
+  const isIncomeCategoryId = (id: string) => {
+    if (INCOME_CATEGORIES.some((c) => c.id === id)) return true;
+    const scopeGroup = selectedGroupId !== 'all' && selectedGroupId ? groupData : allGroups.find((g: any) => (g.customCategories || []).some((c: any) => c.id === id));
+    return (scopeGroup?.customCategories || []).some((c: any) => c.id === id && c.type === 'income');
+  };
 
   // Fetch ALL members for relevant groups to have a full map of displays
   const [allRelevantMembersValue] = useCollection(
@@ -496,6 +491,7 @@ export default function GroupAnalysisSummary() {
       { name: t('common.optional'), value: optional, color: '#EAB308' },
     ].filter((d) => d.value > 0);
   }, [expenses, selectedGroupId, allGroups, groupData, t]);
+  const essentialOptionalTotal = useMemo(() => essentialOptionalData.reduce((s, d) => s + d.value, 0), [essentialOptionalData]);
 
   const isArchivedExpense = (exp: any) => !!allGroups.find((g: any) => g.id === exp.groupId)?.archived;
 
@@ -591,19 +587,51 @@ export default function GroupAnalysisSummary() {
 
   const groupSpendingData = useMemo(() => {
     if (selectedGroupId !== 'all') return [];
-    const counts: Record<string, number> = {};
-    groupSpendingExpenses.forEach(exp => {
+    // Tracks expense and income separately per group — `value` (their sum) still drives sorting,
+    // the bar width, and "% Share" (an overall activity-size comparison across groups), but the
+    // row itself shows the expense/income split so one lump number never hides that a group's
+    // total was really income offsetting (or adding to) its spend.
+    const counts: Record<string, { expense: number; income: number }> = {};
+    groupSpendingExpenses.forEach((exp: any) => {
       const g = allGroups.find(gr => gr.id === exp.groupId);
-      if (g) {
-        counts[g.name] = (counts[g.name] || 0) + exp.amount;
-      }
+      if (!g) return;
+      if (!counts[g.name]) counts[g.name] = { expense: 0, income: 0 };
+      if (exp.type === 'income') counts[g.name].income += exp.amount || 0;
+      else counts[g.name].expense += exp.amount || 0;
     });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+    return Object.entries(counts).map(([name, v]) => ({ name, expense: v.expense, income: v.income, value: v.expense + v.income }));
   }, [groupSpendingExpenses, allGroups, selectedGroupId]);
 
   const totalSpending = useMemo(() => {
     return categoryMemberExpenses.reduce((acc, exp) => acc + exp.amount, 0);
   }, [categoryMemberExpenses]);
+  // Split for the Spend/Income Category header — totalSpending above stays a single combined
+  // number (existing % Share math on each row divides by it), but showing ONE lump figure that
+  // silently adds income on top of expenses read as one (wrong) total, so the header shows both
+  // separately instead.
+  const categoryTabTotals = useMemo(() => {
+    let expense = 0;
+    let income = 0;
+    categoryMemberExpenses.forEach((exp: any) => {
+      if (exp.type === 'income') income += exp.amount || 0;
+      else expense += exp.amount || 0;
+    });
+    return { expense, income };
+  }, [categoryMemberExpenses]);
+  // Same split, same reasoning, for the Groups and Members tab headers.
+  const groupTabTotals = useMemo(
+    () => groupSpendingData.reduce((acc, g) => ({ expense: acc.expense + g.expense, income: acc.income + g.income }), { expense: 0, income: 0 }),
+    [groupSpendingData],
+  );
+  const memberTabTotals = useMemo(() => {
+    let expense = 0;
+    let income = 0;
+    categoryMemberContributionExpenses.forEach((exp: any) => {
+      if (exp.type === 'income') income += exp.amount || 0;
+      else expense += exp.amount || 0;
+    });
+    return { expense, income };
+  }, [categoryMemberContributionExpenses]);
 
   const trendData = useMemo(() => {
     const dataMap: Record<string, { value: number; essential: number; optional: number; income: number; label: string }> = {};
@@ -920,10 +948,67 @@ export default function GroupAnalysisSummary() {
                 being nested inside the Trend tile. Labeled so the card reads as its own distinct
                 "Filters" section rather than floating unlabeled controls. */}
             <div className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-              <h2 className="text-[10px] font-black text-text-muted uppercase tracking-widest flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-[14px]">filter_alt</span>
-                {t('analysis.filtersTitle')}
-              </h2>
+              <div className="flex items-center justify-between gap-1.5">
+                <h2 className="text-[10px] font-black text-text-muted uppercase tracking-widest flex items-center gap-1.5 shrink-0">
+                  <span className="material-symbols-outlined text-[14px]">filter_alt</span>
+                  {t('analysis.filtersTitle')}
+                </h2>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <div className="relative shrink-0">
+                    <button
+                      onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                      className="w-[105px] bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    >
+                      <span className="truncate">{selectedCategory === 'all' ? t('analysis.allCategories') : categoryLabel(selectedCategory)}</span>
+                      <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
+                    </button>
+                    <AnimatePresence>
+                      {showCategoryDropdown && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1 max-h-48 overflow-y-auto"
+                        >
+                          <button onClick={() => { setSelectedCategory('all'); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allCategories')}</button>
+                          {CATEGORIES_LIST.map(cat => (
+                            <button key={cat.id} onClick={() => { setSelectedCategory(cat.id); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">
+                              {categoryLabel(cat.id)}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  <div className="relative shrink-0">
+                    <button
+                      onClick={() => setShowMemberDropdown(!showMemberDropdown)}
+                      className="w-[105px] bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
+                    >
+                      <span className="truncate">{selectedMember ? selectedMember.displayName : t('analysis.allMembers')}</span>
+                      <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
+                    </button>
+                    <AnimatePresence>
+                      {showMemberDropdown && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1"
+                        >
+                          <button onClick={() => { setSelectedMemberId(null); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allMembers')}</button>
+                          {groupMembers.map(m => (
+                            <button key={m.userId} onClick={() => { setSelectedMemberId(m.userId); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">
+                              {m.displayName}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              </div>
 
               {/* Row 1 — every toggle-style filter (type + essential/optional) in one row that
                   never wraps: sized to fit all four on a typical phone width, with an
@@ -962,12 +1047,11 @@ export default function GroupAnalysisSummary() {
                 })}
               </div>
 
-              {/* Row 2 — year/category/member dropdowns are fixed-width (never collapse to 0 the
-                  way an unconstrained flex-1 sibling could — that's what made the month strip
-                  disappear entirely on a narrow phone before); the month strip gets its own fixed-
-                  width scroll window between them. overflow-x-auto on the OUTER row is a fallback
-                  for a device too narrow to fit all of this even at these sizes — worst case, the
-                  whole row scrolls so the member dropdown is still reachable, never clipped off. */}
+              {/* Row 2 — just year + months now that category/member moved up next to the "Filters"
+                  label. The year dropdown is fixed/shrink-0 so it can't be squeezed illegibly; the
+                  month strip fills whatever's left (flex-1) with a min-width floor so it can't
+                  collapse to 0 either, and scrolls internally past that. overflow-x-auto on the
+                  OUTER row is a fallback for a device too narrow to fit both even at these sizes. */}
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                 <div className="relative shrink-0">
                   <button
@@ -1008,7 +1092,7 @@ export default function GroupAnalysisSummary() {
                   </AnimatePresence>
                 </div>
 
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-32 shrink-0">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-[110px]">
                   {MONTH_LABELS.map((label, idx) => (
                     <button
                       key={label}
@@ -1024,60 +1108,6 @@ export default function GroupAnalysisSummary() {
                       {label}
                     </button>
                   ))}
-                </div>
-                <div className="w-px h-5 bg-border-subtle shrink-0 mx-0.5" />
-                <div className="relative shrink-0">
-                  <button
-                    onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
-                    className="w-24 bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
-                  >
-                    <span className="truncate">{selectedCategory === 'all' ? t('analysis.allCategories') : categoryLabel(selectedCategory)}</span>
-                    <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
-                  </button>
-                  <AnimatePresence>
-                    {showCategoryDropdown && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1 max-h-48 overflow-y-auto"
-                      >
-                        <button onClick={() => { setSelectedCategory('all'); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allCategories')}</button>
-                        {CATEGORIES_LIST.map(cat => (
-                          <button key={cat.id} onClick={() => { setSelectedCategory(cat.id); setShowCategoryDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">
-                            {categoryLabel(cat.id)}
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-                <div className="relative shrink-0">
-                  <button
-                    onClick={() => setShowMemberDropdown(!showMemberDropdown)}
-                    className="w-24 bg-surface-container/30 h-8 px-2 rounded-lg text-[10px] font-bold text-primary flex items-center justify-between gap-1 border border-border-subtle hover:bg-surface-container transition-all shadow-sm"
-                  >
-                    <span className="truncate">{selectedMember ? selectedMember.displayName : t('analysis.allMembers')}</span>
-                    <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
-                  </button>
-                  <AnimatePresence>
-                    {showMemberDropdown && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className="absolute right-0 mt-1 w-48 bg-white border border-border-subtle rounded-xl shadow-2xl z-[60] py-1"
-                      >
-                        <button onClick={() => { setSelectedMemberId(null); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">{t('analysis.allMembers')}</button>
-                        {groupMembers.map(m => (
-                          <button key={m.userId} onClick={() => { setSelectedMemberId(m.userId); setShowMemberDropdown(false); }} className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-surface-container transition-colors">
-                            {m.displayName}
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
                 </div>
               </div>
             </div>
@@ -1132,6 +1162,30 @@ export default function GroupAnalysisSummary() {
                 </button>
               </div>
 
+              {/* Legend — what each bar segment (and the budget line, when shown) actually is.
+                  Same colors as the Bar/Line fills below, kept in sync manually since recharts'
+                  own auto-legend doesn't fit this compact a layout. */}
+              <div className="flex items-center gap-3 flex-wrap -mt-2">
+                <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: '#16A34A' }} />
+                  {t('common.essential')}
+                </span>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: '#EAB308' }} />
+                  {t('common.optional')}
+                </span>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: '#2563EB' }} />
+                  {t('common.income')}
+                </span>
+                {timeStep === 'monthly' && selectedGroupId !== 'all' && (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
+                    <span className="w-2.5 h-0.5 rounded-full shrink-0" style={{ backgroundColor: '#EF4444' }} />
+                    {t('common.budget')}
+                  </span>
+                )}
+              </div>
+
               {/* Responsive Bar Chart — horizontally scrollable so bars/labels never get squished */}
               <div className="h-[250px] w-full pt-4 overflow-x-auto no-scrollbar">
                 {trendData.length > 0 ? (
@@ -1170,13 +1224,13 @@ export default function GroupAnalysisSummary() {
                             const diff = point.budget != null ? point.value - point.budget : null;
                             return (
                               <div className="bg-[#0F4761] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold shadow-lg transform -translate-y-8 space-y-0.5">
-                                <div>{currencySymbol}{point.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                                {point.essential > 0 && <div className="text-green-300 font-normal">{t('common.essential')}: {currencySymbol}{point.essential.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>}
-                                {point.optional > 0 && <div className="text-yellow-300 font-normal">{t('common.optional')}: {currencySymbol}{point.optional.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>}
-                                {point.income > 0 && <div className="text-blue-300 font-normal">{t('common.income')}: {currencySymbol}{point.income.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>}
+                                <div>{currencySymbol}{formatAmountCompact(point.value, undefined, profile?.numberSystem)}</div>
+                                {point.essential > 0 && <div className="text-green-300 font-normal">{t('common.essential')}: {currencySymbol}{formatAmountCompact(point.essential, undefined, profile?.numberSystem)}</div>}
+                                {point.optional > 0 && <div className="text-yellow-300 font-normal">{t('common.optional')}: {currencySymbol}{formatAmountCompact(point.optional, undefined, profile?.numberSystem)}</div>}
+                                {point.income > 0 && <div className="text-blue-300 font-normal">{t('common.income')}: {currencySymbol}{formatAmountCompact(point.income, undefined, profile?.numberSystem)}</div>}
                                 {diff != null && (
                                   <div className={diff > 0 ? 'text-red-300' : 'text-green-300'}>
-                                    Budget {currencySymbol}{point.budget.toLocaleString()} · {diff > 0 ? 'Over' : 'Under'} by {currencySymbol}{Math.abs(diff).toLocaleString()}
+                                    Budget {currencySymbol}{formatAmountCompact(point.budget, undefined, profile?.numberSystem)} · {diff > 0 ? 'Over' : 'Under'} by {currencySymbol}{formatAmountCompact(Math.abs(diff), undefined, profile?.numberSystem)}
                                   </div>
                                 )}
                               </div>
@@ -1196,9 +1250,9 @@ export default function GroupAnalysisSummary() {
                           whichever segment is ACTUALLY the topmost non-zero one for each specific
                           bar (varies per period), computed via topStackSegment, instead of
                           assuming it's always the same series. */}
-                      <Bar dataKey="essential" stackId="a" fill="url(#gradEssential)" barSize={32} name={t('common.essential')} label={makeStackTotalLabel('essential', trendData, currencySymbol)} />
-                      <Bar dataKey="optional" stackId="a" fill="url(#gradOptional)" barSize={32} name={t('common.optional')} label={makeStackTotalLabel('optional', trendData, currencySymbol)} />
-                      <Bar dataKey="income" stackId="a" fill="url(#gradIncome)" barSize={32} name={t('common.income')} label={makeStackTotalLabel('income', trendData, currencySymbol)} />
+                      <Bar dataKey="essential" stackId="a" fill="url(#gradEssential)" barSize={32} name={t('common.essential')} label={makeStackTotalLabel('essential', trendData, currencySymbol, profile?.numberSystem)} />
+                      <Bar dataKey="optional" stackId="a" fill="url(#gradOptional)" barSize={32} name={t('common.optional')} label={makeStackTotalLabel('optional', trendData, currencySymbol, profile?.numberSystem)} />
+                      <Bar dataKey="income" stackId="a" fill="url(#gradIncome)" barSize={32} name={t('common.income')} label={makeStackTotalLabel('income', trendData, currencySymbol, profile?.numberSystem)} />
                       {timeStep === 'monthly' && selectedGroupId !== 'all' && (
                         <Line
                           dataKey="budget"
@@ -1222,7 +1276,7 @@ export default function GroupAnalysisSummary() {
                                 fontWeight="bold"
                                 fill={isOver ? '#DC2626' : '#16A34A'}
                               >
-                                {isOver ? '+' : '-'}{currencySymbol}{Math.abs(diff).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                {isOver ? '+' : '-'}{currencySymbol}{formatAmountCompact(Math.abs(diff), undefined, profile?.numberSystem)}
                               </text>
                             );
                           }}
@@ -1306,44 +1360,30 @@ export default function GroupAnalysisSummary() {
             )}
 
             {analysisTab === 'categories' && essentialOptionalData.length > 0 && (
-              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3 overflow-hidden">
+              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3">
                 <h3 className="font-bold text-primary">Essential vs Optional</h3>
-                {/* Percentage renders INSIDE each slice (positioned at the ring's own mid-radius,
-                    not as an external leader-line label) so it can never overflow the chart's box
-                    regardless of container size — the leader-line labels recharts uses by default
-                    were exactly what was spilling outside the small side-by-side layout this
-                    replaced. */}
-                <div className="w-44 h-44 mx-auto">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={essentialOptionalData}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius="55%"
-                        outerRadius="90%"
-                        paddingAngle={2}
-                        strokeWidth={0}
-                        label={renderDonutPercentLabel}
-                        labelLine={false}
-                      >
-                        {essentialOptionalData.map((entry) => (
-                          <Cell key={entry.name} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value: number, name: string) => [`${currencySymbol}${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, name]}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
+                {/* A single stacked bar instead of a donut — same two-color-segments idiom already
+                    used for this exact split elsewhere (GroupExpenses.tsx's summary bar), and a lot
+                    shorter than a ~176px chart box for a metric that's really just one ratio. */}
+                <div className="h-3 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
+                  {essentialOptionalData.map((entry) => (
+                    <div
+                      key={entry.name}
+                      style={{ width: `${(entry.value / essentialOptionalTotal) * 100}%`, backgroundColor: entry.color }}
+                      className="h-full"
+                    />
+                  ))}
                 </div>
                 <div className="flex flex-wrap justify-center gap-x-5 gap-y-1.5">
                   {essentialOptionalData.map((entry) => (
                     <div key={entry.name} className="flex items-center gap-1.5 min-w-0">
                       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
                       <span className="text-xs font-bold text-on-surface truncate">{entry.name}</span>
+                      <span className="text-[10px] font-bold text-text-muted shrink-0">
+                        {Math.round((entry.value / essentialOptionalTotal) * 100)}%
+                      </span>
                       <span className="text-xs font-black text-primary shrink-0">
-                        {currencySymbol}{entry.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        {currencySymbol}{formatAmountCompact(entry.value, undefined, profile?.numberSystem)}
                       </span>
                     </div>
                   ))}
@@ -1362,9 +1402,22 @@ export default function GroupAnalysisSummary() {
                   animate={{ opacity: 1, y: 0 }}
                   className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm flex flex-col min-h-[350px]"
                 >
-                  <div className="flex justify-between items-center mb-6 gap-2">
-                    <h3 className="font-bold text-primary shrink-0">{t('analysis.spendingByGroup')}</h3>
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex justify-between items-start mb-6 gap-2">
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-primary">{t('analysis.spendingByGroup')}</h3>
+                      <div className="flex items-center gap-1.5 mt-1 overflow-x-auto no-scrollbar">
+                        <span className="text-xs font-bold text-[#0F7A38] whitespace-nowrap shrink-0">
+                          {currencySymbol}{formatAmountCompact(groupTabTotals.income, undefined, profile?.numberSystem)}
+                          <span className="text-[8px] font-bold text-text-muted uppercase tracking-wider ml-0.5">{t('common.income')}</span>
+                        </span>
+                        <span className="text-text-muted text-xs shrink-0">|</span>
+                        <span className="text-xs font-bold text-success whitespace-nowrap shrink-0">
+                          {currencySymbol}{formatAmountCompact(groupTabTotals.expense, undefined, profile?.numberSystem)}
+                          <span className="text-[8px] font-bold text-text-muted uppercase tracking-wider ml-0.5">{t('common.expense')}</span>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <ArchiveToggle checked={showArchivedInGroupSpending} onToggle={() => setShowArchivedInGroupSpending((v) => !v)} label={t('analysis.showArchived')} />
                       <button
                         onClick={() => navigate(buildExpensesLink())}
@@ -1399,7 +1452,18 @@ export default function GroupAnalysisSummary() {
                                     {group?.archived && <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('analysis.archivedTag')}>archive</span>}
                                     {entry.name}
                                   </span>
-                                  <span className="font-bold text-success text-xs ml-2">{getCurrencySymbol(group?.currency)}{entry.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                  <span className="flex items-center gap-1.5 ml-2 shrink-0">
+                                    {entry.expense > 0 && (
+                                      <span className="font-bold text-success text-xs whitespace-nowrap">
+                                        {getCurrencySymbol(group?.currency)}{formatAmountCompact(entry.expense, group?.currency, profile?.numberSystem)}
+                                      </span>
+                                    )}
+                                    {entry.income > 0 && (
+                                      <span className="font-bold text-[#0F7A38] text-xs whitespace-nowrap">
+                                        +{getCurrencySymbol(group?.currency)}{formatAmountCompact(entry.income, group?.currency, profile?.numberSystem)}
+                                      </span>
+                                    )}
+                                  </span>
                                 </div>
                                 <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
                                   <motion.div 
@@ -1416,6 +1480,7 @@ export default function GroupAnalysisSummary() {
                                 thisMonth={monthComparisonByGroup.thisMonth[entry.name] || 0}
                                 lastMonth={monthComparisonByGroup.lastMonth[entry.name] || 0}
                                 currencySymbol={getCurrencySymbol(group?.currency)}
+                                numberSystem={profile?.numberSystem}
                                 t={t}
                               />
                               <div className="text-[9px] text-text-muted font-bold uppercase tracking-wider text-right shrink-0">
@@ -1448,9 +1513,17 @@ export default function GroupAnalysisSummary() {
                 <div className="flex justify-between items-start mb-6 gap-2">
                   <div className="min-w-0">
                     <h3 className="font-bold text-primary">{t('analysis.spendingByCategory')}</h3>
-                    <p className="text-xl font-bold text-success mt-1">
-                      {currencySymbol}{totalSpending.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </p>
+                    <div className="flex items-center gap-1.5 mt-1 overflow-x-auto no-scrollbar">
+                      <span className="text-xs font-bold text-[#0F7A38] whitespace-nowrap shrink-0">
+                        {currencySymbol}{formatAmountCompact(categoryTabTotals.income, undefined, profile?.numberSystem)}
+                        <span className="text-[8px] font-bold text-text-muted uppercase tracking-wider ml-0.5">{t('common.income')}</span>
+                      </span>
+                      <span className="text-text-muted text-xs shrink-0">|</span>
+                      <span className="text-xs font-bold text-success whitespace-nowrap shrink-0">
+                        {currencySymbol}{formatAmountCompact(categoryTabTotals.expense, undefined, profile?.numberSystem)}
+                        <span className="text-[8px] font-bold text-text-muted uppercase tracking-wider ml-0.5">{t('common.expense')}</span>
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     {selectedGroupId === 'all' && (
@@ -1467,9 +1540,14 @@ export default function GroupAnalysisSummary() {
                 </div>
 
                 <div className="space-y-6 overflow-y-auto">
-                  {categoryData.length > 0 ? (
-                    categoryData.sort((a, b) => b.value - a.value).map((entry, index) => {
+                  {(() => {
+                    // A category with nothing spent/earned this period isn't worth a row — every
+                    // category used to render (categoryData pre-seeds every category at 0 so it
+                    // has a stable key for month-comparison lookups), just filtered out here.
+                    const nonZero = categoryData.filter((d) => d.value > 0).sort((a, b) => b.value - a.value);
+                    return nonZero.length > 0 ? nonZero.map((entry, index) => {
                       const pct = totalSpending > 0 ? (entry.value / totalSpending) * 100 : 0;
+                      const isIncome = isIncomeCategoryId(entry.name);
                       return (
                         <div
                           key={entry.name}
@@ -1477,24 +1555,29 @@ export default function GroupAnalysisSummary() {
                           className="space-y-1 p-1 hover:bg-surface-container/40 rounded-xl transition-all cursor-pointer"
                         >
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-primary/5 border border-primary/10 flex items-center justify-center flex-shrink-0">
+                            <div className={clsx(
+                              'w-8 h-8 rounded-lg border flex items-center justify-center flex-shrink-0',
+                              isIncome ? 'bg-[#0F7A38]/10 border-[#0F7A38]/20' : 'bg-primary/5 border-primary/10',
+                            )}>
                               <span className="text-sm">
                                 {CATEGORIES_LIST.find(c => c.id === entry.name)?.icon || '🧾'}
                               </span>
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex justify-between items-center mb-1">
-                                <span className="font-bold text-primary truncate text-xs">
+                                <span className={clsx('font-bold truncate text-xs', isIncome ? 'text-[#0F7A38]' : 'text-primary')}>
                                   {CATEGORIES_LIST.find(c => c.id === entry.name) ? categoryLabel(entry.name) : entry.name}
                                 </span>
-                                <span className="font-bold text-success text-xs ml-2">{currencySymbol}{entry.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span className={clsx('font-bold text-xs ml-2', isIncome ? 'text-[#0F7A38]' : 'text-success')}>
+                                  {isIncome && '+'}{currencySymbol}{formatAmountCompact(entry.value, undefined, profile?.numberSystem)}
+                                </span>
                               </div>
                               <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
-                                <motion.div 
+                                <motion.div
                                   initial={{ width: 0 }}
                                   animate={{ width: `${pct}%` }}
                                   className="h-full rounded-full shadow-sm"
-                                  style={{ backgroundColor: CATEGORY_COLORS[entry.name.toLowerCase()] || COLORS[index % COLORS.length] }}
+                                  style={{ backgroundColor: isIncome ? '#0F7A38' : (CATEGORY_COLORS[entry.name.toLowerCase()] || COLORS[index % COLORS.length]) }}
                                 />
                               </div>
                             </div>
@@ -1504,6 +1587,7 @@ export default function GroupAnalysisSummary() {
                               thisMonth={monthComparisonByCategory.thisMonth[entry.name] || 0}
                               lastMonth={monthComparisonByCategory.lastMonth[entry.name] || 0}
                               currencySymbol={currencySymbol}
+                              numberSystem={profile?.numberSystem}
                               t={t}
                             />
                             <div className="text-[9px] text-text-muted font-bold uppercase tracking-wider text-right shrink-0">
@@ -1512,10 +1596,10 @@ export default function GroupAnalysisSummary() {
                           </div>
                         </div>
                       );
-                    })
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-text-muted text-sm italic">{t('analysis.noDataYet')}</div>
-                  )}
+                    }) : (
+                      <div className="h-full flex items-center justify-center text-text-muted text-sm italic">{t('analysis.noDataYet')}</div>
+                    );
+                  })()}
                 </div>
               </motion.div>
             )}
@@ -1527,9 +1611,22 @@ export default function GroupAnalysisSummary() {
               transition={{ delay: 0.2 }}
               className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm"
             >
-              <div className="flex justify-between items-center mb-6 gap-2">
-                <h3 className="font-bold text-primary shrink-0">{t('analysis.memberContributions')}</h3>
-                <div className="flex items-center gap-1.5">
+              <div className="flex justify-between items-start mb-6 gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-primary">{t('analysis.memberContributions')}</h3>
+                  <div className="flex items-center gap-1.5 mt-1 overflow-x-auto no-scrollbar">
+                    <span className="text-xs font-bold text-[#0F7A38] whitespace-nowrap shrink-0">
+                      {currencySymbol}{formatAmountCompact(memberTabTotals.income, undefined, profile?.numberSystem)}
+                      <span className="text-[8px] font-bold text-text-muted uppercase tracking-wider ml-0.5">{t('common.income')}</span>
+                    </span>
+                    <span className="text-text-muted text-xs shrink-0">|</span>
+                    <span className="text-xs font-bold text-success whitespace-nowrap shrink-0">
+                      {currencySymbol}{formatAmountCompact(memberTabTotals.expense, undefined, profile?.numberSystem)}
+                      <span className="text-[8px] font-bold text-text-muted uppercase tracking-wider ml-0.5">{t('common.expense')}</span>
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
                   {selectedGroupId === 'all' && (
                     <ArchiveToggle checked={includeArchivedInCategoryMember} onToggle={() => setIncludeArchivedInCategoryMember((v) => !v)} label={t('analysis.includeArchived')} />
                   )}
@@ -1551,6 +1648,10 @@ export default function GroupAnalysisSummary() {
                   .map((member: any) => {
                   const memberExpenses = categoryMemberContributionExpenses.filter(exp => exp.paidBy === member.userId);
                   const contribution = memberExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+                  // Split so one lump "contribution" number never hides how much of it was really
+                  // income vs. actual spend — same reasoning as the Categories/Groups tabs.
+                  const memberExpenseTotal = memberExpenses.filter((exp: any) => exp.type !== 'income').reduce((acc, curr) => acc + curr.amount, 0);
+                  const memberIncomeTotal = memberExpenses.filter((exp: any) => exp.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
                   const total = categoryMemberContributionExpenses.reduce((acc, curr) => acc + curr.amount, 0);
                   const pct = total > 0 ? (contribution / total) * 100 : 0;
                   
@@ -1581,7 +1682,18 @@ export default function GroupAnalysisSummary() {
                           )}
                         </div>
                         <div className="text-right">
-                          <span className="text-sm font-bold text-primary block">{currencySymbol}{contribution.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {memberExpenseTotal > 0 && (
+                              <span className="text-sm font-bold text-primary whitespace-nowrap">
+                                {currencySymbol}{formatAmountCompact(memberExpenseTotal, undefined, profile?.numberSystem)}
+                              </span>
+                            )}
+                            {memberIncomeTotal > 0 && (
+                              <span className="text-sm font-bold text-[#0F7A38] whitespace-nowrap">
+                                +{currencySymbol}{formatAmountCompact(memberIncomeTotal, undefined, profile?.numberSystem)}
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[10px] text-text-muted font-medium">{t('analysis.transactionsCount', { count: memberExpenses.length })}</span>
                         </div>
                       </div>
@@ -1603,6 +1715,7 @@ export default function GroupAnalysisSummary() {
                         thisMonth={monthComparisonByMember.thisMonth[member.userId] || 0}
                         lastMonth={monthComparisonByMember.lastMonth[member.userId] || 0}
                         currencySymbol={currencySymbol}
+                        numberSystem={profile?.numberSystem}
                         t={t}
                       />
                       {/* Legend for this member's categories */}

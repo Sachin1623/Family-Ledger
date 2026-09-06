@@ -224,7 +224,16 @@ export default function Header() {
                 {/* Click-outside catcher — plain backdrop, no dim/blur, so the rest of the header
                     stays fully visible while the menu is open. */}
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-12 z-50 w-56 bg-white rounded-2xl border border-border-subtle shadow-xl py-1.5 overflow-hidden">
+                {/* `fixed`, not `absolute` — the <header> itself has overflow-x-auto (see its own
+                    comment above), and per the CSS spec, setting only one overflow axis to
+                    non-visible forces the OTHER axis to compute as `auto` too. That silently
+                    clipped this panel to the header's own box (an `absolute` descendant is clipped
+                    by an ancestor's overflow; a `fixed` one is not) — the menu button's click was
+                    always working, `menuOpen` really was flipping to true, but the panel rendered
+                    with zero visible pixels. `fixed` escapes that clip entirely, same as
+                    GlobalSearch/FeedPanel below already do (both `position: fixed`), which is
+                    exactly why those never showed this symptom. */}
+                <div className="fixed right-4 top-[calc(60px+env(safe-area-inset-top)+4px)] z-50 w-56 bg-white rounded-2xl border border-border-subtle shadow-xl py-1.5 overflow-hidden">
                   {hasShopAccess && (
                     <button
                       data-tour="header-shop-toggle"

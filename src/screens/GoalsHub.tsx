@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
-import { getCurrencySymbol } from '../lib/constants';
+import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import {
   Goal,
@@ -26,6 +26,7 @@ import { useFxRates, fetchFxRates, convertBucketsToCurrency } from '../lib/fx';
 import { computeNetSavingsBuckets } from '../lib/netSavings';
 import AccountsHub from './AccountsHub';
 import GoalAllocationManager from './GoalAllocationManager';
+import GoalReports from './GoalReports';
 
 // Goals Dashboard — the home hub. Net savings is the user's own, AGGREGATED ACROSS EVERY GROUP
 // THEY BELONG TO for the current month (not scoped to any single group — see the header comment
@@ -49,7 +50,9 @@ export default function GoalsHub() {
   // with groups that are no longer really "yours" day to day.
   const activeGroupIds = useMemo(() => groups.filter((g: any) => !g.archived).map((g: any) => g.id), [groups]);
 
-  const [goalsTab, setGoalsTab] = useState<'goals' | 'accounts' | 'allocation'>('goals');
+  // 'reports' is the landing tab — Reports & Timeline (the Goal Horizon chart plus totals) is
+  // what most benefits from being seen first on opening Goals, per explicit request.
+  const [goalsTab, setGoalsTab] = useState<'reports' | 'goals' | 'accounts' | 'allocation'>('reports');
   const [showAccountsHelp, setShowAccountsHelp] = useState(false);
 
   // A default currency for new goals — the user's first/most-used group's currency, since there's
@@ -428,7 +431,7 @@ export default function GoalsHub() {
             <p className="text-[10px] text-text-muted">{t('goals.cashHoldingSubtitle')}</p>
           </div>
           <span className="text-sm font-black text-primary shrink-0">
-            {sym}{fromMinorUnits(g.currentAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            {sym}{formatAmountCompact(fromMinorUnits(g.currentAmountMinor), g.currency, profile?.numberSystem)}
           </span>
         </button>
       );
@@ -462,7 +465,7 @@ export default function GoalsHub() {
         </div>
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-text-muted">
-            {sym}{fromMinorUnits(goalTotalMinor(g)).toLocaleString(undefined, { maximumFractionDigits: 0 })} / {sym}{fromMinorUnits(g.targetAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            {sym}{formatAmountCompact(fromMinorUnits(goalTotalMinor(g)), g.currency, profile?.numberSystem)} / {sym}{formatAmountCompact(fromMinorUnits(g.targetAmountMinor), g.currency, profile?.numberSystem)}
           </span>
           <span className="text-text-muted font-bold">
             {g.status === 'completed' ? t('goals.metOn', { date: g.completedAt?.slice(0, 10) || '' }) : projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
@@ -470,8 +473,8 @@ export default function GoalsHub() {
         </div>
         {g.accountAllocatedMinor > 0 && (
           <p className="text-[10px] text-text-muted flex items-center gap-2">
-            <span className="flex items-center gap-0.5"><span className="material-symbols-outlined text-[11px]">account_balance</span>{sym}{fromMinorUnits(g.accountAllocatedMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-            <span className="flex items-center gap-0.5"><span className="material-symbols-outlined text-[11px]">calendar_month</span>{sym}{fromMinorUnits(g.currentAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+            <span className="flex items-center gap-0.5"><span className="material-symbols-outlined text-[11px]">account_balance</span>{sym}{formatAmountCompact(fromMinorUnits(g.accountAllocatedMinor), g.currency, profile?.numberSystem)}</span>
+            <span className="flex items-center gap-0.5"><span className="material-symbols-outlined text-[11px]">calendar_month</span>{sym}{formatAmountCompact(fromMinorUnits(g.currentAmountMinor), g.currency, profile?.numberSystem)}</span>
           </p>
         )}
       </button>
@@ -487,7 +490,7 @@ export default function GoalsHub() {
         </div>
         {goalsTab === 'goals' && (
           <div className="flex items-center gap-1.5 shrink-0">
-            <button type="button" onClick={() => navigate('/goals/reports')} className="w-10 h-10 rounded-xl border border-border-subtle text-primary flex items-center justify-center hover:bg-surface-container">
+            <button type="button" onClick={() => setGoalsTab('reports')} className="w-10 h-10 rounded-xl border border-border-subtle text-primary flex items-center justify-center hover:bg-surface-container">
               <span className="material-symbols-outlined text-[20px]">insights</span>
             </button>
             <button
@@ -504,6 +507,7 @@ export default function GoalsHub() {
 
       <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
         {([
+          { key: 'reports', label: t('goals.reportsTitle') },
           { key: 'goals', label: t('goals.hubTitle') },
           { key: 'accounts', label: t('accounts.title') },
           { key: 'allocation', label: t('goals.manageAllocation') },
@@ -519,6 +523,7 @@ export default function GoalsHub() {
         ))}
       </div>
 
+      {goalsTab === 'reports' && <GoalReports embedded />}
       {goalsTab === 'accounts' && (
         <>
           <button
@@ -542,7 +547,7 @@ export default function GoalsHub() {
           <span className="text-[10px] font-bold text-text-muted">{thisMonthKey}</span>
         </div>
         <p className={clsx('text-2xl font-black', netSavingsThisMonthMinor >= 0 ? 'text-success' : 'text-error')}>
-          {getCurrencySymbol(displayCurrency)}{fromMinorUnits(netSavingsThisMonthMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          {getCurrencySymbol(displayCurrency)}{formatAmountCompact(fromMinorUnits(netSavingsThisMonthMinor), displayCurrency, profile?.numberSystem)}
         </p>
         <p className="text-[10px] text-text-muted">{t('goals.aggregatedAcrossGroups', { count: activeGroupIds.length })}</p>
         {displayConversion.unconvertedCurrencies.length > 0 && (
@@ -580,7 +585,7 @@ export default function GoalsHub() {
         <div className="bg-success/10 border border-success/30 rounded-2xl p-4 space-y-2">
           <p className="text-sm font-bold text-success flex items-center gap-1.5">
             <span className="material-symbols-outlined text-[18px]">check_circle</span>
-            {t('goals.postedToCashSavings', { amount: `${getCurrencySymbol(cashSavingsCurrency)}${fromMinorUnits(postResult.cashHoldingCreditMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}` })}
+            {t('goals.postedToCashSavings', { amount: `${getCurrencySymbol(cashSavingsCurrency)}${formatAmountCompact(fromMinorUnits(postResult.cashHoldingCreditMinor), cashSavingsCurrency, profile?.numberSystem)}` })}
           </p>
           <button type="button" onClick={() => setPostResult(null)} className="text-[11px] font-bold text-text-muted">{t('common.close')}</button>
         </div>
@@ -592,7 +597,7 @@ export default function GoalsHub() {
             <span className="material-symbols-outlined text-[18px]">history</span>
             {t('goals.caughtUpMonths', {
               count: catchUpResult.months,
-              amount: `${getCurrencySymbol(cashSavingsCurrency)}${fromMinorUnits(catchUpResult.totalMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+              amount: `${getCurrencySymbol(cashSavingsCurrency)}${formatAmountCompact(fromMinorUnits(catchUpResult.totalMinor), cashSavingsCurrency, profile?.numberSystem)}`,
             })}
           </p>
           <button type="button" onClick={() => setCatchUpResult(null)} className="text-[11px] font-bold text-text-muted">{t('common.close')}</button>
@@ -732,7 +737,7 @@ function ArchivedGoalRow({ goal }: { goal: Goal } & any) {
         <p className="text-xs font-bold text-on-surface truncate">{goal.name}</p>
         <p className="text-[10px] text-text-muted">
           {goal.completedAt ? t('goals.statusCompleted') : t('goals.statusArchived')}
-          {goal.targetAmountMinor > 0 && ` · ${sym}${fromMinorUnits(goal.targetAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+          {goal.targetAmountMinor > 0 && ` · ${sym}${formatAmountCompact(fromMinorUnits(goal.targetAmountMinor), goal.currency, profile?.numberSystem)}`}
         </p>
       </div>
       <button type="button" onClick={handleResume} disabled={resuming} className="text-[11px] font-bold text-primary shrink-0 disabled:opacity-50">

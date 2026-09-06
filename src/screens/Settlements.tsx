@@ -6,7 +6,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
-import { getCurrencySymbol, EXPENSE_CATEGORIES } from '../lib/constants';
+import { getCurrencySymbol, EXPENSE_CATEGORIES, formatAmountCompact } from '../lib/constants';
 import { parseLocalDate } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
 import SettlementDetailModal, { SettlementDetailInfo } from '../components/SettlementDetailModal';
@@ -32,7 +32,7 @@ interface SettlementInfo {
 }
 
 export default function Settlements() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { groupId: urlGroupId } = useParams();
@@ -296,11 +296,11 @@ export default function Settlements() {
             {summary.owedByCurrency.length === 0 ? (
               <span className="text-2xl font-black text-success">{currencySymbol}0.00</span>
             ) : summary.owedByCurrency.length === 1 ? (
-              <span className="text-2xl font-black text-success">{getCurrencySymbol(summary.owedByCurrency[0].currencyCode)}{summary.owedByCurrency[0].amount.toFixed(2)}</span>
+              <span className="text-2xl font-black text-success">{getCurrencySymbol(summary.owedByCurrency[0].currencyCode)}{formatAmountCompact(summary.owedByCurrency[0].amount, summary.owedByCurrency[0].currencyCode, profile?.numberSystem)}</span>
             ) : (
               <div className="flex flex-col items-center gap-0.5">
                 {summary.owedByCurrency.map(({ currencyCode, amount }) => (
-                  <span key={currencyCode} className="text-base font-black text-success">{getCurrencySymbol(currencyCode)}{amount.toFixed(2)}</span>
+                  <span key={currencyCode} className="text-base font-black text-success">{getCurrencySymbol(currencyCode)}{formatAmountCompact(amount, currencyCode, profile?.numberSystem)}</span>
                 ))}
               </div>
             )}
@@ -310,11 +310,11 @@ export default function Settlements() {
             {summary.oweByCurrency.length === 0 ? (
               <span className="text-2xl font-black text-error">{currencySymbol}0.00</span>
             ) : summary.oweByCurrency.length === 1 ? (
-              <span className="text-2xl font-black text-error">{getCurrencySymbol(summary.oweByCurrency[0].currencyCode)}{summary.oweByCurrency[0].amount.toFixed(2)}</span>
+              <span className="text-2xl font-black text-error">{getCurrencySymbol(summary.oweByCurrency[0].currencyCode)}{formatAmountCompact(summary.oweByCurrency[0].amount, summary.oweByCurrency[0].currencyCode, profile?.numberSystem)}</span>
             ) : (
               <div className="flex flex-col items-center gap-0.5">
                 {summary.oweByCurrency.map(({ currencyCode, amount }) => (
-                  <span key={currencyCode} className="text-base font-black text-error">{getCurrencySymbol(currencyCode)}{amount.toFixed(2)}</span>
+                  <span key={currencyCode} className="text-base font-black text-error">{getCurrencySymbol(currencyCode)}{formatAmountCompact(amount, currencyCode, profile?.numberSystem)}</span>
                 ))}
               </div>
             )}
@@ -368,7 +368,8 @@ export default function Settlements() {
 
                   <div className="text-right shrink-0">
                     <div className="text-lg font-black text-primary">
-                      {selectedGroupId === 'overall' ? getCurrencySymbol(groups.find((g: any) => g.id === s.groupId)?.currency) : currencySymbol}{s.amount.toFixed(2)}
+                      {selectedGroupId === 'overall' ? getCurrencySymbol(groups.find((g: any) => g.id === s.groupId)?.currency) : currencySymbol}
+                      {formatAmountCompact(s.amount, selectedGroupId === 'overall' ? groups.find((g: any) => g.id === s.groupId)?.currency : undefined, profile?.numberSystem)}
                     </div>
                   </div>
                 </motion.div>
@@ -406,7 +407,7 @@ export default function Settlements() {
                     <div className="text-right shrink-0">
                       <div className="text-sm font-black text-primary">
                         {selectedGroupId === 'overall' ? getCurrencySymbol(groups.find(g => g.id === expense.groupId)?.currency) : currencySymbol}
-                        {expense.amount.toFixed(2)}
+                        {formatAmountCompact(expense.amount, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}
                       </div>
                       <div className="text-[8px] font-black text-text-muted uppercase tracking-widest bg-surface px-1.5 py-0.5 rounded-full inline-block mt-0.5 border border-border-subtle">
                         {expense.splitInfo.splitType === 'equally' ? t('addExpense.equally') : expense.splitInfo.splitType === 'percentage' ? t('addExpense.percent') : t('common.amount')}

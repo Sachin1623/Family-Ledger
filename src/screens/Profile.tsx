@@ -18,7 +18,7 @@ import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from '../context/LanguageCo
 import { DEFAULT_PUBLIC_PROFILE_SETTINGS, PublicProfileSettings } from '../lib/pointsApi';
 import { clearFieldCryptoCache } from '../lib/fieldCrypto';
 import { resizeImageFile } from '../lib/imageUtils';
-import { CURRENCY_SYMBOLS, getCurrencySymbol } from '../lib/constants';
+import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberSystem } from '../lib/constants';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -516,6 +516,8 @@ export default function Profile() {
   // visible, not buried), everything else is grouped under one of these four.
   const [profileTab, setProfileTab] = useState<'general' | 'social' | 'security' | 'more'>('general');
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [showNumberSystemPicker, setShowNumberSystemPicker] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [updating, setUpdating] = useState<string | null>(null);
@@ -889,6 +891,39 @@ export default function Profile() {
     try {
       await updateDoc(doc(db, 'users', user.uid, 'private', 'info'), {
         currency: code,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  // Same personal-preference placement as currency above (private info doc, not public) — country
+  // is just a profile field with no feature reading it yet; numberSystem is what
+  // formatAmountCompact() (lib/constants.ts) uses to pick K/L/Cr vs K/M/B for large amounts,
+  // overriding its old currency-based guess wherever a screen has the signed-in user's own
+  // profile in scope (Dashboard, ManageGroup).
+  const handleSetCountry = async (country: string) => {
+    if (!user) return;
+    setShowCountryPicker(false);
+    const path = `users/${user.uid}/private/info`;
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'private', 'info'), {
+        country,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  const handleSetNumberSystem = async (numberSystem: NumberSystem) => {
+    if (!user) return;
+    setShowNumberSystemPicker(false);
+    const path = `users/${user.uid}/private/info`;
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'private', 'info'), {
+        numberSystem,
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -1368,6 +1403,113 @@ export default function Profile() {
                             )}
                           >
                             {CURRENCY_SYMBOLS[code]} {code}
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowCountryPicker((v) => !v)}
+                  className="w-full p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                      <span className="material-symbols-outlined">public</span>
+                    </div>
+                    <div className="text-left">
+                      <p className="font-bold text-sm text-on-surface">{t('profile.country')}</p>
+                      <p className="text-xs text-text-muted">{t('profile.chooseCountry')}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-text-muted shrink-0">
+                    <span className="text-sm font-bold text-primary truncate max-w-[120px]">
+                      {profile?.country || t('profile.countryNotSet')}
+                    </span>
+                    <span className="material-symbols-outlined text-[20px]">
+                      {showCountryPicker ? 'expand_less' : 'expand_more'}
+                    </span>
+                  </div>
+                </button>
+                <AnimatePresence>
+                  {showCountryPicker && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden bg-surface/50"
+                    >
+                      <div className="p-2 grid grid-cols-2 gap-1.5 max-h-64 overflow-y-auto">
+                        {COUNTRIES.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => handleSetCountry(c)}
+                            className={clsx(
+                              'px-3 py-2.5 rounded-xl text-left text-sm font-bold transition-all border truncate',
+                              c === profile?.country
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white text-on-surface border-border-subtle hover:bg-surface-container',
+                            )}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowNumberSystemPicker((v) => !v)}
+                  className="w-full p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                      <span className="material-symbols-outlined">tag</span>
+                    </div>
+                    <div className="text-left">
+                      <p className="font-bold text-sm text-on-surface">{t('profile.numberSystem')}</p>
+                      <p className="text-xs text-text-muted">{t('profile.chooseNumberSystem')}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-text-muted shrink-0">
+                    <span className="text-sm font-bold text-primary truncate max-w-[110px]">
+                      {NUMBER_SYSTEMS.find((n) => n.id === profile?.numberSystem)?.label || t('profile.numberSystemNotSet')}
+                    </span>
+                    <span className="material-symbols-outlined text-[20px]">
+                      {showNumberSystemPicker ? 'expand_less' : 'expand_more'}
+                    </span>
+                  </div>
+                </button>
+                <AnimatePresence>
+                  {showNumberSystemPicker && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden bg-surface/50"
+                    >
+                      <div className="p-2 space-y-1.5">
+                        {NUMBER_SYSTEMS.map((n) => (
+                          <button
+                            key={n.id}
+                            type="button"
+                            onClick={() => handleSetNumberSystem(n.id as NumberSystem)}
+                            className={clsx(
+                              'w-full px-3 py-2.5 rounded-xl text-left text-sm font-bold transition-all border flex items-center justify-between gap-2',
+                              n.id === profile?.numberSystem
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white text-on-surface border-border-subtle hover:bg-surface-container',
+                            )}
+                          >
+                            <span>{n.label}</span>
+                            <span className={clsx('text-xs font-black', n.id === profile?.numberSystem ? 'text-white/80' : 'text-text-muted')}>{n.example}</span>
                           </button>
                         ))}
                       </div>

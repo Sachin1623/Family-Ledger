@@ -15,6 +15,7 @@ import { clsx } from 'clsx';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
 import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
+import ImageLightbox from '../components/ImageLightbox';
 import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
@@ -35,7 +36,6 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 // brand new group, or one from before this feature existed, is collapsed until the user
 // explicitly expands it.
 const EXPANDED_STORAGE_KEY = 'familyledger_expanded_groups';
-const AVATAR_STACK_CAP = 4;
 
 function loadExpandedGroups(): Set<string> {
   try {
@@ -488,6 +488,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
   const [poking, setPoking] = useState(false);
   const [poked, setPoked] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showExpandedIcon, setShowExpandedIcon] = useState(false);
   const { messages: chatMessages, loading: chatLoading, hasUnseen: chatUnseen, markSeen: markChatSeen } = useGameChat('groups', groupId);
 
   const handlePokeAll = async (e: React.MouseEvent) => {
@@ -648,6 +649,37 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
     fn();
   };
 
+  // Month picker — every stat below this row (Latest Spend, budget bar, Income/Expense/Net) is
+  // scoped to whichever month is selected here, not always "the real current month". Local to
+  // this card, never persisted — a fresh page load (or just navigating away and back) always
+  // starts back on the actual current month, exactly like every stat here worked before this
+  // existed. Capped from stepping past the real current month — there's nothing to show for a
+  // month that hasn't happened yet. Shared between the with-budget and no-budget layouts below
+  // (the 30% slot next to the budget card, or its own row when there's no budget to sit beside).
+  const monthPickerEl = (
+    <div className="flex items-center justify-center gap-0.5 bg-surface-container/50 rounded-full pl-1 pr-1.5 py-1 w-full">
+      <button onClick={stopAnd(() => stepMonth(-1))} title={t('dashboard.previousMonth')} className="p-1 hover:bg-white rounded-full transition-colors text-text-muted shrink-0">
+        <span className="material-symbols-outlined text-[16px] block">chevron_left</span>
+      </button>
+      <button
+        onClick={stopAnd(() => setSelectedMonthKey(todayMonthKey))}
+        disabled={isCurrentMonth}
+        title={isCurrentMonth ? undefined : t('dashboard.backToCurrentMonth')}
+        className={clsx('text-[11px] font-bold px-0.5 shrink-0 whitespace-nowrap', isCurrentMonth ? 'text-on-surface' : 'text-primary underline decoration-dotted')}
+      >
+        {monthLabel}
+      </button>
+      <button
+        onClick={stopAnd(() => stepMonth(1))}
+        disabled={isCurrentMonth}
+        title={t('dashboard.nextMonth')}
+        className="p-1 hover:bg-white rounded-full transition-colors text-text-muted shrink-0 disabled:opacity-30 disabled:pointer-events-none"
+      >
+        <span className="material-symbols-outlined text-[16px] block">chevron_right</span>
+      </button>
+    </div>
+  );
+
   return (
     <>
     <motion.div
@@ -659,8 +691,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
       // (see the note on ArchivedGroupRow for why: it read as the group repeatedly "going to
       // archive" on ordinary page loads, which is exactly what this was meant to avoid).
       transition={{ delay: index * 0.05, duration: 0.3 }}
-      className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
-      onClick={() => navigate(`/groups/${groupId}`)}
+      className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm hover:shadow-md transition-all group relative overflow-hidden"
     >
       <div className="relative z-10 space-y-2">
         {/* Header — icon, name, member count, feed/expand controls. Identical markup and sizing
@@ -668,13 +699,18 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
             "Latest Spend" section below actually grows/shrinks (see its own comment). */}
         <div className="flex items-center justify-between gap-2 -mx-6 -mt-6 mb-1 px-6 pt-4 pb-3 rounded-t-2xl bg-gradient-to-r from-[#4ADE80]/15 to-[#3B82F6]/15 border-b border-border-subtle">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 border border-primary/20 overflow-hidden shadow-inner">
+            <button
+              type="button"
+              onClick={stopAnd(() => setShowExpandedIcon(true))}
+              title={t('dashboard.expandGroupIcon')}
+              className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 border border-primary/20 overflow-hidden shadow-inner active:scale-95 transition-transform"
+            >
               {group?.photoURL ? (
                 <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <span className="text-3xl">{groupIconEmoji(group?.icon)}</span>
               )}
-            </div>
+            </button>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 min-w-0">
                 <h3 className="font-bold text-on-surface line-clamp-1">{group?.name || 'Loading...'}</h3>
@@ -696,90 +732,68 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
         </div>
 
         {/* Action row — labeled icon "bubbles" (colored background per action, short caption
-            below) instead of the old bare icon-only buttons, plus the month picker set apart on
-            the right in its own pill. Same 5 actions, same handlers/tooltips as before — purely a
-            visual redesign (inspired by a reference screenshot), not a functional change. */}
-        {/* overflow-x-auto is a fallback, not the primary fix — 5 action icons plus the month
-            pill are sized to fit a typical phone width; on a genuinely narrow device this scrolls
-            instead of clipping the month picker off the right edge of the screen. */}
-        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-0.5 shrink-0">
-            <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-              <span className="w-9 h-9 rounded-2xl bg-violet-100 flex items-center justify-center text-base">➕</span>
-              <span className="text-[9px] font-bold text-text-muted">Add</span>
-            </button>
-            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-              <span className="w-9 h-9 rounded-2xl bg-amber-100 flex items-center justify-center text-base">{poked ? '✅' : '✋'}</span>
-              <span className="text-[9px] font-bold text-text-muted">Poke</span>
-            </button>
-            <span onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1 px-0.5 py-0.5">
-              <span className="relative w-9 h-9 rounded-2xl bg-pink-100 flex items-center justify-center">
-                <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
-              </span>
-              <span className="text-[9px] font-bold text-text-muted">Chat</span>
+            below), spanning the card's full width now that the month picker moved next to the
+            budget card below — 5 evenly-spaced, slightly larger icons instead of packing tighter
+            to make room for a 6th thing on this row. Same 5 actions, same handlers/tooltips as
+            before — purely a visual redesign, not a functional change. */}
+        <div className="flex items-center justify-between gap-1">
+          <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
+            <span className="text-[10px] font-bold text-text-muted">Add</span>
+          </button>
+          <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <span className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-lg">{poked ? '✅' : '✋'}</span>
+            <span className="text-[10px] font-bold text-text-muted">Poke</span>
+          </button>
+          <span onClick={(e) => e.stopPropagation()} className="flex-1 flex flex-col items-center gap-1 py-0.5">
+            <span className="relative w-11 h-11 rounded-2xl bg-pink-100 flex items-center justify-center">
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
             </span>
-            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-              <span className="w-9 h-9 rounded-2xl bg-blue-100 flex items-center justify-center text-base">📊</span>
-              <span className="text-[9px] font-bold text-text-muted">Trends</span>
-            </button>
-            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex flex-col items-center gap-1 px-0.5 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-              <span className="w-9 h-9 rounded-2xl bg-teal-100 flex items-center justify-center text-base">🧾</span>
-              <span className="text-[9px] font-bold text-text-muted">Report</span>
-            </button>
-          </div>
-
-          {/* Month picker — every stat below this row (Latest Spend, budget bar, Income/Expense/
-              Net) is scoped to whichever month is selected here, not always "the real current
-              month". Local to this card, never persisted — a fresh page load (or just navigating
-              away and back) always starts back on the actual current month, exactly like every
-              stat here worked before this existed. Capped from stepping past the real current
-              month — there's nothing to show for a month that hasn't happened yet. */}
-          <div className="flex items-center gap-0.5 bg-surface-container/50 rounded-full pl-1 pr-1.5 py-1 shrink-0">
-            <button onClick={stopAnd(() => stepMonth(-1))} title={t('dashboard.previousMonth')} className="p-1 hover:bg-white rounded-full transition-colors text-text-muted shrink-0">
-              <span className="material-symbols-outlined text-[16px] block">chevron_left</span>
-            </button>
-            <button
-              onClick={stopAnd(() => setSelectedMonthKey(todayMonthKey))}
-              disabled={isCurrentMonth}
-              title={isCurrentMonth ? undefined : t('dashboard.backToCurrentMonth')}
-              className={clsx('text-[11px] font-bold px-0.5 shrink-0 whitespace-nowrap', isCurrentMonth ? 'text-on-surface' : 'text-primary underline decoration-dotted')}
-            >
-              {monthLabel}
-            </button>
-            <button
-              onClick={stopAnd(() => stepMonth(1))}
-              disabled={isCurrentMonth}
-              title={t('dashboard.nextMonth')}
-              className="p-1 hover:bg-white rounded-full transition-colors text-text-muted shrink-0 disabled:opacity-30 disabled:pointer-events-none"
-            >
-              <span className="material-symbols-outlined text-[16px] block">chevron_right</span>
-            </button>
-          </div>
+            <span className="text-[10px] font-bold text-text-muted">Chat</span>
+          </span>
+          <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <span className="w-11 h-11 rounded-2xl bg-blue-100 flex items-center justify-center text-lg">📊</span>
+            <span className="text-[10px] font-bold text-text-muted">Trends</span>
+          </button>
+          <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+            <span className="w-11 h-11 rounded-2xl bg-teal-100 flex items-center justify-center text-lg">🧾</span>
+            <span className="text-[10px] font-bold text-text-muted">Report</span>
+          </button>
         </div>
 
         {/* Budget card — label+amount and the percent now share one row (was a label above a bar
             with the percent floating over whatever point the fill happened to reach) — simpler,
             and matches a reference layout: BUDGET amount top-left, percent top-right, spent/
-            remaining below the bar. Same budgetStatus math/thresholds as before throughout. */}
-        {budgetStatus && (
-          <div className="bg-surface-container/40 rounded-2xl p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">
-                {t('common.budget')} {currencySymbol}{formatAmountCompact(budget.amount, group?.currency)}
-              </span>
-              <span className={clsx('text-xs font-black shrink-0', budgetStatus.textClass)}>
-                {Math.round(budgetStatus.percent)}%
-              </span>
+            remaining below the bar. Same budgetStatus math/thresholds as before throughout. Sits
+            at 70% width with the month picker taking the remaining 30% alongside it; with no
+            budget set, the month picker just gets its own row instead of an empty 70% slot next
+            to it. */}
+        {budgetStatus ? (
+          <div className="flex items-stretch gap-2">
+            <div className="w-[70%] bg-surface-container/40 rounded-2xl p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">
+                  {t('common.budget')} {currencySymbol}{formatAmountCompact(budget.amount, group?.currency, profile?.numberSystem)}
+                </span>
+                <span className={clsx('text-xs font-black shrink-0', budgetStatus.textClass)}>
+                  {Math.round(budgetStatus.percent)}%
+                </span>
+              </div>
+              <div className="h-1.5 bg-surface rounded-full overflow-hidden">
+                <div className={clsx('h-full rounded-full transition-all', budgetStatus.barClass)} style={{ width: `${Math.min(100, budgetStatus.percent)}%` }} />
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[9px] text-text-muted font-bold">
+                <span className="truncate">{t('common.spent')} {currencySymbol}{formatAmountCompact(monthExpense, group?.currency, profile?.numberSystem)}</span>
+                <span className={clsx(budgetStatus.percent > 100 ? 'text-error' : '', 'truncate text-right')}>
+                  {budgetStatus.percent > 100 ? t('common.overBy') : t('common.remaining')} {currencySymbol}{formatAmountCompact(Math.abs(budget.amount - monthExpense), group?.currency, profile?.numberSystem)}
+                </span>
+              </div>
             </div>
-            <div className="h-1.5 bg-surface rounded-full overflow-hidden">
-              <div className={clsx('h-full rounded-full transition-all', budgetStatus.barClass)} style={{ width: `${Math.min(100, budgetStatus.percent)}%` }} />
-            </div>
-            <div className="flex items-center justify-between gap-2 text-[9px] text-text-muted font-bold">
-              <span className="truncate">{t('common.spent')} {currencySymbol}{formatAmountCompact(monthExpense, group?.currency)}</span>
-              <span className={clsx(budgetStatus.percent > 100 ? 'text-error' : '', 'truncate text-right')}>
-                {budgetStatus.percent > 100 ? t('common.overBy') : t('common.remaining')} {currencySymbol}{formatAmountCompact(Math.abs(budget.amount - monthExpense), group?.currency)}
-              </span>
-            </div>
+            <div className="w-[30%] flex items-center">{monthPickerEl}</div>
+          </div>
+        ) : (
+          <div className="flex justify-end">
+            <div className="w-[30%]">{monthPickerEl}</div>
           </div>
         )}
 
@@ -849,7 +863,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
                 <p className="text-[10px] font-bold text-text-muted truncate">{t('dashboard.essentialPct', { pct: essentialSpendPct })}</p>
                 {(spendMemberFilter || spendClassificationFilter) && (
                   <p className="text-[10px] font-black text-primary truncate">
-                    {t('dashboard.filteredTotal', { amount: `${currencySymbol}${filteredSpendTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
+                    {t('dashboard.filteredTotal', { amount: `${currencySymbol}${formatAmountCompact(filteredSpendTotal, group?.currency, profile?.numberSystem)}` })}
                   </p>
                 )}
               </div>
@@ -905,7 +919,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
                         <span className="text-sm truncate">{expense.description}</span>
                       </div>
                       <span className={clsx("text-sm font-bold flex-none ml-2", isIncomeRow ? "text-[#0F7A38]" : "text-primary")}>
-                        {isIncomeRow && '+'}{currencySymbol}{expense.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {isIncomeRow && '+'}{currencySymbol}{formatAmountCompact(expense.amount, group?.currency, profile?.numberSystem)}
                       </span>
                     </div>
                   );
@@ -917,97 +931,91 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
           </div>
         </motion.div>
 
-        {/* Footer — a narrow 20% column of overlapping member avatars (icons only, no names —
-            back to the original stacked-avatar look) beside an 80% column carrying the month
-            stat tiles and the last-month summary, instead of stacking member chips above the
-            stats full-width. pt-2 (not pt-4) — when Latest Spend is collapsed, its own space-y-2
-            sibling margins already add gap around its now-invisible 0-height div, so a full pt-4
-            here on top of that stacked into a visibly oversized gap between the budget card and
-            this row. */}
-        <div className="pt-2 border-t border-gray-50 flex items-start gap-2">
-          <div className="w-1/5 shrink-0 flex items-center pt-1">
-            <div className="flex -space-x-2.5">
-              {members.slice(0, AVATAR_STACK_CAP).map((member: any, i: number) => (
-                <div
-                  key={i}
-                  className="w-7 h-7 rounded-full border-2 border-white bg-surface-container-high overflow-hidden shrink-0"
-                  style={{ zIndex: AVATAR_STACK_CAP - i }}
-                >
-                  {member.photoURL ? (
-                    <img src={member.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-[10px] font-bold">
-                      {member.displayName?.slice(0, 1)}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {members.length > AVATAR_STACK_CAP && (
-                <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-container flex items-center justify-center text-[9px] font-bold text-text-muted shrink-0">
-                  +{members.length - AVATAR_STACK_CAP}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="w-4/5 min-w-0 space-y-2">
-            {group?.incomeEnabled ? (
-              <>
-                {/* Tinted rounded tiles instead of a plain 3-column text grid — same numbers, more
-                    visually distinct at a glance. */}
-                <div className="grid grid-cols-3 gap-1.5">
-                  <div className="bg-[#0F7A38]/10 rounded-xl py-2 px-1 text-center">
-                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
-                    <p className="text-sm font-bold text-[#0F7A38] truncate">
-                      {currencySymbol}{monthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </p>
-                  </div>
-                  <div className="bg-primary/5 rounded-xl py-2 px-1 text-center">
-                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
-                    <p className="text-sm font-bold text-primary truncate">
-                      {currencySymbol}{monthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </p>
-                  </div>
-                  <div className={clsx('rounded-xl py-2 px-1 text-center', monthIncome >= monthExpense ? 'bg-success/10' : 'bg-error/10')}>
-                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">
-                      {monthIncome >= monthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}
-                    </p>
-                    <p className={clsx('text-sm font-bold truncate', monthIncome >= monthExpense ? 'text-success' : 'text-error')}>
-                      {currencySymbol}{Math.abs(monthIncome - monthExpense).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </p>
-                  </div>
-                </div>
-                {/* Event groups (one-off trips/parties) don't have a meaningful "previous month" —
-                    there's no month-over-month cadence to compare against. Collapsed into one
-                    compact line (was its own 3-column grid) — same numbers, less vertical space. */}
-                {!isEventGroup && (
-                  <p className="text-[9px] text-text-muted font-bold text-center leading-snug">
-                    Last Mo. {t('common.income')}: {currencySymbol}{previousMonthIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {' · '}{t('common.expense')}: {currencySymbol}{previousMonthExpense.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {' · '}{previousMonthIncome >= previousMonthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}: {currencySymbol}
-                    {Math.abs(previousMonthIncome - previousMonthExpense).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        {/* Footer — Income/Expense/Net (or the non-income "This Month" card) uses the card's full
+            width. pt-2 (not pt-4) — when Latest Spend is collapsed, its own space-y-2 sibling
+            margins already add gap around its now-invisible 0-height div, so a full pt-4 here on
+            top of that stacked into a visibly oversized gap between the budget card and this row. */}
+        <div className="pt-2 border-t border-gray-50 space-y-2.5">
+          {group?.incomeEnabled ? (
+            <>
+              {/* Tinted rounded tiles instead of a plain 3-column text grid — same numbers, more
+                  visually distinct at a glance. */}
+              <div className="grid grid-cols-3 gap-1.5">
+                <div className="bg-[#0F7A38]/10 rounded-xl py-2 px-1 text-center">
+                  <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
+                  <p className="text-sm font-bold text-[#0F7A38] truncate">
+                    {currencySymbol}{formatAmountCompact(monthIncome, group?.currency, profile?.numberSystem)}
                   </p>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center justify-between gap-2">
-                {!isEventGroup ? (
-                  <p className="text-[9px] text-text-muted font-bold uppercase tracking-wider truncate">
-                    {t('dashboard.lastMonth', { amount: `${currencySymbol}${previousMonthSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
+                </div>
+                <div className="bg-primary/5 rounded-xl py-2 px-1 text-center">
+                  <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
+                  <p className="text-sm font-bold text-primary truncate">
+                    {currencySymbol}{formatAmountCompact(monthExpense, group?.currency, profile?.numberSystem)}
                   </p>
-                ) : <span />}
-                <div className="bg-primary/5 rounded-xl px-3 py-1.5 text-right shrink-0">
-                  <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">This Month</p>
-                  <p className="text-base font-bold text-primary">
-                    {currencySymbol}{monthSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className={clsx('rounded-xl py-2 px-1 text-center', monthIncome >= monthExpense ? 'bg-success/10' : 'bg-error/10')}>
+                  <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">
+                    {monthIncome >= monthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}
+                  </p>
+                  <p className={clsx('text-sm font-bold truncate', monthIncome >= monthExpense ? 'text-success' : 'text-error')}>
+                    {currencySymbol}{formatAmountCompact(Math.abs(monthIncome - monthExpense), group?.currency, profile?.numberSystem)}
                   </p>
                 </div>
               </div>
-            )}
-          </div>
+              {/* Event groups (one-off trips/parties) don't have a meaningful "previous month" —
+                  there's no month-over-month cadence to compare against. Collapsed into one
+                  compact line (was its own 3-column grid) — same numbers, less vertical space. */}
+              {!isEventGroup && (
+                <p className="text-[9px] text-text-muted font-bold text-center leading-snug">
+                  Last Mo. {t('common.income')}: {currencySymbol}{formatAmountCompact(previousMonthIncome, group?.currency, profile?.numberSystem)}
+                  {' · '}{t('common.expense')}: {currencySymbol}{formatAmountCompact(previousMonthExpense, group?.currency, profile?.numberSystem)}
+                  {' · '}{previousMonthIncome >= previousMonthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}: {currencySymbol}
+                  {formatAmountCompact(Math.abs(previousMonthIncome - previousMonthExpense), group?.currency, profile?.numberSystem)}
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              {!isEventGroup ? (
+                <p className="text-[9px] text-text-muted font-bold uppercase tracking-wider truncate">
+                  {t('dashboard.lastMonth', { amount: `${currencySymbol}${formatAmountCompact(previousMonthSpend, group?.currency, profile?.numberSystem)}` })}
+                </p>
+              ) : <span />}
+              <div className="bg-primary/5 rounded-xl px-3 py-1.5 text-right shrink-0">
+                <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">This Month</p>
+                <p className="text-base font-bold text-primary">
+                  {currencySymbol}{monthSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
+
+    {/* Expanded group icon/photo — a real photo reuses the shared ImageLightbox (same
+        tap-to-dismiss viewer as every other "attached photo" in the app); an icon-only group has
+        no image src to hand it, so it gets a plain enlarged-emoji overlay instead. */}
+    {showExpandedIcon && (
+      group?.photoURL ? (
+        <ImageLightbox src={group.photoURL} onClose={() => setShowExpandedIcon(false)} />
+      ) : (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80"
+          onClick={() => setShowExpandedIcon(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setShowExpandedIcon(false)}
+            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white"
+            aria-label="Close"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+          <span className="text-[140px] leading-none">{groupIconEmoji(group?.icon)}</span>
+        </div>
+      )
+    )}
 
     {quickViewExpense && (
       <ExpenseQuickView

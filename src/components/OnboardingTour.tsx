@@ -31,8 +31,13 @@ export default function OnboardingTour() {
   // straight to `${tour.route}?tour=${tour.id}` — or (2) the 'dashboard' tour auto-launching for a
   // genuinely brand-new account (`hasSeenOnboarding === false`, set explicitly at signup in
   // AuthContext.tsx) that hasn't finished it yet, landing on '/' with no explicit tour requested.
-  // Re-runs on every route/param change so navigating from one tour's screen to another's (or a
-  // fresh `?tour=` deep link on an already-mounted screen) picks it up correctly.
+  // The auto-launch path also waits on `hasCompletedProfileSetup` (ProfileSetupWizard.tsx's own
+  // gate) so a brand-new account sees the name/currency/DOB/create-group wizard first, THEN this
+  // spotlight tour once that's dismissed — never both full-screen overlays at once. An explicit
+  // `?tour=` deep link (e.g. from About.tsx) is unaffected by that check, since it's a deliberate
+  // request, not the auto-launch. Re-runs on every route/param change so navigating from one
+  // tour's screen to another's (or a fresh `?tour=` deep link on an already-mounted screen) picks
+  // it up correctly.
   useEffect(() => {
     if (!user || !profile) return;
     const requested = searchParams.get('tour');
@@ -46,7 +51,10 @@ export default function OnboardingTour() {
         return;
       }
     }
-    if (!requested && !activeTourId && location.pathname === '/' && profile.hasSeenOnboarding === false) {
+    if (
+      !requested && !activeTourId && location.pathname === '/' &&
+      profile.hasSeenOnboarding === false && profile.hasCompletedProfileSetup !== false
+    ) {
       setStepIndex(0);
       setActiveTourId('dashboard');
     }

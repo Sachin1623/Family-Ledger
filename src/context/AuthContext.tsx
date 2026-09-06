@@ -120,7 +120,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // Explicitly `false` (not just absent) so OnboardingTour.tsx can tell a genuinely
                 // brand-new account apart from an established user whose doc predates this field
                 // entirely — only the former should auto-launch the tour.
-                hasSeenOnboarding: false
+                hasSeenOnboarding: false,
+                // Same reasoning, for ProfileSetupWizard.tsx's guided name/currency/DOB/create-
+                // group sequence — gates on this being explicitly `false`, not just falsy, so an
+                // established account never sees it retroactively.
+                hasCompletedProfileSetup: false
               }).catch(err => {
                 handleFirestoreError(err, OperationType.CREATE, `users/${myUid}`);
                 throw err;
