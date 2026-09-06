@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { collection, doc, getDoc, setDoc, updateDoc, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
@@ -37,6 +37,7 @@ export default function GoalsHub() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const groupIds = useMemo(() => membershipsValue?.docs.map((d) => d.data().groupId) || [], [membershipsValue]);
@@ -51,10 +52,34 @@ export default function GoalsHub() {
   const activeGroupIds = useMemo(() => groups.filter((g: any) => !g.archived).map((g: any) => g.id), [groups]);
 
   // 'reports' is the landing tab — Reports & Timeline (the Goal Horizon chart plus totals) is
-  // what most benefits from being seen first on opening Goals, per explicit request.
-  const [goalsTab, setGoalsTab] = useState<'reports' | 'goals' | 'accounts' | 'allocation'>('reports');
+  // what most benefits from being seen first on opening Goals, per explicit request. A `?tab=`
+  // query param overrides that default — used when landing back here from a route-level page this
+  // hub linked out to (e.g. New Goal, tagged with `?from=<tab>` on the way out — see the "New Goal"
+  // buttons below and GoalWizard.tsx's own close/back handling), so returning restores the exact
+  // tab you left, the same way closing a same-page modal never lost it in the first place. Read via
+  // useState's lazy initializer (runs once per mount, not an effect) — safe here specifically
+  // because navigating back from a DIFFERENT route always remounts GoalsHub fresh; this is not the
+  // mount-only-effect deep-link trap (see feedback memory) since that concerns a route re-visited
+  // WITHOUT unmounting, which doesn't happen on this particular round trip.
+  const VALID_GOALS_TABS = ['reports', 'goals', 'accounts', 'allocation'] as const;
+  const [goalsTab, setGoalsTab] = useState<'reports' | 'goals' | 'accounts' | 'allocation'>(() => {
+    const tab = searchParams.get('tab');
+    return (VALID_GOALS_TABS as readonly string[]).includes(tab || '') ? (tab as any) : 'reports';
+  });
   const [showAccountsHelp, setShowAccountsHelp] = useState(false);
   const [showWorkflowGuide, setShowWorkflowGuide] = useState(false);
+
+  // Keeps the address bar's `?tab=` in sync with whichever tab is active, so a genuine browser
+  // back press (not just the on-screen "New Goal" close button or the hardware/gesture back
+  // button, which both already resolve the right tab via `?from=`/getParentPath) also naturally
+  // lands back on the right tab — the pushed '/goals/new' history entry's own "previous" entry is
+  // this URL, so it needs to already carry the tab for that to work. `replace` (not push) so
+  // switching tabs doesn't spam browser history with one entry per tap.
+  useEffect(() => {
+    if (searchParams.get('tab') === goalsTab) return;
+    navigate(`/goals?tab=${goalsTab}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalsTab]);
 
   // A default currency for new goals — the user's first/most-used group's currency, since there's
   // no single "the" currency once goals aggregate across groups that could each technically use a
@@ -523,7 +548,7 @@ export default function GoalsHub() {
           {goalsTab === 'goals' && (
             <button
               type="button"
-              onClick={() => navigate('/goals/new')}
+              onClick={() => navigate(`/goals/new?from=${goalsTab}`)}
               className="bg-primary text-white px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all text-sm"
             >
               <span className="material-symbols-outlined text-[18px]">add</span>
@@ -637,7 +662,7 @@ export default function GoalsHub() {
           <span className="text-4xl block">🎯</span>
           <p className="text-sm font-bold text-on-surface">{t('goals.emptyStateTitle')}</p>
           <p className="text-xs text-text-muted">{t('goals.emptyStateDesc')}</p>
-          <button type="button" onClick={() => navigate('/goals/new')} className="mt-2 px-5 py-2.5 bg-primary text-white font-bold rounded-xl text-sm">
+          <button type="button" onClick={() => navigate(`/goals/new?from=${goalsTab}`)} className="mt-2 px-5 py-2.5 bg-primary text-white font-bold rounded-xl text-sm">
             {t('goals.createFirstGoal')}
           </button>
         </div>
@@ -713,7 +738,7 @@ export default function GoalsHub() {
             </div>
             {[
               { icon: 'account_balance', titleKey: 'goals.guideStep1Title', whyKey: 'goals.guideStep1Why', howKey: 'goals.guideStep1How', actionKey: 'goals.guideStep1Action', onAction: () => setGoalsTab('accounts') },
-              { icon: 'flag', titleKey: 'goals.guideStep2Title', whyKey: 'goals.guideStep2Why', howKey: 'goals.guideStep2How', actionKey: 'goals.guideStep2Action', onAction: () => navigate('/goals/new') },
+              { icon: 'flag', titleKey: 'goals.guideStep2Title', whyKey: 'goals.guideStep2Why', howKey: 'goals.guideStep2How', actionKey: 'goals.guideStep2Action', onAction: () => navigate(`/goals/new?from=${goalsTab}`) },
               { icon: 'link', titleKey: 'goals.guideStep3Title', whyKey: 'goals.guideStep3Why', howKey: 'goals.guideStep3How', actionKey: 'goals.guideStep3Action', onAction: () => setGoalsTab('allocation') },
               { icon: 'insights', titleKey: 'goals.guideStep4Title', whyKey: 'goals.guideStep4Why', howKey: 'goals.guideStep4How', actionKey: 'goals.guideStep4Action', onAction: () => setGoalsTab('reports') },
             ].map((step) => (

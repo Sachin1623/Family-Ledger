@@ -15,6 +15,54 @@ export const getCurrencySymbol = (currencyCode?: string) => {
   return CURRENCY_SYMBOLS[currencyCode || ''] || currencyCode || '$';
 };
 
+// Best-effort "what currency does this user probably use" guess for contexts with no group
+// selected (so no group.currency to read) and no profile.currency set either — e.g.
+// Settlements.tsx's "Overall" balance summary, which used to hardcode getCurrencySymbol(undefined)
+// straight to '$' regardless of who was looking at it. There's no permissions-friendly way to get
+// a user's real location without a paid geo-IP service, so — same approach geo.ts's
+// getApproxCountry() already uses for admin analytics — this infers from the device's own IANA
+// timezone (Intl.DateTimeFormat) rather than asking for anything. Only covers the currencies this
+// app's own currency picker actually offers (CURRENCY_SYMBOLS above); anywhere that map doesn't
+// reach falls back to USD, the most globally recognizable default with zero other signal.
+const TIMEZONE_CURRENCY: Record<string, string> = {
+  'Asia/Kolkata': 'INR',
+  'Asia/Calcutta': 'INR',
+  'America/New_York': 'USD',
+  'America/Chicago': 'USD',
+  'America/Denver': 'USD',
+  'America/Los_Angeles': 'USD',
+  'America/Anchorage': 'USD',
+  'Pacific/Honolulu': 'USD',
+  'America/Toronto': 'CAD',
+  'America/Vancouver': 'CAD',
+  'America/Edmonton': 'CAD',
+  'America/Winnipeg': 'CAD',
+  'Europe/London': 'GBP',
+  'Australia/Sydney': 'AUD',
+  'Australia/Melbourne': 'AUD',
+  'Australia/Brisbane': 'AUD',
+  'Australia/Perth': 'AUD',
+  'Asia/Dubai': 'AED',
+  'Asia/Riyadh': 'SAR',
+  'Asia/Tokyo': 'JPY',
+  'Asia/Shanghai': 'CNY',
+  'Europe/Paris': 'EUR',
+  'Europe/Berlin': 'EUR',
+  'Europe/Madrid': 'EUR',
+  'Europe/Rome': 'EUR',
+  'Europe/Amsterdam': 'EUR',
+  'Europe/Dublin': 'EUR',
+};
+
+export function guessLocationCurrency(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return TIMEZONE_CURRENCY[tz] || 'USD';
+  } catch {
+    return 'USD';
+  }
+}
+
 export type NumberSystem = 'south_asian' | 'international';
 export const NUMBER_SYSTEMS: { id: NumberSystem; label: string; example: string }[] = [
   { id: 'south_asian', label: 'South Asian (K, L, Cr)', example: '₹12.5L' },
@@ -56,6 +104,29 @@ export const COUNTRIES: string[] = [
   'Israel', 'Turkey', 'Jordan', 'Lebanon',
   'Other',
 ];
+
+// One real ISO currency per COUNTRIES entry (not just the 10 CURRENCY_SYMBOLS has a dedicated
+// glyph for — getCurrencySymbol() already falls back to printing the raw code, e.g. "NGN", for
+// anything outside that set, which reads fine and is still far more correct than mislabeling a
+// Nigerian user's balance in Rupees or Dollars). 'Other' deliberately has no entry — there's
+// nothing sensible to guess from it.
+const COUNTRY_CURRENCY: Record<string, string> = {
+  India: 'INR', 'United States': 'USD', 'United Kingdom': 'GBP', Canada: 'CAD', Australia: 'AUD', 'New Zealand': 'NZD',
+  'United Arab Emirates': 'AED', 'Saudi Arabia': 'SAR', Qatar: 'QAR', Kuwait: 'KWD', Bahrain: 'BHD', Oman: 'OMR',
+  Singapore: 'SGD', Malaysia: 'MYR', Indonesia: 'IDR', Thailand: 'THB', Philippines: 'PHP', Vietnam: 'VND',
+  Pakistan: 'PKR', Bangladesh: 'BDT', 'Sri Lanka': 'LKR', Nepal: 'NPR', Bhutan: 'BTN', Maldives: 'MVR',
+  China: 'CNY', Japan: 'JPY', 'South Korea': 'KRW', 'Hong Kong': 'HKD', Taiwan: 'TWD',
+  Germany: 'EUR', France: 'EUR', Spain: 'EUR', Italy: 'EUR', Netherlands: 'EUR', Belgium: 'EUR', Switzerland: 'CHF',
+  Austria: 'EUR', Sweden: 'SEK', Norway: 'NOK', Denmark: 'DKK', Finland: 'EUR', Ireland: 'EUR', Portugal: 'EUR',
+  Poland: 'PLN', 'Czech Republic': 'CZK', Greece: 'EUR', Romania: 'RON', Hungary: 'HUF', Ukraine: 'UAH', Russia: 'RUB',
+  'South Africa': 'ZAR', Nigeria: 'NGN', Kenya: 'KES', Egypt: 'EGP', Morocco: 'MAD', Ghana: 'GHS',
+  Brazil: 'BRL', Mexico: 'MXN', Argentina: 'ARS', Chile: 'CLP', Colombia: 'COP', Peru: 'PEN',
+  Israel: 'ILS', Turkey: 'TRY', Jordan: 'JOD', Lebanon: 'LBP',
+};
+
+export function currencyForCountry(country?: string | null): string | undefined {
+  return country ? COUNTRY_CURRENCY[country] : undefined;
+}
 
 // `icon` values are native emoji (not Material Symbols ligature names) — every render site that
 // displays one must NOT wrap it in a `material-symbols-outlined` class, since that font expects a

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { collection, doc, getDoc, setDoc, updateDoc, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
@@ -25,7 +25,21 @@ export default function GoalWizard() {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const { goalId } = useParams<{ goalId?: string }>();
+  const [searchParams] = useSearchParams();
   const isEditing = !!goalId;
+
+  // Editing always returns to that goal's own detail page (where the Edit button lives) — same as
+  // the old plain `navigate(-1)` did for this branch, just not dependent on browser history actually
+  // matching. Creating a NEW goal returns to whichever GoalsHub tab launched it (tagged as
+  // `?from=<tab>` by GoalsHub.tsx's own "New Goal" buttons) — GoalsHub's tabs are React state, not
+  // routes, so a hardcoded '/goals' would always land back on its default 'reports' tab regardless.
+  // Used by both the on-screen close button below AND the hardware/gesture back handler (App.tsx,
+  // via navigationParents.ts's matching '/goals/new' special-case), so the two always agree.
+  const closeDestination = () => {
+    if (isEditing) { navigate(`/goals/${goalId}`); return; }
+    const from = searchParams.get('from');
+    navigate(from ? `/goals?tab=${from}` : '/goals');
+  };
 
   const [loaded, setLoaded] = useState(!isEditing);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
@@ -179,14 +193,23 @@ export default function GoalWizard() {
   }
 
   return (
-    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-primary">{isEditing ? t('goals.editGoal') : t('goals.newGoal')}</h1>
-        <button onClick={() => navigate(-1)} className="p-2 text-text-muted hover:bg-surface rounded-full">
-          <span className="material-symbols-outlined text-[20px] block">close</span>
-        </button>
+    <div className="pb-32">
+      {/* top offset matches Header.tsx's own real rendered height (min-h-[60px] plus its
+          safe-area-inset-top padding) — Header itself is `sticky top-0 z-50`, so without this
+          offset this bar would stick to the exact same top:0 position and get painted over/pushed
+          out from under it while scrolling, which is what "the header still scrolls" actually was:
+          not a failure to stick, but sticking in the wrong place. Same offset Header.tsx's own
+          hamburger-menu dropdown already uses for the same reason. */}
+      <div className="sticky top-[calc(60px+env(safe-area-inset-top))] z-10 bg-white border-b border-border-subtle">
+        <div className="max-w-lg mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
+          <h1 className="text-xl font-bold text-primary">{isEditing ? t('goals.editGoal') : t('goals.newGoal')}</h1>
+          <button onClick={closeDestination} className="p-2 text-text-muted hover:bg-surface rounded-full" aria-label={t('common.close')}>
+            <span className="material-symbols-outlined text-[20px] block">close</span>
+          </button>
+        </div>
       </div>
 
+      <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5">
       <div className="space-y-1.5">
         <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.icon')}</label>
         <div className="flex flex-wrap gap-2">
@@ -323,6 +346,7 @@ export default function GoalWizard() {
       <button type="button" onClick={handleSave} disabled={saving} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
         {saving ? t('goals.saving') : isEditing ? t('common.save') : t('goals.createGoal')}
       </button>
+      </div>
     </div>
   );
 }

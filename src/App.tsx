@@ -4,6 +4,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { setNavigateFn } from './lib/navigationRef';
 import { getParentPath } from './lib/navigationParents';
+import { consumeModalBackHandler } from './lib/modalBackHandler';
 import { trackPageView } from './lib/firebase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
@@ -182,6 +183,11 @@ const NavigationBridge = () => {
   React.useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const listenerPromise = CapacitorApp.addListener('backButton', () => {
+      // A floating modal (e.g. AccountsHub's Add Account form) covers the screen but isn't its
+      // own route — getParentPath below only knows about the route underneath it, so without this
+      // check, back would skip straight past the modal to that route's own logical parent instead
+      // of just closing the modal first, one layer at a time like the on-screen X does.
+      if (consumeModalBackHandler()) return;
       const path = pathnameRef.current;
       if (path === '/' || path === '/login') {
         CapacitorApp.exitApp();

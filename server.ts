@@ -3125,7 +3125,7 @@ async function startServer() {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
       const [usersSnap, groupsSnap, expensesSnap] = await Promise.all([
-        db.collection('users').select('country', 'lastActiveAt', 'joinedAt').get(),
+        db.collection('users').select('approxCountry', 'lastActiveAt', 'joinedAt').get(),
         db.collection('groups').select('createdBy').get(),
         db.collection('expenses').select('addedBy', 'amount').get(),
       ]);
@@ -3146,7 +3146,7 @@ async function startServer() {
 
       usersSnap.docs.forEach((d) => {
         const data = d.data();
-        const country = data.country || 'Unknown';
+        const country = data.approxCountry || 'Unknown';
         uidToCountry.set(d.id, country);
         const bucket = getBucket(country);
         bucket.users += 1;
@@ -3291,7 +3291,7 @@ async function startServer() {
         email: u.email || '',
         displayName: u.displayName || '',
         photoURL: u.photoURL || '',
-        country: u.country || 'Unknown',
+        country: u.approxCountry || 'Unknown',
         joinedAt: u.joinedAt || null,
         lastActiveAt: u.lastActiveAt || null,
         groupCount: groupCountByUid.get(u.uid) || 0,

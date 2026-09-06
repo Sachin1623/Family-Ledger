@@ -6,7 +6,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, formatAmountCompact } from '../lib/constants';
+import { getCurrencySymbol, currencyForCountry, guessLocationCurrency, EXPENSE_CATEGORIES, formatAmountCompact } from '../lib/constants';
 import { parseLocalDate } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
 import SettlementDetailModal, { SettlementDetailInfo } from '../components/SettlementDetailModal';
@@ -212,11 +212,19 @@ export default function Settlements() {
   // silently mislabeling a mixed- or non-INR total as Rupees — see the fix on those cards).
   // Still correct as-is for every OTHER currencySymbol usage in this file (settlement rows, the
   // detail modal, etc.), which are all scoped to one specific group already.
+  // The zero-balance placeholder ("You are owed $0.00") has no group/settlement to read a real
+  // currency off at all — used to fall straight to getCurrencySymbol(undefined)'s hardcoded '$'
+  // regardless of who was looking at it. Preference order: the viewer's own explicit profile
+  // currency, then the currency of their explicit profile Country (a real user choice, more
+  // reliable than guessing), then a last-resort device-timezone guess for the rare case neither
+  // is set.
   const currencySymbol = useMemo(() => {
-    if (selectedGroupId === 'overall') return getCurrencySymbol(undefined);
+    if (selectedGroupId === 'overall') {
+      return getCurrencySymbol(profile?.currency || currencyForCountry(profile?.country) || guessLocationCurrency());
+    }
     const group = groups.find(g => g.id === selectedGroupId);
     return getCurrencySymbol(group?.currency);
-  }, [selectedGroupId, groups]);
+  }, [selectedGroupId, groups, profile?.currency, profile?.country]);
 
   // The expense lines actually behind a given settlement row — any expense in that group where
   // BOTH people appear (one paid, the other is in the split), in either direction, since a net

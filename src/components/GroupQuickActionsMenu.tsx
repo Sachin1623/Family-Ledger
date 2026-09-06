@@ -420,6 +420,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
         exit={{ y: 40, opacity: 0 }}
         onClick={stop}
         className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] overflow-y-auto"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <div className="flex items-center justify-between px-2 py-2 border-b border-border-subtle sticky top-0 bg-white z-10">
           {subPanel ? (

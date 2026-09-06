@@ -28,7 +28,6 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/expense-reminders': '/tools',
   '/reminders': '/tools',
   '/goals': '/',
-  '/goals/new': '/goals',
   '/goals/allocate': '/goals',
   '/goals/reports': '/goals',
   '/goals/reconcile': '/goals',
@@ -103,6 +102,14 @@ export function getParentPath(pathname: string, search?: string): string {
     new URLSearchParams(search || '').get('from') === 'dashboard'
   ) {
     return '/';
+  }
+  // Same idea, for GoalsHub's own internal tabs (Reports/Goals/Accounts/Allocation) — those are
+  // React state, not routes, so navigating to New Goal and back would otherwise always land on
+  // GoalsHub's default 'reports' tab regardless of which one was actually open. GoalsHub.tsx tags
+  // its "New Goal" links with `?from=<tab>` on the way out and reads `?tab=` back on mount.
+  if (pathname === '/goals/new') {
+    const from = new URLSearchParams(search || '').get('from');
+    return from ? `/goals?tab=${from}` : '/goals';
   }
   if (PARENT_OVERRIDES[pathname]) return PARENT_OVERRIDES[pathname];
   for (const [pattern, parent] of PARENT_PATTERNS) {

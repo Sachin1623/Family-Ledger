@@ -227,7 +227,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: nowIso,
           platform: Capacitor.isNativePlatform() ? Capacitor.getPlatform() : 'web',
         }).catch((err) => console.error('loginEvents write failed:', err));
-        setDoc(userDocRef, { lastLoginAt: nowIso, lastActiveAt: nowIso, country: getApproxCountry() }, { merge: true }).catch((err) =>
+        // `approxCountry` — deliberately NOT `country` — is a timezone-based guess for the admin
+        // analytics dashboard only (see getApproxCountry()'s own header comment). It used to be
+        // written as plain `country` on this PUBLIC doc, which collided with the user's own
+        // explicit country choice from Profile.tsx/ProfileSetupWizard (stored as `country` on the
+        // PRIVATE info doc) — both merge into the same flat client-side `profile` object, so this
+        // auto-detected value silently clobbered the user's real pick on every single login.
+        setDoc(userDocRef, { lastLoginAt: nowIso, lastActiveAt: nowIso, approxCountry: getApproxCountry() }, { merge: true }).catch((err) =>
           console.error('lastLoginAt update failed:', err),
         );
       } else {

@@ -17,6 +17,7 @@ import {
 } from '../lib/accounts';
 import { applyAccountChange, deallocateAccountBeforeDelete, notifyGoalsMet, AccountAllocationInput } from '../lib/accountAllocations';
 import { shareText } from '../lib/fileShare';
+import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 
@@ -219,6 +220,17 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
     setFormError(null);
     setShowForm(true);
   };
+
+  // Android/gesture back button used to fall straight through this modal to the accounts route's
+  // own logical parent (Dashboard) — see modalBackHandler.ts's header comment for why. Pushing a
+  // close handler while the form is open makes back just close the form and land back on Accounts,
+  // matching the new on-screen X button below.
+  useEffect(() => {
+    if (!showForm) return;
+    const handler = () => setShowForm(false);
+    pushModalBackHandler(handler);
+    return () => popModalBackHandler(handler);
+  }, [showForm]);
 
   // --- View Account (read-only) ---
   // Opening an account — via the deep link below, or tapping its row in the list — lands here
@@ -750,8 +762,14 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
       {/* --- Add/Edit account modal --- */}
       {showForm && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowForm(false)}>
-          <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-black text-primary">{editingAccount ? t('accounts.editAccount') : t('accounts.addAccount')}</h3>
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
+              <h3 className="text-base font-black text-primary">{editingAccount ? t('accounts.editAccount') : t('accounts.addAccount')}</h3>
+              <button type="button" onClick={() => setShowForm(false)} className="p-1.5 -mr-1.5 text-text-muted hover:bg-surface rounded-full shrink-0" aria-label={t('common.close')}>
+                <span className="material-symbols-outlined text-[20px] block">close</span>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
             <input
               type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('accounts.namePlaceholder')} autoFocus
               className="w-full h-12 bg-surface px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
@@ -944,6 +962,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
               <button onClick={handleSaveAccount} disabled={saving} className="flex-1 py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
                 {saving ? t('goals.saving') : t('common.save')}
               </button>
+            </div>
             </div>
           </div>
         </div>
