@@ -54,6 +54,7 @@ export default function GoalsHub() {
   // what most benefits from being seen first on opening Goals, per explicit request.
   const [goalsTab, setGoalsTab] = useState<'reports' | 'goals' | 'accounts' | 'allocation'>('reports');
   const [showAccountsHelp, setShowAccountsHelp] = useState(false);
+  const [showWorkflowGuide, setShowWorkflowGuide] = useState(false);
 
   // A default currency for new goals — the user's first/most-used group's currency, since there's
   // no single "the" currency once goals aggregate across groups that could each technically use a
@@ -438,6 +439,18 @@ export default function GoalsHub() {
     }
     const pct = goalProgressPct(g);
     const projected = g.status === 'completed' ? null : goalHorizonDate(g, ledgersByGoal.get(g.id) || [], ownAccounts);
+    // How far the actual projection (from the real savings/interest rate feeding this goal) sits
+    // from the date the user originally aimed for — positive means later than hoped (behind),
+    // zero or negative means on schedule or ahead. Only shown when there's something to compare:
+    // a target date the user actually set, AND a real projection (an unfunded goal has neither
+    // an account nor a rate to project from, so there's nothing meaningful to compare yet).
+    const monthsBehindTarget = g.targetDate && projected
+      ? (() => {
+          const [ty, tm] = g.targetDate.split('-').map(Number);
+          const [py, pm] = projected.split('-').map(Number);
+          return (py - ty) * 12 + (pm - tm);
+        })()
+      : null;
     return (
       <button
         key={g.id}
@@ -467,8 +480,18 @@ export default function GoalsHub() {
           <span className="text-text-muted">
             {sym}{formatAmountCompact(fromMinorUnits(goalTotalMinor(g)), g.currency, profile?.numberSystem)} / {sym}{formatAmountCompact(fromMinorUnits(g.targetAmountMinor), g.currency, profile?.numberSystem)}
           </span>
-          <span className="text-text-muted font-bold">
+          <span className="text-text-muted font-bold flex items-center gap-1">
             {g.status === 'completed' ? t('goals.metOn', { date: g.completedAt?.slice(0, 10) || '' }) : projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
+            {monthsBehindTarget !== null && (
+              <span className={clsx(
+                'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
+                monthsBehindTarget <= 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning',
+              )}>
+                {monthsBehindTarget <= 0
+                  ? (monthsBehindTarget <= -1 ? t('goals.aheadOfTarget', { months: Math.abs(monthsBehindTarget) }) : t('goals.onTrack'))
+                  : t('goals.behindTarget', { months: monthsBehindTarget })}
+              </span>
+            )}
           </span>
         </div>
         {g.accountAllocatedMinor > 0 && (
@@ -488,11 +511,16 @@ export default function GoalsHub() {
           <h1 className="text-2xl font-bold text-primary">{t('goals.hubTitle')}</h1>
           <p className="text-xs text-text-muted">{t('goals.hubSubtitle')}</p>
         </div>
-        {goalsTab === 'goals' && (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button type="button" onClick={() => setGoalsTab('reports')} className="w-10 h-10 rounded-xl border border-border-subtle text-primary flex items-center justify-center hover:bg-surface-container">
-              <span className="material-symbols-outlined text-[20px]">insights</span>
-            </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowWorkflowGuide(true)}
+            className="flex items-center gap-1 text-xs font-bold text-text-muted hover:text-primary transition-colors"
+          >
+            {t('goals.howItWorks')}
+            <span className="material-symbols-outlined text-[16px]">help</span>
+          </button>
+          {goalsTab === 'goals' && (
             <button
               type="button"
               onClick={() => navigate('/goals/new')}
@@ -501,8 +529,8 @@ export default function GoalsHub() {
               <span className="material-symbols-outlined text-[18px]">add</span>
               {t('goals.newGoal')}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
@@ -665,6 +693,47 @@ export default function GoalsHub() {
             <button onClick={() => setShowAccountsHelp(false)} className="w-full py-3 bg-primary text-white font-bold rounded-xl">
               {t('common.close')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- "How Goals Works" guide — a full walkthrough of the actual funding chain (account ->
+          goal -> allocation), each step ending in a real link into the tab/screen that does it,
+          not just a wall of text. Separate from showAccountsHelp above (a narrower, Accounts-tab-
+          specific explainer) — this one is the page-level orientation for the whole feature,
+          reachable from the header regardless of which tab is active. */}
+      {showWorkflowGuide && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowWorkflowGuide(false)}>
+          <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-primary">{t('goals.howItWorks')}</h3>
+              <button type="button" onClick={() => setShowWorkflowGuide(false)} className="text-text-muted">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            {[
+              { icon: 'account_balance', titleKey: 'goals.guideStep1Title', whyKey: 'goals.guideStep1Why', howKey: 'goals.guideStep1How', actionKey: 'goals.guideStep1Action', onAction: () => setGoalsTab('accounts') },
+              { icon: 'flag', titleKey: 'goals.guideStep2Title', whyKey: 'goals.guideStep2Why', howKey: 'goals.guideStep2How', actionKey: 'goals.guideStep2Action', onAction: () => navigate('/goals/new') },
+              { icon: 'link', titleKey: 'goals.guideStep3Title', whyKey: 'goals.guideStep3Why', howKey: 'goals.guideStep3How', actionKey: 'goals.guideStep3Action', onAction: () => setGoalsTab('allocation') },
+              { icon: 'insights', titleKey: 'goals.guideStep4Title', whyKey: 'goals.guideStep4Why', howKey: 'goals.guideStep4How', actionKey: 'goals.guideStep4Action', onAction: () => setGoalsTab('reports') },
+            ].map((step) => (
+              <div key={step.titleKey} className="space-y-1.5 pb-3 border-b border-border-subtle last:border-0 last:pb-0">
+                <h4 className="text-sm font-black text-primary flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px]">{step.icon}</span>
+                  {t(step.titleKey)}
+                </h4>
+                <p className="text-xs text-text-muted leading-relaxed">{t(step.whyKey)}</p>
+                <p className="text-xs text-on-surface leading-relaxed">{t(step.howKey)}</p>
+                <button
+                  type="button"
+                  onClick={() => { step.onAction(); setShowWorkflowGuide(false); }}
+                  className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
+                >
+                  {t(step.actionKey)}
+                  <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

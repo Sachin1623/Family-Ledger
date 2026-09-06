@@ -89,9 +89,20 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
       horizon
         .map(({ goal, projected }) => {
           const dateStr = projected || goal.targetDate;
-          return dateStr ? { goal, dateStr, isProjected: !!projected } : null;
+          if (!dateStr) return null;
+          // Same "how far off target" comparison as the Horizon View list and GoalsHub's own goal
+          // cards — only meaningful when there's a real target date AND a real projection to
+          // weigh it against; a goal with only one of the two has nothing to compare.
+          const monthsBehindTarget = goal.targetDate && projected
+            ? (() => {
+                const [ty, tm] = goal.targetDate.split('-').map(Number);
+                const [py, pm] = projected.split('-').map(Number);
+                return (py - ty) * 12 + (pm - tm);
+              })()
+            : null;
+          return { goal, dateStr, isProjected: !!projected, monthsBehindTarget };
         })
-        .filter((m): m is { goal: Goal; dateStr: string; isProjected: boolean } => !!m)
+        .filter((m): m is { goal: Goal; dateStr: string; isProjected: boolean; monthsBehindTarget: number | null } => !!m)
         .sort((a, b) => a.dateStr.localeCompare(b.dateStr)),
     [horizon],
   );
@@ -112,22 +123,15 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
     const frac = y + (m - 1) / 12 + (d - 1) / 365;
     return Math.min(100, Math.max(0, ((frac - chartRange.minYear) / (chartRange.maxYear - chartRange.minYear)) * 100));
   };
-  // Greedy row-packing, not a hard 2-row alternation: for each marker (already in date order), it
-  // goes in the LOWEST row whose most-recently-placed marker is far enough away (in %) that their
-  // 2-line-clamped name labels can't collide. A fixed 2-row toggle could still overlap a THIRD
-  // goal landing close to both of the first two (it just cycles back to row 0 again); this instead
-  // opens as many rows as it actually needs — the chart grows taller to fit them (see
-  // CHART_ROW_HEIGHT below) rather than ever letting two labels sit on top of each other.
-  const MIN_MARKER_GAP_PCT = 16;
+  // Fixed 3-layer cycle, not a distance-based packer: goal 1 -> row 0, goal 2 -> row 1, goal 3 ->
+  // row 2, goal 4 -> row 0 again, and so on (chartMarkers is already in date/pct order). A greedy
+  // "only split rows when actually close together" packer still let two-close-but-not-close-enough
+  // markers land on the same row and visually crowd each other — cycling through 3 fixed layers
+  // unconditionally guarantees any two ADJACENT-in-order goals are always at least 2 rows apart,
+  // which is what actually stopped the crowding.
+  const CHART_ROW_COUNT = 3;
   const positionedMarkers = useMemo(() => {
-    const lastPctByRow: number[] = [];
-    return chartMarkers.map((m) => {
-      const pct = yearPct(m.dateStr);
-      let row = 0;
-      while (lastPctByRow[row] !== undefined && pct - lastPctByRow[row] < MIN_MARKER_GAP_PCT) row += 1;
-      lastPctByRow[row] = pct;
-      return { ...m, pct, row };
-    });
+    return chartMarkers.map((m, i) => ({ ...m, pct: yearPct(m.dateStr), row: i % CHART_ROW_COUNT }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartMarkers, chartRange]);
   const chartMaxRow = useMemo(() => positionedMarkers.reduce((max, m) => Math.max(max, m.row), 0), [positionedMarkers]);
@@ -160,6 +164,15 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
   // nearest and furthest goals' names stay fully inside the card instead of clipping.
   const markerAnchor = (pct: number): string => (pct < 10 ? 'translateX(0)' : pct > 90 ? 'translateX(-100%)' : 'translateX(-50%)');
   const markerLeftAlign = (pct: number): 'left' | 'right' | 'center' => (pct < 10 ? 'left' : pct > 90 ? 'right' : 'center');
+  // Dot/line color reflects on-track vs. behind schedule when there's a real target date to
+  // compare against (same threshold as GoalsHub's own goal cards and the Horizon View list below);
+  // otherwise falls back to the original filled-vs-hollow "projected vs. target-only" distinction.
+  const markerStatus = (m: { isProjected: boolean; monthsBehindTarget: number | null }): { dot: string; line: string } => {
+    if (m.monthsBehindTarget !== null) {
+      return m.monthsBehindTarget <= 0 ? { dot: 'bg-success', line: 'bg-success/60' } : { dot: 'bg-warning', line: 'bg-warning/60' };
+    }
+    return m.isProjected ? { dot: 'bg-primary', line: 'bg-primary/60' } : { dot: 'bg-white border-primary/40', line: 'bg-border-subtle' };
+  };
 
   const totalAccumulatedMinor = reportableGoals.reduce((s, g) => s + goalTotalMinor(g), 0);
   const totalTargetMinor = reportableGoals.reduce((s, g) => s + g.targetAmountMinor, 0);
@@ -197,28 +210,43 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
           <div className="relative" style={{ height: chartHeight }}>
             {positionedMarkers.map((m) => {
               const rowTop = 12 + m.row * CHART_ROW_HEIGHT;
-              const blockHeight = 52; // 2-line label + gap + icon
+              const NAME_HEIGHT = 24; // up to 2 clamped lines
+              const ICON_HEIGHT = 24;
+              const iconTop = rowTop + NAME_HEIGHT + 2;
+              const lineTop = iconTop + ICON_HEIGHT;
               return (
-                <div
-                  key={m.goal.id}
-                  className="absolute flex flex-col items-center cursor-pointer group"
-                  style={{ left: `${m.pct}%`, top: rowTop, width: 100, transform: markerAnchor(m.pct) }}
-                  onClick={() => navigate(`/goals/${m.goal.id}`)}
-                >
-                  <span
+                // Two separately-positioned pieces, not one shared anchored column: the NAME can
+                // shift left/right (markerAnchor) so long text never clips off the card's edge,
+                // but the ICON + connecting LINE always sit dead-centered on the marker's true pct
+                // (translateX(-50%), unconditionally) — exactly matching the dot below. Sharing one
+                // anchored 100px-wide box used to center the icon WITHIN that box instead of over
+                // the actual data point whenever a marker sat near either edge (where the box's
+                // own anchor becomes left/right-aligned to keep the text on-screen), which is what
+                // made the connecting line — and the icon above it — visibly drift away from its
+                // own dot.
+                <React.Fragment key={m.goal.id}>
+                  <div
                     className={clsx(
-                      'text-[9px] font-bold text-on-surface leading-tight line-clamp-2 w-full group-hover:text-primary',
+                      'absolute text-[9px] font-bold text-on-surface leading-tight line-clamp-2 cursor-pointer hover:text-primary',
                       markerLeftAlign(m.pct) === 'left' ? 'text-left' : markerLeftAlign(m.pct) === 'right' ? 'text-right' : 'text-center',
                     )}
+                    style={{ left: `${m.pct}%`, top: rowTop, width: 100, transform: markerAnchor(m.pct) }}
+                    onClick={() => navigate(`/goals/${m.goal.id}`)}
                   >
                     {m.goal.name}
-                  </span>
-                  <span className="text-xl leading-none mt-1">{m.goal.icon || '🎯'}</span>
+                  </div>
                   <div
-                    className={clsx('w-px mt-0.5', m.isProjected ? 'bg-primary/40' : 'bg-border-subtle')}
-                    style={{ height: Math.max(0, chartAxisTop - rowTop - blockHeight), marginLeft: markerLeftAlign(m.pct) === 'left' ? 2 : markerLeftAlign(m.pct) === 'right' ? -2 : 0 }}
-                  />
-                </div>
+                    className="absolute flex flex-col items-center cursor-pointer group"
+                    style={{ left: `${m.pct}%`, top: iconTop, transform: 'translateX(-50%)' }}
+                    onClick={() => navigate(`/goals/${m.goal.id}`)}
+                  >
+                    <span className="text-xl leading-none group-hover:scale-110 transition-transform">{m.goal.icon || '🎯'}</span>
+                    <div
+                      className={clsx('w-[3px] rounded-full mt-0.5', markerStatus(m).line)}
+                      style={{ height: Math.max(0, chartAxisTop - lineTop) }}
+                    />
+                  </div>
+                </React.Fragment>
               );
             })}
             {/* Axis line + dots */}
@@ -226,7 +254,7 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
             {positionedMarkers.map((m) => (
               <span
                 key={`dot-${m.goal.id}`}
-                className={clsx('absolute w-2 h-2 rounded-full border-2 border-white shadow', m.isProjected ? 'bg-primary' : 'bg-white border-primary/40')}
+                className={clsx('absolute w-2 h-2 rounded-full border-2 border-white shadow', markerStatus(m).dot)}
                 style={{ left: `${m.pct}%`, top: chartAxisTop - 4, transform: 'translateX(-50%)' }}
               />
             ))}
@@ -246,7 +274,9 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
               </span>
             ))}
           </div>
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex items-center gap-3 pt-1 flex-wrap">
+            <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-success inline-block" />{t('goals.onTrack')}</span>
+            <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-warning inline-block" />{t('goals.chartLegendBehind')}</span>
             <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-primary inline-block" />{t('goals.chartLegendProjected')}</span>
             <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-white border-2 border-primary/40 inline-block" />{t('goals.chartLegendTargetDate')}</span>
           </div>
@@ -261,23 +291,44 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
           <div className="relative pl-6">
             <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-border-subtle" />
             <div className="space-y-4">
-              {horizon.map(({ goal, projected }) => (
-                <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}`)}>
-                  <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', projected ? 'bg-primary' : 'bg-border-subtle')} />
-                  <div className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3">
-                    <span className="text-xl shrink-0">{goal.icon || '🎯'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-on-surface truncate">{goal.name}</p>
-                      <p className="text-[11px] text-text-muted">
-                        {projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
-                      </p>
+              {horizon.map(({ goal, projected }) => {
+                // Same "how far off target" reasoning as GoalsHub.tsx's own goal cards — only
+                // shown when there's a real target date AND a real projection to compare it to.
+                const monthsBehindTarget = goal.targetDate && projected
+                  ? (() => {
+                      const [ty, tm] = goal.targetDate.split('-').map(Number);
+                      const [py, pm] = projected.split('-').map(Number);
+                      return (py - ty) * 12 + (pm - tm);
+                    })()
+                  : null;
+                return (
+                  <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}`)}>
+                    <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', projected ? 'bg-primary' : 'bg-border-subtle')} />
+                    <div className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3">
+                      <span className="text-xl shrink-0">{goal.icon || '🎯'}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-on-surface truncate">{goal.name}</p>
+                        <p className="text-[11px] text-text-muted flex items-center gap-1">
+                          {projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
+                          {monthsBehindTarget !== null && (
+                            <span className={clsx(
+                              'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
+                              monthsBehindTarget <= 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning',
+                            )}>
+                              {monthsBehindTarget <= 0
+                                ? (monthsBehindTarget <= -1 ? t('goals.aheadOfTarget', { months: Math.abs(monthsBehindTarget) }) : t('goals.onTrack'))
+                                : t('goals.behindTarget', { months: monthsBehindTarget })}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-primary shrink-0">
+                        {getCurrencySymbol(goal.currency)}{formatAmountCompact(fromMinorUnits(goal.targetAmountMinor - goalTotalMinor(goal)), goal.currency, profile?.numberSystem)} {t('goals.toGo')}
+                      </span>
                     </div>
-                    <span className="text-xs font-bold text-primary shrink-0">
-                      {getCurrencySymbol(goal.currency)}{formatAmountCompact(fromMinorUnits(goal.targetAmountMinor - goalTotalMinor(goal)), goal.currency, profile?.numberSystem)} {t('goals.toGo')}
-                    </span>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
