@@ -78,6 +78,17 @@ export default function SettlementDetailModal({
     }
   };
 
+  // Generic wa.me/?text= share (no phone number stored for any user in this app, same reason
+  // Friends.tsx's own WhatsApp invite button uses this form) — opens WhatsApp's own contact
+  // picker with the message prefilled. Always window.open(), never a bare <a target="_blank">:
+  // anchors get silently swallowed in the Android WebView build.
+  const handleWhatsAppReminder = () => {
+    const amountStr = `${currencySymbol}${formatAmountCompact(settlement.amount, undefined, profile?.numberSystem)}`;
+    const firstName = settlement.owerName.split(' ')[0];
+    const message = `Hey ${firstName}! Friendly reminder — you owe me ${amountStr} in "${settlement.groupName}" on FamilyLedger. 🙏`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+  };
+
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={(e) => e.stopPropagation()}>
@@ -147,20 +158,32 @@ export default function SettlementDetailModal({
                   <span className="material-symbols-outlined text-[20px]">paid</span>
                   {t('settlements.settleUp')}
                 </button>
-              ) : sent ? (
-                <div className="w-full h-12 bg-success/10 text-success font-bold rounded-2xl flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[20px]">check_circle</span>
-                  {t('settlements.reminderSent')}
-                </div>
               ) : (
-                <button
-                  onClick={handleSendReminder}
-                  disabled={sending}
-                  className="w-full h-12 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-[20px]">notifications_active</span>
-                  {sending ? '…' : t('settlements.sendReminder')}
-                </button>
+                <div className="flex gap-2">
+                  {sent ? (
+                    <div className="flex-1 h-12 bg-success/10 text-success font-bold rounded-2xl flex items-center justify-center gap-2">
+                      <span className="material-symbols-outlined text-[20px]">check_circle</span>
+                      {t('settlements.reminderSent')}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleSendReminder}
+                      disabled={sending}
+                      className="flex-1 h-12 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">notifications_active</span>
+                      {sending ? '…' : t('settlements.sendReminder')}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleWhatsAppReminder}
+                    className="w-12 h-12 shrink-0 bg-[#25D366]/10 text-[#128C4A] rounded-2xl flex items-center justify-center border border-[#25D366]/20 active:scale-95 transition-all"
+                    title={t('settlements.reminderViaWhatsApp')}
+                    aria-label={t('settlements.reminderViaWhatsApp')}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">chat</span>
+                  </button>
+                </div>
               )}
               {error && <p className="text-xs font-bold text-error text-center mt-2">{error}</p>}
             </div>

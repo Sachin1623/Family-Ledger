@@ -521,7 +521,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           ))}
         </div>
 
-        <div className="p-3 border-t border-border-subtle flex items-center gap-2 shrink-0">
+        <div
+          className="p-3 border-t border-border-subtle flex items-center gap-2 shrink-0"
+          style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        >
           <input
             type="text"
             value={text}

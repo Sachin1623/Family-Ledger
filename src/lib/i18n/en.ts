@@ -693,6 +693,7 @@ const en = {
   'settlements.settleUp': 'Settle Up',
   'settlements.sendReminder': 'Send Reminder',
   'settlements.reminderSent': 'Reminder sent!',
+  'settlements.reminderViaWhatsApp': 'Send reminder via WhatsApp',
   'settlements.transactions': 'Transactions',
   'settlements.noTransactions': 'No expense lines found.',
 
@@ -702,6 +703,10 @@ const en = {
   'chat.noMembersYet': 'No group members yet — join or create a group first.',
   'chat.online': 'Online',
   'chat.lastSeen': 'Last seen {{time}}',
+  'chat.searchUsers': 'Search users',
+  'chat.searchPlaceholder': 'Search by name or email…',
+  'chat.noSearchResults': 'No users found.',
+  'chat.otherResults': 'Other FamilyLedger users',
 
   'friends.title': 'Friends & Family',
   'friends.subtitle': 'Connect beyond your groups — add friends, chat, and build a family roster.',

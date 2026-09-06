@@ -1043,10 +1043,10 @@ export default function AddExpense() {
           opened from. Either way, markExpenseAdded() inside handleSave hands the id(s) off to
           Dashboard.tsx so the group tile highlights (and auto-expands to show) whatever was just
           added, the moment the user actually gets back there. */}
-      <div className={clsx(
-        'absolute left-4 right-4 z-[95] flex items-center justify-end gap-2',
-        showKeypad ? 'bottom-64' : 'bottom-4',
-      )}>
+      <div
+        className="absolute left-4 right-4 z-[95] flex items-center justify-end gap-2"
+        style={{ bottom: showKeypad ? '16rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}
+      >
         <button
           onClick={() => handleSave(true)}
           disabled={loading}

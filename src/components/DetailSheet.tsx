@@ -36,7 +36,11 @@ export default function DetailSheet({
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">{children}</div>
         {(onEdit || onDelete) && (
-          <div className="p-4 border-t border-border-subtle shrink-0 flex gap-2">
+          <div
+            className="p-4 border-t border-border-subtle shrink-0 flex gap-2"
+            style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
+          >
+
             {onEdit && (
               <button
                 onClick={onEdit}

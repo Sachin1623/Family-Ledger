@@ -68,8 +68,18 @@ export default function Navigation() {
           above the device's own gesture/home-indicator area on iOS, and Android's equivalent — the
           nav's real height used to stop exactly at the physical screen edge, right where an
           accidental OS-level back-swipe/gesture is most likely to land. Evaluates to 0 with no
-          layout change on devices/browsers with no inset (most Android phones, desktop web). */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-border-subtle flex flex-col z-50 pb-[env(safe-area-inset-bottom)]">
+          layout change on devices/browsers with no inset (most Android phones, desktop web).
+          z-30 (not z-50) is deliberate — every floating modal in the app (Add Account, Add Goal,
+          the Spend Categories panel, etc.) uses `fixed inset-0 z-50` as its own backdrop, but
+          this <Navigation/> is mounted AFTER a screen's own modal content in the DOM (it's a
+          sibling rendered at the end of AuthenticatedLayout, not inside the screen itself). Two
+          elements tied at the same z-index stack by DOM order, so at z-50 this nav bar was always
+          winning that tie and painting over the bottom of every modal — including whatever
+          primary action button happened to sit there. Sitting one layer below the z-50 modal
+          convention (but still above ordinary page content, which has no explicit z-index) fixes
+          every current and future floating window at once, instead of bumping z-index on dozens
+          of individual modals. */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-border-subtle flex flex-col z-30 pb-[env(safe-area-inset-bottom)]">
         {/* Navigation Items Layer */}
         <div className="h-16 flex justify-around items-center">
           {links.map((link) => (

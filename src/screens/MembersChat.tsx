@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { collection, query, where } from 'firebase/firestore';
@@ -10,6 +10,7 @@ import { useFriendships } from '../lib/useFriendships';
 import { useDmChats } from '../lib/useDmChats';
 import { isPresenceOnline, lastSeenLabel } from '../lib/presence';
 import { useLanguage } from '../context/LanguageContext';
+import { searchUsers, FoundUser } from '../lib/inviteApi';
 
 // Every co-member across every group the user belongs to, in one place, each row a 1-tap DM —
 // the Tools-page replacement for the presence dropdown that used to sit on top of Dashboard.
@@ -57,19 +58,83 @@ export default function MembersChat() {
 
   const openChat = (uid: string) => navigate(`/?dm=${uid}`);
 
+  // Search: filters the co-member/friend list already on screen by name, and — once the query is
+  // specific enough (2+ chars) — also looks up the wider FamilyLedger user directory via the same
+  // /api/search-users endpoint Friends.tsx uses, so a chat can be started with someone who isn't
+  // yet a co-member or accepted friend (DMs have no such restriction in firestore.rules — being
+  // one of the two halves of the chat id is the only membership check).
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<FoundUser[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) { setSearchResults([]); return; }
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchUsers(q)
+        .then(setSearchResults)
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const trimmedQuery = searchQuery.trim();
+  const filteredMembers = trimmedQuery
+    ? orderedMembers.filter((m: any) => m.displayName?.toLowerCase().includes(trimmedQuery.toLowerCase()))
+    : orderedMembers;
+  const knownUids = useMemo(() => new Set(allChattable.map((m: any) => m.userId)), [allChattable]);
+  const otherResults = trimmedQuery.length >= 2 ? searchResults.filter((u) => u.uid !== user?.uid && !knownUids.has(u.uid)) : [];
+
+  const closeSearch = () => { setShowSearch(false); setSearchQuery(''); setSearchResults([]); };
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div>
-          <h1 className="text-2xl font-black text-primary">{t('chat.title')}</h1>
-          <p className="text-sm text-text-muted mt-1">{t('chat.subtitle')}</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-black text-primary">{t('chat.title')}</h1>
+            <p className="text-sm text-text-muted mt-1">{t('chat.subtitle')}</p>
+          </div>
+          <button
+            onClick={() => (showSearch ? closeSearch() : setShowSearch(true))}
+            className={clsx(
+              'w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors',
+              showSearch ? 'bg-primary text-white' : 'bg-white border border-border-subtle text-text-muted',
+            )}
+            aria-label={t('chat.searchUsers')}
+            title={t('chat.searchUsers')}
+          >
+            <span className="material-symbols-outlined text-[20px]">{showSearch ? 'close' : 'search'}</span>
+          </button>
         </div>
 
+        {showSearch && (
+          <div className="relative">
+            <input
+              type="text"
+              autoFocus
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('chat.searchPlaceholder')}
+              className="w-full px-3 py-2.5 pl-9 text-sm rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-white"
+            />
+            <span className="material-symbols-outlined text-[18px] text-text-muted absolute left-2.5 top-1/2 -translate-y-1/2">search</span>
+            {searching && (
+              <span className="material-symbols-outlined animate-spin text-[16px] text-text-muted absolute right-3 top-1/2 -translate-y-1/2">sync</span>
+            )}
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden" data-tour="chat-members">
-          {orderedMembers.length === 0 && (
-            <p className="p-6 text-sm text-text-muted italic text-center">{t('chat.noMembersYet')}</p>
+          {filteredMembers.length === 0 && otherResults.length === 0 && (
+            <p className="p-6 text-sm text-text-muted italic text-center">
+              {trimmedQuery ? t('chat.noSearchResults') : t('chat.noMembersYet')}
+            </p>
           )}
-          {orderedMembers.map((m: any) => {
+          {filteredMembers.map((m: any) => {
             const presence = presenceByUid.get(m.userId);
             const online = isPresenceOnline(presence);
             const unread = chatByOtherUid.get(m.userId)?.unreadFor?.[user?.uid || ''] || 0;
@@ -112,6 +177,33 @@ export default function MembersChat() {
             );
           })}
         </div>
+
+        {otherResults.length > 0 && (
+          <div>
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('chat.otherResults')}</label>
+            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden mt-2">
+              {otherResults.map((u) => (
+                <div
+                  key={u.uid}
+                  onClick={() => openChat(u.uid)}
+                  className="p-4 flex items-center gap-3 hover:bg-surface-container/20 transition-colors cursor-pointer"
+                >
+                  <div className="w-10 h-10 rounded-full bg-surface-container-high overflow-hidden shrink-0">
+                    {u.photoURL ? (
+                      <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-primary text-xs font-bold">
+                        {u.displayName?.slice(0, 1)}
+                      </div>
+                    )}
+                  </div>
+                  <p className="min-w-0 flex-1 text-sm font-bold text-on-surface truncate">{u.displayName}</p>
+                  <span className="material-symbols-outlined text-primary shrink-0">chat</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

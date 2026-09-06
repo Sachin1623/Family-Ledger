@@ -345,7 +345,10 @@ export default function Dashboard() {
       {showReorderModal && (
         <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowReorderModal(false)} />
-          <div className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl p-5 space-y-4 max-h-[85vh] flex flex-col">
+          <div
+            className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl p-5 space-y-4 max-h-[85vh] flex flex-col"
+            style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+          >
             <div className="flex items-center justify-between shrink-0">
               <h2 className="text-base font-black text-primary">{t('dashboard.reorderGroups')}</h2>
               <button onClick={() => setShowReorderModal(false)} className="p-1.5 text-text-muted hover:bg-surface rounded-full">
