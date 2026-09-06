@@ -1110,14 +1110,26 @@ export default function Profile() {
               </h2>
               <p className="text-sm text-text-muted font-medium">{profile?.email || user?.email}</p>
               {profile?.shortId && (
-                <button
-                  onClick={() => navigator.clipboard?.writeText(profile.shortId)}
-                  title="Copy your ID — share it so others can find you when inviting to a group"
-                  className="mt-1 flex items-center gap-1 text-[11px] font-bold text-primary bg-primary/5 px-2.5 py-1 rounded-full active:scale-95 transition-all"
-                >
-                  ID: {profile.shortId}
-                  <span className="material-symbols-outlined text-[13px]">content_copy</span>
-                </button>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(profile.shortId)}
+                    title="Copy your ID — share it so others can find you when inviting to a group"
+                    className="flex items-center gap-1 text-[11px] font-bold text-primary bg-primary/5 px-2.5 py-1 rounded-full active:scale-95 transition-all"
+                  >
+                    ID: {profile.shortId}
+                    <span className="material-symbols-outlined text-[13px]">content_copy</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const message = `Hey! Add me on FamilyLedger — search for my ID: ${profile.shortId}`;
+                      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+                    }}
+                    title="Share your ID via WhatsApp"
+                    className="w-6 h-6 rounded-full bg-[#25D366]/10 text-[#128C4A] flex items-center justify-center active:scale-95 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-[13px] block">chat</span>
+                  </button>
+                </div>
               )}
             </div>
           )}

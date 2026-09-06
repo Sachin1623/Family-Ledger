@@ -65,7 +65,26 @@ public class AlarmRingingService extends Service {
         activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
         int piFlags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
+        // Auto-popup launch (fired once, right now, by startActivity() below AND by the system via
+        // setFullScreenIntent) — deliberately does NOT stop the ringing on its own; the alarm is
+        // supposed to keep ringing until the user actually acts on it, same as any real alarm clock.
         PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(this, id, activityIntent, piFlags);
+
+        // A SEPARATE PendingIntent (distinct request code, extra EXTRA_STOP_ON_OPEN flag) just for
+        // the notification's own tap target. Reusing fullScreenPendingIntent here — as this used to
+        // — meant tapping the notification itself (rather than one of AlarmActivity's own in-screen
+        // buttons) just re-showed the same ringing screen with the sound still going: "opening the
+        // app" from the notification silently did nothing to the alarm. AlarmActivity.bind() checks
+        // this extra and stops the ringing the moment it's opened this way, in addition to the
+        // explicit stop each of its own buttons already does.
+        Intent tapIntent = new Intent(this, AlarmActivity.class);
+        tapIntent.putExtra(AlarmReceiver.EXTRA_ID, id);
+        tapIntent.putExtra(AlarmReceiver.EXTRA_TITLE, title);
+        tapIntent.putExtra(AlarmReceiver.EXTRA_BODY, body);
+        tapIntent.putExtra(AlarmReceiver.EXTRA_ROUTE, route);
+        tapIntent.putExtra(AlarmActivity.EXTRA_STOP_ON_OPEN, true);
+        tapIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent tapPendingIntent = PendingIntent.getActivity(this, -id, tapIntent, piFlags);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(getApplicationInfo().icon)
@@ -74,7 +93,7 @@ public class AlarmRingingService extends Service {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setFullScreenIntent(fullScreenPendingIntent, true)
-            .setContentIntent(fullScreenPendingIntent)
+            .setContentIntent(tapPendingIntent)
             .setOngoing(true)
             .setAutoCancel(false);
 

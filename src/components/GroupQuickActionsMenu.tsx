@@ -412,14 +412,14 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     (group?.name || '');
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <motion.div
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 40, opacity: 0 }}
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
         onClick={stop}
-        className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="relative w-full sm:max-w-sm bg-white rounded-3xl shadow-2xl max-h-[85vh] overflow-y-auto"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <div className="flex items-center justify-between px-2 py-2 border-b border-border-subtle sticky top-0 bg-white z-10">

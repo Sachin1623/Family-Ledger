@@ -10,7 +10,7 @@
 const en = {
   // Bottom navigation (Navigation.tsx)
   'nav.groups': 'Groups',
-  'nav.balances': 'Balances',
+  'nav.balances': 'Splits',
   'nav.analysis': 'Analysis',
   'nav.chat': 'Chat',
   'nav.goals': 'Goals',
@@ -122,6 +122,7 @@ const en = {
   'dashboard.expandGroupIcon': 'View group photo',
   'dashboard.expenseReportTooltip': 'Expense report',
   'dashboard.groupFeedTooltip': 'Group feed',
+  'dashboard.revealTooltip': 'Show details',
   'dashboard.expandTooltip': 'Expand',
   'dashboard.collapseTooltip': 'Collapse',
   'dashboard.createGroup': 'Create Group',

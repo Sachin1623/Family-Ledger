@@ -22,7 +22,11 @@ import { useDmChats } from '../lib/useDmChats';
 // for good on 2026-09-04.
 const PERSONAL_LINKS = [
   { to: '/', icon: '👥', labelKey: 'nav.groups' },
-  { to: '/settlements', icon: '💰', labelKey: 'nav.balances', tour: 'nav-settlements' },
+  // Renamed from "Balances"/💰 — icon deliberately the real `call_split` Material Symbol (the
+  // same one GroupCard's "Split Enabled" badge uses), not an emoji substitute, so it reads as the
+  // exact same "split" concept elsewhere in the app. The one exception to this file's own emoji
+  // pilot (see header comment) — a per-request deviation, not a reversal of that direction.
+  { to: '/settlements', materialIcon: 'call_split', labelKey: 'nav.balances', tour: 'nav-settlements' },
   { to: '/analysis', icon: '📊', labelKey: 'nav.analysis', tour: 'nav-analysis' },
   { to: '/chat', icon: '💬', labelKey: 'nav.chat' },
   { to: '/goals', icon: '🎯', labelKey: 'nav.goals' },
@@ -99,7 +103,9 @@ export default function Navigation() {
                       'w-8 h-8 rounded-full flex items-center justify-center transition-all text-xl',
                       isActive && (shopMode ? 'bg-[#7C3AED]/10 scale-110' : 'bg-primary/10 scale-110')
                     )}>
-                      {link.icon}
+                      {(link as any).materialIcon ? (
+                        <span className="material-symbols-outlined text-[22px] block">{(link as any).materialIcon}</span>
+                      ) : link.icon}
                     </div>
                     {link.to === '/chat' && unreadChatCount > 0 && (
                       <span className="absolute -top-0.5 -end-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-error text-white text-[9px] font-bold flex items-center justify-center border-2 border-white">

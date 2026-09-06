@@ -21,6 +21,12 @@ import android.widget.TextView;
  */
 public class AlarmActivity extends Activity {
 
+    // Set by AlarmRingingService's notification-tap PendingIntent (distinct from the auto-popup
+    // one that shows this screen the moment the alarm fires, which must NOT stop the ringing on
+    // its own) — tells bind() the user got here by actually opening the app in response to the
+    // alarm, so the ringing should stop right away, same as tapping any of the buttons below does.
+    static final String EXTRA_STOP_ON_OPEN = "stopOnOpen";
+
     private int alarmId;
     private String route;
 
@@ -74,6 +80,9 @@ public class AlarmActivity extends Activity {
         route = intent.getStringExtra(AlarmReceiver.EXTRA_ROUTE);
         ((TextView) findViewById(R.id.alarmTitle)).setText(title != null ? title : "Reminder");
         ((TextView) findViewById(R.id.alarmBody)).setText(body != null ? body : "");
+        if (intent.getBooleanExtra(EXTRA_STOP_ON_OPEN, false)) {
+            stopRingingService();
+        }
     }
 
     private void stopRingingService() {

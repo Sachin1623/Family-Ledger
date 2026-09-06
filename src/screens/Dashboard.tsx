@@ -35,15 +35,42 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 // as "expanded" (opt-in) rather than "collapsed" (opt-out) so groups default to COLLAPSED — a
 // brand new group, or one from before this feature existed, is collapsed until the user
 // explicitly expands it.
+//
+// A group tile actually has THREE display states, not two — added a level below what used to be
+// the only two (this ambiguity is why the two-set design below exists rather than one three-valued
+// map): a group's tile state is derived, never stored directly —
+//   1. header-only  — icon/name/member-count/menu row, nothing else. The new default.
+//   2. revealed     — adds the action icons, budget bar, and Income/Expense/Net + Last Month
+//                      footer. This is what "expanded" (below) already meant before this change.
+//   3. fully expanded — adds the Latest Spend list on top of everything in state 2.
+// `expandedGroupIds` (state 3) is untouched, same key/shape as before — a group already in it from
+// before this feature existed stays fully expanded, not reset to header-only, since silently
+// discarding a preference someone already set is worse than the slightly inconsistent-looking
+// "some tiles default further open than others" right after this ships. `revealedGroupIds` (state
+// >= 2) is new and starts empty for everyone — state 3 implies state 2 by simple OR, so a group
+// doesn't need to be in both sets to render at state 3; see tileStateFor() below.
 const EXPANDED_STORAGE_KEY = 'familyledger_expanded_groups';
+const REVEALED_STORAGE_KEY = 'familyledger_revealed_groups';
 
-function loadExpandedGroups(): Set<string> {
+function loadIdSet(key: string): Set<string> {
   try {
-    const raw = localStorage.getItem(EXPANDED_STORAGE_KEY);
+    const raw = localStorage.getItem(key);
     return new Set(raw ? JSON.parse(raw) : []);
   } catch {
     return new Set();
   }
+}
+
+function loadExpandedGroups(): Set<string> {
+  return loadIdSet(EXPANDED_STORAGE_KEY);
+}
+
+type GroupTileState = 1 | 2 | 3;
+
+function tileStateFor(groupId: string, expandedGroupIds: Set<string>, revealedGroupIds: Set<string>): GroupTileState {
+  if (expandedGroupIds.has(groupId)) return 3;
+  if (revealedGroupIds.has(groupId)) return 2;
+  return 1;
 }
 
 // Deterministic per-pair id for a 1:1 chat — sorted so it's the same regardless of who opens it
@@ -198,18 +225,41 @@ export default function Dashboard() {
     Object.keys(pendingHighlights).forEach((gid) => base.add(gid));
     return base;
   });
-  const toggleCollapse = (groupId: string) => {
-    setExpandedGroupIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
-      try {
-        localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(Array.from(next)));
-      } catch {
-        // localStorage unavailable (private browsing etc.) — expanded state just won't persist.
-      }
-      return next;
-    });
+  const [revealedGroupIds, setRevealedGroupIds] = useState<Set<string>>(() => loadIdSet(REVEALED_STORAGE_KEY));
+
+  // Cycles a tile 1 -> 2 -> 3 -> 1 (see tileStateFor's header comment for what each state shows).
+  // Each set is independently persisted to its own localStorage key; state 3 -> 1 clears BOTH so a
+  // fully-collapsed tile doesn't secretly still count as "revealed" underneath.
+  const cycleGroupState = (groupId: string) => {
+    const current = tileStateFor(groupId, expandedGroupIds, revealedGroupIds);
+    if (current === 1) {
+      setRevealedGroupIds((prev) => {
+        const next = new Set(prev).add(groupId);
+        try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(next))); } catch {}
+        return next;
+      });
+    } else if (current === 2) {
+      setExpandedGroupIds((prev) => {
+        const next = new Set(prev).add(groupId);
+        try { localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(Array.from(next))); } catch {}
+        return next;
+      });
+    } else {
+      setExpandedGroupIds((prev) => {
+        if (!prev.has(groupId)) return prev;
+        const next = new Set(prev);
+        next.delete(groupId);
+        try { localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(Array.from(next))); } catch {}
+        return next;
+      });
+      setRevealedGroupIds((prev) => {
+        if (!prev.has(groupId)) return prev;
+        const next = new Set(prev);
+        next.delete(groupId);
+        try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(next))); } catch {}
+        return next;
+      });
+    }
   };
 
   return (
@@ -304,8 +354,8 @@ export default function Dashboard() {
                 groupId={membership.groupId}
                 index={index}
                 isFirst={index === 0}
-                collapsed={!expandedGroupIds.has(membership.groupId)}
-                onToggleCollapse={() => toggleCollapse(membership.groupId)}
+                tileState={tileStateFor(membership.groupId, expandedGroupIds, revealedGroupIds)}
+                onToggleCollapse={() => cycleGroupState(membership.groupId)}
                 highlightExpenseIds={pendingHighlights[membership.groupId]}
               />
             ))}
@@ -464,7 +514,7 @@ function ArchivedGroupRow({ groupId }: any) {
   );
 }
 
-function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highlightExpenseIds }: any) {
+function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highlightExpenseIds }: any) {
   // Fades the highlight after a few seconds rather than leaving it on indefinitely — it's meant
   // to draw the eye to what was just added, not become a permanent marker. `highlightExpenseIds`
   // itself never changes after Dashboard's initial mount (see peekRecentlyAdded there), so this
@@ -483,7 +533,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
   const [quickViewExpense, setQuickViewExpense] = useState<any>(null);
   const [showQuickActions, setShowQuickActions] = useState(false);
   // Filters the "Latest Spend" list below to just this member's own entries — tapping the same
-  // avatar again clears it. Local to this card (not persisted), same lifecycle as `collapsed`.
+  // avatar again clears it. Local to this card (not persisted), same lifecycle as `tileState`.
   const [spendMemberFilter, setSpendMemberFilter] = useState<string | null>(null);
   // Same idea, for Essential/Optional (see lib/constants.ts's getCategoryClassification) — both
   // filters combine (AND), so a member + classification can be selected together.
@@ -543,6 +593,27 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
     const exps = expensesValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue]);
+
+  // The current user's own net balance within THIS group only — same per-split summation
+  // Settlements.tsx's own balance calc uses (never netted against any other group's expenses),
+  // just narrowed down to one person's running total instead of building the full owers/receivers
+  // settlement list. Positive = owed to them, negative = they owe. Runs over every expense this
+  // group has ever had (not scoped to a month), matching what a real outstanding balance is.
+  const myGroupBalance = useMemo(() => {
+    if (!user) return 0;
+    let bal = 0;
+    expenses.forEach((e: any) => {
+      const payerId = e.paidBy;
+      const splits = e.splitInfo?.splits || [];
+      splits.forEach((split: any) => {
+        const benefitId = split.userId;
+        if (payerId === benefitId) return;
+        if (benefitId === user.uid) bal -= split.amount;
+        if (payerId === user.uid) bal += split.amount;
+      });
+    });
+    return bal;
+  }, [expenses, user]);
   // Which month this card's stats are scoped to — defaults to (and, on every fresh mount, always
   // starts back at) the real current month; see the month-picker button group's own comment for
   // why this is deliberately local, unpersisted state rather than something remembered across
@@ -698,8 +769,9 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
     >
       <div className="relative z-10 space-y-2">
         {/* Header — icon, name, member count, feed/expand controls. Identical markup and sizing
-            regardless of `collapsed`, so nothing here ever shifts position on toggle — only the
-            "Latest Spend" section below actually grows/shrinks (see its own comment). */}
+            regardless of `tileState`, so nothing here ever shifts position on toggle — everything
+            else in this card (action icons, budget, footer, "Latest Spend") appears/grows in step
+            with tileState instead (see tileStateFor's header comment for what each state shows). */}
         <div className="flex items-center justify-between gap-2 -mx-6 -mt-6 mb-1 px-6 pt-4 pb-3 rounded-t-2xl bg-gradient-to-r from-[#4ADE80]/15 to-[#3B82F6]/15 border-b border-border-subtle">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -728,12 +800,19 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
             <button onClick={stopAnd(() => setShowQuickActions(true))} title="Group actions" className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
               <span className="material-symbols-outlined text-[20px] block">more_vert</span>
             </button>
-            <button onClick={stopAnd(onToggleCollapse)} title={collapsed ? t('dashboard.expandTooltip') : t('dashboard.collapseTooltip')} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
-              <span className="material-symbols-outlined text-[20px] block">{collapsed ? 'expand_more' : 'expand_less'}</span>
+            <button onClick={stopAnd(onToggleCollapse)} title={tileState === 1 ? t('dashboard.revealTooltip') : tileState === 2 ? t('dashboard.expandTooltip') : t('dashboard.collapseTooltip')} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
+              <span className="material-symbols-outlined text-[20px] block">
+                {tileState === 1 ? 'keyboard_double_arrow_down' : tileState === 2 ? 'expand_more' : 'expand_less'}
+              </span>
             </button>
           </div>
         </div>
 
+        {/* Action row, budget card, and the footer below all only appear once the tile is at
+            least "revealed" (tileState >= 2) — the new default is header-only (tileState 1). See
+            tileStateFor's header comment for the full state breakdown. */}
+        {tileState >= 2 && (
+        <>
         {/* Action row — labeled icon "bubbles" (colored background per action, short caption
             below), spanning the card's full width now that the month picker moved next to the
             budget card below — 5 evenly-spaced, slightly larger icons instead of packing tighter
@@ -800,13 +879,35 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
           </div>
         )}
 
+        {/* This user's own outstanding balance within THIS group only — same red/error (owe) /
+            green/success (owed) convention Settlements.tsx's own "You owe"/"You are owed" cards
+            use. Deliberately NOT gated on group?.splitEnabled — myGroupBalance is computed from
+            this group's full expense history regardless of that flag, so a nonzero balance here
+            can only come from real split expenses, current OR past (splitting was later turned
+            off but an old debt was never settled). Same "ever had a real split expense, not just
+            currently split-enabled" reasoning Settlements.tsx's own splitEnabledGroups already
+            documents. Hidden only when actually settled (same >0.01 float-safety threshold used
+            everywhere else in this app's balance math), not when splitting happens to be off. */}
+        {Math.abs(myGroupBalance) > 0.01 && (
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
+              {myGroupBalance > 0 ? t('settlements.youAreOwed') : t('settlements.youOwe')}
+            </span>
+            <span className={clsx('text-sm font-black', myGroupBalance > 0 ? 'text-success' : 'text-error')}>
+              {currencySymbol}{formatAmountCompact(Math.abs(myGroupBalance), group?.currency, profile?.numberSystem)}
+            </span>
+          </div>
+        )}
+        </>
+        )}
+
         {/* Latest Spend — the ONLY part of this card that actually grows/shrinks. Height-animated
             (not a plain conditional render) so toggling reads as a smooth expansion rather than a
             layout jump; `initial={false}` skips animating on first mount/re-render so a page
             refresh lands directly in the right state instead of visibly "opening". */}
         <motion.div
           initial={false}
-          animate={{ height: collapsed ? 0 : 'auto', opacity: collapsed ? 0 : 1 }}
+          animate={{ height: tileState === 3 ? 'auto' : 0, opacity: tileState === 3 ? 1 : 0 }}
           transition={{ duration: 0.25, ease: 'easeInOut' }}
           className="overflow-hidden"
         >
@@ -937,7 +1038,9 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
         {/* Footer — Income/Expense/Net (or the non-income "This Month" card) uses the card's full
             width. pt-2 (not pt-4) — when Latest Spend is collapsed, its own space-y-2 sibling
             margins already add gap around its now-invisible 0-height div, so a full pt-4 here on
-            top of that stacked into a visibly oversized gap between the budget card and this row. */}
+            top of that stacked into a visibly oversized gap between the budget card and this row.
+            Only shown at tileState >= 2, same as the action row/budget card above. */}
+        {tileState >= 2 && (
         <div className="pt-2 border-t border-gray-50 space-y-2.5">
           {group?.incomeEnabled ? (
             <>
@@ -993,6 +1096,7 @@ function GroupCard({ groupId, index, isFirst, collapsed, onToggleCollapse, highl
             </div>
           )}
         </div>
+        )}
       </div>
     </motion.div>
 
