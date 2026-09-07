@@ -44,19 +44,37 @@ public class AlarmReceiver extends BroadcastReceiver {
         String startDate = intent.getStringExtra(EXTRA_START_DATE);
         String route = intent.getStringExtra(EXTRA_ROUTE);
 
+        // Re-arm the NEXT occurrence FIRST, before attempting to ring this one — deliberately
+        // unconditional and ahead of the startForegroundService() call below. That call can throw
+        // on some OEM builds (background-execution restrictions vary by manufacturer beyond what
+        // stock Android's own AlarmManager-broadcast exemption guarantees; seen in the wild on at
+        // least one Vivo device where a scheduled dose silently never rang). Previously this method
+        // scheduled the next occurrence AFTER starting the service, so a thrown exception there
+        // aborted onReceive() before ever reaching the reschedule line — silently breaking every
+        // future occurrence of that alarm too, not just the one that failed to ring, until the user
+        // happened to reopen the app (which re-arms everything from JS — see
+        // GlobalMedicineReminderScheduler.tsx). One missed dose is recoverable; a recurring alarm
+        // that quietly stops recurring forever is a much worse, harder-to-notice failure — this
+        // ordering guarantees the former can never cause the latter.
+        if (hour >= 0 && minute >= 0) {
+            AlarmScheduler.scheduleNext(context, id, title, body, hour, minute, weekdays, intervalDays, startDate, route);
+        }
+
         Intent ringIntent = new Intent(context, AlarmRingingService.class);
         ringIntent.putExtra(EXTRA_ID, id);
         ringIntent.putExtra(EXTRA_TITLE, title);
         ringIntent.putExtra(EXTRA_BODY, body);
         ringIntent.putExtra(EXTRA_ROUTE, route);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(ringIntent);
-        } else {
-            context.startService(ringIntent);
-        }
-
-        if (hour >= 0 && minute >= 0) {
-            AlarmScheduler.scheduleNext(context, id, title, body, hour, minute, weekdays, intervalDays, startDate, route);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(ringIntent);
+            } else {
+                context.startService(ringIntent);
+            }
+        } catch (Exception e) {
+            // Nothing more to do for THIS occurrence if the OS refuses to start the ringing
+            // service — but the reschedule above already happened, so the alarm keeps recurring
+            // correctly regardless.
         }
     }
 }
