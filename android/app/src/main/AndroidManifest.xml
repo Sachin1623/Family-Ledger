@@ -119,4 +119,14 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Also for medicine reminders — confirmed via a real device this session that without this,
+         an OEM's own battery manager (seen on a Vivo phone) can silently drop the alarm broadcast
+         before it ever reaches AlarmReceiver, with zero trace: no crash, no log, nothing. Standard
+         Android's own exact-alarm exemption (SCHEDULE_EXACT_ALARM above) does NOT protect against
+         this — it's a separate, OEM-specific restriction layer. Google Play restricts this
+         permission's use to apps with a genuine alarm/timer-like need, which this qualifies for the
+         same way any real alarm clock app does; see alarmClock.ts's requestBatteryOptimizationExemption
+         for the one-time in-app prompt that requests it. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

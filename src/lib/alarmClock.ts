@@ -30,6 +30,8 @@ interface AlarmClockNativePlugin {
   cancelAll(): Promise<void>;
   checkFullScreenIntentPermission(): Promise<{ granted: boolean }>;
   requestFullScreenIntentPermission(): Promise<{ granted: boolean }>;
+  checkBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
+  requestBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
 }
 
 const native = registerPlugin<AlarmClockNativePlugin>('AlarmClock');
@@ -87,5 +89,33 @@ export async function requestAlarmTakeoverPermission() {
     if (proceed) await native.requestFullScreenIntentPermission();
   } catch (err) {
     console.error('Failed to check/request full-screen intent permission:', err);
+  }
+}
+
+// Same one-time-ask pattern as requestAlarmTakeoverPermission above, for standard Android's own
+// battery-optimization exemption — confirmed via a real device this session that without it, an
+// OEM's own background-management layer (seen on a Vivo phone) can silently drop an alarm's
+// broadcast before it ever reaches AlarmReceiver, with zero trace: no crash, no error, nothing.
+// SCHEDULE_EXACT_ALARM (requestExactAlarmPermission in pushNotifications.ts) does NOT cover this —
+// it's a separate restriction layer OEMs add on top of stock Android. This shows Android's own
+// system dialog directly (one tap to grant), not a redirect into Settings to hunt for the toggle.
+const BATTERY_EXEMPTION_ASKED_KEY = 'familyledger_battery_exemption_asked';
+
+export async function requestBatteryOptimizationExemption() {
+  if (!isSupported()) return;
+  try {
+    if (localStorage.getItem(BATTERY_EXEMPTION_ASKED_KEY)) return;
+    const status = await native.checkBatteryOptimizationExemption();
+    if (status.granted) {
+      localStorage.setItem(BATTERY_EXEMPTION_ASKED_KEY, '1');
+      return;
+    }
+    localStorage.setItem(BATTERY_EXEMPTION_ASKED_KEY, '1');
+    const proceed = window.confirm(
+      'To make sure medicine reminders never get silently missed, FamilyLedger needs to be exempted from battery optimization. Allow it now?'
+    );
+    if (proceed) await native.requestBatteryOptimizationExemption();
+  } catch (err) {
+    console.error('Failed to check/request battery optimization exemption:', err);
   }
 }

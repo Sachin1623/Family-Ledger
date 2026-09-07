@@ -3,7 +3,7 @@ import { FirebaseMessaging } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { User } from 'firebase/auth';
 import { navigateTo } from './navigationRef';
-import { requestAlarmTakeoverPermission } from './alarmClock';
+import { requestAlarmTakeoverPermission, requestBatteryOptimizationExemption } from './alarmClock';
 import { registerMedicineActionTypes, snoozeMedicineReminder } from './medicineReminders';
 
 let registered = false;
@@ -232,6 +232,13 @@ export async function initPushNotifications(user: User) {
     // (see alarmClock.ts) additionally needs "Full screen notifications" to actually take over the
     // screen rather than just post a normal notification.
     requestAlarmTakeoverPermission();
+
+    // Separate from both permission asks above — standard Android's own battery-optimization
+    // exemption, confirmed this session (via a real device) to be the actual root cause behind
+    // medicine reminders silently never ringing at all, with zero trace anywhere. Neither of the
+    // two permissions above cover this; it's the OEM's own background-management layer, on top of
+    // stock Android, silently dropping the alarm broadcast before it reaches our code.
+    requestBatteryOptimizationExemption();
 
     // iOS-only (no-ops on Android, where medicine reminders bypass this plugin entirely) — lets
     // the scheduled reminder show Dismiss/Snooze buttons directly on the lock-screen notification.

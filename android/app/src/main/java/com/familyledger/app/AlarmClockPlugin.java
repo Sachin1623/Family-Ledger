@@ -98,6 +98,44 @@ public class AlarmClockPlugin extends Plugin {
         call.resolve(result);
     }
 
+    // Separate from "Full screen notifications" above — this is standard Android's own battery
+    // optimization exemption (what "Ignore battery optimizations" / "No restrictions" does when
+    // toggled manually in Settings). Confirmed via a real device this session: without this, an
+    // OEM's own background-management layer (seen on a Vivo phone specifically) can silently drop
+    // an alarm's broadcast before it ever reaches AlarmReceiver — no crash, no log, the OS just
+    // never delivers it. SCHEDULE_EXACT_ALARM alone does not protect against this; it's a genuinely
+    // separate restriction. requestBatteryOptimizationExemption's Intent shows Android's own system
+    // dialog directly (one tap to grant), rather than sending the user to hunt through Settings.
+    @PluginMethod
+    public void checkBatteryOptimizationExemption(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("granted", isIgnoringBatteryOptimizations());
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void requestBatteryOptimizationExemption(PluginCall call) {
+        if (!isIgnoringBatteryOptimizations()) {
+            try {
+                Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent);
+            } catch (Exception e) {
+                // Some OEM builds block this system dialog outright — nothing more to do from here;
+                // the permission just stays whatever it already was.
+            }
+        }
+        JSObject result = new JSObject();
+        result.put("granted", isIgnoringBatteryOptimizations());
+        call.resolve(result);
+    }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        android.os.PowerManager pm = (android.os.PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
     private boolean canUseFullScreenIntent() {
         // Below Android 14 (API 34) there's no such gate — a declared USE_FULL_SCREEN_INTENT
         // permission is enough on its own.
