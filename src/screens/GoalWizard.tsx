@@ -194,13 +194,17 @@ export default function GoalWizard() {
 
   return (
     <div className="pb-32">
-      {/* top offset matches Header.tsx's own real rendered height (min-h-[60px] plus its
-          safe-area-inset-top padding) — Header itself is `sticky top-0 z-50`, so without this
-          offset this bar would stick to the exact same top:0 position and get painted over/pushed
-          out from under it while scrolling, which is what "the header still scrolls" actually was:
-          not a failure to stick, but sticking in the wrong place. Same offset Header.tsx's own
-          hamburger-menu dropdown already uses for the same reason. */}
-      <div className="sticky top-[calc(60px+env(safe-area-inset-top))] z-10 bg-white border-b border-border-subtle">
+      {/* `fixed`, not `sticky` — confirmed on-device that AuthenticatedLayout's <main
+          overflow-y-auto> doesn't actually end up as the real scrolling element on every
+          WebView/viewport (a mobile dynamic-viewport-height quirk), which silently breaks
+          `sticky`'s containing-block resolution: the header rode along with `<main>` off-screen
+          instead of staying put, even though Header.tsx's OWN sticky bar (a true sibling of
+          `<main>`, outside it entirely) stayed pinned fine. `fixed` always resolves against the
+          real viewport regardless of any ancestor's overflow behavior — same fix already used for
+          Header.tsx's own hamburger-menu dropdown, which hit the identical class of bug. Top
+          offset matches Header.tsx's real rendered height (min-h-[60px] plus its own
+          safe-area-inset-top padding) so this sits directly below it, not overlapping. */}
+      <div className="fixed top-[calc(60px+env(safe-area-inset-top))] left-0 right-0 z-10 bg-white border-b border-border-subtle">
         <div className="max-w-lg mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-primary">{isEditing ? t('goals.editGoal') : t('goals.newGoal')}</h1>
           <button onClick={closeDestination} className="p-2 text-text-muted hover:bg-surface rounded-full" aria-label={t('common.close')}>
@@ -209,7 +213,10 @@ export default function GoalWizard() {
         </div>
       </div>
 
-      <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5">
+      {/* pt-20/md:pt-24 (not the plain p-4/md:p-8 every other side uses) — the header above is now
+          `fixed`, so it no longer reserves its own space in normal flow; this pushes real content
+          down far enough to clear it instead of rendering underneath it. */}
+      <div className="px-4 md:px-8 pb-4 md:pb-8 pt-20 md:pt-24 max-w-lg mx-auto space-y-5">
       <div className="space-y-1.5">
         <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.icon')}</label>
         <div className="flex flex-wrap gap-2">

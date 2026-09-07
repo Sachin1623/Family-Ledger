@@ -35,7 +35,20 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            minifyEnabled false
+            // Was `false` — Play Console's "App optimization" check flags this as near-zero
+            // obfuscation (3%), which affects visibility/publishing per its own warning. R8
+            // handles both code shrinking and obfuscation together; shrinkResources drops unused
+            // resources it finds once minification identifies what's actually reachable. See
+            // proguard-rules.pro for the defensive keep rules this needed before it was safe to
+            // flip on (reflection-based bits: this app's own Capacitor plugin, Firestore model
+            // deserialization).
+            minifyEnabled true
+            shrinkResources true
+            // `proguard-android.txt` (not the `-optimize` variant) — obfuscation/renaming is what
+            // Play Console's score actually measures and what this needed; the extra bytecode-level
+            // optimization passes in the `-optimize` file raise reflection-breakage risk (like the
+            // annotation-stripping crash this shipped with on the first attempt) without being
+            // necessary for that goal.
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
