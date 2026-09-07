@@ -14,6 +14,7 @@ import {
   goalHorizonDate,
   goalProgressPct,
   goalTotalMinor,
+  monthsBehindTarget,
   fromMinorUnits,
   decryptGoalsList,
   decryptLedgerEntries,
@@ -469,13 +470,7 @@ export default function GoalsHub() {
     // zero or negative means on schedule or ahead. Only shown when there's something to compare:
     // a target date the user actually set, AND a real projection (an unfunded goal has neither
     // an account nor a rate to project from, so there's nothing meaningful to compare yet).
-    const monthsBehindTarget = g.targetDate && projected
-      ? (() => {
-          const [ty, tm] = g.targetDate.split('-').map(Number);
-          const [py, pm] = projected.split('-').map(Number);
-          return (py - ty) * 12 + (pm - tm);
-        })()
-      : null;
+    const behindMonths = monthsBehindTarget(g.targetDate, projected);
     return (
       <button
         key={g.id}
@@ -507,14 +502,14 @@ export default function GoalsHub() {
           </span>
           <span className="text-text-muted font-bold flex items-center gap-1">
             {g.status === 'completed' ? t('goals.metOn', { date: g.completedAt?.slice(0, 10) || '' }) : projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
-            {monthsBehindTarget !== null && (
+            {behindMonths !== null && (
               <span className={clsx(
                 'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
-                monthsBehindTarget <= 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning',
+                behindMonths <= 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning',
               )}>
-                {monthsBehindTarget <= 0
-                  ? (monthsBehindTarget <= -1 ? t('goals.aheadOfTarget', { months: Math.abs(monthsBehindTarget) }) : t('goals.onTrack'))
-                  : t('goals.behindTarget', { months: monthsBehindTarget })}
+                {behindMonths <= 0
+                  ? (behindMonths <= -1 ? t('goals.aheadOfTarget', { months: Math.abs(behindMonths) }) : t('goals.onTrack'))
+                  : t('goals.behindTarget', { months: behindMonths })}
               </span>
             )}
           </span>

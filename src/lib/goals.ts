@@ -344,6 +344,19 @@ export function goalHorizonDate(goal: Goal, ledger: GoalLedgerEntry[], accounts:
   return forward || projectedCompletionDate(goal, trailingThreeMonthAverage(ledger, today), today);
 }
 
+// How many months later (positive) or earlier (zero/negative) a goal's PROJECTED completion sits
+// versus the target date the user set for it — the same "behind schedule" figure GoalsHub's own
+// goal-card badges already show, extracted here so Cash Savings' "goals behind schedule"
+// recommendation (GoalDetail.tsx) uses the exact same definition instead of quietly drifting from
+// what the goal's own card says. null when there's nothing to compare (no target date set, or no
+// projection available yet).
+export function monthsBehindTarget(targetDate: string | null, projected: string | null): number | null {
+  if (!targetDate || !projected) return null;
+  const [ty, tm] = targetDate.split('-').map(Number);
+  const [py, pm] = projected.split('-').map(Number);
+  return (py - ty) * 12 + (pm - tm);
+}
+
 export function goalProgressPct(goal: Goal): number {
   if (goal.targetAmountMinor <= 0) return 0;
   return Math.min(100, (goalTotalMinor(goal) / goal.targetAmountMinor) * 100);

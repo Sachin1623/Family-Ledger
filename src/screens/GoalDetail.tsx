@@ -15,6 +15,7 @@ import {
   goalProgressPct,
   goalTotalMinor,
   goalHorizonDate,
+  monthsBehindTarget,
   decryptGoalAmounts,
   decryptGoalsList,
   decryptLedgerEntries,
@@ -103,6 +104,28 @@ export default function GoalDetail() {
     return () => { cancelled = true; };
   }, [otherGoalsValue, goalId]);
 
+  // Every OTHER active goal's own ledger — only fetched while viewing Cash Savings itself, purely
+  // to feed the "Behind Schedule" recommendation below (goalHorizonDate needs a goal's own ledger
+  // to project its completion date the same way GoalsHub's own per-goal badges do). Mirrors
+  // GoalsHub's ledgersByGoal fetch pattern exactly, just scoped to otherActiveGoals instead of
+  // every one of the user's own goals.
+  const [otherGoalsLedgers, setOtherGoalsLedgers] = useState<Map<string, GoalLedgerEntry[]>>(new Map());
+  useEffect(() => {
+    if (!goal?.isCashHolding || otherActiveGoals.length === 0) { setOtherGoalsLedgers(new Map()); return; }
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        otherActiveGoals.map(async (g) => {
+          const snap = await getDocs(collection(db, 'goals', g.id, 'ledger'));
+          const raw = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+          return [g.id, await decryptLedgerEntries(g.id, raw)] as const;
+        }),
+      );
+      if (!cancelled) setOtherGoalsLedgers(new Map(entries));
+    })();
+    return () => { cancelled = true; };
+  }, [goal?.isCashHolding, otherActiveGoals.map((g) => g.id).join(',')]);
+
   // Just the ID — a regular goal no longer needs Cash Savings' live balance for anything (Pull
   // was removed; funding only ever comes from accounts now), only its ID, to tell whether a
   // merge_in ledger entry came from there (see fromCashSavingsMinor below).
@@ -150,6 +173,32 @@ export default function GoalDetail() {
       .catch((err) => console.error('Failed to decrypt accounts:', err));
     return () => { cancelled = true; };
   }, [accountsForTransferValue]);
+
+  // "Which of your goals could use this spare cash most" — ranked by the exact same
+  // months-behind-schedule figure shown on GoalsHub's own goal cards (see monthsBehindTarget in
+  // lib/goals.ts), most-behind first. Deliberately just a ranked list of the user's own numbers —
+  // no investment/allocation advice, no "spare money" tier — per explicit product decision. Each
+  // entry also carries which of the owner's accounts already allocate to that goal (read straight
+  // off accountsForTransfer's own goalAllocations — the same accounts the "Transfer to Account"
+  // picker below offers), since parking Cash Savings into one of THOSE accounts is what actually
+  // reaches the goal (funding only ever flows account -> goal, never Cash Savings -> goal
+  // directly) — a goal with none listed isn't linked to any account yet, which is itself useful:
+  // it explains why it's behind, and that transferring into any account won't help until one is.
+  const behindScheduleGoals = useMemo(() => {
+    if (!goal?.isCashHolding) return [];
+    return otherActiveGoals
+      .map((g) => {
+        const gLedger = otherGoalsLedgers.get(g.id) || [];
+        const gProjected = goalHorizonDate(g, gLedger, accountsForTransfer);
+        const linkedAccountNames = accountsForTransfer
+          .map((a) => ({ account: a, entry: (a.goalAllocations || []).find((ga) => ga.goalId === g.id) }))
+          .filter((x): x is { account: FinancialAccount; entry: NonNullable<FinancialAccount['goalAllocations']>[number] } => !!x.entry && x.entry.pct > 0)
+          .map((x) => ({ id: x.account.id, name: x.account.name, pct: x.entry.pct }));
+        return { goal: g, behindMonths: monthsBehindTarget(g.targetDate, gProjected), linkedAccountNames };
+      })
+      .filter((e): e is { goal: Goal; behindMonths: number; linkedAccountNames: { id: string; name: string; pct: number }[] } => e.behindMonths !== null && e.behindMonths > 0)
+      .sort((a, b) => b.behindMonths - a.behindMonths);
+  }, [goal?.isCashHolding, otherActiveGoals, otherGoalsLedgers, accountsForTransfer]);
 
   // Bucket #1's own sub-breakdown, purely for display — derived live from this goal's own
   // ledger rather than a separate stored field. 'auto' + 'undo' nets out any undone posting;
@@ -662,6 +711,40 @@ export default function GoalDetail() {
         )}
         </div>
       </div>
+
+      {isOwner && goal.isCashHolding && behindScheduleGoals.length > 0 && (
+        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">
+          <div>
+            <h2 className="text-xs font-bold text-primary">{t('goals.behindScheduleTitle')}</h2>
+            <p className="text-[10px] text-text-muted">{t('goals.behindScheduleSubtitle')}</p>
+          </div>
+          <div className="space-y-1.5">
+            {behindScheduleGoals.map(({ goal: g, behindMonths, linkedAccountNames }) => (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => navigate(`/goals/${g.id}`)}
+                className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 transition-colors text-left space-y-1"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-lg shrink-0">{g.icon || '🎯'}</span>
+                  <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{g.name}</span>
+                  <span className="text-[9px] font-black text-warning bg-warning/10 px-1.5 py-0.5 rounded-full shrink-0">
+                    {t('goals.behindTarget', { months: behindMonths })}
+                  </span>
+                  <span className="material-symbols-outlined text-[14px] text-text-muted shrink-0">chevron_right</span>
+                </div>
+                <p className="text-[10px] text-text-muted pl-[26px] flex items-center gap-1 flex-wrap">
+                  <span className="material-symbols-outlined text-[12px] shrink-0">account_balance</span>
+                  {linkedAccountNames.length > 0
+                    ? linkedAccountNames.map((a) => `${a.name} (${a.pct}%)`).join(', ')
+                    : t('goals.noAccountLinkedYet')}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isOwner && !goal.isCashHolding && (linkedAccounts.length > 0 || monthlyPostingMinor !== 0 || fromCashSavingsMinor !== 0) && (
         <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">

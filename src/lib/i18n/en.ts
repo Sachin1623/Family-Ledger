@@ -647,6 +647,8 @@ const en = {
   'profile.shareFamilyLedger': 'Share FamilyLedger',
   'profile.copyShareMessage': 'Copy Share Message',
   'profile.forAnyOtherApp': 'For any other app, use "Share FamilyLedger" above — it opens your phone\'s own share menu with every installed app to choose from.',
+  'profile.shareLinkOnly': "Link not showing up when you share the image? Tap here to send just the text & link",
+  'profile.linkCopied': 'Link copied to clipboard!',
   'profile.business': 'Business',
   'profile.shopkeeperAccessEnabled': 'Shopkeeper access enabled',
   'profile.switchViewsAnytime': 'Switch views anytime from the header',
@@ -1635,6 +1637,9 @@ const en = {
   'goals.onTrack': 'On track',
   'goals.aheadOfTarget': '{{months}}mo early',
   'goals.behindTarget': '{{months}}mo late',
+  'goals.behindScheduleTitle': 'Goals Behind Schedule',
+  'goals.behindScheduleSubtitle': 'Consider directing this toward one of these first',
+  'goals.noAccountLinkedYet': 'Not linked to any account yet',
 
   'goals.editGoal': 'Edit Goal',
   'goals.icon': 'Icon',

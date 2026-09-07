@@ -11,6 +11,9 @@ import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { blobToBase64, shareText } from '../lib/fileShare';
 import { BiometricAuth, BiometryError } from '@aparajita/capacitor-biometric-auth';
 import { getAppLockSettings, enablePinLock, enableBiometricLock, disableAppLock } from '../lib/appLock';
 import { removeCurrentDeviceToken } from '../lib/pushNotifications';
@@ -708,20 +711,19 @@ export default function Profile() {
     }
   };
 
-  // Renders the off-screen ShareBanner to a PNG File via html2canvas — same capture pattern as
+  // Renders the off-screen ShareBanner to a PNG Blob via html2canvas — same capture pattern as
   // WeeklySummary.tsx's RecapTile, just lazy-imported (html2canvas-pro is a genuinely heavy
   // dependency, and unlike the weekly-recap modal — opened specifically to view/share stats —
   // most Profile visits never touch sharing at all, so this matches the Health screens' lazy-load
   // convention for the same library rather than WeeklySummary's static one). Returns null on any
-  // failure so callers can fall back to a text-only share instead of hard-failing.
-  const captureShareBannerImage = async (): Promise<File | null> => {
+  // failure so callers can fall back to a text-only share instead of hard-failing. Blob (not a
+  // File) so both the native and web share paths below can each wrap it the way they actually need.
+  const captureShareBannerImage = async (): Promise<Blob | null> => {
     if (!shareBannerRef.current) return null;
     try {
       const { default: html2canvas } = await import('html2canvas-pro');
       const canvas = await html2canvas(shareBannerRef.current, { backgroundColor: null, scale: 2, useCORS: true });
-      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
-      if (!blob) return null;
-      return new File([blob], 'familyledger-features.png', { type: 'image/png' });
+      return await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
     } catch (err) {
       console.error('Failed to capture share banner image:', err);
       return null;
@@ -734,13 +736,35 @@ export default function Profile() {
   // their web intents: WhatsApp/Facebook/X's own NATIVE apps (unlike their web share intents) can
   // receive an image fine via the OS's standard share mechanism, so picking e.g. "Facebook" from
   // the OS sheet after tapping the Facebook button can actually carry the banner through, where
-  // Facebook's web-only sharer.php intent flatly cannot. Mirrors WeeklySummary.tsx's
-  // shareViaOsSheet for the same reason it works there.
+  // Facebook's web-only sharer.php intent flatly cannot.
+  //
+  // Native-first (Capacitor Share + Filesystem) — same reasoning fileShare.ts's shareOrDownloadFile
+  // already documents: navigator.share's file support is unreliable inside THIS app's actual
+  // installed Android WebView specifically, even though it works fine in a desktop/mobile browser
+  // — it silently did nothing on a real native install, the image never actually attached. Only
+  // falls to navigator.share when there's no native Share/Filesystem plugin available at all (i.e.
+  // genuinely running in a browser, not the installed app).
   const shareViaOsSheetWithBanner = async (message: string): Promise<boolean> => {
+    const blob = await captureShareBannerImage();
+    if (!blob) return false;
+
+    if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Filesystem') && Capacitor.isPluginAvailable('Share')) {
+      try {
+        const base64Data = await blobToBase64(blob);
+        const written = await Filesystem.writeFile({ path: 'familyledger-features.png', data: base64Data, directory: Directory.Cache });
+        await Share.share({ title: 'FamilyLedger', text: message, url: written.uri });
+        return true;
+      } catch (err: any) {
+        if (typeof err?.message === 'string' && /cancel/i.test(err.message)) return true; // user dismissed the sheet
+        console.error('Native image share failed, falling back:', err);
+        return false;
+      }
+    }
+
     const nav = navigator as any;
     if (!nav.share) return false;
-    const image = await captureShareBannerImage();
-    if (image && nav.canShare?.({ files: [image] })) {
+    const image = new File([blob], 'familyledger-features.png', { type: 'image/png' });
+    if (nav.canShare?.({ files: [image] })) {
       try {
         await nav.share({ title: 'FamilyLedger', text: message, files: [image] });
         return true;
@@ -760,7 +784,10 @@ export default function Profile() {
   // Facebook/LinkedIn actually read and populate the post preview from. That's the whole
   // mechanism for a genuine single-click Facebook/LinkedIn share: there's no way to pre-attach an
   // image/caption to their web intent directly, only to make the URL they fetch describe itself.
-  const handleShareApp = async (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
+  //
+  // Pulled out of handleShareApp so handleShareLinkOnly below (the guaranteed-clickable-link
+  // fallback) can build the exact same message text without duplicating it.
+  const buildShareMessages = () => {
     const shareUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
     const webShareUrl = `${window.location.origin}/share`;
     // WhatsApp/native have no length limit and WhatsApp renders *bold*/dividers as real
@@ -771,6 +798,24 @@ export default function Profile() {
     // the long version anyway, and a mistimed trim can cut the link off entirely.
     const message = `*💰 FamilyLedger*\n_Split bills. Track budgets. Stay sane._\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\nTired of chasing "who owes who"? I've been using this with my family and it's actually fixed it.\n\n✅ *Split expenses* — equally, by %, or exact amounts\n📊 *Real budgets* — set one per category (rent, food, bills...); splitting is optional, so it also works if you just want to track family spending\n🔄 *Recurring bills* — rent, wifi, subscriptions log themselves every month\n🎯 *Goals* — set savings targets, link real accounts, see when you'll hit them\n💬 *Group chat & friends* — no separate thread just for money talk\n🎮 *Bonus* — a few games built in too\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n👉 Try it — free on Android:\n${shareUrl}`;
     const shortMessage = `💰 Tired of chasing who-owes-who? FamilyLedger splits bills, tracks budgets & recurring expenses — free on Android. Give it a try 👇\n${shareUrl}`;
+    return { shareUrl, webShareUrl, message, shortMessage };
+  };
+
+  // The feature-banner image is genuinely useful context, but Android's share intent never
+  // guarantees a receiving app renders the accompanying caption text once an image is attached —
+  // several chat apps show the picture and silently drop the text alongside it, and that dropped
+  // text is exactly where the real, clickable Play Store link lives (the link printed inside the
+  // banner image itself is just flat pixels — never an actual hyperlink, in any app). This sends
+  // the same message as a genuine text-only share, so whatever app receives it is guaranteed to
+  // render — and linkify — the link, independent of whatever the image share did.
+  const handleShareLinkOnly = async () => {
+    const { message } = buildShareMessages();
+    const result = await shareText('FamilyLedger', message);
+    if (result === 'copied') alert(t('profile.linkCopied'));
+  };
+
+  const handleShareApp = async (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
+    const { webShareUrl, message, shortMessage } = buildShareMessages();
 
     if (await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message)) return;
 
@@ -1191,6 +1236,12 @@ export default function Profile() {
                 LinkedIn
               </button>
             </div>
+            <button
+              onClick={handleShareLinkOnly}
+              className="w-full text-center text-[11px] font-bold text-primary underline underline-offset-2"
+            >
+              {t('profile.shareLinkOnly')}
+            </button>
             <p className="text-[10px] text-text-muted">
               {t('profile.forAnyOtherApp')}
             </p>

@@ -2,7 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 
-function blobToBase64(blob: Blob): Promise<string> {
+export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
