@@ -74,6 +74,7 @@ import GoalsHub from './screens/GoalsHub';
 import GoalDetail from './screens/GoalDetail';
 import GoalWizard from './screens/GoalWizard';
 import GoalAllocationManager from './screens/GoalAllocationManager';
+import GoalFundingSetup from './screens/GoalFundingSetup';
 import GoalReports from './screens/GoalReports';
 import AccountsHub from './screens/AccountsHub';
 import PersonalLoans from './screens/PersonalLoans';
@@ -353,6 +354,7 @@ export default function App() {
               <Route path="/goals/accounts" element={<AuthenticatedLayout><AccountsHub /></AuthenticatedLayout>} />
               <Route path="/goals/:goalId" element={<AuthenticatedLayout><GoalDetail /></AuthenticatedLayout>} />
               <Route path="/goals/:goalId/edit" element={<AuthenticatedLayout><GoalWizard /></AuthenticatedLayout>} />
+              <Route path="/goals/:goalId/allocate" element={<AuthenticatedLayout><GoalFundingSetup /></AuthenticatedLayout>} />
               <Route path="/personal-loans" element={<AuthenticatedLayout><PersonalLoans /></AuthenticatedLayout>} />
               <Route path="/personal-loans/:contactId" element={<AuthenticatedLayout><LoanContactDetail /></AuthenticatedLayout>} />
 

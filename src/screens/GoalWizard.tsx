@@ -53,6 +53,11 @@ export default function GoalWizard() {
   const [currency, setCurrency] = useState('');
   const [shareGroupId, setShareGroupId] = useState<string | null>(null);
   const [shareFriendUids, setShareFriendUids] = useState<string[]>([]);
+  // 'view' (read-only) or 'edit' (can also post a boost) — one role for the whole shared group, a
+  // role per individual friend. New shares default to 'view', the safer starting point (existing
+  // shared goals default the other way when this field is absent — see goals.ts's doc comment).
+  const [shareGroupRole, setShareGroupRole] = useState<'view' | 'edit'>('view');
+  const [shareFriendRoles, setShareFriendRoles] = useState<Record<string, 'view' | 'edit'>>({});
   const [friendSearch, setFriendSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -86,6 +91,8 @@ export default function GoalWizard() {
         setCurrency(g.currency);
         setShareGroupId(g.groupId);
         setShareFriendUids(g.friendUids || []);
+        setShareGroupRole(g.groupRole || 'edit');
+        setShareFriendRoles(g.friendRoles || {});
       }
       setLoaded(true);
     })();
@@ -107,6 +114,14 @@ export default function GoalWizard() {
   const toggleFriend = (uid: string) => {
     setShareFriendUids((prev) => (prev.includes(uid) ? prev.filter((u) => u !== uid) : [...prev, uid]));
   };
+  const setFriendRole = (uid: string, role: 'view' | 'edit') => {
+    setShareFriendRoles((prev) => ({ ...prev, [uid]: role }));
+  };
+  // Only the currently-selected friends' roles are ever written — a friend removed from the share
+  // list shouldn't leave a stale role entry behind. Missing entries (a friend just added, never
+  // explicitly given a role) default to 'view', same as the field's own absent-value default.
+  const buildFriendRoles = (): Record<string, 'view' | 'edit'> =>
+    Object.fromEntries(shareFriendUids.map((uid) => [uid, shareFriendRoles[uid] || 'view']));
   const filteredFriends = acceptedFriends.filter(({ friendUid }) => {
     if (!friendSearch.trim()) return true;
     const fname = friendUsersByUid.get(friendUid)?.displayName || '';
@@ -142,7 +157,9 @@ export default function GoalWizard() {
           icon,
           imageUrl: images[0] || null,
           groupId: shareGroupId,
+          groupRole: shareGroupId ? shareGroupRole : null,
           friendUids: shareFriendUids,
+          friendRoles: buildFriendRoles(),
           updatedAt: nowIso,
         });
         navigate(`/goals/${editingGoal.id}`);
@@ -166,7 +183,9 @@ export default function GoalWizard() {
           imageUrl: images[0] || null,
           currency: currency || 'INR',
           groupId: shareGroupId,
+          groupRole: shareGroupId ? shareGroupRole : null,
           friendUids: shareFriendUids,
+          friendRoles: buildFriendRoles(),
           createdBy: user.uid,
           createdByName: actorName,
           createdAt: nowIso,
@@ -178,7 +197,7 @@ export default function GoalWizard() {
           targetAmountMinor: encryptedAmounts.targetAmountMinor,
           currentAmountMinor: encryptedAmounts.currentAmountMinor,
         });
-        navigate('/goals/allocate');
+        navigate(`/goals/${ref.id}/allocate`);
       }
     } catch (err) {
       console.error('Failed to save goal:', err);
@@ -188,35 +207,31 @@ export default function GoalWizard() {
     }
   };
 
+  // Floating centered modal — same pattern as AccountsHub's Add/Edit Account (fixed inset-0
+  // backdrop, centered white box, a `shrink-0` header that never scrolls, and everything else in a
+  // `flex-1 overflow-y-auto` body) — replacing the previous full-screen-page-with-a-fixed-header
+  // treatment this used before. Wrapping the loading state (the `!loaded` branch, hit while an Edit
+  // fetches the existing goal) in the same shell too, so there's no flash of bare unstyled text
+  // before the modal chrome appears.
   if (!loaded) {
-    return <div className="p-8 text-center text-text-muted">{t('goals.loading')}</div>;
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-8 text-center text-text-muted">{t('goals.loading')}</div>
+      </div>
+    );
   }
 
   return (
-    <div className="pb-32">
-      {/* `fixed`, not `sticky` — confirmed on-device that AuthenticatedLayout's <main
-          overflow-y-auto> doesn't actually end up as the real scrolling element on every
-          WebView/viewport (a mobile dynamic-viewport-height quirk), which silently breaks
-          `sticky`'s containing-block resolution: the header rode along with `<main>` off-screen
-          instead of staying put, even though Header.tsx's OWN sticky bar (a true sibling of
-          `<main>`, outside it entirely) stayed pinned fine. `fixed` always resolves against the
-          real viewport regardless of any ancestor's overflow behavior — same fix already used for
-          Header.tsx's own hamburger-menu dropdown, which hit the identical class of bug. Top
-          offset matches Header.tsx's real rendered height (min-h-[60px] plus its own
-          safe-area-inset-top padding) so this sits directly below it, not overlapping. */}
-      <div className="fixed top-[calc(60px+env(safe-area-inset-top))] left-0 right-0 z-10 bg-white border-b border-border-subtle">
-        <div className="max-w-lg mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeDestination}>
+      <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
           <h1 className="text-xl font-bold text-primary">{isEditing ? t('goals.editGoal') : t('goals.newGoal')}</h1>
-          <button onClick={closeDestination} className="p-2 text-text-muted hover:bg-surface rounded-full" aria-label={t('common.close')}>
+          <button onClick={closeDestination} className="p-1.5 -mr-1.5 text-text-muted hover:bg-surface rounded-full shrink-0" aria-label={t('common.close')}>
             <span className="material-symbols-outlined text-[20px] block">close</span>
           </button>
         </div>
-      </div>
 
-      {/* pt-20/md:pt-24 (not the plain p-4/md:p-8 every other side uses) — the header above is now
-          `fixed`, so it no longer reserves its own space in normal flow; this pushes real content
-          down far enough to clear it instead of rendering underneath it. */}
-      <div className="px-4 md:px-8 pb-4 md:pb-8 pt-20 md:pt-24 max-w-lg mx-auto space-y-5">
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
       <div className="space-y-1.5">
         <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.icon')}</label>
         <div className="flex flex-wrap gap-2">
@@ -299,6 +314,18 @@ export default function GoalWizard() {
             <option key={g.id} value={g.id}>{g.name}</option>
           ))}
         </select>
+        {shareGroupId && (
+          <div className="flex bg-surface rounded-lg border border-border-subtle p-0.5 gap-0.5">
+            {(['view', 'edit'] as const).map((role) => (
+              <button
+                key={role} type="button" onClick={() => setShareGroupRole(role)}
+                className={clsx('flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all', shareGroupRole === role ? 'bg-primary text-white' : 'text-text-muted')}
+              >
+                {t(role === 'view' ? 'goals.shareRoleView' : 'goals.shareRoleEdit')}
+              </button>
+            ))}
+          </div>
+        )}
         {myFamilies.length > 0 && (
           <div className="space-y-1">
             {myFamilies.map((fam: any) => {
@@ -334,14 +361,29 @@ export default function GoalWizard() {
                 filteredFriends.map(({ friendUid }) => {
                   const friend = friendUsersByUid.get(friendUid);
                   const selected = shareFriendUids.includes(friendUid);
+                  const role = shareFriendRoles[friendUid] || 'view';
                   return (
-                    <button key={friendUid} type="button" onClick={() => toggleFriend(friendUid)} className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors">
-                      <img src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`} className="w-6 h-6 rounded-full object-cover shrink-0" alt="" />
-                      <span className="flex-1 text-left text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
-                      <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
-                        {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
-                      </span>
-                    </button>
+                    <div key={friendUid} className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors">
+                      <button type="button" onClick={() => toggleFriend(friendUid)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
+                        <img src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`} className="w-6 h-6 rounded-full object-cover shrink-0" alt="" />
+                        <span className="flex-1 min-w-0 text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
+                        <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                          {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                        </span>
+                      </button>
+                      {selected && (
+                        <div className="flex bg-surface rounded-md border border-border-subtle p-0.5 gap-0.5 shrink-0">
+                          {(['view', 'edit'] as const).map((r) => (
+                            <button
+                              key={r} type="button" onClick={() => setFriendRole(friendUid, r)}
+                              className={clsx('px-2 py-1 rounded text-[9px] font-bold transition-all', role === r ? 'bg-primary text-white' : 'text-text-muted')}
+                            >
+                              {t(r === 'view' ? 'goals.shareRoleView' : 'goals.shareRoleEdit')}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   );
                 })
               )}
@@ -353,6 +395,7 @@ export default function GoalWizard() {
       <button type="button" onClick={handleSave} disabled={saving} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
         {saving ? t('goals.saving') : isEditing ? t('common.save') : t('goals.createGoal')}
       </button>
+        </div>
       </div>
     </div>
   );

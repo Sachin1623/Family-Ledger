@@ -41,6 +41,15 @@ export interface AccountEditableFields {
   contributionFrequency?: string | null;
   contributionNextDate?: string | null;
   interestNextDate?: string | null;
+  // Sharing — same dual model as goals.ts's Goal. A shared EDITOR (not just a viewer) can save
+  // these through this same form, but firestore.rules restricts them to a fixed field allow-list
+  // that deliberately excludes these four — a shared editor's save always omits them (see
+  // AccountsHub's handleSaveAccount), so only the owner's own save ever actually changes who an
+  // account is shared with.
+  groupId?: string | null;
+  friendUids?: string[];
+  groupRole?: 'view' | 'edit' | null;
+  friendRoles?: Record<string, 'view' | 'edit'>;
 }
 
 export interface JustCompletedGoal { goalId: string; name: string; amountMinor: number }

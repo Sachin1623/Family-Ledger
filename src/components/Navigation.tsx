@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useShopMode } from '../context/ShopModeContext';
 import { useAuth } from '../context/AuthContext';
@@ -45,27 +45,48 @@ export default function Navigation() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   // Count of distinct DM chats with unread messages for me — not a total message count, per
   // spec (a badge showing "37" for one very chatty conversation would be more noise than signal
   // on a small bottom-nav icon).
   const { unreadChatCount } = useDmChats(shopMode ? undefined : user?.uid);
   const links = shopMode ? SHOP_LINKS : PERSONAL_LINKS;
-  // Hidden in shop mode (no expense-tracking concept there) and on the Add Expense screen itself
-  // (it's a full-screen modal over whatever page was open — showing the button that opens it
-  // stacked on top of itself would be redundant).
-  const showAddExpenseFab = !shopMode && location.pathname !== '/add-expense';
+
+  // The floating action button is "Add Expense" everywhere by default, but that action has no
+  // meaning anywhere under Goals — swapped for "New Goal"/"New Account" on GoalsHub's own matching
+  // tab (read straight off ?tab=, which GoalsHub keeps synced to the URL), and hidden entirely on
+  // every other Goals child page (GoalDetail, GoalWizard, GoalFundingSetup, the standalone
+  // /goals/accounts /goals/allocate /goals/reports routes, and GoalsHub's own Reports/Allocation
+  // tabs) rather than showing an Add Expense button that doesn't belong there. `openAdd=1` is a
+  // deep-link AccountsHub reacts to (see its own openAddParam effect) to open the Add Account form
+  // the same way `?open=<id>` already opens a specific existing account.
+  const isGoalsArea = location.pathname === '/goals' || location.pathname.startsWith('/goals/');
+  const goalsTab = location.pathname === '/goals' ? searchParams.get('tab') : null;
+  let fab: { to: string; label: string; icon: string; tour?: string } | null = null;
+  if (shopMode) {
+    fab = null;
+  } else if (goalsTab === 'goals') {
+    fab = { to: '/goals/new?from=goals', label: t('goals.newGoal'), icon: '🎯' };
+  } else if (goalsTab === 'accounts') {
+    fab = { to: '/goals?tab=accounts&openAdd=1', label: t('accounts.addAccount'), icon: '🏦' };
+  } else if (isGoalsArea) {
+    fab = null;
+  } else if (location.pathname !== '/add-expense') {
+    fab = { to: '/add-expense', label: t('nav.addExpense'), icon: '➕', tour: 'nav-add-expense' };
+  }
 
   return (
     <>
-      {showAddExpenseFab && (
+      {fab && (
         <NavLink
-          to="/add-expense"
-          data-tour="nav-add-expense"
+          key={fab.to}
+          to={fab.to}
+          data-tour={fab.tour}
           className="fixed right-4 z-40 flex items-center gap-2 pl-4 pr-5 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform"
           style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)' }}
         >
-          <span className="text-lg leading-none">➕</span>
-          {t('nav.addExpense')}
+          <span className="text-lg leading-none">{fab.icon}</span>
+          {fab.label}
         </NavLink>
       )}
       {/* pb-[env(safe-area-inset-bottom)] pushes the actual tap targets (the h-16 row below) up

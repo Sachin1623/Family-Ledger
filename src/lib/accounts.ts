@@ -70,6 +70,17 @@ export interface FinancialAccount {
   contributionAmountMinor?: number | null;
   contributionFrequency?: ContributionFrequency | null;
   contributionNextDate?: string | null; // yyyy-mm-dd — next date a contribution is due
+  // Sharing — same dual model as goals.ts's Goal (optional group AND/OR specific friends, one role
+  // for the whole group, a role per individual friend). Unlike goals, accounts never had ANY
+  // sharing before this existed, so there's no backward-compat default to preserve — an absent
+  // role simply means 'view' (the safer default for real money balances), same as what a brand new
+  // share defaults to. 'edit' lets a viewer change the same fields the owner's own edit form can
+  // (balance, rate, SIP, nominees, etc.) — never the sharing settings themselves, and never delete
+  // or reallocate which of the OWNER's own goals this account funds (see firestore.rules).
+  groupId?: string | null;
+  friendUids?: string[];
+  groupRole?: 'view' | 'edit' | null;
+  friendRoles?: Record<string, 'view' | 'edit'>;
 }
 
 export type AccountType = 'bank' | 'mutual_fund' | 'broker' | 'real_estate' | 'cash' | 'other';

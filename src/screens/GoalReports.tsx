@@ -189,15 +189,13 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">
-          <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.totalAccumulated')}</p>
-          <p className="text-lg font-black text-success mt-1">{currencySymbol}{formatAmountCompact(fromMinorUnits(totalAccumulatedMinor), reportableGoals[0]?.currency, profile?.numberSystem)}</p>
-        </div>
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">
-          <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.totalTargeted')}</p>
-          <p className="text-lg font-black text-primary mt-1">{currencySymbol}{formatAmountCompact(fromMinorUnits(totalTargetMinor), reportableGoals[0]?.currency, profile?.numberSystem)}</p>
-        </div>
+      <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 flex items-center justify-between gap-3">
+        <span className="text-xs font-bold text-text-muted">
+          {t('goals.totalAccumulated')} <span className="text-success font-black">{currencySymbol}{formatAmountCompact(fromMinorUnits(totalAccumulatedMinor), reportableGoals[0]?.currency, profile?.numberSystem)}</span>
+        </span>
+        <span className="text-xs font-bold text-text-muted text-right">
+          {t('goals.totalTargeted')} <span className="text-primary font-black">{currencySymbol}{formatAmountCompact(fromMinorUnits(totalTargetMinor), reportableGoals[0]?.currency, profile?.numberSystem)}</span>
+        </span>
       </div>
 
       {completedCount > 0 && (

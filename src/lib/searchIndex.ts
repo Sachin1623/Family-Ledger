@@ -58,7 +58,7 @@ export const SEARCHABLE_FEATURES: SearchableFeature[] = [
   { id: 'goals-new', label: 'New Goal', description: 'Create a new savings goal', labelKey: 'goals.newGoal', icon: 'add_task', route: '/goals/new' },
   { id: 'goals-reports', label: 'Goal Reports', description: 'Progress & history across your goals', labelKey: 'search.goalReports', icon: 'insights', route: '/goals/reports' },
   { id: 'goals-accounts', label: 'Financial Accounts', description: 'Bank/investment accounts linked to your goals', labelKey: 'accounts.title', icon: 'account_balance', route: '/goals/accounts', keywords: ['bank', 'account'] },
-  { id: 'goals-allocate', label: 'Allocation Manager', description: 'Which account funds which goal, and how much', labelKey: 'goals.allocationManagerTitle', icon: 'account_balance', route: '/goals/allocate' },
+  { id: 'goals-allocate', label: 'Allocation Overview', description: 'Which account funds which goal, and how much', labelKey: 'goals.allocationManagerTitle', icon: 'account_balance', route: '/goals/allocate' },
   { id: 'feed', label: 'Activity Feed', description: 'Recent activity across your groups', labelKey: 'header.feed', icon: 'history', route: '/feed' },
   { id: 'profile', label: 'Profile', description: 'Account settings & notification preferences', labelKey: 'header.profile', descriptionKey: 'search.profileDesc', icon: 'person', route: '/profile', keywords: ['settings', 'account'] },
   { id: 'feedback', label: 'Feedback & Support', description: 'Suggestions, feedback & bug reports', labelKey: 'profile.feedbackSupport', descriptionKey: 'profile.feedbackSupportDesc', icon: 'forum', route: '/feedback', keywords: ['bug', 'support', 'contact'] },

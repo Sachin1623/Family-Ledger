@@ -1085,6 +1085,19 @@ service cloud.firestore {
           (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
         );
       }
+      // Same viewer check, gated to only the share(s) that actually grant 'edit' — an absent role
+      // defaults to 'edit' (see goals.ts's Goal.groupRole/friendRoles doc comment: every share made
+      // before this field existed already granted boost rights, and a missing value must keep
+      // meaning that, not silently downgrade to view-only).
+      function isGoalEditor() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          (resource.data.groupId != null && canModifyGroup(resource.data.groupId) &&
+            (!resource.data.keys().hasAll(['groupRole']) || resource.data.groupRole == null || resource.data.groupRole == 'edit')) ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]) &&
+            (!resource.data.keys().hasAll(['friendRoles']) || !resource.data.friendRoles.keys().hasAny([request.auth.uid]) || resource.data.friendRoles[request.auth.uid] == 'edit'))
+        );
+      }
       function isValidGoal(data) {
         return data.keys().hasAll(['userId', 'name', 'targetAmountMinor', 'currentAmountMinor', 'status', 'currency', 'createdBy', 'createdByName', 'createdAt', 'updatedAt']) &&
                data.userId is string && data.userId.size() > 0 &&
@@ -1110,6 +1123,8 @@ service cloud.firestore {
                (!data.keys().hasAll(['completedAt']) || data.completedAt == null || data.completedAt is string) &&
                (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
                (!data.keys().hasAll(['friendUids']) || data.friendUids is list) &&
+               (!data.keys().hasAll(['groupRole']) || data.groupRole == null || data.groupRole in ['view', 'edit']) &&
+               (!data.keys().hasAll(['friendRoles']) || data.friendRoles is map) &&
                (!data.keys().hasAll(['isCashHolding']) || data.isCashHolding is bool);
       }
 
@@ -1126,7 +1141,7 @@ service cloud.firestore {
         // rules have no way to compare two encrypted values, so that specific guarantee becomes
         // convention (the client only ever encrypts a larger amount) rather than a DB-enforced
         // invariant. A known, deliberate tradeoff of encrypting this field, not an oversight.
-        (isGoalViewer() && existing().userId != request.auth.uid &&
+        (isGoalEditor() && existing().userId != request.auth.uid &&
           incoming().diff(existing()).affectedKeys().hasOnly(['currentAmountMinor', 'updatedAt']) &&
           isValidAmountField(incoming().currentAmountMinor) &&
           (!(incoming().currentAmountMinor is int) || incoming().currentAmountMinor >= existing().currentAmountMinor))
@@ -1146,6 +1161,18 @@ service cloud.firestore {
             (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid]))
           );
         }
+        // Mirrors the top-level goal doc's own isGoalEditor() — a boost needs 'edit', not just
+        // view access. Missing role still defaults to 'edit' here too, same backward-compat reason.
+        function isParentEditor() {
+          let g = parentGoal();
+          return isSignedIn() && (
+            g.userId == request.auth.uid ||
+            (g.groupId != null && canModifyGroup(g.groupId) &&
+              (!g.keys().hasAll(['groupRole']) || g.groupRole == null || g.groupRole == 'edit')) ||
+            (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid]) &&
+              (!g.keys().hasAll(['friendRoles']) || !g.friendRoles.keys().hasAny([request.auth.uid]) || g.friendRoles[request.auth.uid] == 'edit'))
+          );
+        }
         function isValidLedgerEntry(data) {
           return data.keys().hasAll(['type', 'amountMinor', 'createdBy', 'createdByName', 'createdAt']) &&
                  data.type is string && data.type in ['auto', 'boost', 'withdrawal', 'merge_in', 'merge_out', 'reconciliation', 'undo', 'completed', 'account_alloc', 'account_dealloc', 'reset'] &&
@@ -1156,9 +1183,10 @@ service cloud.firestore {
                  (!data.keys().hasAll(['relatedGoalId']) || data.relatedGoalId is string);
         }
         allow read: if isParentViewer();
-        // The owner can post any entry type; a non-owner shared viewer can only ever post 'boost'.
+        // The owner can post any entry type; a non-owner shared EDITOR can only ever post 'boost'
+        // (a shared 'view'-only viewer can read but never write here at all).
         allow create: if isSignedIn() && isValidLedgerEntry(incoming()) && incoming().createdBy == request.auth.uid &&
-          (parentGoal().userId == request.auth.uid || (isParentViewer() && incoming().type == 'boost'));
+          (parentGoal().userId == request.auth.uid || (isParentEditor() && incoming().type == 'boost'));
         // Ledger entries are otherwise immutable (see comment above) — this exists solely so the
         // owner can wipe a goal's ledger as part of GoalsHub.tsx's "Delete Permanently" action on
         // an already-archived goal (which then also deletes the goal doc itself in the same
@@ -1193,10 +1221,30 @@ service cloud.firestore {
     }
 
     // --- Financial Accounts ---
-    // Strictly personal — never shared, unlike goals themselves (a bank balance is far more
-    // sensitive than a savings goal's progress bar). Balances change only via an explicit user
-    // edit or Transfer Funds — see src/lib/accountAllocations.ts.
+    // Now shareable (optional group AND/OR specific friends, same dual model as goals.ts's Goal) —
+    // a role, 'view' or 'edit', gates whether a shared viewer can also change the account, same
+    // structure as goals' groupRole/friendRoles. Unlike goals there's no pre-existing data to stay
+    // backward-compatible with, so an absent role simply means 'view' here (the safer default for
+    // real money balances), not 'edit' the way goals defaults for legacy reasons — see
+    // accounts.ts's FinancialAccount.groupRole/friendRoles doc comment.
     match /financialAccounts/{accountId} {
+      function isAccountViewer() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
+        );
+      }
+      function isAccountEditor() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != null && canModifyGroup(resource.data.groupId) &&
+            resource.data.keys().hasAll(['groupRole']) && resource.data.groupRole == 'edit') ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]) &&
+            resource.data.keys().hasAll(['friendRoles']) && resource.data.friendRoles.keys().hasAny([request.auth.uid]) &&
+            resource.data.friendRoles[request.auth.uid] == 'edit')
+        );
+      }
       function isValidAccount(data) {
         return data.keys().hasAll(['userId', 'name', 'type', 'currency', 'currentBalanceMinor', 'archived', 'createdAt', 'updatedAt']) &&
                data.userId is string && data.userId.size() > 0 &&
@@ -1224,17 +1272,58 @@ service cloud.firestore {
                (!data.keys().hasAll(['contributionAmountMinor']) || data.contributionAmountMinor == null || isValidAmountField(data.contributionAmountMinor)) &&
                (!data.keys().hasAll(['contributionFrequency']) || data.contributionFrequency == null || data.contributionFrequency in ['weekly', 'monthly', 'quarterly', 'yearly']) &&
                (!data.keys().hasAll(['contributionNextDate']) || data.contributionNextDate == null || data.contributionNextDate is string) &&
-               (!data.keys().hasAll(['interestNextDate']) || data.interestNextDate == null || data.interestNextDate is string);
+               (!data.keys().hasAll(['interestNextDate']) || data.interestNextDate == null || data.interestNextDate is string) &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['friendUids']) || data.friendUids is list) &&
+               (!data.keys().hasAll(['groupRole']) || data.groupRole == null || data.groupRole in ['view', 'edit']) &&
+               (!data.keys().hasAll(['friendRoles']) || data.friendRoles is map);
       }
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidAccount(incoming());
-      allow update: if isSignedIn() && existing().userId == request.auth.uid && isValidAccount(incoming()) && incoming().userId == existing().userId;
+      allow read: if isAccountViewer();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidAccount(incoming()) &&
+        (!incoming().keys().hasAll(['groupId']) || incoming().groupId == null || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && (
+        (existing().userId == request.auth.uid && isValidAccount(incoming()) && incoming().userId == existing().userId &&
+          (!incoming().keys().hasAll(['groupId']) || incoming().groupId == null || canModifyGroup(incoming().groupId))) ||
+        // Shared editor: may change the same fields the owner's own edit form touches, but never
+        // delete, never reassign ownership, never reallocate which of the OWNER'S OWN goals this
+        // account funds, and never change the sharing settings themselves (only the owner decides
+        // who it's shared with, same as goals never let a shared viewer touch groupId/friendUids).
+        (isAccountEditor() && existing().userId != request.auth.uid &&
+          isValidAccount(incoming()) && incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'type', 'currency', 'currentBalanceMinor', 'balanceAsOf', 'interestRatePct',
+            'compoundFrequency', 'interestNextDate', 'accountNumber', 'nominees',
+            'contributionAmountMinor', 'contributionFrequency', 'contributionNextDate', 'updatedAt'
+          ]))
+      );
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
 
       // Append-only history of every balance/allocation change applyAccountChange() makes — the
       // "History" button on AccountsHub. Never updated or deleted, same immutability as a goal's
-      // own ledger.
+      // own ledger. Same viewer/editor split as the parent account — a shared 'view' role can read
+      // history but never write it; a shared 'edit' role can do both, since applyAccountChange()
+      // writes a log entry for every save it makes, owner or shared editor alike.
       match /log/{entryId} {
+        function parentAccount() { return get(/databases/$(database)/documents/financialAccounts/$(accountId)).data; }
+        function isParentViewer() {
+          let a = parentAccount();
+          return isSignedIn() && (
+            a.userId == request.auth.uid ||
+            (a.keys().hasAll(['groupId']) && a.groupId != null && canModifyGroup(a.groupId)) ||
+            (a.keys().hasAll(['friendUids']) && a.friendUids.hasAny([request.auth.uid]))
+          );
+        }
+        function isParentEditor() {
+          let a = parentAccount();
+          return isSignedIn() && (
+            a.userId == request.auth.uid ||
+            (a.keys().hasAll(['groupId']) && a.groupId != null && canModifyGroup(a.groupId) &&
+              a.keys().hasAll(['groupRole']) && a.groupRole == 'edit') ||
+            (a.keys().hasAll(['friendUids']) && a.friendUids.hasAny([request.auth.uid]) &&
+              a.keys().hasAll(['friendRoles']) && a.friendRoles.keys().hasAny([request.auth.uid]) &&
+              a.friendRoles[request.auth.uid] == 'edit')
+          );
+        }
         function isValidAccountLog(data) {
           return data.keys().hasAll(['balanceBeforeMinor', 'balanceAfterMinor', 'createdBy', 'createdByName', 'createdAt']) &&
                  isValidAmountField(data.balanceBeforeMinor) && isValidAmountField(data.balanceAfterMinor) &&
@@ -1246,9 +1335,8 @@ service cloud.firestore {
                  // Storage bucket exists to point at instead.
                  (!data.keys().hasAll(['images']) || data.images is list);
         }
-        allow read: if isSignedIn() && get(/databases/$(database)/documents/financialAccounts/$(accountId)).data.userId == request.auth.uid;
-        allow create: if isSignedIn() && isValidAccountLog(incoming()) && incoming().createdBy == request.auth.uid &&
-          get(/databases/$(database)/documents/financialAccounts/$(accountId)).data.userId == request.auth.uid;
+        allow read: if isParentViewer();
+        allow create: if isSignedIn() && isValidAccountLog(incoming()) && incoming().createdBy == request.auth.uid && isParentEditor();
       }
     }
 

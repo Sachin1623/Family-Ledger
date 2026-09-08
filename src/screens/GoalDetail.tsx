@@ -26,6 +26,7 @@ import { encryptAmount, decryptAmount } from '../lib/fieldCrypto';
 import { clearGoalFromAllAccounts, applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 import ImageAttachments from '../components/ImageAttachments';
+import GoalContributionSchedule from '../components/GoalContributionSchedule';
 
 type Modal = null | 'boost' | 'transfer' | 'transferAccount' | 'merge' | 'delete' | 'complete' | 'reset' | 'resetCash';
 
@@ -74,6 +75,13 @@ export default function GoalDetail() {
     return () => { cancelled = true; };
   }, [goalDoc]);
   const isOwner = !!user && !!goal && goal.userId === user.uid;
+  // A non-owner's effective role — friendUids takes precedence when the viewer is listed there
+  // individually; otherwise their access came through the shared group, so groupRole applies.
+  // Missing role defaults to 'edit', same backward-compat reason as goals.ts's own doc comment
+  // (every goal shared before roles existed already granted boost rights).
+  const viewerCanEdit = isOwner || (!!user && !!goal && (
+    goal.friendUids?.includes(user.uid) ? (goal.friendRoles?.[user.uid] || 'edit') === 'edit' : (goal.groupRole || 'edit') === 'edit'
+  ));
   const currencySymbol = getCurrencySymbol(goal?.currency);
 
   const [ledgerValue] = useCollection(goal ? collection(db, 'goals', goal.id, 'ledger') : null);
@@ -215,6 +223,7 @@ export default function GoalDetail() {
 
   const projected = goal && goal.status !== 'completed' ? goalHorizonDate(goal, ledger, linkedFullAccounts) : null;
 
+  const [fundingTab, setFundingTab] = useState<'allocations' | 'contributions'>('allocations');
   const [modal, setModal] = useState<Modal>(null);
   const [busy, setBusy] = useState(false);
   const [amountInput, setAmountInput] = useState('');
@@ -746,58 +755,82 @@ export default function GoalDetail() {
         </div>
       )}
 
-      {isOwner && !goal.isCashHolding && (linkedAccounts.length > 0 || monthlyPostingMinor !== 0 || fromCashSavingsMinor !== 0) && (
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">
-          <h2 className="text-xs font-bold text-primary">{t('goals.whereThisComesFrom')}</h2>
-          {linkedAccounts.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.fromAccountsLabel')}</p>
-              {linkedAccounts.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => navigate(`/goals/accounts?open=${a.id}`)}
-                  className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 transition-colors text-left space-y-0.5"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[14px] text-primary shrink-0">account_balance</span>
-                    <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{a.name}</span>
-                    {a.reserved && (
-                      <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0" title={t('goals.reservedNote')}>
-                        {t('goals.reserved')}
-                      </span>
-                    )}
-                    <span className="material-symbols-outlined text-[14px] text-text-muted shrink-0">chevron_right</span>
+      {isOwner && !goal.isCashHolding && (
+        <div className="space-y-2.5">
+          <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
+            <button
+              type="button" onClick={() => setFundingTab('allocations')}
+              className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', fundingTab === 'allocations' ? 'bg-primary text-white' : 'text-text-muted')}
+            >
+              {t('goals.allocationsTab')}
+            </button>
+            <button
+              type="button" onClick={() => setFundingTab('contributions')}
+              className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', fundingTab === 'contributions' ? 'bg-primary text-white' : 'text-text-muted')}
+            >
+              {t('goals.contributionsTab')}
+            </button>
+          </div>
+
+          {fundingTab === 'allocations' ? (
+            (linkedAccounts.length > 0 || monthlyPostingMinor !== 0 || fromCashSavingsMinor !== 0) ? (
+              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">
+                {linkedAccounts.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.fromAccountsLabel')}</p>
+                    {linkedAccounts.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => navigate(`/goals/accounts?open=${a.id}`)}
+                        className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 transition-colors text-left space-y-0.5"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[14px] text-primary shrink-0">account_balance</span>
+                          <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{a.name}</span>
+                          {a.reserved && (
+                            <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0" title={t('goals.reservedNote')}>
+                              {t('goals.reserved')}
+                            </span>
+                          )}
+                          <span className="material-symbols-outlined text-[14px] text-text-muted shrink-0">chevron_right</span>
+                        </div>
+                        <p className="text-[11px] text-text-muted font-bold pl-[20px]">
+                          {a.pct}% · {getCurrencySymbol(a.currency)}{fromMinorUnits(a.contributedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </p>
+                      </button>
+                    ))}
                   </div>
-                  <p className="text-[11px] text-text-muted font-bold pl-[20px]">
-                    {a.pct}% · {getCurrencySymbol(a.currency)}{fromMinorUnits(a.contributedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </p>
-                </button>
-              ))}
-            </div>
-          )}
-          {(monthlyPostingMinor !== 0 || fromCashSavingsMinor !== 0) && (
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.fromMonthlySavingsLabel')}</p>
-              {monthlyPostingMinor !== 0 && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-on-surface flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px] text-primary">calendar_month</span>
-                    {t('goals.fromMonthlyPosting')}
-                  </span>
-                  <span className="text-text-muted font-bold shrink-0">{currencySymbol}{fromMinorUnits(monthlyPostingMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                </div>
-              )}
-              {fromCashSavingsMinor !== 0 && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-on-surface flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px] text-primary">savings</span>
-                    {t('goals.fromCashSavingsPulls')}
-                  </span>
-                  <span className="text-text-muted font-bold shrink-0">{currencySymbol}{fromMinorUnits(fromCashSavingsMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                </div>
-              )}
-            </div>
+                )}
+                {(monthlyPostingMinor !== 0 || fromCashSavingsMinor !== 0) && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.fromMonthlySavingsLabel')}</p>
+                    {monthlyPostingMinor !== 0 && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-on-surface flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[13px] text-primary">calendar_month</span>
+                          {t('goals.fromMonthlyPosting')}
+                        </span>
+                        <span className="text-text-muted font-bold shrink-0">{currencySymbol}{fromMinorUnits(monthlyPostingMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    {fromCashSavingsMinor !== 0 && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-on-surface flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[13px] text-primary">savings</span>
+                          {t('goals.fromCashSavingsPulls')}
+                        </span>
+                        <span className="text-text-muted font-bold shrink-0">{currencySymbol}{fromMinorUnits(fromCashSavingsMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-text-muted text-center py-6">{t('goals.noAccountAllocationsYet')}</p>
+            )
+          ) : (
+            <GoalContributionSchedule goal={goal} linkedAccounts={linkedAccounts} linkedFullAccounts={linkedFullAccounts} />
           )}
         </div>
       )}
@@ -819,17 +852,29 @@ export default function GoalDetail() {
         </button>
       )}
 
+      {isOwner && !goal.isCashHolding && goal.status !== 'archived' && !displayAsCompleted && (
+        <button onClick={() => navigate(`/goals/${goal.id}/allocate`)} className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm flex items-center justify-center gap-1.5">
+          <span className="material-symbols-outlined text-[18px]">account_balance</span>
+          {t('goals.editAllocation')}
+        </button>
+      )}
+
       {goal.status !== 'archived' && !displayAsCompleted && !goal.isCashHolding && (
         isOwner ? (
           <button onClick={() => openModal('transfer')} disabled={goal.currentAmountMinor <= 0} className="w-full py-3 bg-white border border-border-subtle text-on-surface font-bold rounded-xl text-sm flex items-center justify-center gap-1.5 disabled:opacity-40">
             <span className="material-symbols-outlined text-[18px]">savings</span>
             {t('goals.returnToCashSavings')}
           </button>
-        ) : (
+        ) : viewerCanEdit ? (
           <button onClick={() => openModal('boost')} className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm flex items-center justify-center gap-1.5">
             <span className="material-symbols-outlined text-[18px]">add_circle</span>
             {t('goals.boostFunds')}
           </button>
+        ) : (
+          <p className="text-xs text-text-muted text-center flex items-center justify-center gap-1">
+            <span className="material-symbols-outlined text-[14px]">visibility</span>
+            {t('goals.viewOnlyShareNote')}
+          </p>
         )
       )}
       {isOwner && !goal.isCashHolding && goal.status !== 'archived' && !displayAsCompleted && (

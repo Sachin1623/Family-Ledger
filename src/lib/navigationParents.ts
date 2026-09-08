@@ -77,6 +77,7 @@ const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/groups\/[^/]+\/manage$/, (p) => p.replace(/\/manage$/, '')],
   [/^\/groups\/[^/]+$/, '/'],
   [/^\/goals\/[^/]+\/edit$/, (p) => p.replace(/\/edit$/, '')],
+  [/^\/goals\/[^/]+\/allocate$/, (p) => p.replace(/\/allocate$/, '')],
   [/^\/goals\/[^/]+$/, '/goals'],
   [/^\/settlements\/[^/]+$/, '/settlements'],
   [/^\/shopping-lists\/[^/]+$/, '/shopping-lists'],

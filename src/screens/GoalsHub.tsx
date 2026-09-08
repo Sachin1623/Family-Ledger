@@ -484,7 +484,12 @@ export default function GoalsHub() {
             <div className="min-w-0">
               <p className="text-sm font-bold text-on-surface truncate flex items-center gap-1">
                 {g.name}
-                {sharedBadge && <span className="material-symbols-outlined text-[13px] text-text-muted" title={t('goals.sharedWithYou')}>group</span>}
+                {/* Shown on a "shared with me" copy (recipient's view) AND on the owner's own tile
+                    when they've shared it out — same icon either way, just answering "is this
+                    shared at all" at a glance, not who shared it with whom. */}
+                {(sharedBadge || g.groupId || (g.friendUids && g.friendUids.length > 0)) && (
+                  <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={sharedBadge ? t('goals.sharedWithYou') : t('goals.sharedByYou')}>group</span>
+                )}
               </p>
               <p className="text-[10px] text-text-muted">
                 {g.status === 'completed' ? t('goals.statusCompleted') : g.status === 'paused' ? t('goals.statusPaused') : t('goals.statusActive')}
@@ -525,79 +530,73 @@ export default function GoalsHub() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-5 pb-24">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-primary">{t('goals.hubTitle')}</h1>
-          <p className="text-xs text-text-muted">{t('goals.hubSubtitle')}</p>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => setShowWorkflowGuide(true)}
-            className="flex items-center gap-1 text-xs font-bold text-text-muted hover:text-primary transition-colors"
-          >
-            {t('goals.howItWorks')}
-            <span className="material-symbols-outlined text-[16px]">help</span>
-          </button>
-          {goalsTab === 'goals' && (
-            <button
-              type="button"
-              onClick={() => navigate(`/goals/new?from=${goalsTab}`)}
-              className="bg-primary text-white px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all text-sm"
-            >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              {t('goals.newGoal')}
-            </button>
-          )}
+    <>
+      {/* `fixed`, not `sticky` — same class of bug (and same fix) as GoalWizard.tsx's own header:
+          AuthenticatedLayout's <main overflow-y-auto> doesn't reliably end up as the real scrolling
+          element on every mobile WebView, which silently breaks `sticky`'s containing-block
+          resolution. `fixed` always resolves against the real viewport regardless. Top offset
+          matches Header.tsx's real rendered height so this sits directly below it, not overlapping;
+          the scrollable content below (pt-40/md:pt-44) is padded to clear THIS block's own height
+          instead, since it no longer reserves space in normal flow. */}
+      <div className="fixed top-[calc(60px+env(safe-area-inset-top))] left-0 right-0 z-10 bg-white border-b border-border-subtle">
+        <div className="px-4 md:px-8 pt-4 md:pt-8 pb-3 md:pb-4 max-w-2xl mx-auto space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h1 className="text-2xl font-bold text-primary">{t('goals.hubTitle')}</h1>
+              <p className="text-xs text-text-muted">{t('goals.hubSubtitle')}</p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* "New Goal" used to also live here — dropped now that the global FAB (Navigation.tsx)
+                  already becomes "New Goal" while this tab is active, so there's no need for two
+                  buttons doing the same thing on screen at once. */}
+              <button
+                type="button"
+                onClick={() => setShowWorkflowGuide(true)}
+                className="flex items-center gap-1 text-xs font-bold text-text-muted hover:text-primary transition-colors"
+              >
+                {t('goals.howItWorks')}
+                <span className="material-symbols-outlined text-[16px]">help</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex bg-surface rounded-xl border border-border-subtle p-1 gap-1">
+            {([
+              { key: 'reports', label: t('goals.reportsTitle') },
+              { key: 'goals', label: t('goals.hubTitle') },
+              { key: 'accounts', label: t('accounts.title') },
+              { key: 'allocation', label: t('goals.manageAllocation') },
+            ] as const).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setGoalsTab(tab.key)}
+                className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', goalsTab === tab.key ? 'bg-primary text-white' : 'text-text-muted')}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
-        {([
-          { key: 'reports', label: t('goals.reportsTitle') },
-          { key: 'goals', label: t('goals.hubTitle') },
-          { key: 'accounts', label: t('accounts.title') },
-          { key: 'allocation', label: t('goals.manageAllocation') },
-        ] as const).map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setGoalsTab(tab.key)}
-            className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', goalsTab === tab.key ? 'bg-primary text-white' : 'text-text-muted')}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
+    <div className="px-4 md:px-8 pt-40 md:pt-44 max-w-2xl mx-auto space-y-5 pb-24">
       {goalsTab === 'reports' && <GoalReports embedded />}
-      {goalsTab === 'accounts' && (
-        <>
-          <button
-            type="button" onClick={() => setShowAccountsHelp(true)}
-            className="flex items-center gap-1.5 text-[11px] font-bold text-primary px-1"
-          >
-            <span className="material-symbols-outlined text-[15px]">help</span>
-            {t('goals.accountsHelpTitle')}
-          </button>
-          <AccountsHub embedded />
-        </>
-      )}
+      {goalsTab === 'accounts' && <AccountsHub embedded onShowGoalsHelp={() => setShowAccountsHelp(true)} />}
       {goalsTab === 'allocation' && <GoalAllocationManager embedded />}
 
       {goalsTab === 'goals' && (
       <>
       {/* Net savings + post-month card */}
       <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.netSavingsThisMonth')}</p>
-          <span className="text-[10px] font-bold text-text-muted">{thisMonthKey}</span>
+        <div className="flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-[10px] font-bold text-text-muted uppercase tracking-wider">
+            {t('goals.netSavingsThisMonth')} · {thisMonthKey} · {t('goals.aggregatedAcrossGroups', { count: activeGroupIds.length })}
+          </p>
+          <p className={clsx('shrink-0 text-lg font-black', netSavingsThisMonthMinor >= 0 ? 'text-success' : 'text-error')}>
+            {getCurrencySymbol(displayCurrency)}{formatAmountCompact(fromMinorUnits(netSavingsThisMonthMinor), displayCurrency, profile?.numberSystem)}
+          </p>
         </div>
-        <p className={clsx('text-2xl font-black', netSavingsThisMonthMinor >= 0 ? 'text-success' : 'text-error')}>
-          {getCurrencySymbol(displayCurrency)}{formatAmountCompact(fromMinorUnits(netSavingsThisMonthMinor), displayCurrency, profile?.numberSystem)}
-        </p>
-        <p className="text-[10px] text-text-muted">{t('goals.aggregatedAcrossGroups', { count: activeGroupIds.length })}</p>
         {displayConversion.unconvertedCurrencies.length > 0 && (
           <p className="text-[10px] text-warning font-bold">
             {t('goals.currenciesExcluded', { currencies: displayConversion.unconvertedCurrencies.join(', ') })}
@@ -773,6 +772,7 @@ export default function GoalsHub() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

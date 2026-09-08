@@ -75,10 +75,20 @@ export interface Goal {
   // the ONLY place that ever writes this field.
   accountAllocatedMinor: number;
   // Sharing — same dual model as sharedReminders.ts: an optional group AND/OR specific friends.
-  // Shared viewers can see progress and add boosts; only the owner can withdraw, edit, pause,
-  // merge, or archive/delete.
+  // Every shared viewer can always see progress; whether they can also post a boost is gated by
+  // role below. Only the owner can ever withdraw, edit, pause, merge, allocate accounts, or
+  // archive/delete, regardless of role.
   groupId: string | null;
   friendUids: string[];
+  // 'view' = read-only, 'edit' = can also post a boost. One role for the WHOLE shared group (not
+  // per-member — picking a role per group member would be its own UI this app doesn't have), and
+  // a role per individual friend (they're each added one at a time already). Missing/null defaults
+  // to 'edit' — every goal shared before this field existed already granted boost rights
+  // unconditionally, and an absent value must keep meaning exactly that, not silently downgrade
+  // pre-existing shares to view-only. New shares default to 'view' instead (see GoalWizard.tsx) —
+  // the safer starting point going forward, even though old data defaults the other way.
+  groupRole?: 'view' | 'edit' | null;
+  friendRoles?: Record<string, 'view' | 'edit'>;
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -248,6 +258,10 @@ export function projectedCompletionDate(goal: Goal, trailingAvgMinor: number, to
 // AccountsHub's own SIP badge already show, so the projection matches what the account screens
 // say will happen.
 export interface GoalFundingSource {
+  // Optional — lets a caller correlate projectGoalHorizonBreakdown()'s per-source results back to
+  // the account each entry came from. Unused by the date-only projection, so existing callers that
+  // never set it (fundingSourcesForGoal below) are unaffected.
+  id?: string;
   pct: number;
   currentBalanceMinor: number;
   interestRatePct: number | null;
@@ -269,6 +283,7 @@ export function fundingSourcesForGoal(goalId: string, accounts: FinancialAccount
     const entry = (a.goalAllocations || []).find((g) => g.goalId === goalId);
     if (!entry || entry.pct <= 0 || entry.reservedAmountMinor != null) return;
     sources.push({
+      id: a.id,
       pct: entry.pct,
       currentBalanceMinor: a.currentBalanceMinor,
       interestRatePct: a.interestRatePct ?? null,
@@ -288,10 +303,30 @@ export function fundingSourcesForGoal(goalId: string, accounts: FinancialAccount
 // matches what will actually happen. Only `pct`% of each month's growth counts toward the goal —
 // the rest of that account's growth belongs to its own unallocated portion, or to other goals it
 // also allocates to. Bounded to 50 years (genuinely unreachable with the given inputs, not a bug)
-// — returns null there, same as "no positive contribution rate" already does below.
-export function projectGoalHorizonDate(remainingMinor: number, sources: GoalFundingSource[], today: Date = new Date()): string | null {
-  if (remainingMinor <= 0) return null;
-  if (sources.length === 0) return null;
+// — stops with a null date there, same as "no positive contribution rate" already does below.
+//
+// The single walk-forward engine everything else in this section derives from — one month-by-month
+// simulation, not one per caller, so the goal-met date, each source's total growth by then, AND the
+// full month-by-month schedule (GoalReports' contribution table) can never silently drift apart from
+// each other. Every entry carries both that month's OWN incremental growth per source
+// (`perSourceMinor`) and the running total per source since today (`perSourceCumulativeMinor`) —
+// neither includes each source's own already-counted starting lump sum (today's pct% of its current
+// balance); callers add that back in themselves, same as goalTotalMinor()'s own two-bucket split.
+export interface GoalHorizonScheduleEntry {
+  monthKey: string; // yyyy-mm — the month this entry covers
+  perSourceMinor: number[]; // this month's own incremental growth, parallel-indexed to `sources`
+  perSourceCumulativeMinor: number[]; // running total growth per source, through this month
+  totalMinor: number;
+  cumulativeMinor: number;
+}
+export interface GoalHorizonSchedule {
+  date: string | null; // yyyy-mm-dd the goal is projected to be met, null if never within 50 years
+  entries: GoalHorizonScheduleEntry[]; // one per simulated month, stopping at `date` (or empty)
+}
+export function projectGoalHorizonSchedule(remainingMinor: number, sources: GoalFundingSource[], today: Date = new Date()): GoalHorizonSchedule {
+  const none: GoalHorizonSchedule = { date: null, entries: [] };
+  if (remainingMinor <= 0) return none;
+  if (sources.length === 0) return none;
 
   const state = sources.map((s) => {
     const n = COMPOUND_PERIODS_PER_YEAR[s.compoundFrequency || 'yearly'];
@@ -299,35 +334,96 @@ export function projectGoalHorizonDate(remainingMinor: number, sources: GoalFund
     return {
       balance: s.currentBalanceMinor, pct: s.pct, monthlyRate,
       contributionAmountMinor: s.contributionAmountMinor, contributionFrequency: s.contributionFrequency, nextContribDate: s.contributionNextDate,
+      cumulativeMinor: 0,
     };
   });
   // No source has either a rate or a live contribution schedule — nothing will ever change, so
   // there's genuinely no future date to project (same "no positive rate" null the trailing-avg
   // projection already returns).
-  if (state.every((s) => s.monthlyRate <= 0 && !(s.contributionAmountMinor && s.contributionFrequency && s.nextContribDate))) return null;
+  if (state.every((s) => s.monthlyRate <= 0 && !(s.contributionAmountMinor && s.contributionFrequency && s.nextContribDate))) return none;
 
-  let contributedMinor = 0;
+  const entries: GoalHorizonScheduleEntry[] = [];
+  let cumulativeMinor = 0;
   let cursor = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const MAX_MONTHS = 600; // 50 years
   for (let m = 0; m < MAX_MONTHS; m++) {
     const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, cursor.getDate());
-    for (const s of state) {
+    // yyyy-mm-dd string, compared directly against nextContribDate the same way AccountsHub's own
+    // REAL SIP catch-up does (`contributionNextDate <= today`, plain string comparison — no Date
+    // object parsing, which this app avoids elsewhere too since `new Date('2026-09-30')` parses as
+    // UTC midnight and can land on the wrong local day). Inclusive `<=`: a contribution due EXACTLY
+    // on this month's boundary date must credit within this month, not slip to next month — the
+    // previous `new Date(...) < monthEnd` comparison was strict, so a contribution due exactly one
+    // month out from `today` (a very common case — most SIPs get set up "starting today") was
+    // silently deferred a full period late, understating every month's projected growth by exactly
+    // one contribution the whole way through.
+    const monthEndStr = `${monthEnd.getFullYear()}-${String(monthEnd.getMonth() + 1).padStart(2, '0')}-${String(monthEnd.getDate()).padStart(2, '0')}`;
+    const perSourceMinor = state.map((s) => {
       const before = s.balance;
       if (s.monthlyRate > 0) s.balance *= 1 + s.monthlyRate;
       if (s.contributionAmountMinor && s.contributionFrequency) {
-        while (s.nextContribDate && new Date(s.nextContribDate) < monthEnd) {
+        while (s.nextContribDate && s.nextContribDate <= monthEndStr) {
           s.balance += s.contributionAmountMinor;
           s.nextContribDate = nextContributionDate(s.nextContribDate, s.contributionFrequency);
         }
       }
-      contributedMinor += (s.balance - before) * s.pct / 100;
-    }
+      const grownThisMonth = (s.balance - before) * s.pct / 100;
+      s.cumulativeMinor += grownThisMonth;
+      return grownThisMonth;
+    });
+    const totalThisMonth = perSourceMinor.reduce((sum, v) => sum + v, 0);
+    cumulativeMinor += totalThisMonth;
     cursor = monthEnd;
-    if (contributedMinor >= remainingMinor) {
-      return `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+    entries.push({
+      monthKey: `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`,
+      perSourceMinor: perSourceMinor.map((v) => Math.round(v)),
+      perSourceCumulativeMinor: state.map((s) => Math.round(s.cumulativeMinor)),
+      totalMinor: Math.round(totalThisMonth),
+      cumulativeMinor: Math.round(cumulativeMinor),
+    });
+    if (cumulativeMinor >= remainingMinor) {
+      return { date: `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`, entries };
     }
   }
-  return null;
+  return none; // never met within 50 years — no partial schedule either, same as the date-only null
+}
+
+// Every year an entries[] spans, each source's growth summed across its months and cumulative
+// carried from that year's LAST month (entries are already chronological) — GoalReports' yearly
+// table view over the same schedule projectGoalHorizonSchedule() above produces.
+export interface GoalHorizonYearlyEntry {
+  year: number;
+  perSourceMinor: number[]; // this YEAR's own incremental growth per source
+  perSourceCumulativeMinor: number[]; // running total per source through the end of this year
+  totalMinor: number;
+  cumulativeMinor: number;
+}
+export function aggregateScheduleByYear(entries: GoalHorizonScheduleEntry[], sourceCount: number): GoalHorizonYearlyEntry[] {
+  const byYear = new Map<number, GoalHorizonYearlyEntry>();
+  entries.forEach((e) => {
+    const year = Number(e.monthKey.split('-')[0]);
+    let y = byYear.get(year);
+    if (!y) { y = { year, perSourceMinor: new Array(sourceCount).fill(0), perSourceCumulativeMinor: new Array(sourceCount).fill(0), totalMinor: 0, cumulativeMinor: 0 }; byYear.set(year, y); }
+    e.perSourceMinor.forEach((v, i) => { y!.perSourceMinor[i] += v; });
+    y.totalMinor += e.totalMinor;
+    y.perSourceCumulativeMinor = e.perSourceCumulativeMinor;
+    y.cumulativeMinor = e.cumulativeMinor;
+  });
+  return Array.from(byYear.values());
+}
+
+export interface GoalHorizonBreakdown {
+  date: string | null;
+  perSourceGrowthMinor: number[];
+}
+export function projectGoalHorizonBreakdown(remainingMinor: number, sources: GoalFundingSource[], today: Date = new Date()): GoalHorizonBreakdown {
+  const schedule = projectGoalHorizonSchedule(remainingMinor, sources, today);
+  if (schedule.entries.length === 0) return { date: null, perSourceGrowthMinor: sources.map(() => 0) };
+  return { date: schedule.date, perSourceGrowthMinor: schedule.entries[schedule.entries.length - 1].perSourceCumulativeMinor };
+}
+
+export function projectGoalHorizonDate(remainingMinor: number, sources: GoalFundingSource[], today: Date = new Date()): string | null {
+  return projectGoalHorizonBreakdown(remainingMinor, sources, today).date;
 }
 
 // The one function every screen (GoalDetail, GoalsHub, GoalReports) should call for "when will

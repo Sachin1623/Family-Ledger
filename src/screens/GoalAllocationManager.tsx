@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
 import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
-import { Goal, fromMinorUnits, decryptGoalsList } from '../lib/goals';
+import { Goal, fromMinorUnits, goalTotalMinor, fundingSourcesForGoal, projectGoalHorizonSchedule, decryptGoalsList } from '../lib/goals';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 import { applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
 
@@ -108,6 +108,14 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
           {goals.map((g) => {
             const rows = rowsByGoal.get(g.id) || [];
             const sym = getCurrencySymbol(g.currency);
+            // Same forward simulation GoalDetail's own Contributions tab and GoalFundingSetup use
+            // (goals.ts's projectGoalHorizonSchedule) — run once per goal here so every row below
+            // can show both its contribution TODAY and its projected total once the goal actually
+            // hits target, without a separate query per row.
+            const remainingMinor = g.targetAmountMinor - goalTotalMinor(g);
+            const sources = fundingSourcesForGoal(g.id, accounts);
+            const schedule = remainingMinor > 0 ? projectGoalHorizonSchedule(remainingMinor, sources) : { date: null, entries: [] };
+            const lastEntry = schedule.entries[schedule.entries.length - 1];
             return (
               <div key={g.id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">
                 <button type="button" onClick={() => navigate(`/goals/${g.id}`)} className="flex items-center gap-2 w-full text-left">
@@ -121,25 +129,59 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
                   <p className="text-[11px] text-text-muted">{t('goals.noAccountAllocationsYet')}</p>
                 ) : (
                   <div className="space-y-1.5">
-                    {rows.map((r) => (
-                      <button
-                        key={r.account.id} type="button"
-                        onClick={() => openEdit(g.id, g.name, r.account.id, r.pct)}
-                        className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 text-left space-y-0.5 transition-colors"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-[14px] text-primary shrink-0">account_balance</span>
-                          <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{r.account.name}</span>
-                          {r.reserved && (
-                            <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">{t('goals.reserved')}</span>
-                          )}
-                        </div>
-                        <p className="text-xs font-bold text-primary pl-[20px]">
-                          {r.pct}% · {getCurrencySymbol(r.account.currency)}{formatAmountCompact(fromMinorUnits(r.amountMinor), r.account.currency, profile?.numberSystem)}
-                        </p>
-                      </button>
-                    ))}
+                    {/* Legend once per goal card (not repeated per row, so it never grows any
+                        individual tile) — explains what each row's black-vs-green figure means. */}
+                    <p className="text-[9px] font-bold text-text-muted pl-1">
+                      <span className="text-primary">{t('goals.allocationLegendNow')}</span>
+                      {' → '}
+                      <span className="text-success">{t('goals.allocationLegendAtGoal')}</span>
+                    </p>
+                    {rows.map((r) => {
+                      const fmt = (m: number) => `${getCurrencySymbol(r.account.currency)}${formatAmountCompact(fromMinorUnits(m), r.account.currency, profile?.numberSystem)}`;
+                      // Reserved (frozen) and already-at/past-target goals never grow further — their
+                      // contribution today IS their final contribution. Otherwise, add this account's
+                      // own share of the projected forward growth (see the schedule computed above)
+                      // to get what it will have contributed by the time the goal is actually met.
+                      const sourceIdx = sources.findIndex((s) => s.id === r.account.id);
+                      const finalAmountMinor = (remainingMinor <= 0 || r.reserved || !lastEntry || sourceIdx < 0)
+                        ? r.amountMinor
+                        : r.amountMinor + lastEntry.perSourceCumulativeMinor[sourceIdx];
+                      const currentTargetPct = g.targetAmountMinor > 0 ? Math.round((r.amountMinor / g.targetAmountMinor) * 100) : 0;
+                      const finalTargetPct = g.targetAmountMinor > 0 ? Math.round((finalAmountMinor / g.targetAmountMinor) * 100) : 0;
+                      return (
+                        <button
+                          key={r.account.id} type="button"
+                          onClick={() => openEdit(g.id, g.name, r.account.id, r.pct)}
+                          className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 text-left space-y-0.5 transition-colors"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-[14px] text-primary shrink-0">account_balance</span>
+                            <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{r.account.name}</span>
+                            {r.reserved && (
+                              <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">{t('goals.reserved')}</span>
+                            )}
+                          </div>
+                          {/* Current contribution -> projected contribution once the goal hits
+                              target, both as % of the goal target — kept to this one line so the
+                              tile's height never grows past its original two lines. */}
+                          <p className="text-[11px] font-bold pl-[20px] truncate">
+                            <span className="text-primary">{currentTargetPct}% · {fmt(r.amountMinor)}</span>
+                            <span className="text-text-muted"> → </span>
+                            <span className="text-success">{finalTargetPct}% · {fmt(finalAmountMinor)}</span>
+                          </p>
+                        </button>
+                      );
+                    })}
                   </div>
+                )}
+                {rows.length > 0 && (
+                  <p className="text-[10px] font-bold text-text-muted text-right">
+                    {remainingMinor <= 0
+                      ? t('goals.metImmediatelyShort')
+                      : schedule.date
+                        ? t('goals.metByDate', { date: schedule.date })
+                        : t('goals.projectionUnavailable')}
+                  </p>
                 )}
               </div>
             );

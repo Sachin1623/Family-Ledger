@@ -18,6 +18,8 @@ import {
 import { applyAccountChange, deallocateAccountBeforeDelete, notifyGoalsMet, AccountAllocationInput } from '../lib/accountAllocations';
 import { shareText } from '../lib/fileShare';
 import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
+import { useFriendships } from '../lib/useFriendships';
+import { useFamilies } from '../lib/useFamilies';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 
@@ -38,7 +40,7 @@ import ImageLightbox from '../components/ImageLightbox';
 // src/lib/accountAllocations.ts's applyAccountChange() — see its own header comment for why that's
 // the only place this ever happens. Every save also writes one entry to this account's own
 // financialAccounts/{id}/log subcollection — the "History" button below shows it.
-export default function AccountsHub({ embedded = false }: { embedded?: boolean } = {}) {
+export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { embedded?: boolean; onShowGoalsHelp?: () => void } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -152,6 +154,32 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
   const [linkableGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid), where('status', '==', 'active')) : null);
   const linkableGoals = (linkableGoalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []).filter((g: any) => !g.isCashHolding);
 
+  // --- Sharing (accounts, group/friend membership + role data) ---
+  // Same dual model as GoalWizard.tsx's own Share With — group memberships/list, friends, and
+  // families all needed for both the Share With picker on the Add/Edit form below AND for the
+  // "shared with me" queries further down.
+  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const groupIds = membershipsValue?.docs.map((d) => d.data().groupId) || [];
+  const cappedGroupIds = groupIds.slice(0, 30); // Firestore 'in' query cap, same as elsewhere in this app
+  const [groupsValue] = useCollection(groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds.slice(0, 30))) : null);
+  const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+  const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(user?.uid);
+  const { families: myFamilies, membersByFamilyId } = useFamilies(user?.uid);
+
+  // --- Accounts shared with me (owned by someone else, visible to me via group or friend share) ---
+  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [sharedWithMeAccounts, setSharedWithMeAccounts] = useState<FinancialAccount[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const byId = new Map<string, any>();
+    groupSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    friendSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setSharedWithMeAccounts(decrypted); })
+      .catch((err) => console.error('Failed to decrypt shared accounts:', err));
+    return () => { cancelled = true; };
+  }, [groupSharedAccountsValue, friendSharedAccountsValue, user?.uid]);
+
   // --- Add/edit account form ---
   const [showInfo, setShowInfo] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -170,6 +198,11 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
   const [contributionAmountInput, setContributionAmountInput] = useState('');
   const [contributionFrequency, setContributionFrequency] = useState<ContributionFrequency | ''>('');
   const [contributionNextDateInput, setContributionNextDateInput] = useState('');
+  const [shareGroupId, setShareGroupId] = useState<string | null>(null);
+  const [shareFriendUids, setShareFriendUids] = useState<string[]>([]);
+  const [shareGroupRole, setShareGroupRole] = useState<'view' | 'edit'>('view');
+  const [shareFriendRoles, setShareFriendRoles] = useState<Record<string, 'view' | 'edit'>>({});
+  const [friendSearch, setFriendSearch] = useState('');
   // Collapsed by default — most accounts either don't allocate to any goal or already have their
   // split set from a previous save, so showing every goal's % input up front just adds scroll for
   // no reason most of the time. Same "expanded opt-in" pattern used elsewhere in this app.
@@ -179,6 +212,43 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
 
   const allocTotal: number = Object.keys(allocPcts).reduce((s: number, k: string) => s + (allocPcts[k] || 0), 0);
   const nomineeTotal: number = nominees.reduce((s, n) => s + (n.pct || 0), 0);
+
+  // --- Share With helpers — same shape as GoalWizard.tsx's own (group + family toggle + friend
+  // search/toggle, each with a 'view'/'edit' role) ---
+  const isFamilyFullySelected = (familyId: string) => {
+    const members = membersByFamilyId.get(familyId) || [];
+    return members.length > 0 && members.every((m) => shareFriendUids.includes(m.userId));
+  };
+  const toggleFamily = (familyId: string) => {
+    const memberUids = (membersByFamilyId.get(familyId) || []).map((m) => m.userId);
+    const allSelected = isFamilyFullySelected(familyId);
+    setShareFriendUids((prev) => (allSelected ? prev.filter((u) => !memberUids.includes(u)) : Array.from(new Set([...prev, ...memberUids]))));
+  };
+  const toggleFriend = (uid: string) => {
+    setShareFriendUids((prev) => (prev.includes(uid) ? prev.filter((u) => u !== uid) : [...prev, uid]));
+  };
+  const setFriendRole = (uid: string, role: 'view' | 'edit') => {
+    setShareFriendRoles((prev) => ({ ...prev, [uid]: role }));
+  };
+  const buildFriendRoles = (): Record<string, 'view' | 'edit'> =>
+    Object.fromEntries(shareFriendUids.map((uid) => [uid, shareFriendRoles[uid] || 'view']));
+  const filteredFriends = acceptedFriends.filter(({ friendUid }) => {
+    if (!friendSearch.trim()) return true;
+    const fname = friendUsersByUid.get(friendUid)?.displayName || '';
+    return fname.toLowerCase().includes(friendSearch.trim().toLowerCase());
+  });
+
+  // A non-owner's effective role for a given account — friendUids takes precedence when the
+  // viewer is individually listed; otherwise their access came through the shared group, so
+  // groupRole applies. Missing role defaults to 'view' here (unlike goals' 'edit' default — see
+  // accounts.ts's doc comment: there's no pre-existing account-sharing data to stay compatible
+  // with, so the safer default applies from day one).
+  const canEditAccount = (a: FinancialAccount): boolean => {
+    if (!user) return false;
+    if (a.userId === user.uid) return true;
+    if (a.friendUids?.includes(user.uid)) return (a.friendRoles?.[user.uid] || 'view') === 'edit';
+    return (a.groupRole || 'view') === 'edit';
+  };
 
   const openAdd = () => {
     setEditingAccount(null);
@@ -196,6 +266,10 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
     setContributionAmountInput('');
     setContributionFrequency('');
     setContributionNextDateInput('');
+    setShareGroupId(null);
+    setShareFriendUids([]);
+    setShareGroupRole('view');
+    setShareFriendRoles({});
     setAllocSectionExpanded(false);
     setFormError(null);
     setShowForm(true);
@@ -216,6 +290,10 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
     setContributionAmountInput(a.contributionAmountMinor != null ? String(fromMinorUnits(a.contributionAmountMinor)) : '');
     setContributionFrequency(a.contributionFrequency || '');
     setContributionNextDateInput(a.contributionNextDate || '');
+    setShareGroupId(a.groupId || null);
+    setShareFriendUids(a.friendUids || []);
+    setShareGroupRole(a.groupRole || 'view');
+    setShareFriendRoles(a.friendRoles || {});
     setAllocSectionExpanded(false);
     setFormError(null);
     setShowForm(true);
@@ -257,6 +335,19 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
     openView(match);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAccountParam, allAccounts]);
+
+  // Deep-link from the global "New Account" FAB (Navigation.tsx — shown in place of "Add Expense"
+  // while on the Accounts tab within Goals) — auto-opens the Add Account form once. Same reactive,
+  // ref-guarded pattern as openAccountParam above, for the identical reason (never a mount-only
+  // effect on a route React Router reuses across repeat visits).
+  const openAddParam = searchParams.get('openAdd');
+  const openedAddRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openAddParam || openAddParam === openedAddRef.current) return;
+    openedAddRef.current = openAddParam;
+    openAdd();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openAddParam]);
 
   const handleSaveAccount = async () => {
     if (!user || saving) return;
@@ -319,6 +410,8 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
         await setDoc(ref, {
           userId: user.uid, name: trimmed, type, currency, currentBalanceMinor: 0, balanceAsOf: asOf,
           goalAllocations: [], allocatedGoalIds: [], interestRatePct, compoundFrequency: compoundFrequency || null,
+          groupId: shareGroupId, groupRole: shareGroupId ? shareGroupRole : null,
+          friendUids: shareFriendUids, friendRoles: buildFriendRoles(),
           archived: false, createdAt: nowIso, updatedAt: nowIso,
         });
         accountId = ref.id;
@@ -331,6 +424,10 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
         accountNumberInput.trim() ? encryptText('account', accountId, accountNumberInput.trim()) : Promise.resolve(null),
         contributionAmountMinorPlain != null ? encryptAmount('account', accountId, contributionAmountMinorPlain) : Promise.resolve(null),
       ]);
+      // A shared EDITOR's save must never touch sharing settings — firestore.rules restricts a
+      // non-owner's allowed fields to exactly the ones below, excluding groupId/groupRole/
+      // friendUids/friendRoles, so only the owner's own save ever changes who this is shared with.
+      const isOwnerSave = !editingAccount || editingAccount.userId === user.uid;
       const fields = {
         name: trimmed, type, currency, balanceAsOf: asOf, interestRatePct, compoundFrequency: compoundFrequency || null,
         accountNumber: encAccountNumber, nominees: cleanedNominees,
@@ -338,6 +435,7 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
         contributionFrequency: contributionFrequency || null,
         contributionNextDate: contributionFrequency ? contributionNextDateInput : null,
         interestNextDate: interestRatePct != null && interestRatePct > 0 && compoundFrequency ? interestNextDateInput : null,
+        ...(isOwnerSave ? { groupId: shareGroupId, groupRole: shareGroupId ? shareGroupRole : null, friendUids: shareFriendUids, friendRoles: buildFriendRoles() } : {}),
       };
       const { justCompletedGoals } = await applyAccountChange(accountId, balanceMinor, newAllocations, actorName, fields);
       notifyGoalsMet(justCompletedGoals);
@@ -511,10 +609,20 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
         </div>
       )}
 
-      <button type="button" onClick={() => setShowInfo(true)} className="w-full flex items-center gap-1.5 text-[11px] font-bold text-primary px-1">
-        <span className="material-symbols-outlined text-[15px]">info</span>
-        <span className="underline">{t('accounts.whyWeAsk')}</span>
-      </button>
+      {/* Two distinct help topics (this account-privacy explainer, plus GoalsHub's own
+          "what are accounts for" workflow explainer when embedded there) — icon-only and
+          right-aligned rather than the full-width labeled rows this used to be, since together
+          they were costing two whole lines before any real content showed. */}
+      <div className="flex items-center justify-end gap-1">
+        {onShowGoalsHelp && (
+          <button type="button" onClick={onShowGoalsHelp} className="p-1.5 text-primary hover:bg-primary/10 rounded-full" aria-label={t('goals.accountsHelpTitle')} title={t('goals.accountsHelpTitle')}>
+            <span className="material-symbols-outlined text-[18px] block">help</span>
+          </button>
+        )}
+        <button type="button" onClick={() => setShowInfo(true)} className="p-1.5 text-primary hover:bg-primary/10 rounded-full" aria-label={t('accounts.whyWeAsk')} title={t('accounts.whyWeAsk')}>
+          <span className="material-symbols-outlined text-[18px] block">info</span>
+        </button>
+      </div>
 
       {autoApplyResults.length > 0 && (
         <div className="bg-success/10 border border-success/30 rounded-xl p-3 space-y-1">
@@ -531,30 +639,33 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-5 space-y-2">
-        <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('accounts.totalAcrossAccounts')}</p>
-        <p className="text-2xl font-black text-primary">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalMinor), defaultCurrency, profile?.numberSystem)}</p>
+      <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span className="text-xs font-bold text-text-muted whitespace-nowrap">
+          {t('accounts.totalAcrossAccounts')} <span className="text-primary font-black">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalMinor), defaultCurrency, profile?.numberSystem)}</span>
+        </span>
         {activeAccounts.length > 0 && (
-          <div className="flex gap-4 pt-1 border-t border-border-subtle">
-            <div className="flex-1 pt-2">
-              <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1">
-                <span className="material-symbols-outlined text-[12px] text-primary">link</span>
-                {t('accounts.allocatedToGoals')}
-              </p>
-              <p className="text-sm font-black text-primary">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalAllocatedMinor), defaultCurrency, profile?.numberSystem)}</p>
-            </div>
-            <div className="flex-1 pt-2 border-l border-border-subtle pl-4">
-              <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('accounts.unallocated')}</p>
-              <p className="text-sm font-black text-text-muted">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalUnallocatedMinor), defaultCurrency, profile?.numberSystem)}</p>
-            </div>
-          </div>
+          <>
+            <span className="text-xs font-bold text-text-muted whitespace-nowrap flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px] text-primary">link</span>
+              {t('accounts.allocatedToGoals')} <span className="text-primary font-black">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalAllocatedMinor), defaultCurrency, profile?.numberSystem)}</span>
+            </span>
+            <span className="text-xs font-bold text-text-muted whitespace-nowrap">
+              {t('accounts.unallocated')} <span className="text-on-surface font-black">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalUnallocatedMinor), defaultCurrency, profile?.numberSystem)}</span>
+            </span>
+          </>
         )}
       </div>
 
-      <button type="button" onClick={openAdd} className="w-full py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-bold flex items-center justify-center gap-1.5">
-        <span className="material-symbols-outlined text-[16px]">add</span>
-        {t('accounts.addAccount')}
-      </button>
+      {/* Only when NOT embedded — inside GoalsHub's Accounts tab, the global FAB (Navigation.tsx)
+          already becomes "New Account" while this tab is active, so a second button here would
+          just duplicate it. The standalone /goals/accounts route has no such FAB, so it keeps this
+          as its only way to add an account. */}
+      {!embedded && (
+        <button type="button" onClick={openAdd} className="w-full py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-bold flex items-center justify-center gap-1.5">
+          <span className="material-symbols-outlined text-[16px]">add</span>
+          {t('accounts.addAccount')}
+        </button>
+      )}
       {activeAccounts.length > 1 && (
         <button type="button" onClick={openTransfer} className="w-full py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-bold flex items-center justify-center gap-1.5">
           <span className="material-symbols-outlined text-[16px]">swap_horiz</span>
@@ -579,7 +690,12 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                 <div role="button" tabIndex={0} onClick={() => openView(a)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openView(a); }} className="w-full flex items-center gap-3 text-left cursor-pointer">
                   <span className="text-xl shrink-0">{meta?.icon || '💰'}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-on-surface truncate">{a.name}</p>
+                    <p className="text-sm font-bold text-on-surface truncate flex items-center gap-1">
+                      {a.name}
+                      {(a.groupId || (a.friendUids && a.friendUids.length > 0)) && (
+                        <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('accounts.sharedByYou')}>group</span>
+                      )}
+                    </p>
                     <p className="text-[10px] text-text-muted truncate">
                       {t(`accounts.type.${a.type}`)}
                       {' · '}
@@ -650,6 +766,31 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                     <span className="material-symbols-outlined text-[16px] block">delete</span>
                   </button>
                 </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {sharedWithMeAccounts.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('accounts.sharedWithMe')}</p>
+          {sharedWithMeAccounts.map((a) => {
+            const meta = ACCOUNT_TYPES.find((tp) => tp.id === a.type);
+            return (
+              <div
+                key={a.id} role="button" tabIndex={0} onClick={() => openView(a)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openView(a); }}
+                className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3 cursor-pointer"
+              >
+                <span className="text-xl shrink-0">{meta?.icon || '💰'}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-on-surface truncate flex items-center gap-1">
+                    {a.name}
+                    <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0">{canEditAccount(a) ? 'edit' : 'visibility'}</span>
+                  </p>
+                  <p className="text-[10px] text-text-muted truncate">{t(`accounts.type.${a.type}`)}</p>
+                </div>
+                <span className="text-sm font-bold text-primary shrink-0">{getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)}</span>
               </div>
             );
           })}
@@ -737,22 +878,32 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                 </div>
               )}
 
+              {viewAccount.userId !== user?.uid && (
+                <p className="text-[11px] text-text-muted flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">group</span>
+                  {t(canEditAccount(viewAccount) ? 'accounts.sharedByLabelEdit' : 'accounts.sharedByLabelView')}
+                </p>
+              )}
               <div className="flex gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => { const a = viewAccount; setViewAccount(null); openEdit(a); }}
-                  className="flex-1 py-2.5 bg-primary text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined text-[16px]">edit</span>
-                  {t('common.edit')}
-                </button>
+                {canEditAccount(viewAccount) && (
+                  <button
+                    type="button"
+                    onClick={() => { const a = viewAccount; setViewAccount(null); openEdit(a); }}
+                    className="flex-1 py-2.5 bg-primary text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">edit</span>
+                    {t('common.edit')}
+                  </button>
+                )}
                 <button type="button" onClick={() => setHistoryAccount(viewAccount)} className="flex-1 py-2.5 border border-border-subtle text-text-muted text-xs font-bold rounded-xl flex items-center justify-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px]">history</span>
                   {t('accounts.history')}
                 </button>
-                <button type="button" onClick={() => openShare(viewAccount)} className="p-2.5 border border-border-subtle text-text-muted rounded-xl" aria-label={t('accounts.shareDetails')}>
-                  <span className="material-symbols-outlined text-[16px] block">share</span>
-                </button>
+                {viewAccount.userId === user?.uid && (
+                  <button type="button" onClick={() => openShare(viewAccount)} className="p-2.5 border border-border-subtle text-text-muted rounded-xl" aria-label={t('accounts.shareDetails')}>
+                    <span className="material-symbols-outlined text-[16px] block">share</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -951,6 +1102,98 @@ export default function AccountsHub({ embedded = false }: { embedded?: boolean }
                     </p>
                     <p className="text-[11px] text-text-muted px-1">{t('accounts.allocationNote')}</p>
                   </>
+                )}
+              </div>
+            )}
+            {(!editingAccount || editingAccount.userId === user?.uid) && (
+              <div className="space-y-1.5 pt-1 border-t border-border-subtle">
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.shareWith')}</label>
+                <p className="text-[11px] text-text-muted px-1">{t('accounts.shareWithDesc')}</p>
+                <select
+                  value={shareGroupId || ''}
+                  onChange={(e) => setShareGroupId(e.target.value || null)}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+                >
+                  <option value="">{t('goals.noGroupShare')}</option>
+                  {groups.map((g: any) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+                {shareGroupId && (
+                  <div className="flex bg-surface rounded-lg border border-border-subtle p-0.5 gap-0.5">
+                    {(['view', 'edit'] as const).map((role) => (
+                      <button
+                        key={role} type="button" onClick={() => setShareGroupRole(role)}
+                        className={clsx('flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all', shareGroupRole === role ? 'bg-primary text-white' : 'text-text-muted')}
+                      >
+                        {t(role === 'view' ? 'goals.shareRoleView' : 'goals.shareRoleEdit')}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {myFamilies.length > 0 && (
+                  <div className="space-y-1">
+                    {myFamilies.map((fam: any) => {
+                      const fmembers = membersByFamilyId.get(fam.id) || [];
+                      const selected = isFamilyFullySelected(fam.id);
+                      return (
+                        <button
+                          key={fam.id} type="button" onClick={() => toggleFamily(fam.id)}
+                          className={clsx('w-full flex items-center justify-between px-2.5 py-2 rounded-lg border text-left transition-all', selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle')}
+                        >
+                          <span className="text-xs font-bold flex items-center gap-1.5">
+                            <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                              {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                            </span>
+                            {fam.name}
+                          </span>
+                          <span className="text-[10px] font-bold text-text-muted shrink-0">{fmembers.length}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {acceptedFriends.length > 0 && (
+                  <div className="space-y-1">
+                    <input
+                      type="text" value={friendSearch} onChange={(e) => setFriendSearch(e.target.value)} placeholder={t('health.searchFriends')}
+                      className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-1.5 text-xs outline-none"
+                    />
+                    <div className="max-h-32 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle">
+                      {filteredFriends.length === 0 ? (
+                        <p className="text-[11px] text-text-muted text-center py-3">{t('health.noFriendsFound')}</p>
+                      ) : (
+                        filteredFriends.map(({ friendUid }) => {
+                          const friend = friendUsersByUid.get(friendUid);
+                          const selected = shareFriendUids.includes(friendUid);
+                          const role = shareFriendRoles[friendUid] || 'view';
+                          return (
+                            <div key={friendUid} className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-surface transition-colors">
+                              <button type="button" onClick={() => toggleFriend(friendUid)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
+                                <img src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`} className="w-6 h-6 rounded-full object-cover shrink-0" alt="" />
+                                <span className="flex-1 min-w-0 text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
+                                <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                                  {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                                </span>
+                              </button>
+                              {selected && (
+                                <div className="flex bg-surface rounded-md border border-border-subtle p-0.5 gap-0.5 shrink-0">
+                                  {(['view', 'edit'] as const).map((r) => (
+                                    <button
+                                      key={r} type="button" onClick={() => setFriendRole(friendUid, r)}
+                                      className={clsx('px-2 py-1 rounded text-[9px] font-bold transition-all', role === r ? 'bg-primary text-white' : 'text-text-muted')}
+                                    >
+                                      {t(r === 'view' ? 'goals.shareRoleView' : 'goals.shareRoleEdit')}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
