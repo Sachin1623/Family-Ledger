@@ -10,8 +10,9 @@ import { getCurrencySymbol } from '../lib/constants';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { useFriendships } from '../lib/useFriendships';
 import { useFamilies } from '../lib/useFamilies';
-import { Goal, toMinorUnits, fromMinorUnits, validateGoalName, validateTargetAmount, validateTargetDate, decryptGoalAmounts, encryptGoalAmounts } from '../lib/goals';
+import { Goal, toMinorUnits, fromMinorUnits, goalTotalMinor, validateGoalName, validateTargetAmount, validateTargetDate, decryptGoalAmounts, encryptGoalAmounts } from '../lib/goals';
 import { encryptAmount } from '../lib/fieldCrypto';
+import { unfreezeGoalReservations } from '../lib/accountAllocations';
 import ImageAttachments from '../components/ImageAttachments';
 
 const ICONS = ['🎯', '✈️', '🏠', '🚗', '🎓', '💍', '👶', '🏥', '🎉', '💻', '📱', '🛡️', '🏖️', '🐶', '🎸', '💰'];
@@ -148,6 +149,14 @@ export default function GoalWizard() {
       const actorName = profile?.displayName || user.displayName || 'Someone';
       const nowIso = new Date().toISOString();
       if (isEditing && editingGoal) {
+        // A goal auto-completes (and freezes every account's own reservedAmountMinor share of it
+        // — see accountAllocations.ts's header comment) the moment its total reaches target,
+        // whether or not the user ever explicitly hit "Mark Completed." A target isn't actually
+        // immutable, though: raising it back above the goal's current total means it's genuinely
+        // no longer met, so it should behave like any other active goal again — reopened, with
+        // every account's frozen share released back to tracking its live balance/% (not stuck
+        // immutable), rather than staying permanently "done" against a target that no longer holds.
+        const reopening = editingGoal.status === 'completed' && amountMinor > goalTotalMinor(editingGoal);
         const encryptedTarget = await encryptAmount('goal', editingGoal.id, amountMinor);
         await updateDoc(doc(db, 'goals', editingGoal.id), {
           name: name.trim(),
@@ -161,7 +170,16 @@ export default function GoalWizard() {
           friendUids: shareFriendUids,
           friendRoles: buildFriendRoles(),
           updatedAt: nowIso,
+          ...(reopening ? { status: 'active', completedAt: null } : {}),
         });
+        if (reopening) {
+          await unfreezeGoalReservations(editingGoal.id, editingGoal.userId);
+          const encryptedZero = await encryptAmount('goal', editingGoal.id, 0);
+          await setDoc(doc(collection(db, 'goals', editingGoal.id, 'ledger')), {
+            type: 'reset', amountMinor: encryptedZero, monthKey: null,
+            note: t('goals.reopenedNote'), createdBy: user.uid, createdByName: actorName, createdAt: nowIso,
+          });
+        }
         navigate(`/goals/${editingGoal.id}`);
       } else {
         // Two-phase write: the crypto/key endpoint authorizes a 'goal' scope by reading

@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
 import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
-import { Goal, GoalLedgerEntry, goalHorizonDate, goalTotalMinor, fromMinorUnits, decryptGoalsList, decryptLedgerEntries } from '../lib/goals';
+import { Goal, GoalLedgerEntry, goalHorizonDate, goalTargetReachedAt, goalTotalMinor, fromMinorUnits, decryptGoalsList, decryptLedgerEntries } from '../lib/goals';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 
 // Reports & Timeline (Horizon View) — a chronological ladder of every active goal's projected
@@ -69,12 +69,17 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
     // balance still counts toward Total Accumulated below — it's real money, just untargeted.
     return reportableGoals
       .filter((g) => g.status === 'active' && !g.isCashHolding)
-      .map((g) => ({ goal: g, projected: goalHorizonDate(g, ledgersByGoal.get(g.id) || [], accounts) }))
+      .map((g) => {
+        const ledger = ledgersByGoal.get(g.id) || [];
+        return { goal: g, projected: goalHorizonDate(g, ledger, accounts), reachedDate: goalTargetReachedAt(g, ledger) };
+      })
       .sort((a, b) => {
-        if (!a.projected && !b.projected) return 0;
-        if (!a.projected) return 1;
-        if (!b.projected) return -1;
-        return a.projected.localeCompare(b.projected);
+        const aDate = a.reachedDate || a.projected;
+        const bDate = b.reachedDate || b.projected;
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return 1;
+        if (!bDate) return -1;
+        return aDate.localeCompare(bDate);
       });
   }, [reportableGoals, ledgersByGoal, accounts]);
 
@@ -87,22 +92,24 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
   const chartMarkers = useMemo(
     () =>
       horizon
-        .map(({ goal, projected }) => {
-          const dateStr = projected || goal.targetDate;
+        .map(({ goal, projected, reachedDate }) => {
+          // A goal already at/past its target plots at the date it actually got there, never at
+          // the (now-irrelevant) forward projection or the originally-aimed-for target date.
+          const dateStr = reachedDate || projected || goal.targetDate;
           if (!dateStr) return null;
           // Same "how far off target" comparison as the Horizon View list and GoalsHub's own goal
           // cards — only meaningful when there's a real target date AND a real projection to
-          // weigh it against; a goal with only one of the two has nothing to compare.
-          const monthsBehindTarget = goal.targetDate && projected
+          // weigh it against; a goal already reached has nothing left to compare (it's done).
+          const monthsBehindTarget = !reachedDate && goal.targetDate && projected
             ? (() => {
                 const [ty, tm] = goal.targetDate.split('-').map(Number);
                 const [py, pm] = projected.split('-').map(Number);
                 return (py - ty) * 12 + (pm - tm);
               })()
             : null;
-          return { goal, dateStr, isProjected: !!projected, monthsBehindTarget };
+          return { goal, dateStr, isProjected: !!projected, isReached: !!reachedDate, monthsBehindTarget };
         })
-        .filter((m): m is { goal: Goal; dateStr: string; isProjected: boolean; monthsBehindTarget: number | null } => !!m)
+        .filter((m): m is { goal: Goal; dateStr: string; isProjected: boolean; isReached: boolean; monthsBehindTarget: number | null } => !!m)
         .sort((a, b) => a.dateStr.localeCompare(b.dateStr)),
     [horizon],
   );
@@ -167,7 +174,8 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
   // Dot/line color reflects on-track vs. behind schedule when there's a real target date to
   // compare against (same threshold as GoalsHub's own goal cards and the Horizon View list below);
   // otherwise falls back to the original filled-vs-hollow "projected vs. target-only" distinction.
-  const markerStatus = (m: { isProjected: boolean; monthsBehindTarget: number | null }): { dot: string; line: string } => {
+  const markerStatus = (m: { isProjected: boolean; isReached: boolean; monthsBehindTarget: number | null }): { dot: string; line: string } => {
+    if (m.isReached) return { dot: 'bg-success', line: 'bg-success/60' };
     if (m.monthsBehindTarget !== null) {
       return m.monthsBehindTarget <= 0 ? { dot: 'bg-success', line: 'bg-success/60' } : { dot: 'bg-warning', line: 'bg-warning/60' };
     }
@@ -273,6 +281,7 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
             ))}
           </div>
           <div className="flex items-center gap-3 pt-1 flex-wrap">
+            <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-success inline-block" />{t('goals.chartLegendCompleted')}</span>
             <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-success inline-block" />{t('goals.onTrack')}</span>
             <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-warning inline-block" />{t('goals.chartLegendBehind')}</span>
             <span className="flex items-center gap-1 text-[10px] text-text-muted"><span className="w-2 h-2 rounded-full bg-primary inline-block" />{t('goals.chartLegendProjected')}</span>
@@ -289,10 +298,11 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
           <div className="relative pl-6">
             <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-border-subtle" />
             <div className="space-y-4">
-              {horizon.map(({ goal, projected }) => {
+              {horizon.map(({ goal, projected, reachedDate }) => {
                 // Same "how far off target" reasoning as GoalsHub.tsx's own goal cards — only
-                // shown when there's a real target date AND a real projection to compare it to.
-                const monthsBehindTarget = goal.targetDate && projected
+                // shown when there's a real target date AND a real projection to compare it to;
+                // a goal already at/past target has nothing left to compare (it's done).
+                const monthsBehindTarget = !reachedDate && goal.targetDate && projected
                   ? (() => {
                       const [ty, tm] = goal.targetDate.split('-').map(Number);
                       const [py, pm] = projected.split('-').map(Number);
@@ -301,13 +311,20 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
                   : null;
                 return (
                   <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}`)}>
-                    <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', projected ? 'bg-primary' : 'bg-border-subtle')} />
+                    <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', reachedDate ? 'bg-success' : projected ? 'bg-primary' : 'bg-border-subtle')} />
                     <div className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3">
                       <span className="text-xl shrink-0">{goal.icon || '🎯'}</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-on-surface truncate">{goal.name}</p>
                         <p className="text-[11px] text-text-muted flex items-center gap-1">
-                          {projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
+                          {reachedDate
+                            ? t('goals.metOn', { date: reachedDate })
+                            : (projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable'))}
+                          {reachedDate && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0 bg-success/10 text-success">
+                              {t('goals.statusCompleted')}
+                            </span>
+                          )}
                           {monthsBehindTarget !== null && (
                             <span className={clsx(
                               'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
@@ -321,7 +338,7 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
                         </p>
                       </div>
                       <span className="text-xs font-bold text-primary shrink-0">
-                        {getCurrencySymbol(goal.currency)}{formatAmountCompact(fromMinorUnits(goal.targetAmountMinor - goalTotalMinor(goal)), goal.currency, profile?.numberSystem)} {t('goals.toGo')}
+                        {getCurrencySymbol(goal.currency)}{formatAmountCompact(fromMinorUnits(Math.max(0, goal.targetAmountMinor - goalTotalMinor(goal))), goal.currency, profile?.numberSystem)} {t('goals.toGo')}
                       </span>
                     </div>
                   </div>

@@ -23,7 +23,7 @@ import {
   cashHoldingGoalId,
 } from '../lib/goals';
 import { encryptAmount, decryptAmount } from '../lib/fieldCrypto';
-import { clearGoalFromAllAccounts, applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
+import { clearGoalFromAllAccounts, spendGoalFromAllAccounts, applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 import ImageAttachments from '../components/ImageAttachments';
 import GoalContributionSchedule from '../components/GoalContributionSchedule';
@@ -140,9 +140,18 @@ export default function GoalDetail() {
   const cashHoldingIdForOwner = goal && isOwner && !goal.isCashHolding ? cashHoldingGoalId(goal.userId) : null;
 
   // Which accounts currently allocate to this goal, and how much of each — see lib/accounts.ts's
-  // allocatedGoalIds (kept in sync with goalAllocations purely to make this query possible).
+  // allocatedGoalIds (kept in sync with goalAllocations purely to make this query possible). The
+  // `userId` filter isn't just semantically correct (a goal's accounts are always its OWNER'S own)
+  // — it's required: Firestore evaluates a security rule against a query's POTENTIAL result set,
+  // not its actual one, and financialAccounts' own read rule now also grants access via a shared
+  // group/friend role (see firestore.rules' isAccountViewer(), added for account sharing).
+  // Filtering only on `allocatedGoalIds` gives Firestore nothing to prove the OWNER branch from,
+  // so the whole query got rejected outright — "Missing or insufficient permissions" — even though
+  // it would have returned only this goal's own owner's accounts anyway.
   const [linkedAccountsValue] = useCollection(
-    goal && isOwner && !goal.isCashHolding ? query(collection(db, 'financialAccounts'), where('allocatedGoalIds', 'array-contains', goal.id)) : null,
+    goal && isOwner && !goal.isCashHolding
+      ? query(collection(db, 'financialAccounts'), where('userId', '==', goal.userId), where('allocatedGoalIds', 'array-contains', goal.id))
+      : null,
   );
   // Full decrypted accounts (not just the display-ready summary below) — goalHorizonDate needs
   // each linked account's interest rate/compounding and SIP schedule, not just its current % share.
@@ -437,11 +446,15 @@ export default function GoalDetail() {
     }
   };
 
-  // Shared by both Discontinue paths below — a pure status flip, same as Mark Completed. Neither
-  // bucket is touched: no sweep to Cash Savings, no account deallocation. The goal just closes
-  // exactly as it stands; if the user wants the money out first, that's Return to Cash Savings /
-  // Transfer to Other Goal(s) / Reset Allocation, done explicitly before discontinuing.
+  // Shared by both Discontinue paths below — a status flip, same as Mark Completed, PLUS releasing
+  // bucket #2 (account allocations): an archived/discontinued goal is done, and every account that
+  // was giving it a % share needs that % back for other goals immediately, not stuck on a goal
+  // nobody's tracking anymore. Bucket #1 (manual Cash Savings money) is deliberately left alone —
+  // if the user wants THAT out first, that's Return to Cash Savings / Transfer to Other Goal(s),
+  // done explicitly before discontinuing, same as before.
   const archiveGoal = async (g: Goal) => {
+    const actorName = profile?.displayName || user?.displayName || 'Someone';
+    await clearGoalFromAllAccounts(g.id, actorName, g.userId);
     const nowIso = new Date().toISOString();
     await updateDoc(doc(db, 'goals', g.id), { status: 'archived', updatedAt: nowIso });
   };
@@ -482,14 +495,13 @@ export default function GoalDetail() {
     }
   };
 
-  // "Mark Completed" — a pure status flip, nothing else. Goals can never post to expenses/income
-  // (see accountAllocations.ts's own header comment for why), so unlike its old design this does
-  // NOT touch either balance bucket — both stay exactly as they are, still fully visible, exactly
-  // like a goal that naturally reached its target (same status/completedAt this app already sets
-  // automatically elsewhere). If the user wants the money out first, that's a separate, explicit
-  // choice: Return to Cash Savings / Transfer to Other Goal(s) for bucket #1, or editing the
-  // source account (or Reset Allocation) for bucket #2. Marking Completed just means "I'm done
-  // tracking this," not "I spent it."
+  // "Mark Completed" means the user has actually SPENT bucket #2 (the account-linked money) — see
+  // spendGoalFromAllAccounts's own header comment for exactly how: withdrawn from every linked
+  // account (logged in each one's own History), with every OTHER goal still on those same accounts
+  // rebalanced to keep its own dollar amount rather than silently shrinking as the balance drops.
+  // Bucket #1 (manual Cash Savings money) is deliberately left untouched either way — if the user
+  // wants THAT out too, that's still a separate, explicit choice (Return to Cash Savings / Transfer
+  // to Other Goal(s)).
   const handleCompleteGoal = async () => {
     if (!user || !goal || !isOwner || busy) return;
     setBusy(true);
@@ -497,6 +509,7 @@ export default function GoalDetail() {
     try {
       const actorName = profile?.displayName || user.displayName || 'Someone';
       const nowIso = new Date().toISOString();
+      await spendGoalFromAllAccounts(goal.id, actorName, goal.userId);
       const encryptedZero = await encryptAmount('goal', goal.id, 0);
       await runTransaction(db, async (transaction) => {
         const goalRef = doc(db, 'goals', goal.id);
@@ -528,7 +541,7 @@ export default function GoalDetail() {
     setFormError(null);
     try {
       const actorName = profile?.displayName || user.displayName || 'Someone';
-      await clearGoalFromAllAccounts(goal.id, actorName);
+      await clearGoalFromAllAccounts(goal.id, actorName, goal.userId);
       setModal(null);
     } catch (err) {
       console.error('Failed to reset allocation:', err);
@@ -587,9 +600,10 @@ export default function GoalDetail() {
   };
 
   // Reset Cash Savings — available any time, not just when discontinuing something. Zeroes the
-  // running balance and logs it, same as any other goal's ledger. The money isn't moved anywhere
-  // (no posting, nothing to accept it) — it simply stops being tracked, exactly like Mark
-  // Completed and the now-sweep-free Discontinue don't move money either.
+  // running balance and logs it, same as any other goal's ledger. This only ever touches bucket #1
+  // (manual Cash Savings money) — it isn't moved anywhere (no posting, nothing to accept it), it
+  // simply stops being tracked. Bucket #2 (account-linked money) is a separate story on this same
+  // Cash Savings pseudo-goal: it never has any, since accounts only ever fund REAL goals.
   const handleResetCashSavings = async () => {
     if (!user || !goal || !isOwner || !goal.isCashHolding || busy) return;
     setBusy(true);
@@ -635,10 +649,7 @@ export default function GoalDetail() {
 
   return (
     <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
-      <div className="flex items-center justify-between">
-        <button onClick={() => navigate(-1)} className="p-2 -ml-2 text-text-muted hover:bg-surface rounded-full">
-          <span className="material-symbols-outlined text-[20px] block rtl:-scale-x-100">arrow_back</span>
-        </button>
+      <div className="flex items-center justify-end">
         {goal.isCashHolding ? (
           <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-primary/10 px-2.5 py-1 rounded-full">
             {t('goals.cashHoldingBadge')}
@@ -1049,12 +1060,30 @@ export default function GoalDetail() {
         </div>
       )}
 
-      {/* --- Mark Completed: pure status flip, no money moves --- */}
+      {/* --- Mark Completed: spends bucket #2 (account money) for real — see
+          spendGoalFromAllAccounts's own header comment in accountAllocations.ts */}
       {modal === 'complete' && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setModal(null)}>
           <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-black text-primary">{t('goals.markCompleted')}</h3>
-            <p className="text-xs text-text-muted">{t('goals.completeExplainer')}</p>
+            <p className="text-xs text-text-muted">{t('goals.completeExplainerIntro')}</p>
+            {linkedAccounts.length > 0 ? (
+              <div className="bg-surface rounded-xl p-3 space-y-1.5">
+                {linkedAccounts.map((a) => (
+                  <div key={a.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-on-surface truncate">{a.name}</span>
+                    <span className="font-black text-error shrink-0">-{getCurrencySymbol(a.currency)}{fromMinorUnits(a.contributedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-2 text-xs pt-1.5 border-t border-border-subtle">
+                  <span className="font-bold text-on-surface">{t('goals.totalColumn')}</span>
+                  <span className="font-black text-error">-{currencySymbol}{fromMinorUnits(goal.accountAllocatedMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-text-muted">{t('goals.completeNoAccountsNote')}</p>
+            )}
+            <p className="text-[11px] text-text-muted">{t('goals.completeExplainerRebalance')}</p>
             {formError && <p className="text-xs text-error font-bold">{formError}</p>}
             <button onClick={handleCompleteGoal} disabled={busy} className="w-full py-3 bg-success text-white font-bold rounded-xl disabled:opacity-50">
               {busy ? t('goals.saving') : t('goals.confirmComplete')}

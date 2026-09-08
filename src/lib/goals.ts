@@ -440,6 +440,34 @@ export function goalHorizonDate(goal: Goal, ledger: GoalLedgerEntry[], accounts:
   return forward || projectedCompletionDate(goal, trailingThreeMonthAverage(ledger, today), today);
 }
 
+// A goal's total can reach its target passively — an allocated account's balance simply grows
+// past it — without the user ever clicking Mark Completed (see accountAllocations.ts's header
+// comment: only an explicit action sets `status`/`completedAt` now). goalHorizonDate() above
+// correctly returns null for that case (there's nothing left to PROJECT), but a null projection
+// reads to the user as "unavailable," not "already met" — this fills that gap. Prefers the real
+// `completedAt` when the goal HAS been explicitly completed; otherwise, for a goal that's already
+// at/past its CURRENT target, walks its ledger chronologically (summing the same signed
+// `amountMinor` deltas goalTotalMinor() itself is built from) and returns the timestamp of the
+// entry at which the running total first reached that target — i.e. the actual date it was met,
+// derived rather than stored, so it stays correct even if the target is later raised (the walk
+// then searches for the new, higher threshold, and returns null once nothing in history reaches
+// it — matching the goal being genuinely active again). Returns a plain yyyy-mm-dd string (same
+// shape as `completedAt.slice(0,10)`, used everywhere else a goal's completion date is shown) or
+// null if the target was never reached, or there's no target set.
+export function goalTargetReachedAt(goal: Goal, ledger: GoalLedgerEntry[]): string | null {
+  if (goal.completedAt) return goal.completedAt.slice(0, 10);
+  if (goal.targetAmountMinor <= 0) return null;
+  if (goalTotalMinor(goal) < goal.targetAmountMinor) return null;
+  const sorted = [...ledger].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  let running = 0;
+  for (const entry of sorted) {
+    running += entry.amountMinor;
+    if (running >= goal.targetAmountMinor) return entry.createdAt.slice(0, 10);
+  }
+  const fallback = sorted.length > 0 ? sorted[sorted.length - 1].createdAt : goal.updatedAt;
+  return fallback ? fallback.slice(0, 10) : null;
+}
+
 // How many months later (positive) or earlier (zero/negative) a goal's PROJECTED completion sits
 // versus the target date the user set for it — the same "behind schedule" figure GoalsHub's own
 // goal-card badges already show, extracted here so Cash Savings' "goals behind schedule"

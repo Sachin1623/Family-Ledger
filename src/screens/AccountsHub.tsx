@@ -184,6 +184,15 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
   const [showInfo, setShowInfo] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingAccount, setEditingAccount] = useState<FinancialAccount | null>(null);
+  // An account's own goalAllocations can reference a goal that's no longer active — most commonly
+  // one that hit its target and got reserve-frozen (see accountAllocations.ts's reserve-on-
+  // target-met), which never unwinds itself even once the goal later completes. Those entries
+  // still hold a real % of this account (frozen money, not a leftover), but linkableGoals only
+  // ever lists ACTIVE goals — without surfacing them separately here too, that % silently
+  // disappeared from the editable rows below while still counting in the total, reading as an
+  // unexplained "ghost" percentage the visible rows never add up to.
+  const editingAllocations = editingAccount?.goalAllocations || [];
+  const hiddenAllocations = editingAllocations.filter((a) => !linkableGoals.some((g: any) => g.id === a.goalId));
   const [name, setName] = useState('');
   const [type, setType] = useState<AccountType>('bank');
   const [currency, setCurrency] = useState('INR');
@@ -394,9 +403,18 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
       const actorName = profile?.displayName || user.displayName || 'Someone';
       const nowIso = new Date().toISOString();
       const asOf = balanceAsOf || todayLocalDateString();
+      // A hidden (no-longer-active) allocation's real name has to come from the account's own
+      // existing entry, not linkableGoals (which never lists it) — falling back to the raw goalId
+      // would silently overwrite that goal's stored name with its own ID on this save.
       const newAllocations: AccountAllocationInput[] = Object.keys(allocPcts)
         .filter((goalId) => (allocPcts[goalId] || 0) > 0)
-        .map((goalId) => ({ goalId, goalName: linkableGoals.find((g: any) => g.id === goalId)?.name || goalId, pct: allocPcts[goalId] }));
+        .map((goalId) => ({
+          goalId,
+          goalName: linkableGoals.find((g: any) => g.id === goalId)?.name
+            || editingAllocations.find((a) => a.goalId === goalId)?.goalName
+            || goalId,
+          pct: allocPcts[goalId],
+        }));
       let accountId: string;
       if (editingAccount) {
         accountId = editingAccount.id;
@@ -1068,7 +1086,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
               )}
               <p className="text-[11px] text-text-muted px-1">{t('accounts.contributionNote')}</p>
             </div>
-            {linkableGoals.length > 0 && (
+            {(linkableGoals.length > 0 || hiddenAllocations.length > 0) && (
               <div className="space-y-1.5">
                 <button
                   type="button"
@@ -1096,11 +1114,28 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                           <span className="text-xs font-bold text-text-muted">%</span>
                         </div>
                       ))}
+                      {/* Not editable here — a hidden allocation belongs to a goal that's no
+                          longer active, most often reserve-frozen after hitting its target (see
+                          accountAllocations.ts). Shown read-only so the % total is never
+                          unexplained; freeing it up means Reset Allocation on that goal itself. */}
+                      {hiddenAllocations.map((a) => (
+                        <div key={a.goalId} className="flex items-center gap-2 bg-surface rounded-xl p-2.5 opacity-70">
+                          <span className="text-lg shrink-0">🎯</span>
+                          <span className="flex-1 text-xs font-bold text-on-surface truncate">{a.goalName}</span>
+                          <span className="text-[9px] font-bold text-text-muted bg-surface-container px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+                            {a.reservedAmountMinor != null ? t('goals.reserved') : t('accounts.inactiveGoal')}
+                          </span>
+                          <span className="text-xs font-bold text-text-muted">{a.pct}%</span>
+                        </div>
+                      ))}
                     </div>
                     <p className={clsx('text-[11px] font-bold text-center', allocTotal > 100 ? 'text-error' : 'text-text-muted')}>
                       {t('accounts.allocationTotal', { pct: allocTotal })}
                     </p>
                     <p className="text-[11px] text-text-muted px-1">{t('accounts.allocationNote')}</p>
+                    {hiddenAllocations.length > 0 && (
+                      <p className="text-[11px] text-text-muted px-1">{t('accounts.hiddenAllocationsNote')}</p>
+                    )}
                   </>
                 )}
               </div>

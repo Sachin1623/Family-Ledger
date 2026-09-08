@@ -8,18 +8,24 @@
 // Never touches Cash Savings, never touches `expenses`/income, never needs a bootstrap-if-missing
 // step (a goal being allocated to always already exists — picked from the user's own goals list).
 //
-// Reserve-on-target-met: if crediting a goal's accountAllocatedMinor would take its TOTAL
-// (currentAmountMinor + accountAllocatedMinor) to or past its target, the credit is clamped so the
-// goal lands exactly at target, that clamped amount is FROZEN on this one (account, goal) pairing
-// via `reservedAmountMinor` — future balance changes on the account never move it again — and the
-// goal auto-completes. The entry's `pct` is rewritten to whatever % of the CURRENT balance the
-// frozen amount now represents, purely so the account's own %-sum / unallocated-% math (and the
-// Add/Edit form's 100% cap) stay internally consistent even though the amount itself no longer
-// tracks that pct going forward — this is what frees the rest of the account for other goals. An
-// explicit edit to that entry's own pct (the user actually changing it, not a balance-driven
-// recompute) always clears the reservation and recomputes fresh, re-capping if it's still at/past
-// target.
-import { collection, doc, getDocs, query, runTransaction, where } from 'firebase/firestore';
+// Every allocation entry always tracks pct% of the account's LIVE balance, full stop — nothing
+// here ever freezes/reserves an amount, and a goal is free to sit at or past its target
+// indefinitely without anything about its funding changing. This used to auto-freeze an account's
+// share the moment a goal's total crossed target ("reserve-on-target-met") and silently
+// auto-complete the goal — removed by explicit request: it's confusing for a % to quietly stop
+// tracking the account's real balance, and now that GoalDetail's "Mark Completed" actually spends
+// the money for real (see spendGoalFromAllAccounts) and Discontinue actually releases it (see
+// clearGoalFromAllAccounts), there's no need for a THIRD, silent, automatic way for an allocation
+// to stop moving — finalizing a goal is always an explicit action now. A `reservedAmountMinor` on
+// an entry can still exist as leftover data from before this change; it's honored one last time
+// (falling back to it as the entry's prior amount) but is never re-created and gets dropped the
+// next time this account is saved at all, unfreezing it for good.
+//
+// `justCompletedGoals` no longer means "frozen and auto-completed" — it fires once, the moment a
+// goal's total crosses its target for the first time, purely to trigger the existing "you reached
+// your goal" push notification (notifyGoalsMet) — nothing about the goal or its allocations
+// actually changes because of it.
+import { collection, doc, getDocs, query, runTransaction, updateDoc, where } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { encryptAmount, decryptAmount } from './fieldCrypto';
 import { fromMinorUnits } from './goals';
@@ -86,8 +92,8 @@ export async function applyAccountChange(
     const goalSnaps = await Promise.all(goalRefs.map((ref) => tx.get(ref)));
 
     const allocationChanges: { goalId: string; goalName: string; beforePct: number; afterPct: number; beforeAmountMinor: number; afterAmountMinor: number }[] = [];
-    // Final allocations actually saved on the account — may differ from `newAllocations` when an
-    // entry gets capped/reserved this pass (its pct gets rewritten to match).
+    // Final allocations actually saved on the account — always exactly what the caller passed in
+    // `newAllocations` for goals that still exist; nothing here ever rewrites a pct on its own.
     const finalAllocations: AccountAllocationInput[] = [];
 
     for (let i = 0; i < unionIds.length; i++) {
@@ -101,62 +107,49 @@ export async function applyAccountChange(
       }
       const beforePct = oldEntry?.pct || 0;
       const afterPct = newEntry?.pct || 0;
-      const explicitPctChange = afterPct !== beforePct;
+      // A leftover reservedAmountMinor from before this file stopped ever freezing anything is
+      // honored ONE more time as the entry's prior amount (so its own delta below is computed
+      // correctly), then never carried forward — finalAllocations below only ever stores
+      // {goalId, goalName, pct}, so it's gone for good as soon as this account is touched at all.
       const beforeAmountMinor = (oldEntry?.reservedAmountMinor != null) ? oldEntry.reservedAmountMinor : roundedShare(oldBalance, beforePct);
-      let afterAmountMinor = (oldEntry?.reservedAmountMinor != null && !explicitPctChange)
-        ? oldEntry.reservedAmountMinor // still frozen — balance moved, pct didn't, honor the freeze
-        : roundedShare(newBalanceMinor, afterPct); // fresh computation — explicit edit, or nothing to freeze yet
-      let reservedAmountMinor: number | undefined = (oldEntry?.reservedAmountMinor != null && !explicitPctChange) ? oldEntry.reservedAmountMinor : undefined;
+      const afterAmountMinor = roundedShare(newBalanceMinor, afterPct);
+      const delta = afterAmountMinor - beforeAmountMinor;
 
-      const goalData = goalSnap.data() as any;
-      const goalCurrentBucket2 = await decryptAmount('goal', goalId, goalData.accountAllocatedMinor ?? 0);
-      const goalBucket1 = await decryptAmount('goal', goalId, goalData.currentAmountMinor ?? 0);
-      const targetAmountMinor = await decryptAmount('goal', goalId, goalData.targetAmountMinor ?? 0);
-      let delta = afterAmountMinor - beforeAmountMinor;
-
-      // Reserve-on-target-met: only ever caps a FRESH computation (an entry already frozen from a
-      // prior pass just keeps its existing reservedAmountMinor, computed above).
-      const alreadyCompleted = goalData.status === 'completed';
-      if (reservedAmountMinor === undefined && !alreadyCompleted && targetAmountMinor > 0) {
-        const prospectiveTotal = goalBucket1 + goalCurrentBucket2 + delta;
-        if (prospectiveTotal >= targetAmountMinor) {
-          const maxDelta = targetAmountMinor - goalBucket1 - goalCurrentBucket2;
-          delta = maxDelta;
-          afterAmountMinor = beforeAmountMinor + delta;
-          reservedAmountMinor = afterAmountMinor;
-          justCompletedGoals.push({ goalId, name: goalData.name || '', amountMinor: targetAmountMinor });
-        }
-      }
-
-      const effectivePct = reservedAmountMinor !== undefined
-        ? (newBalanceMinor > 0 ? Math.min(100, Math.round((reservedAmountMinor / newBalanceMinor) * 100)) : afterPct)
-        : afterPct;
-      if (newEntry || reservedAmountMinor !== undefined) {
-        finalAllocations.push({
-          goalId, goalName: newEntry?.goalName || oldEntry?.goalName || '', pct: effectivePct,
-          ...(reservedAmountMinor !== undefined ? { reservedAmountMinor } : {}),
-        });
-      }
+      if (newEntry) finalAllocations.push({ goalId, goalName: newEntry.goalName, pct: afterPct });
 
       allocationChanges.push({
         goalId, goalName: newEntry?.goalName || oldEntry?.goalName || '',
-        beforePct, afterPct: effectivePct, beforeAmountMinor, afterAmountMinor,
+        beforePct, afterPct, beforeAmountMinor, afterAmountMinor,
       });
       if (delta === 0) continue;
 
+      const goalData = goalSnap.data() as any;
+      const goalCurrentBucket2 = await decryptAmount('goal', goalId, goalData.accountAllocatedMinor ?? 0);
+
+      // Notify — never freeze, never auto-complete (see this file's header comment) — the moment
+      // this goal's total crosses its target for the first time, so the user knows to consider
+      // Mark Completed themselves. Fires only on the actual crossing (was below, now at/above),
+      // never again on a later save while it stays there or after it's genuinely completed.
+      if (goalData.status !== 'completed') {
+        const targetAmountMinor = await decryptAmount('goal', goalId, goalData.targetAmountMinor ?? 0);
+        if (targetAmountMinor > 0) {
+          const goalBucket1 = await decryptAmount('goal', goalId, goalData.currentAmountMinor ?? 0);
+          const beforeTotal = goalBucket1 + goalCurrentBucket2;
+          const afterTotal = beforeTotal + delta;
+          if (beforeTotal < targetAmountMinor && afterTotal >= targetAmountMinor) {
+            justCompletedGoals.push({ goalId, name: goalData.name || '', amountMinor: targetAmountMinor });
+          }
+        }
+      }
+
       const goalNext = Math.max(0, goalCurrentBucket2 + delta);
       const encGoalNext = await encryptAmount('goal', goalId, goalNext);
-      const goalUpdate: Record<string, any> = { accountAllocatedMinor: encGoalNext, updatedAt: nowIso };
-      if (justCompletedGoals.some((g) => g.goalId === goalId)) {
-        goalUpdate.status = 'completed';
-        goalUpdate.completedAt = nowIso;
-      }
-      tx.update(goalRefs[i], goalUpdate);
+      tx.update(goalRefs[i], { accountAllocatedMinor: encGoalNext, updatedAt: nowIso });
       const encLedgerAmount = await encryptAmount('goal', goalId, goalNext - goalCurrentBucket2);
       tx.set(doc(collection(db, 'goals', goalId, 'ledger')), {
         type: (goalNext >= goalCurrentBucket2 ? 'account_alloc' : 'account_dealloc'),
         amountMinor: encLedgerAmount, monthKey: null,
-        note: reservedAmountMinor !== undefined ? `${accData.name || 'Account'} — reserved, goal met` : `${accData.name || 'Account'} — ${effectivePct}% allocated`,
+        note: `${accData.name || 'Account'} — ${afterPct}% allocated`,
         createdBy: uid, createdByName: actorName, createdAt: nowIso,
       });
     }
@@ -195,13 +188,96 @@ export async function applyAccountChange(
 // archiveGoal (defensive — archiving itself no longer moves money, see GoalDetail.tsx), and
 // defensively by GoalsHub's permanent-delete (in case any account still references an
 // already-archived goal).
-export async function clearGoalFromAllAccounts(goalId: string, actorName: string): Promise<void> {
-  const snap = await getDocs(query(collection(db, 'financialAccounts'), where('allocatedGoalIds', 'array-contains', goalId)));
+// `ownerId` used to be omitted — the query filtered on `allocatedGoalIds` alone. Firestore
+// evaluates a security rule against a query's POTENTIAL result set, not its actual one: since
+// `financialAccounts`' own read rule now also grants access via a shared group/friend role (see
+// firestore.rules' isAccountViewer(), added for account sharing) and neither of those branches is
+// provable from an `allocatedGoalIds` filter alone, a query with no `userId` filter got rejected
+// outright — "Missing or insufficient permissions" — even though it would have returned zero
+// documents anyway. A goal's account allocations only ever come from ITS OWNER'S OWN accounts to
+// begin with, so this filter is also just correct, not merely a rules workaround.
+export async function clearGoalFromAllAccounts(goalId: string, actorName: string, ownerId: string): Promise<void> {
+  const snap = await getDocs(query(
+    collection(db, 'financialAccounts'),
+    where('userId', '==', ownerId),
+    where('allocatedGoalIds', 'array-contains', goalId),
+  ));
   for (const d of snap.docs) {
     const raw = d.data() as any;
     const balance = await decryptAmount('account', d.id, raw.currentBalanceMinor);
     const nextAllocations: AccountAllocationInput[] = (raw.goalAllocations || []).filter((a: AccountAllocationInput) => a.goalId !== goalId);
     await applyAccountChange(d.id, balance, nextAllocations, actorName);
+  }
+}
+
+// Explicitly Marking a goal Completed (GoalDetail.tsx's handleCompleteGoal) means the user has
+// actually spent that money — unlike Archive/Discontinue (clearGoalFromAllAccounts above), which
+// only ever RELEASES a % back to the account, unspent. For every account allocating to this goal:
+// its contributed share (the frozen reservedAmountMinor if this goal already hit target and froze,
+// otherwise pct% of the live balance) is DEDUCTED from the account's own balance — a real
+// withdrawal, logged in that account's own History same as any other balance change — and this
+// goal's own entry is removed. Every OTHER goal still allocating to that SAME account keeps its
+// own % on a smaller balance now, which would otherwise silently shrink its dollar contribution —
+// so each of those (except ones already reserve-frozen, which are untouched by any balance change
+// by design) gets its % recomputed against the NEW balance to land on the SAME amount it already
+// had, not a proportionally smaller one.
+export async function spendGoalFromAllAccounts(goalId: string, actorName: string, ownerId: string): Promise<void> {
+  const snap = await getDocs(query(
+    collection(db, 'financialAccounts'),
+    where('userId', '==', ownerId),
+    where('allocatedGoalIds', 'array-contains', goalId),
+  ));
+  for (const d of snap.docs) {
+    const raw = d.data() as any;
+    const oldBalance = await decryptAmount('account', d.id, raw.currentBalanceMinor);
+    const allocations: AccountAllocationInput[] = raw.goalAllocations || [];
+    const thisEntry = allocations.find((a) => a.goalId === goalId);
+    if (!thisEntry) continue;
+    const spentMinor = thisEntry.reservedAmountMinor != null ? thisEntry.reservedAmountMinor : roundedShare(oldBalance, thisEntry.pct);
+    const newBalance = Math.max(0, oldBalance - spentMinor);
+    const nextAllocations: AccountAllocationInput[] = allocations
+      .filter((a) => a.goalId !== goalId)
+      .map((a) => {
+        if (a.reservedAmountMinor != null) return a; // frozen — never moves with the balance, leave as-is
+        const contributedBefore = roundedShare(oldBalance, a.pct);
+        const newPct = newBalance > 0 ? Math.max(0, Math.min(100, Math.round((contributedBefore / newBalance) * 100))) : 0;
+        return { goalId: a.goalId, goalName: a.goalName, pct: newPct };
+      });
+    await applyAccountChange(d.id, newBalance, nextAllocations, actorName, undefined, {
+      note: `${thisEntry.goalName} — marked completed, ${fromMinorUnits(spentMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })} spent from this account`,
+    });
+  }
+}
+
+// Un-freezes every account's reservedAmountMinor for this goal — the counterpart to the reserve-
+// on-target-met freeze itself (see this file's own header comment): the freeze exists because the
+// goal hit ITS target, but a goal's target isn't actually immutable — raising it later (GoalWizard)
+// past the goal's current total means it's genuinely no longer "met," and the frozen slice(s) that
+// used to be believed that should go back to tracking the account's live balance/% again, exactly
+// like every other unreserved entry. Deliberately NOT routed through applyAccountChange(): that
+// function can only ever clear a reservation via an EXPLICIT pct change (its own designed
+// behavior — an unchanged pct always re-honors an existing freeze, by design, so callers can't
+// accidentally unfreeze something by re-saving the same %), which isn't what's happening here —
+// the % itself isn't changing, only the freeze flag is being lifted. This intentionally never
+// touches accountAllocatedMinor (the goal's own bucket #2 total) — an unfrozen entry keeps
+// contributing exactly what it already was contributing at the moment of unfreezing; it only
+// starts moving with the account's balance again from here forward.
+export async function unfreezeGoalReservations(goalId: string, ownerId: string): Promise<void> {
+  const snap = await getDocs(query(
+    collection(db, 'financialAccounts'),
+    where('userId', '==', ownerId),
+    where('allocatedGoalIds', 'array-contains', goalId),
+  ));
+  const nowIso = new Date().toISOString();
+  for (const d of snap.docs) {
+    const raw = d.data() as any;
+    const allocations: AccountAllocationInput[] = raw.goalAllocations || [];
+    const entry = allocations.find((a) => a.goalId === goalId);
+    if (!entry || entry.reservedAmountMinor == null) continue;
+    const nextAllocations = allocations.map((a) =>
+      a.goalId === goalId ? { goalId: a.goalId, goalName: a.goalName, pct: a.pct } : a,
+    );
+    await updateDoc(doc(db, 'financialAccounts', d.id), { goalAllocations: nextAllocations, updatedAt: nowIso });
   }
 }
 

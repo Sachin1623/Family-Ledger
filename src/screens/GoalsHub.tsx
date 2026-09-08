@@ -12,6 +12,7 @@ import {
   Goal,
   GoalLedgerEntry,
   goalHorizonDate,
+  goalTargetReachedAt,
   goalProgressPct,
   goalTotalMinor,
   monthsBehindTarget,
@@ -465,6 +466,12 @@ export default function GoalsHub() {
     }
     const pct = goalProgressPct(g);
     const projected = g.status === 'completed' ? null : goalHorizonDate(g, ledgersByGoal.get(g.id) || [], ownAccounts);
+    // A goal can reach its target passively (a linked account's balance simply grows past it)
+    // without ever being explicitly Marked Completed — status stays 'active', so `projected`
+    // above is null (nothing left to project) even though it's genuinely done. This derives the
+    // real date it got there either way, so the card reads "Met {date}" instead of a misleading
+    // "Projection unavailable."
+    const reachedDate = goalTargetReachedAt(g, ledgersByGoal.get(g.id) || []);
     // How far the actual projection (from the real savings/interest rate feeding this goal) sits
     // from the date the user originally aimed for — positive means later than hoped (behind),
     // zero or negative means on schedule or ahead. Only shown when there's something to compare:
@@ -506,7 +513,7 @@ export default function GoalsHub() {
             {sym}{formatAmountCompact(fromMinorUnits(goalTotalMinor(g)), g.currency, profile?.numberSystem)} / {sym}{formatAmountCompact(fromMinorUnits(g.targetAmountMinor), g.currency, profile?.numberSystem)}
           </span>
           <span className="text-text-muted font-bold flex items-center gap-1">
-            {g.status === 'completed' ? t('goals.metOn', { date: g.completedAt?.slice(0, 10) || '' }) : projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
+            {reachedDate ? t('goals.metOn', { date: reachedDate }) : projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable')}
             {behindMonths !== null && (
               <span className={clsx(
                 'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
@@ -795,23 +802,35 @@ function ArchivedGoalRow({ goal }: { goal: Goal } & any) {
     }
   };
   // Safe to hard-delete here (unlike GoalDetail.tsx's own Discontinue flow, which always archives
-  // a goal with any ledger history instead) because by the time a goal is Archived, both buckets
-  // have already been swept/cleared — bucket #1 back to Cash Savings, bucket #2 freed on every
-  // account that was allocating to it — by archiveGoalWithSweep(). The clearGoalFromAllAccounts
-  // call below is purely defensive (in case any account still references this goalId), never
-  // expected to find real money.
+  // a goal with any ledger history instead) because by the time a goal is Archived, bucket #2 has
+  // already been freed on every account that was allocating to it — GoalDetail.tsx's own
+  // archiveGoal() does that as part of archiving itself, not something the user has to remember to
+  // do first. The clearGoalFromAllAccounts call below is purely defensive (in case any account
+  // still somehow references this goalId), never expected to find real money. Bucket #1 (manual
+  // Cash Savings money) is a different story — archiving deliberately leaves it as-is, so an
+  // archived goal that still has some can be hard-deleted here too; there's nothing left to sweep
+  // for THAT bucket by design (see archiveGoal's own doc comment).
   const { user, profile } = useAuth();
   const handleDeletePermanently = async () => {
     setDeleting(true);
     setDeleteError(null);
     try {
       const actorName = profile?.displayName || user?.displayName || 'Someone';
-      await clearGoalFromAllAccounts(goal.id, actorName);
+      await clearGoalFromAllAccounts(goal.id, actorName, goal.userId);
+      // Ledger entries first, awaited to actually commit, THEN the goal doc itself — as two
+      // separate operations, not one atomic batch. The ledger subcollection's own delete rule
+      // reads the PARENT goal via get() to confirm ownership (firestore.rules' parentGoal()); one
+      // atomic batch that deletes the goal at the same time risks that get() seeing the goal as
+      // already gone mid-evaluation, since a batch offers no guarantee that a security rule's
+      // cross-document read resolves against the pre-batch snapshot the way a transaction's do.
       const ledgerSnap = await getDocs(collection(db, 'goals', goal.id, 'ledger'));
-      const batch = writeBatch(db);
-      ledgerSnap.docs.forEach((d) => batch.delete(d.ref));
-      batch.delete(doc(db, 'goals', goal.id));
-      await batch.commit();
+      if (ledgerSnap.docs.length > 0) {
+        const ledgerBatch = writeBatch(db);
+        ledgerSnap.docs.forEach((d) => ledgerBatch.delete(d.ref));
+        await ledgerBatch.commit();
+      }
+      const { deleteDoc } = await import('firebase/firestore');
+      await deleteDoc(doc(db, 'goals', goal.id));
     } catch (err) {
       console.error('Failed to permanently delete goal:', err);
       setDeleteError(t('goals.saveFailed'));
@@ -820,24 +839,32 @@ function ArchivedGoalRow({ goal }: { goal: Goal } & any) {
   };
   const sym = getCurrencySymbol(goal.currency);
   return (
-    <div className="flex items-center gap-3 bg-white rounded-xl border border-border-subtle p-3 opacity-80">
-      <span className="text-lg shrink-0">{goal.icon || '🎯'}</span>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-bold text-on-surface truncate">{goal.name}</p>
-        <p className="text-[10px] text-text-muted">
-          {goal.completedAt ? t('goals.statusCompleted') : t('goals.statusArchived')}
-          {goal.targetAmountMinor > 0 && ` · ${sym}${formatAmountCompact(fromMinorUnits(goal.targetAmountMinor), goal.currency, profile?.numberSystem)}`}
-        </p>
+    // `opacity-80` lives on this INNER wrapper, not the outer one — `opacity` on an ancestor opens
+    // a new stacking context that a `position: fixed` descendant can't escape (unlike normal fixed
+    // positioning, which always escapes to the real viewport), so the delete-confirm modal below
+    // used to render at 80% opacity too — backdrop AND card both faintly see-through, with
+    // whatever's on the page behind bleeding through both. Keeping the modal as a sibling of this
+    // faded wrapper, not a descendant of it, keeps the modal itself at full opacity regardless.
+    <div className="bg-white rounded-xl border border-border-subtle p-3">
+      <div className="flex items-center gap-3 opacity-80">
+        <span className="text-lg shrink-0">{goal.icon || '🎯'}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold text-on-surface truncate">{goal.name}</p>
+          <p className="text-[10px] text-text-muted">
+            {goal.completedAt ? t('goals.statusCompleted') : t('goals.statusArchived')}
+            {goal.targetAmountMinor > 0 && ` · ${sym}${formatAmountCompact(fromMinorUnits(goal.targetAmountMinor), goal.currency, profile?.numberSystem)}`}
+          </p>
+        </div>
+        <button type="button" onClick={handleResume} disabled={resuming} className="text-[11px] font-bold text-primary shrink-0 disabled:opacity-50">
+          {resuming ? t('goals.saving') : t('goals.resumeGoal')}
+        </button>
+        <button
+          type="button" onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
+          className="p-1 text-text-muted hover:text-error shrink-0" aria-label={t('goals.deletePermanently')}
+        >
+          <span className="material-symbols-outlined text-[16px] block">delete</span>
+        </button>
       </div>
-      <button type="button" onClick={handleResume} disabled={resuming} className="text-[11px] font-bold text-primary shrink-0 disabled:opacity-50">
-        {resuming ? t('goals.saving') : t('goals.resumeGoal')}
-      </button>
-      <button
-        type="button" onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
-        className="p-1 text-text-muted hover:text-error shrink-0" aria-label={t('goals.deletePermanently')}
-      >
-        <span className="material-symbols-outlined text-[16px] block">delete</span>
-      </button>
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !deleting && setShowDeleteConfirm(false)}>
