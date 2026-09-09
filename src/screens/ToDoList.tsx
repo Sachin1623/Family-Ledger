@@ -7,6 +7,9 @@ import { clsx } from 'clsx';
 import { scheduleLocalTodoReminder, cancelLocalTodoReminder } from '../lib/localReminders';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { fireWrite } from '../lib/offlineWrite';
+import { executeCashToAccountTransfer, notifyGoalsMet } from '../lib/accountAllocations';
+import { getCurrencySymbol } from '../lib/constants';
+import { fromMinorUnits } from '../lib/goals';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { claimPoints } from '../lib/pointsApi';
 import ImageAttachments from '../components/ImageAttachments';
@@ -311,9 +314,39 @@ export default function ToDoList() {
     }
   };
 
+  // A to-do created by GoalDetail's Recommended Transfers card (Cash Savings -> account) can carry
+  // a `linkedTransfer` payload that hasn't been applied yet ("later" timing — see GoalDetail.tsx).
+  // Completing that to-do is what actually moves the money: this runs the same transfer
+  // executeCashToAccountTransfer already does for the "now" case, then marks it applied so it can
+  // never double-execute (a re-check, a retry, or toggling done again later). Returns false (and
+  // leaves the todo untouched) on failure — e.g. Cash Savings no longer has enough balance since
+  // this was proposed — so the caller aborts the done-toggle rather than marking it complete over a
+  // transfer that didn't actually happen. A todo with no linkedTransfer, or one already applied
+  // (including every "now"-timing todo, which starts out already executed), is a no-op success.
+  const tryExecuteLinkedTransfer = async (todo: any): Promise<boolean> => {
+    if (!todo.linkedTransfer || todo.linkedTransferExecuted) return true;
+    try {
+      const actorName = profile?.displayName || user?.displayName || 'Someone';
+      // The to-do's own text is already the clearest possible audit note here ("Transfer ₹X to Y
+      // from your savings") — reused as-is so the account's History and Cash Savings' own ledger
+      // both explain WHY this balance moved, same as the "now"-timing path already does.
+      const { justCompletedGoals } = await executeCashToAccountTransfer(
+        todo.linkedTransfer.fromGoalId, todo.linkedTransfer.toAccountId, todo.linkedTransfer.amountMinor, actorName, todo.text,
+      );
+      notifyGoalsMet(justCompletedGoals);
+      await updateDoc(doc(db, 'todos', todo.id), { linkedTransferExecuted: true });
+      return true;
+    } catch (err) {
+      console.error('Failed to execute linked transfer:', err);
+      alert(t('todo.linkedTransferFailed'));
+      return false;
+    }
+  };
+
   const handleToggleDone = async (todo: any) => {
     try {
       const nowDone = !todo.done;
+      if (nowDone && !(await tryExecuteLinkedTransfer(todo))) return;
       await updateDoc(doc(db, 'todos', todo.id), {
         done: nowDone, status: nowDone ? 'done' : 'pending',
         ...(nowDone ? { completedAt: new Date().toISOString() } : {}),
@@ -339,6 +372,9 @@ export default function ToDoList() {
   const handleSetStatus = async (todo: any, status: 'pending' | 'done' | 'na') => {
     try {
       const nowDone = status !== 'pending';
+      // Only 'done' triggers the linked transfer — 'na' means "this doesn't apply," which should
+      // never move money.
+      if (status === 'done' && !(await tryExecuteLinkedTransfer(todo))) return;
       await updateDoc(doc(db, 'todos', todo.id), {
         status, done: nowDone,
         ...(status === 'done' ? { completedAt: new Date().toISOString() } : {}),
@@ -762,6 +798,14 @@ export default function ToDoList() {
                     {todo.dueDate && (group ? ' · ' : '') + t('todo.due', { date: new Date(`${todo.dueDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) })}
                     {todo.reminderAt && (group || todo.dueDate ? ' · ' : '') + t('todo.reminder', { time: new Date(todo.reminderAt).toLocaleString() })}
                   </p>
+                  {todo.linkedTransfer && (
+                    <p className={clsx('text-[10px] font-bold truncate', todo.linkedTransferExecuted ? 'text-text-muted' : 'text-primary')}>
+                      {t('todo.linkedTransferSummary', {
+                        account: todo.linkedTransfer.toAccountName,
+                        amount: `${getCurrencySymbol(todo.linkedTransfer.currency)}${fromMinorUnits(todo.linkedTransfer.amountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+                      })}
+                    </p>
+                  )}
                 </div>
                 {reminderPast && (
                   <span className="material-symbols-outlined text-[16px] text-error shrink-0" title={t('todo.reminderPassed')}>notifications_active</span>
@@ -792,6 +836,19 @@ export default function ToDoList() {
             onDelete={() => { const td = viewingTodo; setViewingTodo(null); handleDelete(td); }}
           >
             <DetailField label={t('todo.task')}>{viewingTodo.text}</DetailField>
+            {viewingTodo.linkedTransfer && (
+              <DetailField label={t('todo.linkedTransferLabel')}>
+                <p className="text-sm font-bold text-on-surface">
+                  {t('todo.linkedTransferBreakdown', {
+                    account: viewingTodo.linkedTransfer.toAccountName,
+                    amount: `${getCurrencySymbol(viewingTodo.linkedTransfer.currency)}${fromMinorUnits(viewingTodo.linkedTransfer.amountMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                  })}
+                </p>
+                <p className={clsx('text-[11px] mt-1', viewingTodo.linkedTransferExecuted ? 'text-text-muted' : 'text-primary font-bold')}>
+                  {viewingTodo.linkedTransferExecuted ? t('todo.linkedTransferApplied') : t('todo.linkedTransferPending')}
+                </p>
+              </DetailField>
+            )}
             <DetailField label={t('todo.status')}>
               <div className="flex gap-2">
                 {(['pending', 'done', 'na'] as const).map((s) => (

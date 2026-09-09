@@ -23,7 +23,8 @@ import {
   cashHoldingGoalId,
 } from '../lib/goals';
 import { encryptAmount, decryptAmount } from '../lib/fieldCrypto';
-import { clearGoalFromAllAccounts, spendGoalFromAllAccounts, applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
+import { clearGoalFromAllAccounts, spendGoalFromAllAccounts, applyAccountChange, notifyGoalsMet, executeCashToAccountTransfer, JustCompletedGoal } from '../lib/accountAllocations';
+import { fireWrite } from '../lib/offlineWrite';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
 import ImageAttachments from '../components/ImageAttachments';
 import GoalContributionSchedule from '../components/GoalContributionSchedule';
@@ -217,6 +218,27 @@ export default function GoalDetail() {
       .sort((a, b) => b.behindMonths - a.behindMonths);
   }, [goal?.isCashHolding, otherActiveGoals, otherGoalsLedgers, accountsForTransfer]);
 
+  // "Which of my own accounts should this spare cash go to" — the accounts-first counterpart to
+  // behindScheduleGoals above: for every account that already backs at least one behind-schedule
+  // goal, its rank is the WORST (largest) behindMonths among the goals it backs — an account
+  // backing your most-overdue goal ranks first. Scoped to just that one worst goal per row (not
+  // every goal an account might back) to keep each row simple, same as behindScheduleGoals's rows.
+  const recommendedTransfers = useMemo(() => {
+    if (!goal?.isCashHolding) return [];
+    const behindByGoalId = new Map(behindScheduleGoals.map((e) => [e.goal.id, e]));
+    return accountsForTransfer
+      .map((account) => {
+        const candidates = (account.goalAllocations || [])
+          .map((a) => behindByGoalId.get(a.goalId))
+          .filter((e): e is NonNullable<typeof e> => !!e);
+        if (candidates.length === 0) return null;
+        const worst = candidates.reduce((best, e) => (e.behindMonths > best.behindMonths ? e : best));
+        return { account, worstGoal: worst.goal, worstBehindMonths: worst.behindMonths };
+      })
+      .filter((e): e is { account: FinancialAccount; worstGoal: Goal; worstBehindMonths: number } => !!e)
+      .sort((a, b) => b.worstBehindMonths - a.worstBehindMonths);
+  }, [goal?.isCashHolding, accountsForTransfer, behindScheduleGoals]);
+
   // Bucket #1's own sub-breakdown, purely for display — derived live from this goal's own
   // ledger rather than a separate stored field. 'auto' + 'undo' nets out any undone posting;
   // 'merge_in' only counts here when it actually came FROM Cash Savings (a merge_in from another
@@ -240,6 +262,30 @@ export default function GoalDetail() {
   const [formError, setFormError] = useState<string | null>(null);
   const [transferAccountId, setTransferAccountId] = useState('');
   const [transferProofImages, setTransferProofImages] = useState<string[]>([]);
+
+  // Recommended Transfers — % of the Cash Savings balance proposed for each ranked account,
+  // editable inline (see recommendedTransfers above). Re-seeded with a fresh proportional-to-
+  // behindMonths default whenever the ranked account list itself changes (a different set of
+  // accounts/goals), not on every render — so editing one row doesn't get clobbered by an
+  // unrelated balance tick.
+  const [recTransferPcts, setRecTransferPcts] = useState<Record<string, number>>({});
+  const [recTransferTiming, setRecTransferTiming] = useState<'now' | 'later'>('now');
+  const [recTransferBusy, setRecTransferBusy] = useState(false);
+  const [recTransferError, setRecTransferError] = useState<string | null>(null);
+  useEffect(() => {
+    if (recommendedTransfers.length === 0) { setRecTransferPcts({}); return; }
+    const totalBehind = recommendedTransfers.reduce((s, r) => s + r.worstBehindMonths, 0);
+    const next: Record<string, number> = {};
+    recommendedTransfers.forEach((r) => {
+      next[r.account.id] = totalBehind > 0
+        ? Math.round((r.worstBehindMonths / totalBehind) * 100)
+        : Math.round(100 / recommendedTransfers.length);
+    });
+    setRecTransferPcts(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recommendedTransfers.map((r) => r.account.id).join(',')]);
+  const recTransferPctTotal: number = Object.keys(recTransferPcts).reduce((s: number, key: string) => s + (recTransferPcts[key] || 0), 0);
+  const recTransferMinorTotal = Math.round(((goal?.currentAmountMinor || 0) * recTransferPctTotal) / 100);
 
   const openModal = (m: Modal) => {
     setModal(m);
@@ -599,6 +645,57 @@ export default function GoalDetail() {
     }
   };
 
+  // Recommended Transfers — confirm the proposed split across every ranked account with a nonzero
+  // %. Each row becomes its own to-do (never one combined item — matches the user's explicit ask
+  // for a clear per-account direction), carrying a `linkedTransfer` payload either already applied
+  // ("now") or still pending ("later" — executeCashToAccountTransfer runs the moment that specific
+  // to-do gets marked done, see ToDoList.tsx). Deliberately never touches any account's own
+  // goalAllocations %s — executeCashToAccountTransfer only ever moves balances, same "cash-move and
+  // %-to-goal-edit stay separate" principle as handleTransferToAccount above.
+  const handleConfirmRecommendedTransfers = async () => {
+    if (!user || !goal || !isOwner || !goal.isCashHolding || recTransferBusy) return;
+    const rows = recommendedTransfers
+      .map((r) => ({ ...r, pct: recTransferPcts[r.account.id] || 0, amountMinor: Math.round((goal.currentAmountMinor * (recTransferPcts[r.account.id] || 0)) / 100) }))
+      .filter((r) => r.amountMinor > 0);
+    if (rows.length === 0) return;
+    setRecTransferBusy(true);
+    setRecTransferError(null);
+    try {
+      const actorName = profile?.displayName || user.displayName || 'Someone';
+      const nowIso = new Date().toISOString();
+      const collectedJustCompleted: JustCompletedGoal[] = [];
+      for (const row of rows) {
+        const amountLabel = `${currencySymbol}${fromMinorUnits(row.amountMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+        const linkedTransfer = {
+          fromGoalId: goal.id, fromGoalName: goal.name,
+          toAccountId: row.account.id, toAccountName: row.account.name,
+          amountMinor: row.amountMinor, currency: goal.currency,
+        };
+        if (recTransferTiming === 'now') {
+          const { justCompletedGoals } = await executeCashToAccountTransfer(
+            goal.id, row.account.id, row.amountMinor, actorName,
+            t('goals.recTransferNote', { goal: row.worstGoal.name }),
+          );
+          collectedJustCompleted.push(...justCompletedGoals);
+        }
+        fireWrite(setDoc(doc(collection(db, 'todos')), {
+          userId: user.uid,
+          text: t('goals.recTransferTodoText', { amount: amountLabel, account: row.account.name }),
+          notes: t('goals.recTransferTodoNotes', { amount: amountLabel, account: row.account.name }),
+          done: false, status: 'pending', reminderAt: null, dueDate: null, reminderSent: false, createdAt: nowIso,
+          linkedTransfer, linkedTransferExecuted: recTransferTiming === 'now',
+        }), 'add recommended-transfer to-do');
+      }
+      notifyGoalsMet(collectedJustCompleted);
+      setRecTransferPcts({});
+    } catch (err) {
+      console.error('Failed to confirm recommended transfers:', err);
+      setRecTransferError(t('goals.saveFailed'));
+    } finally {
+      setRecTransferBusy(false);
+    }
+  };
+
   // Reset Cash Savings — available any time, not just when discontinuing something. Zeroes the
   // running balance and logs it, same as any other goal's ledger. This only ever touches bucket #1
   // (manual Cash Savings money) — it isn't moved anywhere (no posting, nothing to accept it), it
@@ -763,6 +860,82 @@ export default function GoalDetail() {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {isOwner && goal.isCashHolding && behindScheduleGoals.some((e) => e.linkedAccountNames.length === 0) && (
+        <p className="text-[10px] text-text-muted text-center px-2">
+          {t('goals.behindGoalsNoAccountCallout', { count: behindScheduleGoals.filter((e) => e.linkedAccountNames.length === 0).length })}
+        </p>
+      )}
+
+      {isOwner && goal.isCashHolding && goal.currentAmountMinor > 0 && recommendedTransfers.length > 0 && (
+        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-3">
+          <div>
+            <h2 className="text-xs font-bold text-primary">{t('goals.recommendedTransfersTitle')}</h2>
+            <p className="text-[10px] text-text-muted">{t('goals.recommendedTransfersSubtitle')}</p>
+          </div>
+          <div className="space-y-2">
+            {recommendedTransfers.map(({ account, worstGoal, worstBehindMonths }) => {
+              const pct = recTransferPcts[account.id] || 0;
+              const rowAmountMinor = Math.round((goal.currentAmountMinor * pct) / 100);
+              return (
+                <div key={account.id} className="bg-surface rounded-xl p-2.5 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-xs font-bold text-on-surface truncate">{account.name}</span>
+                      <span className="block text-[10px] text-text-muted truncate">{t('goals.forGoal', { name: worstGoal.name })}</span>
+                    </span>
+                    <span className="text-[9px] font-black text-warning bg-warning/10 px-1.5 py-0.5 rounded-full shrink-0">
+                      {t('goals.behindTarget', { months: worstBehindMonths })}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text" inputMode="numeric" value={pct}
+                      onChange={(e) => setRecTransferPcts({ ...recTransferPcts, [account.id]: Math.max(0, Math.min(100, Number(e.target.value.replace(/[^0-9]/g, '')) || 0)) })}
+                      className="w-14 h-9 text-center bg-white border border-border-subtle rounded-lg font-black text-primary text-sm outline-none"
+                    />
+                    <span className="text-xs font-bold text-text-muted">%</span>
+                    <span className="text-xs font-bold text-primary ml-auto">
+                      {currencySymbol}{fromMinorUnits(rowAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs font-bold text-center text-text-muted">
+            {t('goals.recTransferFooter', {
+              allocated: `${currencySymbol}${fromMinorUnits(recTransferMinorTotal).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+              available: `${currencySymbol}${fromMinorUnits(goal.currentAmountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            })}
+          </p>
+          <div className="flex bg-surface rounded-xl p-1 gap-1">
+            <button
+              type="button" onClick={() => setRecTransferTiming('now')}
+              className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', recTransferTiming === 'now' ? 'bg-primary text-white' : 'text-text-muted')}
+            >
+              {t('goals.recTransferTimingNow')}
+            </button>
+            <button
+              type="button" onClick={() => setRecTransferTiming('later')}
+              className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', recTransferTiming === 'later' ? 'bg-primary text-white' : 'text-text-muted')}
+            >
+              {t('goals.recTransferTimingLater')}
+            </button>
+          </div>
+          <p className="text-[10px] text-text-muted text-center">
+            {recTransferTiming === 'now' ? t('goals.recTransferTimingNowHint') : t('goals.recTransferTimingLaterHint')}
+          </p>
+          {recTransferError && <p className="text-xs text-error font-bold text-center">{recTransferError}</p>}
+          <button
+            onClick={handleConfirmRecommendedTransfers}
+            disabled={recTransferBusy || recTransferMinorTotal <= 0}
+            className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+          >
+            {recTransferBusy ? t('goals.saving') : t('goals.recTransferConfirmButton')}
+          </button>
         </div>
       )}
 

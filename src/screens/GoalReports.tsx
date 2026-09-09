@@ -237,14 +237,14 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
                       markerLeftAlign(m.pct) === 'left' ? 'text-left' : markerLeftAlign(m.pct) === 'right' ? 'text-right' : 'text-center',
                     )}
                     style={{ left: `${m.pct}%`, top: rowTop, width: 100, transform: markerAnchor(m.pct) }}
-                    onClick={() => navigate(`/goals/${m.goal.id}`)}
+                    onClick={() => navigate(`/goals/${m.goal.id}?from=reports`)}
                   >
                     {m.goal.name}
                   </div>
                   <div
                     className="absolute flex flex-col items-center cursor-pointer group"
                     style={{ left: `${m.pct}%`, top: iconTop, transform: 'translateX(-50%)' }}
-                    onClick={() => navigate(`/goals/${m.goal.id}`)}
+                    onClick={() => navigate(`/goals/${m.goal.id}?from=reports`)}
                   >
                     <span className="text-xl leading-none group-hover:scale-110 transition-transform">{m.goal.icon || '🎯'}</span>
                     <div
@@ -310,7 +310,7 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
                     })()
                   : null;
                 return (
-                  <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}`)}>
+                  <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}?from=reports`)}>
                     <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', reachedDate ? 'bg-success' : projected ? 'bg-primary' : 'bg-border-subtle')} />
                     <div className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3">
                       <span className="text-xl shrink-0">{goal.icon || '🎯'}</span>

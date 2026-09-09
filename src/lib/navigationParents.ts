@@ -112,6 +112,17 @@ export function getParentPath(pathname: string, search?: string): string {
     const from = new URLSearchParams(search || '').get('from');
     return from ? `/goals?tab=${from}` : '/goals';
   }
+  // Same idea for a specific goal's own detail page — GoalsHub's goal cards, GoalReports' chart/
+  // list, and GoalAllocationManager's rows all tag their links with `?from=<tab>` on the way in
+  // (see each screen's own navigate() calls), so back returns to the exact tab that was open
+  // instead of always landing on GoalsHub's default 'reports' tab. Checked before PARENT_PATTERNS
+  // below (whose generic `/goals/:id` -> '/goals' rule would otherwise win and drop the tab) but
+  // only when this IS a plain goal-id path — PARENT_OVERRIDES/other patterns still take priority
+  // for anything more specific (e.g. `/goals/new`, `/goals/:id/edit`, already handled elsewhere).
+  if (/^\/goals\/[^/]+$/.test(pathname) && !PARENT_OVERRIDES[pathname]) {
+    const from = new URLSearchParams(search || '').get('from');
+    if (from) return `/goals?tab=${from}`;
+  }
   if (PARENT_OVERRIDES[pathname]) return PARENT_OVERRIDES[pathname];
   for (const [pattern, parent] of PARENT_PATTERNS) {
     if (pattern.test(pathname)) return typeof parent === 'function' ? parent(pathname) : parent;

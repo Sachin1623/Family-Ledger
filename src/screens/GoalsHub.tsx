@@ -450,7 +450,7 @@ export default function GoalsHub() {
         <button
           key={g.id}
           type="button"
-          onClick={() => navigate(`/goals/${g.id}`)}
+          onClick={() => navigate(`/goals/${g.id}?from=${goalsTab}`)}
           className="w-full text-left bg-primary/5 rounded-2xl border border-primary/20 shadow-sm p-4 flex items-center gap-3"
         >
           <span className="text-2xl shrink-0">{g.icon || '🏦'}</span>
@@ -482,7 +482,7 @@ export default function GoalsHub() {
       <button
         key={g.id}
         type="button"
-        onClick={() => navigate(`/goals/${g.id}`)}
+        onClick={() => navigate(`/goals/${g.id}?from=${goalsTab}`)}
         className="w-full text-left bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2"
       >
         <div className="flex items-center justify-between gap-2">

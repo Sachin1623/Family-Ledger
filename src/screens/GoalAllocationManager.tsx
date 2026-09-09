@@ -118,7 +118,7 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
             const lastEntry = schedule.entries[schedule.entries.length - 1];
             return (
               <div key={g.id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">
-                <button type="button" onClick={() => navigate(`/goals/${g.id}`)} className="flex items-center gap-2 w-full text-left">
+                <button type="button" onClick={() => navigate(`/goals/${g.id}?from=allocation`)} className="flex items-center gap-2 w-full text-left">
                   <span className="text-xl shrink-0">{g.icon || '🎯'}</span>
                   <span className="flex-1 text-sm font-bold text-on-surface truncate">{g.name}</span>
                   <span className="text-xs font-bold text-text-muted shrink-0">

@@ -25,7 +25,7 @@
 // goal's total crosses its target for the first time, purely to trigger the existing "you reached
 // your goal" push notification (notifyGoalsMet) — nothing about the goal or its allocations
 // actually changes because of it.
-import { collection, doc, getDocs, query, runTransaction, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, runTransaction, updateDoc, where } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { encryptAmount, decryptAmount } from './fieldCrypto';
 import { fromMinorUnits } from './goals';
@@ -287,6 +287,58 @@ export async function unfreezeGoalReservations(goalId: string, ownerId: string):
 // doc is already gone.
 export async function deallocateAccountBeforeDelete(accountId: string, actorName: string): Promise<void> {
   await applyAccountChange(accountId, 0, [], actorName);
+}
+
+// Shared core for "move money from Cash Savings into a real account" — the exact two-step shape
+// GoalDetail's own single-destination "Transfer to Account" already uses (a transaction
+// decrementing Cash Savings' own bucket #1 + a 'withdrawal' ledger entry, then applyAccountChange()
+// crediting the destination account so its EXISTING allocations correctly see the larger balance),
+// pulled out here so it can be called from two different timings: immediately (GoalDetail's
+// Recommended Transfers card, "Now") or later, the moment a linked to-do gets marked done
+// (ToDoList.tsx) — neither caller needs to already have the account loaded in React state, this
+// reads and decrypts it itself. Never touches any allocation's own pct — same "cash-relocation and
+// %-to-goal edits stay separate" principle as the rest of this file.
+export async function executeCashToAccountTransfer(
+  fromGoalId: string, toAccountId: string, amountMinor: number, actorName: string, note?: string,
+): Promise<{ justCompletedGoals: JustCompletedGoal[] }> {
+  const nowIso = new Date().toISOString();
+  const uid = auth.currentUser?.uid || '';
+
+  // Checked before touching Cash Savings at all — an account deleted between a "Later" to-do being
+  // created and it being completed shouldn't leave Cash Savings silently debited with nowhere for
+  // the credit to land.
+  const accRef = doc(db, 'financialAccounts', toAccountId);
+  const accSnap = await getDoc(accRef);
+  if (!accSnap.exists()) throw new Error('destination-account-missing');
+  const raw = accSnap.data() as any;
+
+  await runTransaction(db, async (tx) => {
+    const goalRef = doc(db, 'goals', fromGoalId);
+    const snap = await tx.get(goalRef);
+    if (!snap.exists()) throw new Error('cash-savings-missing');
+    const current = await decryptAmount('goal', fromGoalId, snap.data()!.currentAmountMinor);
+    // No escrow — a proposed-but-not-yet-executed transfer never reserves anything, so the balance
+    // actually available at completion time can be lower than when it was proposed. Caller surfaces
+    // this and leaves whatever triggered it (a to-do, the Recommended Transfers card) unresolved.
+    if (amountMinor > current) throw new Error('insufficient-balance');
+    const encNew = await encryptAmount('goal', fromGoalId, current - amountMinor);
+    tx.update(goalRef, { currentAmountMinor: encNew, updatedAt: nowIso });
+    const encLedger = await encryptAmount('goal', fromGoalId, -amountMinor);
+    tx.set(doc(collection(db, 'goals', fromGoalId, 'ledger')), {
+      type: 'withdrawal', amountMinor: encLedger, monthKey: null, note: note || null,
+      createdBy: uid, createdByName: actorName, createdAt: nowIso,
+    });
+  });
+
+  const oldBalance = await decryptAmount('account', toAccountId, raw.currentBalanceMinor);
+  return applyAccountChange(
+    toAccountId, oldBalance + amountMinor, raw.goalAllocations || [], actorName,
+    {
+      name: raw.name, type: raw.type, currency: raw.currency, balanceAsOf: nowIso.slice(0, 10),
+      interestRatePct: raw.interestRatePct ?? null, compoundFrequency: raw.compoundFrequency ?? null,
+    },
+    { note: note || undefined },
+  );
 }
 
 // Fire-and-forget push notification for every goal a call to applyAccountChange() just completed
