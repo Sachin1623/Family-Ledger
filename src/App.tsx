@@ -109,6 +109,7 @@ import LudoTurnIndicator from './components/LudoTurnIndicator';
 import GameTurnIndicator from './components/GameTurnIndicator';
 import GlobalReminderScheduler from './components/GlobalReminderScheduler';
 import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
+import GlobalAlarmRingingBanner from './components/GlobalAlarmRingingBanner';
 import InviteBanner from './components/InviteBanner';
 import OnboardingTour from './components/OnboardingTour';
 import ProfileSetupWizard from './components/ProfileSetupWizard';
@@ -273,6 +274,7 @@ export default function App() {
           <GameTurnIndicator />
           <GlobalReminderScheduler />
           <GlobalMedicineReminderScheduler />
+          <GlobalAlarmRingingBanner />
           <InviteBanner />
           <ProfileSetupWizard />
           <OnboardingTour />

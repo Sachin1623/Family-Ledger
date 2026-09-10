@@ -1,9 +1,7 @@
 package com.familyledger.app;
 
 import android.app.Activity;
-import android.app.AlarmManager;
 import android.app.KeyguardManager;
-import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -93,38 +91,13 @@ public class AlarmActivity extends Activity {
 
     /** Re-fires this exact alarm once, 10 minutes from now, via the same AlarmReceiver/exact-alarm
      *  path as any other alarm — independent of (and in addition to) its real recurring schedule,
-     *  which was already re-armed for its next real occurrence the moment this one fired. */
+     *  which was already re-armed for its next real occurrence the moment this one fired. Shared
+     *  with AlarmClockPlugin.snoozeRinging() (the in-app banner) via AlarmScheduler.snoozeOnce. */
     private void snooze() {
         stopRingingService();
-
         String title = ((TextView) findViewById(R.id.alarmTitle)).getText().toString();
         String body = ((TextView) findViewById(R.id.alarmBody)).getText().toString();
-
-        Intent receiverIntent = new Intent(this, AlarmReceiver.class);
-        receiverIntent.putExtra(AlarmReceiver.EXTRA_ID, alarmId);
-        receiverIntent.putExtra(AlarmReceiver.EXTRA_TITLE, title);
-        receiverIntent.putExtra(AlarmReceiver.EXTRA_BODY, body);
-        receiverIntent.putExtra(AlarmReceiver.EXTRA_ROUTE, route);
-        // Negative hour/minute marks this as a one-shot: AlarmReceiver rings it but does not
-        // re-arm a further occurrence from it (see AlarmReceiver's own doc comment).
-        receiverIntent.putExtra(AlarmReceiver.EXTRA_HOUR, -1);
-        receiverIntent.putExtra(AlarmReceiver.EXTRA_MINUTE, -1);
-
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
-        // Distinct request-code space so a snooze's one-shot PendingIntent never clobbers this
-        // alarm's own recurring one.
-        PendingIntent pi = PendingIntent.getBroadcast(this, 1_000_000_000 + alarmId, receiverIntent, flags);
-
-        AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        if (am == null) return;
-        long trigger = System.currentTimeMillis() + 10 * 60 * 1000L;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
-        } else {
-            am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi);
-        }
+        AlarmScheduler.snoozeOnce(this, alarmId, title, body, route, 10);
     }
 
     // Deep-links straight into `route` (e.g. /health/medicines) instead of just opening the app to

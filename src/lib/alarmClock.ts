@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 
 // Bridges a fully custom native plugin (android/app/src/main/java/com/familyledger/app/
 // AlarmClockPlugin.java + AlarmReceiver/AlarmRingingService/AlarmActivity/AlarmBootReceiver
@@ -24,6 +24,16 @@ export interface AlarmClockSchedule {
   route?: string; // where the ringing screen's "Open FamilyLedger" button deep-links to (e.g. /health/medicines) — see AlarmActivity.openApp()
 }
 
+// State of whatever takeover alarm is ringing RIGHT NOW (foreground service up). `ringing: false`
+// means nothing is — the other fields are then stale/empty and should be ignored.
+export interface RingingAlarmState {
+  ringing: boolean;
+  id?: number;
+  title?: string;
+  body?: string;
+  route?: string;
+}
+
 interface AlarmClockNativePlugin {
   schedule(opts: AlarmClockSchedule): Promise<void>;
   cancel(opts: { id: number }): Promise<void>;
@@ -32,6 +42,13 @@ interface AlarmClockNativePlugin {
   requestFullScreenIntentPermission(): Promise<{ granted: boolean }>;
   checkBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
   requestBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
+  // Currently-ringing controls — so the app can show its own Snooze/Dismiss the whole time an
+  // alarm rings, not only via the native full-screen AlarmActivity.
+  isRinging(): Promise<RingingAlarmState>;
+  stopRinging(): Promise<void>;
+  snoozeRinging(opts?: { minutes?: number }): Promise<void>;
+  addListener(eventName: 'alarmRinging', cb: (state: RingingAlarmState) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'alarmStopped', cb: (state: { ringing: false }) => void): Promise<PluginListenerHandle>;
 }
 
 const native = registerPlugin<AlarmClockNativePlugin>('AlarmClock');
@@ -65,6 +82,59 @@ export async function cancelAllAlarms() {
   } catch (err) {
     console.error('Failed to cancel all alarms:', err);
   }
+}
+
+// --- Currently-ringing alarm: in-app Snooze / Dismiss (see GlobalAlarmRingingBanner.tsx) ---
+// All no-op / "nothing ringing" on web + iOS, same as everything else here.
+
+export async function getRingingAlarm(): Promise<RingingAlarmState> {
+  if (!isSupported()) return { ringing: false };
+  try {
+    return await native.isRinging();
+  } catch (err) {
+    console.error('Failed to read ringing alarm state:', err);
+    return { ringing: false };
+  }
+}
+
+export async function dismissRingingAlarm() {
+  if (!isSupported()) return;
+  try {
+    await native.stopRinging();
+  } catch (err) {
+    console.error('Failed to dismiss ringing alarm:', err);
+  }
+}
+
+export async function snoozeRingingAlarm(minutes = 10) {
+  if (!isSupported()) return;
+  try {
+    await native.snoozeRinging({ minutes });
+  } catch (err) {
+    console.error('Failed to snooze ringing alarm:', err);
+  }
+}
+
+// Subscribe to ring-start / ring-stop while mounted. Returns a cleanup fn that removes both
+// listeners. Fires nothing on web/iOS.
+export function onRingingAlarmChange(
+  onRinging: (state: RingingAlarmState) => void,
+  onStopped: () => void,
+): () => void {
+  if (!isSupported()) return () => {};
+  const handles: PluginListenerHandle[] = [];
+  let removed = false;
+  native.addListener('alarmRinging', (state) => onRinging(state)).then((h) => {
+    if (removed) h.remove(); else handles.push(h);
+  }).catch((err) => console.error('Failed to attach alarmRinging listener:', err));
+  native.addListener('alarmStopped', () => onStopped()).then((h) => {
+    if (removed) h.remove(); else handles.push(h);
+  }).catch((err) => console.error('Failed to attach alarmStopped listener:', err));
+  return () => {
+    removed = true;
+    handles.forEach((h) => h.remove());
+    handles.length = 0;
+  };
 }
 
 // Mirrors requestExactAlarmPermission() in pushNotifications.ts — same one-time-ask, redirect-to-

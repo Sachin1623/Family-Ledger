@@ -12,6 +12,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import org.json.JSONException;
+import java.lang.ref.WeakReference;
 
 /**
  * JS-facing bridge for the alarm-clock-style takeover reminders (see AlarmReceiver/
@@ -22,6 +23,85 @@ import org.json.JSONException;
  */
 @CapacitorPlugin(name = "AlarmClock")
 public class AlarmClockPlugin extends Plugin {
+
+    // --- Currently-ringing-alarm bridge (see AlarmRingingService / GlobalAlarmRingingBanner.tsx) ---
+    // Static, not instance state: AlarmRingingService runs even when there's no webview/plugin
+    // instance attached (alarm fired with the app killed), so it must be able to record "an alarm
+    // is ringing" regardless. When a plugin instance DOES exist, these also fan the change out to
+    // JS as an event; otherwise JS picks it up via isRinging() on its next launch/resume.
+    private static WeakReference<AlarmClockPlugin> instanceRef;
+    private static boolean ringing = false;
+    private static int ringingId = 0;
+    private static String ringingTitle = "";
+    private static String ringingBody = "";
+    private static String ringingRoute = "";
+
+    @Override
+    public void load() {
+        super.load();
+        instanceRef = new WeakReference<>(this);
+    }
+
+    static void onRingingStarted(int id, String title, String body, String route) {
+        ringing = true;
+        ringingId = id;
+        ringingTitle = title != null ? title : "";
+        ringingBody = body != null ? body : "";
+        ringingRoute = route != null ? route : "";
+        AlarmClockPlugin p = instanceRef != null ? instanceRef.get() : null;
+        if (p != null) p.notifyListeners("alarmRinging", ringingState());
+    }
+
+    static void onRingingStopped() {
+        ringing = false;
+        AlarmClockPlugin p = instanceRef != null ? instanceRef.get() : null;
+        if (p != null) {
+            JSObject data = new JSObject();
+            data.put("ringing", false);
+            p.notifyListeners("alarmStopped", data);
+        }
+    }
+
+    private static JSObject ringingState() {
+        JSObject o = new JSObject();
+        o.put("ringing", ringing);
+        o.put("id", ringingId);
+        o.put("title", ringingTitle);
+        o.put("body", ringingBody);
+        o.put("route", ringingRoute);
+        return o;
+    }
+
+    @PluginMethod
+    public void isRinging(PluginCall call) {
+        call.resolve(ringingState());
+    }
+
+    @PluginMethod
+    public void stopRinging(PluginCall call) {
+        sendStopToService();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void snoozeRinging(PluginCall call) {
+        int minutes = call.getInt("minutes", 10);
+        if (ringing || ringingId != 0) {
+            AlarmScheduler.snoozeOnce(getContext(), ringingId, ringingTitle, ringingBody, ringingRoute, minutes);
+        }
+        sendStopToService();
+        call.resolve();
+    }
+
+    private void sendStopToService() {
+        Intent stop = new Intent(getContext(), AlarmRingingService.class);
+        stop.setAction(AlarmRingingService.ACTION_STOP);
+        try {
+            getContext().startService(stop);
+        } catch (Exception ignored) {
+            // Service already gone / OS refused — the ringing is already over either way.
+        }
+    }
 
     @PluginMethod
     public void schedule(PluginCall call) {

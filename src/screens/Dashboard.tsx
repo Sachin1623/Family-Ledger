@@ -821,25 +821,25 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
         <div className="flex items-center justify-between gap-1">
           <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
-            <span className="text-[10px] font-bold text-text-muted">Add</span>
+            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionAdd')}</span>
           </button>
           <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-lg">{poked ? '✅' : '✋'}</span>
-            <span className="text-[10px] font-bold text-text-muted">Poke</span>
+            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionPoke')}</span>
           </button>
           <span onClick={(e) => e.stopPropagation()} className="flex-1 flex flex-col items-center gap-1 py-0.5">
             <span className="relative w-11 h-11 rounded-2xl bg-pink-100 flex items-center justify-center">
               <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
             </span>
-            <span className="text-[10px] font-bold text-text-muted">Chat</span>
+            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionChat')}</span>
           </span>
           <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-blue-100 flex items-center justify-center text-lg">📊</span>
-            <span className="text-[10px] font-bold text-text-muted">Trends</span>
+            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionTrends')}</span>
           </button>
           <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-teal-100 flex items-center justify-center text-lg">🧾</span>
-            <span className="text-[10px] font-bold text-text-muted">Report</span>
+            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionReport')}</span>
           </button>
         </div>
 
@@ -912,35 +912,32 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
           className="overflow-hidden"
         >
           <div className="pt-2">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <h4 className="text-[11px] text-text-muted uppercase font-bold tracking-wider shrink-0 flex items-center gap-1.5">
-                {t('dashboard.latestSpend')}
-                <span className="normal-case font-black text-primary/70">{monthLabel}</span>
-              </h4>
-              {/* Self first, then everyone else — tap to show only that person's entries below,
-                  tap again to clear. Capped at 30% of the row width and horizontally scrollable
-                  so a large group never crowds out the label. */}
-              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar w-[30%] justify-end">
-                {spendFilterMembers.map((m: any) => (
-                  <button
-                    key={m.userId}
-                    onClick={stopAnd(() => setSpendMemberFilter((prev) => (prev === m.userId ? null : m.userId)))}
-                    title={m.userId === user?.uid ? 'Me' : m.displayName}
-                    className={clsx(
-                      'w-6 h-6 rounded-full overflow-hidden shrink-0 border-2 transition-all',
-                      spendMemberFilter === m.userId ? 'border-primary' : 'border-transparent opacity-70',
-                    )}
-                  >
-                    {m.photoURL ? (
-                      <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-[9px] font-bold">
-                        {m.displayName?.slice(0, 1) || '?'}
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
+            {/* Member filter — self first, then everyone else — tap to show only that person's
+                entries below, tap again to clear. Full-width, left-aligned and horizontally
+                scrollable: the old layout squeezed this into 30% of the row next to a "This
+                Month's Spend" label and right-aligned it, which clipped every member past the
+                first few with no way to scroll to them (flex `justify-end` + overflow can't
+                scroll back to the start). The month is already shown by the picker above. */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mb-3 -mx-1 px-1">
+              {spendFilterMembers.map((m: any) => (
+                <button
+                  key={m.userId}
+                  onClick={stopAnd(() => setSpendMemberFilter((prev) => (prev === m.userId ? null : m.userId)))}
+                  title={m.userId === user?.uid ? 'Me' : m.displayName}
+                  className={clsx(
+                    'w-7 h-7 rounded-full overflow-hidden shrink-0 border-2 transition-all',
+                    spendMemberFilter === m.userId ? 'border-primary' : 'border-transparent opacity-70',
+                  )}
+                >
+                  {m.photoURL ? (
+                    <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-primary/10 text-primary text-[10px] font-bold">
+                      {m.displayName?.slice(0, 1) || '?'}
+                    </div>
+                  )}
+                </button>
+              ))}
             </div>
             {/* Essential/Optional — same tap-to-toggle-off pattern as the member avatars above,
                 combines with it (AND) rather than replacing it. The essential-spend % sits next

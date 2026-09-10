@@ -281,6 +281,14 @@ export default function GoalDetail() {
         ? Math.round((r.worstBehindMonths / totalBehind) * 100)
         : Math.round(100 / recommendedTransfers.length);
     });
+    // Independent rounding of each share can sum to 99 or 101 (e.g. three equal accounts -> 33+33
+    // +33). Push the whole-number remainder onto the largest row so the default always sums to
+    // exactly 100 and the footer never shows a stray "99% / 101%".
+    const sum = Object.keys(next).reduce((s, k) => s + next[k], 0);
+    if (sum !== 100 && recommendedTransfers.length > 0) {
+      const biggest = recommendedTransfers.reduce((a, b) => (b.worstBehindMonths > a.worstBehindMonths ? b : a));
+      next[biggest.account.id] = Math.max(0, next[biggest.account.id] + (100 - sum));
+    }
     setRecTransferPcts(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recommendedTransfers.map((r) => r.account.id).join(',')]);
@@ -654,8 +662,30 @@ export default function GoalDetail() {
   // %-to-goal-edit stay separate" principle as handleTransferToAccount above.
   const handleConfirmRecommendedTransfers = async () => {
     if (!user || !goal || !isOwner || !goal.isCashHolding || recTransferBusy) return;
-    const rows = recommendedTransfers
-      .map((r) => ({ ...r, pct: recTransferPcts[r.account.id] || 0, amountMinor: Math.round((goal.currentAmountMinor * (recTransferPcts[r.account.id] || 0)) / 100) }))
+    // Amount per row is NOT `round(balance * pct/100)` computed independently — the sum of several
+    // independent roundings drifts off the intended total (the footer showed "100% / ₹45,000" but
+    // the executed transfers came up a few paise short, or overshot the live balance and made the
+    // last transfer fail mid-batch with "insufficient balance", leaving a partial allocation).
+    // Instead: walk the rows accumulating against the EXACT cumulative target, and let the final
+    // row take whatever's left — so every row lands as close to its decided % as whole paise allow
+    // and the grand total is exactly `round(balance * totalPct/100)`, matching what's shown.
+    const picked = recommendedTransfers
+      .map((r) => ({ ...r, pct: recTransferPcts[r.account.id] || 0 }))
+      .filter((r) => r.pct > 0);
+    const totalPct = picked.reduce((s, r) => s + r.pct, 0);
+    const grandTotalMinor = Math.min(goal.currentAmountMinor, Math.round((goal.currentAmountMinor * totalPct) / 100));
+    let allocatedSoFar = 0;
+    let cumulativePct = 0;
+    const rows = picked
+      .map((r, i) => {
+        cumulativePct += r.pct;
+        const targetCumulative = i === picked.length - 1
+          ? grandTotalMinor
+          : Math.round((goal.currentAmountMinor * cumulativePct) / 100);
+        const amountMinor = Math.max(0, targetCumulative - allocatedSoFar);
+        allocatedSoFar += amountMinor;
+        return { ...r, amountMinor };
+      })
       .filter((r) => r.amountMinor > 0);
     if (rows.length === 0) return;
     setRecTransferBusy(true);

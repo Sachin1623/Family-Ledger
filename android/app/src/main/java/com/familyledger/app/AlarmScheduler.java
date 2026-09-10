@@ -49,6 +49,38 @@ class AlarmScheduler {
         }
     }
 
+    /**
+     * Re-fires alarm {@code id} once, {@code delayMinutes} from now, as a ONE-SHOT: hour/minute are
+     * passed as -1 so AlarmReceiver rings it without re-arming any further occurrence from it (the
+     * real recurring schedule was already advanced the moment the alarm first fired). Distinct
+     * request-code space (1_000_000_000 + id) so a snooze's PendingIntent never clobbers this
+     * alarm's own recurring one. Shared by AlarmActivity's Snooze button and
+     * AlarmClockPlugin.snoozeRinging() (the in-app banner) so both snooze identically.
+     */
+    static void snoozeOnce(Context context, int id, String title, String body, String route, int delayMinutes) {
+        Intent receiverIntent = new Intent(context, AlarmReceiver.class);
+        receiverIntent.putExtra(AlarmReceiver.EXTRA_ID, id);
+        receiverIntent.putExtra(AlarmReceiver.EXTRA_TITLE, title);
+        receiverIntent.putExtra(AlarmReceiver.EXTRA_BODY, body);
+        receiverIntent.putExtra(AlarmReceiver.EXTRA_ROUTE, route);
+        receiverIntent.putExtra(AlarmReceiver.EXTRA_HOUR, -1);
+        receiverIntent.putExtra(AlarmReceiver.EXTRA_MINUTE, -1);
+
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
+        PendingIntent pi = PendingIntent.getBroadcast(context, 1_000_000_000 + id, receiverIntent, flags);
+
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (am == null) return;
+        long trigger = System.currentTimeMillis() + (long) delayMinutes * 60_000L;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
+        } else {
+            am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi);
+        }
+    }
+
     static void cancel(Context context, int id) {
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         Intent intent = new Intent(context, AlarmReceiver.class);

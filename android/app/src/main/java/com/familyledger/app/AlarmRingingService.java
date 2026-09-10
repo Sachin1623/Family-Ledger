@@ -34,6 +34,12 @@ public class AlarmRingingService extends Service {
     private MediaPlayer mediaPlayer;
     private Vibrator vibrator;
     private PowerManager.WakeLock wakeLock;
+    private boolean ringing;
+
+    private int currentId;
+    private String currentTitle = "";
+    private String currentBody = "";
+    private String currentRoute = "";
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -48,12 +54,24 @@ public class AlarmRingingService extends Service {
             return START_NOT_STICKY;
         }
 
+        // A second alarm firing (or a re-delivered AlarmReceiver broadcast, or a snooze re-fire)
+        // while one is already ringing used to stack a fresh MediaPlayer/Vibrator/WakeLock on top
+        // and overwrite the fields — the previous ones were orphaned but kept looping, so a single
+        // ACTION_STOP (Dismiss) only ever silenced the newest and the alarm "wouldn't stop". Tear
+        // any existing ring down first, without emitting a JS "stopped" (we re-start immediately
+        // below), so this invocation is the only one live.
+        stopRingingInternal(false);
+
         int id = intent != null ? intent.getIntExtra(AlarmReceiver.EXTRA_ID, 0) : 0;
         String title = intent != null ? intent.getStringExtra(AlarmReceiver.EXTRA_TITLE) : null;
         String body = intent != null ? intent.getStringExtra(AlarmReceiver.EXTRA_BODY) : null;
         String route = intent != null ? intent.getStringExtra(AlarmReceiver.EXTRA_ROUTE) : null;
         if (title == null) title = "Reminder";
         if (body == null) body = "";
+        currentId = id;
+        currentTitle = title;
+        currentBody = body;
+        currentRoute = route != null ? route : "";
 
         ensureChannel();
 
@@ -138,6 +156,13 @@ public class AlarmRingingService extends Service {
     }
 
     private void startRinging() {
+        ringing = true;
+        // Lets the app show its own in-app Snooze/Dismiss banner (GlobalAlarmRingingBanner.tsx)
+        // for the whole time this is ringing, not just via the native full-screen AlarmActivity.
+        // No-ops when no webview/plugin instance is attached (alarm fired with the app killed) —
+        // the JS side re-queries isRinging() on launch/resume to catch that case.
+        AlarmClockPlugin.onRingingStarted(currentId, currentTitle, currentBody, currentRoute);
+
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FamilyLedger:AlarmRinging");
@@ -174,6 +199,15 @@ public class AlarmRingingService extends Service {
     }
 
     private void stopRinging() {
+        stopRingingInternal(true);
+    }
+
+    // `notify` = tell the JS side ("alarmStopped") that ringing ended. Suppressed only by the
+    // idempotency guard in onStartCommand, which stops the previous ring purely to immediately
+    // start a new one.
+    private void stopRingingInternal(boolean notify) {
+        boolean wasRinging = ringing;
+        ringing = false;
         if (mediaPlayer != null) {
             try {
                 mediaPlayer.stop();
@@ -192,6 +226,9 @@ public class AlarmRingingService extends Service {
             wakeLock = null;
         }
         stopForeground(true);
+        if (notify && wasRinging) {
+            AlarmClockPlugin.onRingingStopped();
+        }
     }
 
     @Override
