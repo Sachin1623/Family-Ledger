@@ -15,7 +15,7 @@ import {
   ContributionFrequency, CONTRIBUTION_FREQUENCIES, nextContributionDate,
   decryptAccountsList, accountUnallocatedMinor, accountAllocatedPctTotal,
 } from '../lib/accounts';
-import { applyAccountChange, deallocateAccountBeforeDelete, notifyGoalsMet, AccountAllocationInput } from '../lib/accountAllocations';
+import { applyAccountChange, deallocateAccountBeforeDelete, undoLatestAccountChange, notifyGoalsMet, AccountAllocationInput } from '../lib/accountAllocations';
 import { shareText } from '../lib/fileShare';
 import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
 import { useFriendships } from '../lib/useFriendships';
@@ -550,6 +550,27 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
   // --- Account history modal ---
   const [historyAccount, setHistoryAccount] = useState<FinancialAccount | null>(null);
   const [historyLightbox, setHistoryLightbox] = useState<string | null>(null);
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
+  useEffect(() => { setConfirmUndo(false); setUndoError(null); }, [historyAccount]);
+
+  const handleUndoLatest = async () => {
+    if (!historyAccount || undoBusy) return;
+    setUndoBusy(true);
+    setUndoError(null);
+    try {
+      const actorName = profile?.displayName || user?.displayName || 'Someone';
+      await undoLatestAccountChange(historyAccount.id, actorName);
+      setConfirmUndo(false);
+      setHistoryAccount(null); // re-open shows the fresh state; the live snapshot repaints the tile
+    } catch (err: any) {
+      console.error('Failed to undo latest account change:', err);
+      setUndoError(err?.message === 'stale' ? t('accounts.undoStale') : t('accounts.undoFailed'));
+    } finally {
+      setUndoBusy(false);
+    }
+  };
   const [logValue] = useCollection(historyAccount ? collection(db, 'financialAccounts', historyAccount.id, 'log') : null);
   const [logEntries, setLogEntries] = useState<any[]>([]);
   useEffect(() => {
@@ -1394,7 +1415,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
               <p className="text-xs text-text-muted text-center py-6">{t('accounts.noHistoryYet')}</p>
             ) : (
               <div className="space-y-2">
-                {logEntries.map((e) => (
+                {logEntries.map((e, idx) => (
                   <div key={e.id} className="bg-surface rounded-xl p-3 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold text-text-muted">{(e.createdAt || '').slice(0, 16).replace('T', ' ')} · {e.createdByName}</span>
@@ -1404,6 +1425,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                         {getCurrencySymbol(historyAccount.currency)}{formatAmountCompact(fromMinorUnits(e.balanceAfterMinor), historyAccount.currency, profile?.numberSystem)}
                       </span>
                     </div>
+                    {e.note && <p className="text-[10px] text-text-muted">{e.note}</p>}
                     {e.allocationChanges.filter((c: any) => c.beforePct !== c.afterPct).map((c: any, i: number) => (
                       <p key={i} className="text-[10px] text-text-muted">
                         {c.goalName}: {c.beforePct}% ({getCurrencySymbol(historyAccount.currency)}{formatAmountCompact(fromMinorUnits(c.beforeAmountMinor), historyAccount.currency, profile?.numberSystem)})
@@ -1419,6 +1441,38 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                           </button>
                         ))}
                       </div>
+                    )}
+                    {/* Undo — only ever the most recent entry (idx 0): reverting an older one would
+                        need a "restore to a past state" that wipes every later change. */}
+                    {idx === 0 && canEditAccount(historyAccount) && (
+                      confirmUndo ? (
+                        <div className="pt-1 space-y-1.5">
+                          <p className="text-[10px] font-bold text-text-muted">{t('accounts.undoConfirm')}</p>
+                          {undoError && <p className="text-[10px] font-bold text-error">{undoError}</p>}
+                          <div className="flex gap-2">
+                            <button
+                              type="button" onClick={handleUndoLatest} disabled={undoBusy}
+                              className="flex-1 py-1.5 rounded-lg bg-error/10 text-error text-[11px] font-bold disabled:opacity-50"
+                            >
+                              {undoBusy ? t('goals.saving') : t('accounts.undoConfirmYes')}
+                            </button>
+                            <button
+                              type="button" onClick={() => { setConfirmUndo(false); setUndoError(null); }} disabled={undoBusy}
+                              className="flex-1 py-1.5 rounded-lg border border-border-subtle text-text-muted text-[11px] font-bold disabled:opacity-50"
+                            >
+                              {t('common.cancel')}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button" onClick={() => setConfirmUndo(true)}
+                          className="pt-1 flex items-center gap-1 text-[11px] font-bold text-text-muted hover:text-error"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">undo</span>
+                          {t('accounts.undoLatest')}
+                        </button>
+                      )
                     )}
                   </div>
                 ))}

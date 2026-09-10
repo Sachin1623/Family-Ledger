@@ -641,7 +641,7 @@ export default function GoalDetail() {
       const { justCompletedGoals } = await applyAccountChange(
         account.id, account.currentBalanceMinor + transferAmountMinor, account.goalAllocations || [], actorName,
         { name: account.name, type: account.type, currency: account.currency, balanceAsOf: nowIso.slice(0, 10), interestRatePct: account.interestRatePct ?? null, compoundFrequency: account.compoundFrequency ?? null },
-        { note: t('goals.transferredFromCashSavingsNote'), images: transferProofImages },
+        { note: t('goals.transferredFromCashSavingsNote'), images: transferProofImages, sourceGoalId: goal.id },
       );
       notifyGoalsMet(justCompletedGoals);
       setModal(null);

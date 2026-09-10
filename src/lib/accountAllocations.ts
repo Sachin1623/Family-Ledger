@@ -25,7 +25,7 @@
 // goal's total crosses its target for the first time, purely to trigger the existing "you reached
 // your goal" push notification (notifyGoalsMet) — nothing about the goal or its allocations
 // actually changes because of it.
-import { collection, doc, getDoc, getDocs, query, runTransaction, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, runTransaction, updateDoc, where } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { encryptAmount, decryptAmount } from './fieldCrypto';
 import { fromMinorUnits } from './goals';
@@ -70,7 +70,10 @@ export async function applyAccountChange(
   newAllocations: AccountAllocationInput[],
   actorName: string,
   fields?: AccountEditableFields,
-  log?: { note?: string; images?: string[] },
+  // sourceGoalId: set by a transfer FROM a goal's own pool (Cash Savings → account) so
+  // undoLatestAccountChange() can re-credit that goal when this entry is later undone. Null for a
+  // plain balance edit / direct %-only change (nothing to give back).
+  log?: { note?: string; images?: string[]; sourceGoalId?: string },
 ): Promise<{ justCompletedGoals: JustCompletedGoal[] }> {
   const nowIso = new Date().toISOString();
   const justCompletedGoals: JustCompletedGoal[] = [];
@@ -175,7 +178,8 @@ export async function applyAccountChange(
       })));
       tx.set(doc(collection(db, 'financialAccounts', accountId, 'log')), {
         balanceBeforeMinor: encBefore, balanceAfterMinor: encAfter, allocationChanges: encChanges,
-        note: log?.note || null, images: log?.images || [], createdBy: uid, createdByName: actorName, createdAt: nowIso,
+        note: log?.note || null, images: log?.images || [], sourceGoalId: log?.sourceGoalId || null,
+        createdBy: uid, createdByName: actorName, createdAt: nowIso,
       });
     }
   });
@@ -289,6 +293,66 @@ export async function deallocateAccountBeforeDelete(accountId: string, actorName
   await applyAccountChange(accountId, 0, [], actorName);
 }
 
+// Reverses the SINGLE most recent entry in an account's History: restores its balance and every
+// goal-allocation % to exactly what they were just before that entry, via a fresh
+// applyAccountChange (so the undo is itself a logged, auditable entry — not a silent rewind).
+// If that entry was a transfer FROM a goal's own pool (log.sourceGoalId set — Cash Savings →
+// account), the credited amount is put back into that goal too, with an 'undo' ledger line.
+// Deliberately only ever the LATEST entry: reverting an older one would need a "restore to a
+// past state" that clobbers every change made after it. Refuses ('stale') if the account's live
+// balance no longer matches that entry's "after" value — something else has touched it since.
+export async function undoLatestAccountChange(accountId: string, actorName: string): Promise<void> {
+  const accSnap = await getDoc(doc(db, 'financialAccounts', accountId));
+  if (!accSnap.exists()) throw new Error('account-missing');
+  const accData = accSnap.data() as any;
+  const liveBalance = await decryptAmount('account', accountId, accData.currentBalanceMinor);
+
+  const logSnap = await getDocs(query(
+    collection(db, 'financialAccounts', accountId, 'log'),
+    orderBy('createdAt', 'desc'),
+  ));
+  if (logSnap.empty) throw new Error('no-history');
+  const entry = logSnap.docs[0].data() as any;
+
+  const balanceBefore = await decryptAmount('account', accountId, entry.balanceBeforeMinor);
+  const balanceAfter = await decryptAmount('account', accountId, entry.balanceAfterMinor);
+  if (liveBalance !== balanceAfter) throw new Error('stale');
+
+  // allocationChanges carries EVERY goal the account touched at that entry (not just the ones
+  // whose % changed), each with its beforePct — so this is the complete allocation set as it
+  // stood right before the entry. If an entry somehow has none recorded (older/edge data), leave
+  // the account's current allocations untouched and only reverse the balance.
+  const allocChanges = (entry.allocationChanges || []) as any[];
+  const beforeAllocations: AccountAllocationInput[] = allocChanges.length > 0
+    ? allocChanges
+        .map((c) => ({ goalId: c.goalId as string, goalName: (c.goalName as string) || '', pct: (c.beforePct as number) || 0 }))
+        .filter((c) => c.pct > 0)
+    : (accData.goalAllocations || []).map((a: any) => ({ goalId: a.goalId, goalName: a.goalName, pct: a.pct }));
+
+  const undoNote = entry.note ? `Undo — ${entry.note}` : 'Undo of previous change';
+  await applyAccountChange(accountId, balanceBefore, beforeAllocations, actorName, undefined, { note: undoNote });
+
+  const sourceGoalId: string | null = entry.sourceGoalId || null;
+  const creditedDelta = balanceAfter - balanceBefore; // > 0 when a transfer IN is being undone
+  if (sourceGoalId && creditedDelta > 0) {
+    const nowIso = new Date().toISOString();
+    await runTransaction(db, async (tx) => {
+      const gRef = doc(db, 'goals', sourceGoalId);
+      const gSnap = await tx.get(gRef);
+      if (!gSnap.exists()) return; // source goal gone — the account side is still correctly reversed
+      const current = await decryptAmount('goal', sourceGoalId, gSnap.data()!.currentAmountMinor ?? 0);
+      const encNext = await encryptAmount('goal', sourceGoalId, current + creditedDelta);
+      tx.update(gRef, { currentAmountMinor: encNext, updatedAt: nowIso });
+      const encLedger = await encryptAmount('goal', sourceGoalId, creditedDelta);
+      tx.set(doc(collection(db, 'goals', sourceGoalId, 'ledger')), {
+        type: 'undo', amountMinor: encLedger, monthKey: null,
+        note: `Undo — transfer to ${accData.name || 'account'}`,
+        createdBy: auth.currentUser?.uid || '', createdByName: actorName, createdAt: nowIso,
+      });
+    });
+  }
+}
+
 // Shared core for "move money from Cash Savings into a real account" — the exact two-step shape
 // GoalDetail's own single-destination "Transfer to Account" already uses (a transaction
 // decrementing Cash Savings' own bucket #1 + a 'withdrawal' ledger entry, then applyAccountChange()
@@ -337,7 +401,7 @@ export async function executeCashToAccountTransfer(
       name: raw.name, type: raw.type, currency: raw.currency, balanceAsOf: nowIso.slice(0, 10),
       interestRatePct: raw.interestRatePct ?? null, compoundFrequency: raw.compoundFrequency ?? null,
     },
-    { note: note || undefined },
+    { note: note || undefined, sourceGoalId: fromGoalId },
   );
 }
 
