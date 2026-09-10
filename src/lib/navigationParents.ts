@@ -78,6 +78,7 @@ const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/groups\/[^/]+$/, '/'],
   [/^\/goals\/[^/]+\/edit$/, (p) => p.replace(/\/edit$/, '')],
   [/^\/goals\/[^/]+\/allocate$/, (p) => p.replace(/\/allocate$/, '')],
+  [/^\/goals\/accounts\/[^/]+$/, '/goals/accounts'],
   [/^\/goals\/[^/]+$/, '/goals'],
   [/^\/settlements\/[^/]+$/, '/settlements'],
   [/^\/shopping-lists\/[^/]+$/, '/shopping-lists'],
@@ -120,6 +121,14 @@ export function getParentPath(pathname: string, search?: string): string {
   // only when this IS a plain goal-id path — PARENT_OVERRIDES/other patterns still take priority
   // for anything more specific (e.g. `/goals/new`, `/goals/:id/edit`, already handled elsewhere).
   if (/^\/goals\/[^/]+$/.test(pathname) && !PARENT_OVERRIDES[pathname]) {
+    const from = new URLSearchParams(search || '').get('from');
+    if (from) return `/goals?tab=${from}`;
+  }
+  // Same for an account's own detail page (`/goals/accounts/:id`) — reached from the account
+  // tiles in GoalsHub's Accounts tab (tagged `?from=accounts`), so back returns to that tab
+  // rather than GoalsHub's default. Untagged (e.g. opened from the standalone `/goals/accounts`
+  // route or a deep link) falls through to the `/goals/accounts` pattern below.
+  if (/^\/goals\/accounts\/[^/]+$/.test(pathname)) {
     const from = new URLSearchParams(search || '').get('from');
     if (from) return `/goals?tab=${from}`;
   }

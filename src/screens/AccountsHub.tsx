@@ -323,27 +323,46 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
   // Opening an account — via the deep link below, or tapping its row in the list — lands here
   // first, not straight into the editable form: a read-only summary with an explicit Edit action,
   // so a quick "what's in this account" glance never risks an accidental field change.
-  const [viewAccount, setViewAccount] = useState<FinancialAccount | null>(null);
-  const [viewRevealNumber, setViewRevealNumber] = useState(false);
-  const openView = (a: FinancialAccount) => { setViewAccount(a); setViewRevealNumber(false); };
+  // Tapping an account now navigates to its own detail screen (AccountDetail.tsx) instead of
+  // opening an inline card — same as tapping a goal. `?from=accounts` (only when embedded inside
+  // GoalsHub's Accounts tab) makes the detail screen's back arrow return to that tab.
+  const openView = (a: FinancialAccount) => navigate(`/goals/accounts/${a.id}${embedded ? '?from=accounts' : ''}`);
 
-  // Deep-link from GoalDetail's "Where this comes from" list (?open=<accountId>) — opens that
-  // account's read-only view directly once it's loaded. Deliberately depends on the param's
-  // actual VALUE, not a mount-only `[]` effect: this route's pathname never changes across repeat
-  // visits (only the query string does), so React Router reuses the same component instance — a
-  // mount-only effect would silently miss every visit after the first (see
-  // feedback_mount_only_query_param_effects). `openedParamRef` guards against re-opening the view
-  // every time `allAccounts` itself updates (e.g. right after saving) for the same param value.
+  // Deep-link `?open=<accountId>` (e.g. from GoalDetail's "Where this comes from" list) — forwards
+  // straight to that account's detail screen. `replace` so it doesn't leave the `?open=` URL in
+  // history to bounce back to. Reactive on the param value (not a mount-only `[]` effect) since
+  // React Router reuses this instance across query-only changes — see
+  // feedback_mount_only_query_param_effects.
   const openAccountParam = searchParams.get('open');
   const openedParamRef = useRef<string | null>(null);
   useEffect(() => {
     if (!openAccountParam || openAccountParam === openedParamRef.current) return;
-    const match = allAccounts.find((a) => a.id === openAccountParam);
-    if (!match) return; // accounts still loading — try again once allAccounts updates
     openedParamRef.current = openAccountParam;
-    openView(match);
+    navigate(`/goals/accounts/${openAccountParam}${embedded ? '?from=accounts' : ''}`, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openAccountParam, allAccounts]);
+  }, [openAccountParam]);
+
+  // Deep-links from AccountDetail's action buttons — it isn't self-contained for Edit-details /
+  // Transfer / Share / Delete (those modals live here, shared with the Add flow), so it bounces
+  // back with a param and we open the right modal once. Same reactive, ref-guarded pattern.
+  const editAccountParam = searchParams.get('edit');
+  const shareAccountParam = searchParams.get('share');
+  const deleteAccountParam = searchParams.get('delete');
+  const transferParam = searchParams.get('transfer');
+  const openedActionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = `${editAccountParam || ''}|${shareAccountParam || ''}|${deleteAccountParam || ''}|${transferParam || ''}`;
+    if (key === '|||' || key === openedActionRef.current) return;
+    if (transferParam) { openedActionRef.current = key; openTransfer(); return; }
+    const id = editAccountParam || shareAccountParam || deleteAccountParam;
+    const match = allAccounts.find((a) => a.id === id) || sharedWithMeAccounts.find((a) => a.id === id);
+    if (!match) return; // still loading
+    openedActionRef.current = key;
+    if (editAccountParam) openEdit(match);
+    else if (shareAccountParam) openShare(match);
+    else if (deleteAccountParam) setDeletingAccount(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editAccountParam, shareAccountParam, deleteAccountParam, transferParam, allAccounts, sharedWithMeAccounts]);
 
   // Deep-link from the global "New Account" FAB (Navigation.tsx — shown in place of "Add Expense"
   // while on the Accounts tab within Goals) — auto-opens the Add Account form once. Same reactive,
@@ -835,119 +854,6 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
           })}
         </div>
       )}
-
-      {/* --- View account (read-only) --- */}
-      {viewAccount && (() => {
-        const meta = ACCOUNT_TYPES.find((tp) => tp.id === viewAccount.type);
-        const unallocatedMinor = accountUnallocatedMinor(viewAccount);
-        const allocatedPct = accountAllocatedPctTotal(viewAccount);
-        return (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setViewAccount(null)}>
-            <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-black text-primary flex items-center gap-2">
-                  <span className="text-xl">{meta?.icon || '💰'}</span> {viewAccount.name}
-                </h3>
-                <button onClick={() => setViewAccount(null)} className="p-1 text-text-muted hover:bg-surface rounded-full">
-                  <span className="material-symbols-outlined text-[18px] block">close</span>
-                </button>
-              </div>
-
-              <div className="bg-surface rounded-xl p-3 space-y-1">
-                <p className="text-2xl font-black text-primary">{getCurrencySymbol(viewAccount.currency)}{formatAmountCompact(fromMinorUnits(viewAccount.currentBalanceMinor), viewAccount.currency, profile?.numberSystem)}</p>
-                <p className="text-[11px] text-text-muted">
-                  {t(`accounts.type.${viewAccount.type}`)} · {t('accounts.asOf', { date: new Date(viewAccount.balanceAsOf || viewAccount.updatedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })}
-                </p>
-              </div>
-
-              {viewAccount.accountNumber && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-text-muted">{t('accounts.accountNumber')}</span>
-                  <button type="button" onClick={() => setViewRevealNumber((v) => !v)} className="font-bold text-on-surface flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px]">{viewRevealNumber ? 'visibility_off' : 'visibility'}</span>
-                    {viewRevealNumber ? viewAccount.accountNumber : maskAccountNumber(viewAccount.accountNumber)}
-                  </button>
-                </div>
-              )}
-
-              {viewAccount.interestRatePct != null && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-text-muted">{t('accounts.interestRateOptional')}</span>
-                  <span className="font-bold text-on-surface text-right">
-                    {viewAccount.compoundFrequency
-                      ? t('accounts.interestRateDisplay', { rate: viewAccount.interestRatePct, frequency: t(`accounts.compound.${viewAccount.compoundFrequency}`) })
-                      : t('accounts.interestRateDisplayNoCompound', { rate: viewAccount.interestRatePct })}
-                    {viewAccount.interestNextDate && ` · ${t('accounts.interestNextDateShort', { date: new Date(viewAccount.interestNextDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })}`}
-                  </span>
-                </div>
-              )}
-
-              {viewAccount.contributionFrequency && viewAccount.contributionAmountMinor != null && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-text-muted">{t('accounts.contributionOptional')}</span>
-                  <span className="font-bold text-primary text-right">
-                    {t('accounts.sipBadge', {
-                      amount: `${getCurrencySymbol(viewAccount.currency)}${formatAmountCompact(fromMinorUnits(viewAccount.contributionAmountMinor), viewAccount.currency, profile?.numberSystem)}`,
-                      frequency: t(`accounts.contributionFrequency.${viewAccount.contributionFrequency}`),
-                      date: viewAccount.contributionNextDate ? new Date(viewAccount.contributionNextDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
-                    })}
-                  </span>
-                </div>
-              )}
-
-              {(viewAccount.nominees || []).length > 0 && (
-                <div className="text-xs">
-                  <span className="text-text-muted">{t('accounts.nominees')}: </span>
-                  <span className="font-bold text-on-surface">{viewAccount.nominees!.map((n) => (viewAccount.nominees!.length > 1 ? `${n.name} (${n.pct}%)` : n.name)).join(', ')}</span>
-                </div>
-              )}
-
-              {(viewAccount.goalAllocations || []).length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('accounts.allocateToGoals')}</p>
-                  {(viewAccount.goalAllocations || []).map((g) => (
-                    <p key={g.goalId} className="text-xs text-primary font-bold flex items-center justify-between">
-                      <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[13px]">link</span>{g.goalName}</span>
-                      <span>{g.pct}%</span>
-                    </p>
-                  ))}
-                  <p className="text-[11px] text-text-muted">
-                    {t('accounts.unallocatedAmount', { amount: `${getCurrencySymbol(viewAccount.currency)}${formatAmountCompact(fromMinorUnits(unallocatedMinor), viewAccount.currency, profile?.numberSystem)}`, pct: 100 - allocatedPct })}
-                  </p>
-                </div>
-              )}
-
-              {viewAccount.userId !== user?.uid && (
-                <p className="text-[11px] text-text-muted flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[13px]">group</span>
-                  {t(canEditAccount(viewAccount) ? 'accounts.sharedByLabelEdit' : 'accounts.sharedByLabelView')}
-                </p>
-              )}
-              <div className="flex gap-2 pt-1">
-                {canEditAccount(viewAccount) && (
-                  <button
-                    type="button"
-                    onClick={() => { const a = viewAccount; setViewAccount(null); openEdit(a); }}
-                    className="flex-1 py-2.5 bg-primary text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">edit</span>
-                    {t('common.edit')}
-                  </button>
-                )}
-                <button type="button" onClick={() => setHistoryAccount(viewAccount)} className="flex-1 py-2.5 border border-border-subtle text-text-muted text-xs font-bold rounded-xl flex items-center justify-center gap-1.5">
-                  <span className="material-symbols-outlined text-[16px]">history</span>
-                  {t('accounts.history')}
-                </button>
-                {viewAccount.userId === user?.uid && (
-                  <button type="button" onClick={() => openShare(viewAccount)} className="p-2.5 border border-border-subtle text-text-muted rounded-xl" aria-label={t('accounts.shareDetails')}>
-                    <span className="material-symbols-outlined text-[16px] block">share</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* --- Add/Edit account modal --- */}
       {showForm && (

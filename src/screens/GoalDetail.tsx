@@ -996,7 +996,7 @@ export default function GoalDetail() {
                       <button
                         key={a.id}
                         type="button"
-                        onClick={() => navigate(`/goals/accounts?open=${a.id}`)}
+                        onClick={() => navigate(`/goals/accounts/${a.id}`)}
                         className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 transition-colors text-left space-y-0.5"
                       >
                         <div className="flex items-center gap-1.5">
