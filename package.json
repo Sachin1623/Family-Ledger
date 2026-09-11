@@ -15,6 +15,7 @@
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^10.0.0",
     "@capacitor-community/contacts": "^8.0.0",
+    "@capacitor-community/in-app-review": "^8.0.0",
     "@capacitor-firebase/authentication": "^8.3.0",
     "@capacitor-firebase/messaging": "^8.5.1",
     "@capacitor/app": "^8.1.1",

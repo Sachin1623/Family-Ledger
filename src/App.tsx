@@ -111,6 +111,8 @@ import GameTurnIndicator from './components/GameTurnIndicator';
 import GlobalReminderScheduler from './components/GlobalReminderScheduler';
 import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
 import GlobalAlarmRingingBanner from './components/GlobalAlarmRingingBanner';
+import FeedbackRatingPrompt from './components/FeedbackRatingPrompt';
+import AppPermissionsReminder from './components/AppPermissionsReminder';
 import InviteBanner from './components/InviteBanner';
 import OnboardingTour from './components/OnboardingTour';
 import ProfileSetupWizard from './components/ProfileSetupWizard';
@@ -276,6 +278,8 @@ export default function App() {
           <GlobalReminderScheduler />
           <GlobalMedicineReminderScheduler />
           <GlobalAlarmRingingBanner />
+          <FeedbackRatingPrompt />
+          <AppPermissionsReminder />
           <InviteBanner />
           <ProfileSetupWizard />
           <OnboardingTour />
