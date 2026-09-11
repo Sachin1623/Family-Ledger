@@ -3446,12 +3446,19 @@ async function startServer() {
         const membersSnap = await db.collection('members').where('userId', '==', uid).get();
         membersSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
 
+        // Tracks every deleted expense doc across all three sources below (group-owned, added-by,
+        // paid-by), keyed by id so an expense that matches more than one of them (e.g. the user
+        // both added it AND is the payer) is only counted once when decrementing stats/global.
+        const deletedExpenses = new Map<string, FirebaseFirestore.DocumentData>();
+        let deletedGroupsCount = 0;
+
         const ownedGroupsSnap = await db.collection('groups').where('createdBy', '==', uid).get();
+        deletedGroupsCount += ownedGroupsSnap.size;
         for (const g of ownedGroupsSnap.docs) {
           const groupMembersSnap = await db.collection('members').where('groupId', '==', g.id).get();
           groupMembersSnap.docs.forEach((m) => ops.push((batch) => batch.delete(m.ref)));
           const groupExpensesSnap = await db.collection('expenses').where('groupId', '==', g.id).get();
-          groupExpensesSnap.docs.forEach((e) => ops.push((batch) => batch.delete(e.ref)));
+          groupExpensesSnap.docs.forEach((e) => { ops.push((batch) => batch.delete(e.ref)); deletedExpenses.set(e.id, e.data()); });
           ops.push((batch) => batch.delete(g.ref));
         }
 
@@ -3460,8 +3467,8 @@ async function startServer() {
           db.collection('expenses').where('paidBy', '==', uid).get(),
           db.collection('activities').where('userId', '==', uid).get(),
         ]);
-        addedExpensesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
-        paidExpensesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        addedExpensesSnap.docs.forEach((d) => { ops.push((batch) => batch.delete(d.ref)); deletedExpenses.set(d.id, d.data()); });
+        paidExpensesSnap.docs.forEach((d) => { ops.push((batch) => batch.delete(d.ref)); deletedExpenses.set(d.id, d.data()); });
         activitiesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
 
         // Goals (+ each one's ledger) and Financial Accounts (+ each one's log) — both owned
@@ -3536,6 +3543,29 @@ async function startServer() {
         ops.push((batch) => batch.delete(db.collection('accountDeletions').doc(uid)));
 
         await commitInChunks(db, ops);
+
+        // Keep the Platform Scale stats (About.tsx, backed by stats/global) from silently
+        // drifting upward forever — this whole wipe runs over the Admin SDK, so it bypasses every
+        // client-side updateGlobalStats() call site (those only fire from the app's own
+        // create/delete flows). The daily recompute cron (/api/cron/recompute-platform-stats) is
+        // the real safety net against drift from any cause, but decrementing here too keeps the
+        // number accurate immediately rather than waiting for the next scheduled run.
+        let deletedExpenseCount = 0;
+        let deletedExpenseAmount = 0;
+        deletedExpenses.forEach((data) => {
+          if (data.type === 'income') return; // stats never counted income in to begin with
+          deletedExpenseCount += 1;
+          deletedExpenseAmount += Number(data.amount) || 0;
+        });
+        await db.collection('stats').doc('global').set(
+          {
+            totalUsers: admin.firestore.FieldValue.increment(-1),
+            totalGroups: admin.firestore.FieldValue.increment(-deletedGroupsCount),
+            totalExpenses: admin.firestore.FieldValue.increment(-deletedExpenseCount),
+            totalAmount: admin.firestore.FieldValue.increment(-deletedExpenseAmount),
+          },
+          { merge: true },
+        );
 
         try {
           await adminAuth.deleteUser(uid);
@@ -10039,6 +10069,60 @@ async function startServer() {
     } catch (error) {
       console.error('cron/send-daily-reminders error:', error);
       return res.status(500).json({ error: 'Daily reminder job failed.' });
+    }
+  });
+
+  // Runs once a day (Cloud Scheduler job `familyledger-recompute-platform-stats`, registered
+  // separately — see project notes, no Cloud Scheduler IaC lives in this repo for any cron job).
+  // Recomputes `stats/global` (backing About.tsx's "Platform Scale" tile) from the real
+  // users/groups/expenses collections, instead of trusting the running increment/decrement total.
+  //
+  // That running total (see updateGlobalStats in statsService.ts, and the handful of
+  // admin.firestore.FieldValue.increment(...) call sites in this file) only ever stays correct if
+  // EVERY create/delete path remembers to adjust it — and at least one Admin-SDK path
+  // (/api/admin/wipe-by-email) went years without doing so, permanently inflating every number on
+  // the About page. This job is the actual safety net: it doesn't matter which code path drifted
+  // the count, a full recount from source once a day puts it back to true. `lastUpdatedAt` lets
+  // the About page show when the numbers were last confirmed accurate, since this is now a daily
+  // snapshot rather than a strictly real-time figure.
+  app.post('/api/cron/recompute-platform-stats', async (req, res) => {
+    const providedSecret = req.headers['x-cron-secret'];
+    if (!process.env.CRON_SECRET || providedSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    if (!adminDb) return res.status(500).json({ error: 'Firestore not available.' });
+    const db = adminDb;
+
+    try {
+      const [usersCountSnap, groupsCountSnap, expensesSnap] = await Promise.all([
+        db.collection('users').count().get(),
+        db.collection('groups').count().get(),
+        // Projection query (only the two fields actually needed) — this collection can be large,
+        // and a full-document fetch here would be wasteful compared to the aggregate counts above.
+        db.collection('expenses').select('type', 'amount').get(),
+      ]);
+
+      let totalExpenses = 0;
+      let totalAmount = 0;
+      expensesSnap.docs.forEach((d) => {
+        const data = d.data();
+        if (data.type === 'income') return; // never counted toward spend stats — see AddExpense.tsx
+        totalExpenses += 1;
+        totalAmount += Number(data.amount) || 0;
+      });
+
+      const lastUpdatedAt = new Date().toISOString();
+      const totalUsers = usersCountSnap.data().count;
+      const totalGroups = groupsCountSnap.data().count;
+      await db.collection('stats').doc('global').set(
+        { totalUsers, totalGroups, totalExpenses, totalAmount, lastUpdatedAt },
+        { merge: true },
+      );
+
+      return res.json({ ok: true, totalUsers, totalGroups, totalExpenses, totalAmount, lastUpdatedAt });
+    } catch (error) {
+      console.error('cron/recompute-platform-stats error:', error);
+      return res.status(500).json({ error: 'Failed to recompute platform stats.' });
     }
   });
 

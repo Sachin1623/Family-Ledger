@@ -5,6 +5,7 @@ import { db } from '../lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { initializeStatsIfEmpty } from '../services/statsService';
 import { getAppVersion } from '../lib/appVersion';
+import { formatRelativeTimeAgo } from '../lib/dateUtils';
 import { useAuth } from '../context/AuthContext';
 import { TOURS } from '../lib/tours';
 
@@ -103,10 +104,9 @@ export default function About() {
             </div>
             
             <div className="mt-8 pt-6 border-t border-white/10 flex items-center justify-between">
-               <div className="flex items-center gap-2">
-                 <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                 <p className="text-[9px] font-bold text-white/50 uppercase tracking-widest">Live Network Stats</p>
-               </div>
+               <p className="text-[9px] font-bold text-white/50 uppercase tracking-widest">
+                 {stats?.lastUpdatedAt ? `Updated ${formatRelativeTimeAgo(stats.lastUpdatedAt)}` : 'Updating…'}
+               </p>
                <p className="text-[9px] italic text-white/30">Verified & Secure</p>
             </div>
           </motion.div>
