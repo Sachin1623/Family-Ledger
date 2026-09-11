@@ -9194,6 +9194,115 @@ async function startServer() {
     }
   });
 
+  // Claim a placeholder trip participant (a name-only person on a split group's roster) for a
+  // real account that has since joined the group. Rewrites `paidBy` + `splitInfo.splits[].userId`
+  // across every expense in the group, plus `splitMembers`/`memberSplits` across every recurring
+  // rule, from the placeholder's id to the real uid (merging shares if the uid is already
+  // present), then marks the placeholder linked. Same Admin-SDK split-rewrite migrateUserData
+  // already does for an account merge. Any member can trigger it — either the joiner
+  // self-claiming or the organiser linking the pair.
+  app.post('/api/group/link-participant', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+
+    const groupId = String(req.body?.groupId || '');
+    const participantId = String(req.body?.participantId || '');
+    const targetUid = String(req.body?.targetUid || '');
+    if (!groupId || !participantId || !targetUid) {
+      return res.status(400).json({ error: 'groupId, participantId and targetUid are required.' });
+    }
+
+    try {
+      const callerSnap = await db.collection('members').doc(`${decoded.uid}_${groupId}`).get();
+      if (!callerSnap.exists) return res.status(403).json({ error: 'You must be a member of this group.' });
+
+      const targetSnap = await db.collection('members').doc(`${targetUid}_${groupId}`).get();
+      if (!targetSnap.exists) return res.status(400).json({ error: 'That person has not joined the group yet.' });
+
+      const groupRef = db.collection('groups').doc(groupId);
+      const groupSnap = await groupRef.get();
+      if (!groupSnap.exists) return res.status(404).json({ error: 'Group not found.' });
+      const participants = (groupSnap.data()?.participants || {}) as Record<string, any>;
+      const participant = participants[participantId];
+      if (!participant) return res.status(404).json({ error: 'That name is not on the roster.' });
+      if (participant.linkedUserId) return res.status(409).json({ error: 'That name is already linked to an account.' });
+
+      const ops: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+
+      const expSnap = await db.collection('expenses').where('groupId', '==', groupId).get();
+      let expensesUpdated = 0;
+      expSnap.docs.forEach((d) => {
+        const data = d.data();
+        const update: Record<string, any> = {};
+        if (data.paidBy === participantId) update.paidBy = targetUid;
+        const splits = data.splitInfo?.splits;
+        if (Array.isArray(splits) && splits.some((s: any) => s.userId === participantId)) {
+          const byId = new Map<string, any>();
+          for (const s of splits) {
+            const key = s.userId === participantId ? targetUid : s.userId;
+            if (byId.has(key)) {
+              const ex = byId.get(key);
+              ex.amount = (Number(ex.amount) || 0) + (Number(s.amount) || 0);
+              if (ex.percentage != null || s.percentage != null) ex.percentage = (Number(ex.percentage) || 0) + (Number(s.percentage) || 0);
+            } else {
+              byId.set(key, { ...s, userId: key });
+            }
+          }
+          update.splitInfo = { ...data.splitInfo, splits: Array.from(byId.values()) };
+        }
+        if (Object.keys(update).length > 0) {
+          ops.push((batch) => batch.update(d.ref, update));
+          expensesUpdated += 1;
+        }
+      });
+
+      const recSnap = await db.collection('recurringExpenses').where('groupId', '==', groupId).get();
+      let recurringUpdated = 0;
+      recSnap.docs.forEach((d) => {
+        const data = d.data();
+        const update: Record<string, any> = {};
+        if (data.paidBy === participantId) update.paidBy = targetUid;
+        if (Array.isArray(data.splitMembers) && data.splitMembers.includes(participantId)) {
+          update.splitMembers = Array.from(new Set(data.splitMembers.map((u: string) => (u === participantId ? targetUid : u))));
+        }
+        if (data.memberSplits && data.memberSplits[participantId] != null) {
+          const ms = { ...data.memberSplits };
+          ms[targetUid] = (Number(ms[targetUid]) || 0) + (Number(ms[participantId]) || 0);
+          delete ms[participantId];
+          update.memberSplits = ms;
+        }
+        if (Object.keys(update).length > 0) {
+          ops.push((batch) => batch.update(d.ref, update));
+          recurringUpdated += 1;
+        }
+      });
+
+      ops.push((batch) => batch.update(groupRef, { [`participants.${participantId}.linkedUserId`]: targetUid }));
+
+      await commitInChunks(db, ops);
+
+      try {
+        const actorName = decoded.name || callerSnap.data()?.displayName || 'Someone';
+        await db.collection('activities').add({
+          groupId, userId: decoded.uid, userName: actorName,
+          userPhoto: callerSnap.data()?.photoURL || '',
+          type: 'participant_linked',
+          description: `${actorName} linked "${participant.name}" to ${targetSnap.data()?.displayName || 'a member'}.`,
+          data: { participantId, targetUid, participantName: participant.name },
+          createdAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error('link-participant: activity log failed:', e);
+      }
+
+      return res.json({ ok: true, expensesUpdated, recurringUpdated });
+    } catch (error) {
+      console.error('link-participant error:', error);
+      return res.status(500).json({ error: 'Unable to link that name. Please try again.' });
+    }
+  });
+
   // Shared by the initial send, the single-request resend, and resend-all below — a feed entry +
   // push + in-app banner, exactly what a first-time request already got. Resending intentionally
   // fires every one of these again (not deduped/cooled-down) since the whole point of "resend" is

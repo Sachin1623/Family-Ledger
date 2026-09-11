@@ -16,6 +16,7 @@ import ExpenseQuickView from '../components/ExpenseQuickView';
 import FrequencyPicker from '../components/FrequencyPicker';
 import { FrequencyConfig, nextOccurrenceAfter, sanitizeFrequencyConfig } from '../lib/frequency';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
+import { buildRoster, participantNameMap } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
@@ -130,6 +131,13 @@ export default function GroupExpenses() {
     });
     return Array.from(unique.values());
   }, [membersValue]);
+
+  // id -> name for placeholder trip participants across every loaded group, so a split id that
+  // isn't a real member still resolves to its name instead of "Unknown".
+  const participantNames = useMemo(() => participantNameMap(allGroups), [allGroups]);
+  const resolveMember = (id: string): any =>
+    members.find((m: any) => m.userId === id)
+    || (participantNames.has(id) ? { userId: id, displayName: participantNames.get(id), photoURL: '', isPlaceholder: true } : undefined);
 
   const [expensesValue] = useCollection(
     groupId === 'all'
@@ -327,10 +335,26 @@ export default function GroupExpenses() {
 
   const editingGroupMembers = useMemo(() => {
     if (!editingExpense || !membersValue) return [];
-    return membersValue.docs
+    const real = membersValue.docs
       .map(doc => doc.data())
       .filter((m: any) => m.groupId === editingExpense.groupId);
-  }, [editingExpense, membersValue]);
+    return buildRoster(real as any[], allGroups.find((g: any) => g.id === editingExpense.groupId));
+  }, [editingExpense, membersValue, allGroups]);
+
+  // Warn before saving a split-participant change on a PAST-dated expense — it silently shifts
+  // what people who may have already settled up now owe (balances are always recomputed live).
+  const editSplitWarning = useMemo(() => {
+    if (!editingExpense?.splitInfo) return null;
+    const original = allExpenses.find((ex: any) => ex.id === editingExpense.id);
+    if (!original?.splitInfo) return null;
+    const before = new Set((original.splitInfo.splits || []).map((s: any) => s.userId));
+    const after = new Set((editingExpense.splitInfo.splits || []).map((s: any) => s.userId));
+    const changed = before.size !== after.size || [...after].some((id) => !before.has(id));
+    if (!changed) return null;
+    const isPast = editingExpense.date && editingExpense.date < new Date().toISOString().slice(0, 10);
+    return isPast ? t('groupExpenses.retroSplitWarning') : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingExpense, allExpenses]);
 
   const handleUpdateExpense = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -991,7 +1015,7 @@ export default function GroupExpenses() {
           <div className="divide-y divide-border-subtle">
             {pagedExpenses.length > 0 ? (
               pagedExpenses.map((expense: any) => {
-                const payer = members.find(m => m.userId === expense.paidBy);
+                const payer = resolveMember(expense.paidBy);
                 const isIncomeRow = expense.type === 'income';
                 const category = (isIncomeRow ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === expense.category);
                 const group = allGroups.find(g => g.id === expense.groupId);
@@ -1066,7 +1090,7 @@ export default function GroupExpenses() {
                             <span className="text-[8px] font-bold text-text-muted uppercase tracking-tight">{t('addExpense.sharedWith')}</span>
                             <div className="flex flex-wrap gap-1">
                               {expense.splitInfo.splits.map((s: any) => {
-                                const splitMember = members.find(m => m.userId === s.userId);
+                                const splitMember = resolveMember(s.userId);
                                 return (
                                   <div key={s.userId} className="flex items-center gap-0.5 bg-surface px-1.5 py-0.5 rounded-full border border-border-subtle shrink-0">
                                     <div className="w-2.5 h-2.5 rounded-full overflow-hidden bg-primary/10 flex-none scale-75">
@@ -1167,7 +1191,7 @@ export default function GroupExpenses() {
 
       {viewingExpense && (() => {
         const viewGroup = allGroups.find((g) => g.id === viewingExpense.groupId);
-        const payer = members.find((m) => m.userId === viewingExpense.paidBy);
+        const payer = resolveMember(viewingExpense.paidBy);
         return (
           <ExpenseQuickView
             expense={viewingExpense}
@@ -1175,7 +1199,7 @@ export default function GroupExpenses() {
             currencySymbol={getCurrencySymbol(viewGroup?.currency)}
             payerName={payer?.userId === user?.uid ? t('common.me') : (payer?.displayName || t('common.unknown'))}
             payerPhoto={payer?.photoURL}
-            members={members}
+            members={buildRoster(members as any[], viewGroup)}
             onClose={() => setViewingExpense(null)}
           />
         );
@@ -1575,6 +1599,12 @@ export default function GroupExpenses() {
                           </div>
                         )}
                       </div>
+                    )}
+                    {editSplitWarning && (
+                      <p className="text-[10px] font-bold text-warning bg-warning/10 rounded-lg px-2 py-1.5 flex items-start gap-1">
+                        <span className="material-symbols-outlined text-[13px] shrink-0">info</span>
+                        {editSplitWarning}
+                      </p>
                     )}
                   </div>
                 )}

@@ -474,7 +474,7 @@ const ro = {
   'settlements.youOwe': 'Datorezi',
   'settlements.whoOwesWho': 'Cine cui datorează?',
   'settlements.noActiveDebts': 'Nicio datorie activă în această vizualizare.',
-  'settlements.spendItems': 'Elemente de cheltuieli (împărțire activată)',
+  'settlements.spendItems': 'Elemente de cheltuieli',
   'settlements.you': 'Tu',
   'settlements.owesLine': '{{ower}} îi datorează lui {{receiver}}',
   'settlements.serverTrouble': 'Probleme la conectarea cu serverul — se afișează ultimele solduri încărcate cu succes.',

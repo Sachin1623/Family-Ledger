@@ -474,7 +474,7 @@ const ar = {
   'settlements.youOwe': 'عليك للآخرين',
   'settlements.whoOwesWho': 'من مدين لمن؟',
   'settlements.noActiveDebts': 'لا توجد ديون نشطة في هذا العرض.',
-  'settlements.spendItems': 'عناصر الإنفاق (التقسيم مفعّل)',
+  'settlements.spendItems': 'عناصر الإنفاق',
   'settlements.you': 'أنت',
   'settlements.owesLine': '{{ower}} مدين لـ {{receiver}}',
   'settlements.serverTrouble': 'هناك مشكلة في الوصول إلى الخادم — نعرض آخر الأرصدة التي تم تحميلها بنجاح.',

@@ -474,7 +474,7 @@ const hi = {
   'settlements.youOwe': 'आपको देना है',
   'settlements.whoOwesWho': 'किसे किससे लेना है?',
   'settlements.noActiveDebts': 'इस दृश्य में कोई सक्रिय बकाया नहीं है।',
-  'settlements.spendItems': 'खर्च आइटम (विभाजन सक्षम)',
+  'settlements.spendItems': 'खर्च आइटम',
   'settlements.you': 'आप',
   'settlements.owesLine': '{{ower}} {{receiver}} को देता है',
   'settlements.serverTrouble': 'सर्वर तक पहुंचने में समस्या हो रही है — आखिरी बार सफलतापूर्वक लोड किए गए बैलेंस दिखा रहे हैं।',

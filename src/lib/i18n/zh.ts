@@ -491,7 +491,7 @@ const zh = {
   'settlements.youOwe': '您欠别人',
   'settlements.whoOwesWho': '谁欠谁？',
   'settlements.noActiveDebts': '此视图中没有未结清的欠款。',
-  'settlements.spendItems': '支出项目（已启用分摊）',
+  'settlements.spendItems': '支出项目',
   'settlements.you': '您',
   'settlements.owesLine': '{{ower}} 欠 {{receiver}}',
   'settlements.serverTrouble': '连接服务器遇到问题 — 正在显示上次成功加载的余额。',

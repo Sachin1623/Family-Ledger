@@ -8,6 +8,8 @@ import { clsx } from 'clsx';
 import { Capacitor } from '@capacitor/core';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { claimPoints } from '../lib/pointsApi';
+import { linkGroupParticipant } from '../lib/inviteApi';
+import { placeholderRows } from '../lib/groupParticipants';
 
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 
@@ -48,6 +50,10 @@ export default function JoinGroup() {
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // After joining a split group that has name-only placeholder participants, offer to claim one
+  // ("are you Priya?") — links this account to that name and inherits its debts/credits.
+  const [claimCandidates, setClaimCandidates] = useState<{ userId: string; displayName: string }[]>([]);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchGroup = async () => {
@@ -155,6 +161,15 @@ export default function JoinGroup() {
       }
 
       claimPoints('group_milestone', { groupId: resolvedGroupId });
+
+      // If this group has name-only placeholder participants awaiting an account, let the joiner
+      // claim one instead of dropping them straight into the group.
+      const candidates = placeholderRows(group);
+      if (candidates.length > 0) {
+        setClaimCandidates(candidates.map((c) => ({ userId: c.userId, displayName: c.displayName })));
+        setJoining(false);
+        return;
+      }
       navigate(`/groups/${resolvedGroupId}`);
     } catch (err) {
       console.error('Join error:', err);
@@ -168,10 +183,64 @@ export default function JoinGroup() {
     }
   };
 
+  const handleClaim = async (participantId: string) => {
+    if (!user || !resolvedGroupId || claimingId) return;
+    setClaimingId(participantId);
+    try {
+      await linkGroupParticipant(resolvedGroupId, participantId, user.uid);
+    } catch (err) {
+      console.error('Failed to claim participant:', err);
+      // Non-fatal — they still joined; just carry on into the group.
+    } finally {
+      navigate(`/groups/${resolvedGroupId}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-surface flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (claimCandidates.length > 0) {
+    return (
+      <div className="min-h-screen bg-surface flex items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white w-full max-w-md p-8 rounded-3xl border border-border-subtle shadow-xl space-y-5 text-center"
+        >
+          <span className="material-symbols-outlined text-primary text-5xl">how_to_reg</span>
+          <div className="space-y-1">
+            <h1 className="text-xl font-bold text-primary">Are you one of these?</h1>
+            <p className="text-sm text-text-muted">
+              {group?.name} already has some names on its expense split. If one is you, pick it to
+              take over its share.
+            </p>
+          </div>
+          <div className="space-y-2">
+            {claimCandidates.map((c) => (
+              <button
+                key={c.userId}
+                onClick={() => handleClaim(c.userId)}
+                disabled={!!claimingId}
+                className="w-full py-3 rounded-xl border border-border-subtle font-bold text-on-surface hover:bg-surface disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {claimingId === c.userId && <span className="material-symbols-outlined animate-spin text-[16px]">sync</span>}
+                {c.displayName}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => navigate(`/groups/${resolvedGroupId}`)}
+            disabled={!!claimingId}
+            className="text-sm font-bold text-text-muted disabled:opacity-50"
+          >
+            None of these — I'm new
+          </button>
+        </motion.div>
       </div>
     );
   }

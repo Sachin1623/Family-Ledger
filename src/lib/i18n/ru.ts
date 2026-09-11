@@ -491,7 +491,7 @@ const ru = {
   'settlements.youOwe': 'Вы должны',
   'settlements.whoOwesWho': 'Кто кому должен?',
   'settlements.noActiveDebts': 'В этом представлении нет активных долгов.',
-  'settlements.spendItems': 'Позиции расходов (с разделением)',
+  'settlements.spendItems': 'Позиции расходов',
   'settlements.you': 'Вы',
   'settlements.owesLine': '{{ower}} должен(на) {{receiver}}',
   'settlements.serverTrouble': 'Проблемы с подключением к серверу — показаны последние успешно загруженные балансы.',

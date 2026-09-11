@@ -15,6 +15,7 @@ import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import DetailSheet, { DetailField } from '../components/DetailSheet';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
+import { buildRoster } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
 
 // Local YYYY-MM-DD (not UTC) — matches the to-do list's calendar, so "today" and each rule's
@@ -94,7 +95,10 @@ export default function RecurringExpenses() {
   const [groupMembersValue] = useCollection(
     groupId ? query(collection(db, 'members'), where('groupId', '==', groupId)) : null,
   );
-  const groupMembers = groupMembersValue?.docs.map((d) => d.data() as any) || [];
+  // Real members + this group's placeholder trip participants (name-only people) — see
+  // lib/groupParticipants.ts. A rule can split with a placeholder; server.ts's
+  // computeRecurringSplitInfo passes the id straight through when materialising.
+  const groupMembers = buildRoster(groupMembersValue?.docs.map((d) => d.data() as any) || [], selectedGroup);
 
   React.useEffect(() => {
     // Skip while editing — handleEditStart already prefilled these from the rule being edited,
@@ -895,10 +899,11 @@ export default function RecurringExpenses() {
                 <div className="space-y-1">
                   {viewingRule.splitMembers.map((uid: string) => {
                     const member = allMembers.find((m: any) => m.userId === uid);
+                    const placeholderName = (groups.find((g: any) => g.id === viewingRule.groupId)?.participants || {})[uid]?.name;
                     const share = viewingRule.memberSplits?.[uid];
                     return (
                       <div key={uid} className="flex items-center justify-between">
-                        <span>{member?.displayName || t('recurring.aMember')}</span>
+                        <span>{member?.displayName || placeholderName || t('recurring.aMember')}</span>
                         {viewingRule.splitType !== 'equally' && share != null && (
                           <span className="text-text-muted">
                             {viewingRule.splitType === 'percentage' ? `${share}%` : `${getCurrencySymbol(group?.currency)}${Number(share).toFixed(2)}`}

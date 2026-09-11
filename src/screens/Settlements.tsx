@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -36,8 +36,19 @@ export default function Settlements() {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { groupId: urlGroupId } = useParams();
-  
+  const [searchParams] = useSearchParams();
+
   const [selectedGroupId, setSelectedGroupId] = useState<string>(urlGroupId || 'overall');
+  // `/settlements/:groupId` is one route pattern — React Router reuses this component instance
+  // across same-pattern navigations (e.g. a deep link from a different group's Manage Members
+  // page while Settlements is already mounted), so the `useState` initializer above only fires on
+  // the very first mount. This keeps `selectedGroupId` in sync on every actual param change too.
+  const appliedGroupParamRef = useRef<string | undefined>(urlGroupId);
+  useEffect(() => {
+    if (urlGroupId === appliedGroupParamRef.current) return;
+    appliedGroupParamRef.current = urlGroupId;
+    setSelectedGroupId(urlGroupId || 'overall');
+  }, [urlGroupId]);
   const [loading, setLoading] = useState(false);
   const [selectedSettlement, setSelectedSettlement] = useState<SettlementDetailInfo | null>(null);
   const [quickViewExpense, setQuickViewExpense] = useState<any>(null);
@@ -101,7 +112,19 @@ export default function Settlements() {
       return acc;
     }, {});
   }
-  const allMembers = lastGoodMembersRef.current;
+  // Real members + placeholder trip participants, in one id -> {displayName, photoURL} map, so a
+  // split id that belongs to a name-only participant still resolves instead of showing "Unknown".
+  const allMembers = useMemo(() => {
+    const merged: Record<string, { displayName: string; photoURL: string }> = { ...lastGoodMembersRef.current };
+    for (const g of groups) {
+      const pmap = ((g as any)?.participants || {}) as Record<string, any>;
+      for (const [id, p] of Object.entries(pmap)) {
+        if (p && typeof p.name === 'string' && !merged[id]) merged[id] = { displayName: p.name, photoURL: '' };
+      }
+    }
+    return merged;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allMembersValue, groupsValue]);
   const hasStaleDataWarning = Boolean((expensesError || allMembersError) && (lastGoodExpensesRef.current.length > 0));
 
   const { balances, settlements, summary } = useMemo(() => {
@@ -247,6 +270,89 @@ export default function Settlements() {
     [allMembers],
   );
 
+  // --- Spend Items: who's currently in view, and the "filter by person" picker ---
+  // Sorted newest-first by spend date so the list (and its "10 most recent" cap) always shows
+  // the most recent spend items, regardless of Firestore's unordered `in`-query return order.
+  const scopedSpendExpenses = useMemo(
+    () =>
+      expenses
+        .filter((e) => e.splitInfo && (selectedGroupId === 'overall' || e.groupId === selectedGroupId))
+        .sort((a: any, b: any) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
+    [expenses, selectedGroupId],
+  );
+  // Only people who actually appear in the currently-scoped list (payer or split participant) —
+  // not every member of every group — so the picker never offers someone who'd just filter down
+  // to zero results.
+  const spendFilterCandidates = useMemo(() => {
+    const ids = new Set<string>();
+    scopedSpendExpenses.forEach((e: any) => {
+      if (e.paidBy) ids.add(e.paidBy);
+      (e.splitInfo?.splits || []).forEach((s: any) => { if (s.userId) ids.add(s.userId); });
+    });
+    return Array.from(ids)
+      .map((id) => ({
+        id,
+        name: id === user?.uid ? t('common.me') : (allMembers[id]?.displayName || t('common.unknown')),
+        photoURL: allMembers[id]?.photoURL || '',
+      }))
+      .sort((a, b) => (a.id === user?.uid ? -1 : b.id === user?.uid ? 1 : a.name.localeCompare(b.name)));
+  }, [scopedSpendExpenses, allMembers, user?.uid, t]);
+  const [spendUserFilter, setSpendUserFilter] = useState<Set<string>>(new Set());
+  const [showSpendFilterModal, setShowSpendFilterModal] = useState(false);
+  // Drop anyone no longer in view (switched group, etc.) so a stale selection can't silently
+  // hide the whole list with no visible reason.
+  useEffect(() => {
+    setSpendUserFilter((prev) => {
+      const candidateIds = new Set(spendFilterCandidates.map((c) => c.id));
+      const next = new Set(Array.from(prev).filter((id) => candidateIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spendFilterCandidates]);
+  const toggleSpendFilterUser = (id: string) => {
+    setSpendUserFilter((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+  // AND logic: when multiple people are selected, only show expenses that involve every one of
+  // them (as payer or split participant) — not expenses that involve any one of them.
+  const filteredSpendExpenses = useMemo(() => {
+    if (spendUserFilter.size === 0) return scopedSpendExpenses;
+    return scopedSpendExpenses.filter((e: any) => {
+      const involved = new Set<string>();
+      if (e.paidBy) involved.add(e.paidBy);
+      (e.splitInfo?.splits || []).forEach((s: any) => { if (s.userId) involved.add(s.userId); });
+      for (const id of spendUserFilter) {
+        if (!involved.has(id)) return false;
+      }
+      return true;
+    });
+  }, [scopedSpendExpenses, spendUserFilter]);
+
+  // Deep-link from ManageGroup's "in use" block message — pre-selects this person in the Spend
+  // Items filter and scrolls the section into view, so "delete blocked because of these expenses"
+  // leads straight to seeing them. Ref-guarded so it only applies once per distinct `member`
+  // value (this component instance is reused across same-pattern route navigations).
+  //
+  // Gated on `expensesValue !== undefined` rather than `!expensesLoading` — while `groupIds` is
+  // still empty (memberships not yet loaded), the expenses query passed to useCollection is
+  // `null`, which makes `expensesLoading` false prematurely (no query means "not loading", not
+  // "loaded"). Firing on that premature false would set spendUserFilter before real data exists,
+  // and the pre-existing "drop stale candidates" effect below would then immediately wipe it back
+  // out against that still-empty candidate list the moment it (re-)runs.
+  const memberParam = searchParams.get('member');
+  const appliedMemberParamRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!memberParam || memberParam === appliedMemberParamRef.current || !expensesValue) return;
+    appliedMemberParamRef.current = memberParam;
+    setSpendUserFilter(new Set([memberParam]));
+    requestAnimationFrame(() => {
+      document.getElementById('spend-items-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [memberParam, expensesValue]);
+
   if (expensesLoading) {
     return <div className="p-8 text-center text-text-muted">Loading settlements...</div>;
   }
@@ -387,10 +493,40 @@ export default function Settlements() {
         </section>
 
         {/* Details of items */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-black text-primary uppercase tracking-wider px-1">{t('settlements.spendItems')}</h2>
+        <section id="spend-items-section" className="space-y-4">
+          {/* Label gets a fixed 50% so the filter control always has equal room on the other
+              half — `min-w-0` lets the label itself shrink instead of forcing the row to
+              overflow, and the responsive text size is a second line of defense on very narrow
+              screens (the label is short enough this never actually needs to kick in). */}
+          <div className="flex items-center gap-2">
+            <div className="w-1/2 min-w-0">
+              <h2 className="text-xs sm:text-sm font-black text-primary uppercase tracking-wider px-1 leading-tight">
+                {t('settlements.spendItems')}
+              </h2>
+            </div>
+            <div className="w-1/2 min-w-0 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowSpendFilterModal(true)}
+                disabled={spendFilterCandidates.length === 0}
+                className={clsx(
+                  'flex items-center gap-1 pl-2.5 pr-2 py-1.5 rounded-full border text-[10px] sm:text-[11px] font-bold min-w-0 max-w-full disabled:opacity-40 transition-all',
+                  spendUserFilter.size > 0
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-white text-text-muted border-border-subtle hover:bg-surface',
+                )}
+              >
+                <span className="material-symbols-outlined text-[14px] shrink-0">filter_list</span>
+                <span className="truncate">
+                  {spendUserFilter.size === 0 ? t('settlements.filterBySpender') : t('settlements.filteredByCount', { count: spendUserFilter.size })}
+                </span>
+              </button>
+            </div>
+          </div>
           <div className="space-y-2">
-            {expenses.filter(e => e.splitInfo && (selectedGroupId === 'overall' || e.groupId === selectedGroupId)).slice(0, 10).map((expense) => {
+            {filteredSpendExpenses.length === 0 ? (
+              <p className="text-xs text-text-muted text-center py-6">{t('settlements.noMatchingSpendItems')}</p>
+            ) : filteredSpendExpenses.slice(0, 10).map((expense) => {
               const payerName = allMembers[expense.paidBy]?.displayName || t('common.unknown');
               const payerIsMe = expense.paidBy === user?.uid;
               
@@ -455,7 +591,7 @@ export default function Settlements() {
                 </div>
               );
             })}
-            {expenses.filter(e => e.splitInfo && (selectedGroupId === 'overall' || e.groupId === selectedGroupId)).length > 10 && (
+            {filteredSpendExpenses.length > 10 && (
               <p className="text-center text-[10px] text-text-muted italic">{t('settlements.onlyShowingRecent')}</p>
             )}
           </div>
@@ -482,6 +618,65 @@ export default function Settlements() {
           members={membersArray}
           onClose={() => setQuickViewExpense(null)}
         />
+      )}
+
+      {showSpendFilterModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowSpendFilterModal(false)}>
+          <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-primary">{t('settlements.filterSpendItemsTitle')}</h3>
+              <button onClick={() => setShowSpendFilterModal(false)} className="p-1 text-text-muted hover:bg-surface rounded-full">
+                <span className="material-symbols-outlined text-[18px] block">close</span>
+              </button>
+            </div>
+            <p className="text-xs text-text-muted">{t('settlements.filterSpendItemsHint')}</p>
+            <div className="space-y-1.5">
+              {spendFilterCandidates.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => toggleSpendFilterUser(c.id)}
+                  className={clsx(
+                    'w-full flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all',
+                    spendUserFilter.has(c.id) ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle hover:bg-surface',
+                  )}
+                >
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/10 border border-border-subtle shrink-0">
+                    {c.photoURL ? (
+                      <img src={c.photoURL} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-xs font-bold text-primary">{c.name.slice(0, 1)}</div>
+                    )}
+                  </div>
+                  <span className="flex-1 text-sm font-bold text-on-surface truncate">{c.name}</span>
+                  <span className={clsx(
+                    'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
+                    spendUserFilter.has(c.id) ? 'bg-primary border-primary' : 'border-border-subtle',
+                  )}>
+                    {spendUserFilter.has(c.id) && <span className="material-symbols-outlined text-[14px] text-white">check</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setSpendUserFilter(new Set())}
+                disabled={spendUserFilter.size === 0}
+                className="flex-1 py-2.5 border border-border-subtle text-text-muted text-xs font-bold rounded-xl disabled:opacity-40"
+              >
+                {t('settlements.clearFilter')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSpendFilterModal(false)}
+                className="flex-1 py-2.5 bg-primary text-white text-xs font-bold rounded-xl"
+              >
+                {t('common.done')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

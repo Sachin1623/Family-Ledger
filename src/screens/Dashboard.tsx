@@ -7,6 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact, getCategoryClassification } from '../lib/constants';
 import ExpenseQuickView from '../components/ExpenseQuickView';
+import { buildRoster } from '../lib/groupParticipants';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { FAVORITABLE_BY_KEY } from '../lib/favorites';
 import { getBudgetStatus } from '../lib/budget';
@@ -1121,22 +1122,22 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
       )
     )}
 
-    {quickViewExpense && (
+    {quickViewExpense && (() => {
+      const roster = buildRoster(members as any[], group);
+      const qvPayer = roster.find((m: any) => m.userId === quickViewExpense.paidBy);
+      return (
       <ExpenseQuickView
         expense={quickViewExpense}
         groupId={groupId}
         currencySymbol={currencySymbol}
-        payerName={
-          members.find((m: any) => m.userId === quickViewExpense.paidBy)?.userId === user?.uid
-            ? 'Me'
-            : (members.find((m: any) => m.userId === quickViewExpense.paidBy)?.displayName || 'Unknown')
-        }
-        payerPhoto={members.find((m: any) => m.userId === quickViewExpense.paidBy)?.photoURL}
-        members={members}
+        payerName={qvPayer?.userId === user?.uid ? 'Me' : (qvPayer?.displayName || 'Unknown')}
+        payerPhoto={qvPayer?.photoURL}
+        members={roster}
         onClose={() => setQuickViewExpense(null)}
         returnTo="/"
       />
-    )}
+      );
+    })()}
 
     {showQuickActions && (
       <GroupQuickActionsMenu

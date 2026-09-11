@@ -474,7 +474,7 @@ const de = {
   'settlements.youOwe': 'Du schuldest',
   'settlements.whoOwesWho': 'Wer schuldet wem?',
   'settlements.noActiveDebts': 'Keine offenen Schulden in dieser Ansicht.',
-  'settlements.spendItems': 'Ausgabenposten (Aufteilung aktiviert)',
+  'settlements.spendItems': 'Ausgabenposten',
   'settlements.you': 'Du',
   'settlements.owesLine': '{{ower}} schuldet {{receiver}}',
   'settlements.serverTrouble': 'Probleme beim Erreichen des Servers — zeige die zuletzt erfolgreich geladenen Salden.',

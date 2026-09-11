@@ -474,7 +474,7 @@ const fr = {
   'settlements.youOwe': 'Vous devez',
   'settlements.whoOwesWho': 'Qui doit à qui ?',
   'settlements.noActiveDebts': 'Aucune dette active dans cette vue.',
-  'settlements.spendItems': 'Postes de dépenses (partage activé)',
+  'settlements.spendItems': 'Postes de dépenses',
   'settlements.you': 'Vous',
   'settlements.owesLine': '{{ower}} doit à {{receiver}}',
   'settlements.serverTrouble': 'Problème pour joindre le serveur — affichage des derniers soldes chargés avec succès.',

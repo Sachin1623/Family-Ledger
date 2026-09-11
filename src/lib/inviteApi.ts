@@ -75,3 +75,25 @@ export async function searchUsers(query: string, groupId?: string): Promise<Foun
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
   return data.users || [];
 }
+
+// Claims a placeholder trip participant (a name on the group's roster with no account) for a real
+// account that has joined the group — the backend rewrites every expense + recurring rule in the
+// group from the placeholder's id to `targetUid`, then marks the placeholder linked. Callable by
+// the organiser (linking the pair) or the joiner (self-claiming their own name).
+export async function linkGroupParticipant(
+  groupId: string,
+  participantId: string,
+  targetUid: string,
+): Promise<{ ok: true; expensesUpdated: number; recurringUpdated: number }> {
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error('Not signed in.');
+
+  const res = await fetch('/api/group/link-participant', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, participantId, targetUid }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
+  return data;
+}

@@ -11,7 +11,8 @@ import {
   EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification,
   getAllGroupCategories, getCategoryNameOverride, makeCustomCategoryId, CustomCategory,
 } from '../lib/constants';
-import { inviteToGroup, inviteUserToGroup, searchUsers, FoundUser } from '../lib/inviteApi';
+import { inviteToGroup, inviteUserToGroup, searchUsers, linkGroupParticipant, FoundUser } from '../lib/inviteApi';
+import { placeholderRows, participantInUse, participantExpenseCount, participantInRecurringUse } from '../lib/groupParticipants';
 import { useFriendships } from '../lib/useFriendships';
 import { claimPoints, getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
 import { getBudgetStatus } from '../lib/budget';
@@ -123,8 +124,20 @@ export default function ManageGroup() {
   const [categoryBudgetError, setCategoryBudgetError] = useState<string | null>(null);
   // Invite tab used to show all four invite methods (WhatsApp/SMS, email, user search, friends)
   // stacked and always expanded — now a picker menu, each method opening its own focused panel.
-  const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | 'contacts' | null>(null);
+  const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | 'contacts' | 'placeholder' | null>(null);
   const [friendInviteSearch, setFriendInviteSearch] = useState('');
+
+  // Placeholder participants — people added to a split group BY NAME who don't have an app
+  // account yet, so their share of expenses can still be split (see lib/groupParticipants.ts).
+  const [newParticipantName, setNewParticipantName] = useState('');
+  const [addingParticipant, setAddingParticipant] = useState(false);
+  const [linkParticipantId, setLinkParticipantId] = useState<string | null>(null);
+  const [participantBusyId, setParticipantBusyId] = useState<string | null>(null);
+  const [participantError, setParticipantError] = useState<string | null>(null);
+  // Set to a participant's id when a delete attempt is blocked because they're still referenced
+  // in expenses/recurring rules — drives the "used in N expenses [View]" line under that row,
+  // distinct from `participantError` (a plain string used for genuine add/link/remove failures).
+  const [participantBlockedId, setParticipantBlockedId] = useState<string | null>(null);
 
   // Browse phone contacts natively (not the flaky Web Contact Picker used by the WhatsApp/SMS
   // panel below, which isn't reliably available inside the installed app's WebView) and multi-
@@ -418,6 +431,66 @@ export default function ManageGroup() {
   const currentMember = members.find((m: any) => m.userId === user?.uid);
   const isAdminOrOwner = currentMember?.role === 'admin' || currentMember?.role === 'owner';
   const isCreator = !!user?.uid && group?.createdBy === user.uid;
+
+  // Placeholder (name-only) participants still awaiting a real account.
+  const placeholders = placeholderRows(group);
+  const groupExpensesForCheck = (groupExpensesValue?.docs || []).map((d) => ({ id: d.id, ...(d.data() as any) }));
+
+  const handleAddParticipant = async () => {
+    const name = newParticipantName.trim();
+    if (!name || !groupId || !user || addingParticipant) return;
+    setAddingParticipant(true);
+    setParticipantError(null);
+    try {
+      const id = doc(collection(db, 'groups')).id; // reuse Firestore's id generator for a safe key
+      await updateDoc(doc(db, 'groups', groupId), {
+        [`participants.${id}`]: { name, addedBy: user.uid, linkedUserId: null, createdAt: new Date().toISOString() },
+      });
+      setNewParticipantName('');
+    } catch (err) {
+      console.error('Failed to add participant:', err);
+      setParticipantError(t('manageGroup.participantAddFailed'));
+    } finally {
+      setAddingParticipant(false);
+    }
+  };
+
+  const handleLinkParticipant = async (participantId: string, targetUid: string) => {
+    if (!groupId || participantBusyId) return;
+    setParticipantBusyId(participantId);
+    setParticipantError(null);
+    try {
+      await linkGroupParticipant(groupId, participantId, targetUid);
+      setLinkParticipantId(null);
+    } catch (err: any) {
+      console.error('Failed to link participant:', err);
+      setParticipantError(err?.message || t('manageGroup.participantLinkFailed'));
+    } finally {
+      setParticipantBusyId(null);
+    }
+  };
+
+  const handleRemoveParticipant = async (participantId: string) => {
+    if (!groupId || participantBusyId) return;
+    if (participantInUse(participantId, groupExpensesForCheck, recurringRules)) {
+      setParticipantError(null);
+      setParticipantBlockedId(participantId);
+      return;
+    }
+    setParticipantBlockedId(null);
+    setParticipantBusyId(participantId);
+    setParticipantError(null);
+    try {
+      const next = { ...(group?.participants || {}) };
+      delete next[participantId];
+      await updateDoc(doc(db, 'groups', groupId), { participants: next });
+    } catch (err) {
+      console.error('Failed to remove participant:', err);
+      setParticipantError(t('manageGroup.participantRemoveFailed'));
+    } finally {
+      setParticipantBusyId(null);
+    }
+  };
 
   const handleToggleSplit = async () => {
     try {
@@ -1309,6 +1382,7 @@ export default function ManageGroup() {
                 ['email', 'mail', 'manageGroup.inviteByEmail'],
                 ['search', 'person_search', 'manageGroup.searchUsersLabel'],
                 ...(addableFriends.length > 0 ? [['friends', 'group_add', 'manageGroup.inviteFromFriends'] as const] : []),
+                ...(group?.splitEnabled ? [['placeholder', 'badge', 'manageGroup.addOffApp'] as const] : []),
               ] as const).map(([key, icon, labelKey]) => (
                 <button
                   key={key}
@@ -1513,6 +1587,86 @@ export default function ManageGroup() {
               </div>
             ))}
           </div>
+
+          {placeholders.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wide px-1">{t('manageGroup.notOnAppYet')}</p>
+              {participantError && <p className="text-[11px] font-medium text-error px-1">{participantError}</p>}
+              {placeholders.map((p) => {
+                const blockedExpenseCount = participantBlockedId === p.userId ? participantExpenseCount(p.userId, groupExpensesForCheck) : 0;
+                const blockedByRecurringOnly = participantBlockedId === p.userId && blockedExpenseCount === 0 && participantInRecurringUse(p.userId, recurringRules);
+                return (
+                <div key={p.userId} className="bg-white p-3 rounded-2xl border border-dashed border-border-subtle shadow-sm space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-full bg-surface flex items-center justify-center text-text-muted shrink-0">
+                        <span className="material-symbols-outlined text-[18px]">person</span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-on-surface truncate">{p.displayName}</p>
+                        <p className="text-[10px] text-text-muted">{t('manageGroup.placeholderSub')}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => { setLinkParticipantId(linkParticipantId === p.userId ? null : p.userId); setParticipantError(null); setParticipantBlockedId(null); }}
+                        className="text-[10px] font-bold text-primary border border-primary/30 px-2 py-1.5 rounded-lg hover:bg-primary/5"
+                      >
+                        {t('manageGroup.linkToMember')}
+                      </button>
+                      <button
+                        onClick={() => handleRemoveParticipant(p.userId)}
+                        disabled={participantBusyId === p.userId}
+                        className="text-error hover:scale-110 transition-all p-1 disabled:opacity-50"
+                        title={t('manageGroup.removeFromGroup')}
+                      >
+                        <span className="material-symbols-outlined text-lg">{participantBusyId === p.userId ? 'sync' : 'delete'}</span>
+                      </button>
+                    </div>
+                  </div>
+                  {participantBlockedId === p.userId && (
+                    <div className="pl-[52px] flex items-center flex-wrap gap-x-2 gap-y-0.5">
+                      <p className="text-[11px] font-medium text-error">
+                        {blockedByRecurringOnly
+                          ? t('manageGroup.participantInRecurringUse')
+                          : t('manageGroup.participantInUse', { count: blockedExpenseCount })}
+                      </p>
+                      {blockedExpenseCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/settlements/${groupId}?member=${p.userId}`)}
+                          className="text-[11px] font-bold text-primary hover:underline shrink-0"
+                        >
+                          {t('manageGroup.viewInSettlements')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                );
+              })}
+              {linkParticipantId && (
+                <div className="bg-surface/60 rounded-2xl border border-border-subtle p-3 space-y-1.5">
+                  <p className="text-[11px] font-bold text-text-muted px-1">
+                    {t('manageGroup.linkPickMember', { name: placeholders.find((p) => p.userId === linkParticipantId)?.displayName || '' })}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {members.filter((m: any) => m.userId !== user?.uid || true).map((m: any) => (
+                      <button
+                        key={m.id}
+                        onClick={() => handleLinkParticipant(linkParticipantId, m.userId)}
+                        disabled={participantBusyId === linkParticipantId}
+                        className="px-3 py-1.5 rounded-full text-xs font-bold border border-border-subtle bg-white text-text-muted flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {participantBusyId === linkParticipantId ? <span className="material-symbols-outlined animate-spin text-[14px]">sync</span> : m.displayName}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setLinkParticipantId(null)} className="text-[11px] font-bold text-text-muted px-1 pt-1">{t('common.cancel')}</button>
+                </div>
+              )}
+            </div>
+          )}
         </section>
         </>
         )}
@@ -2120,6 +2274,7 @@ export default function ManageGroup() {
                       : inviteMethodPanel === 'whatsapp' ? 'manageGroup.inviteViaWhatsapp'
                       : inviteMethodPanel === 'email' ? 'manageGroup.inviteByEmail'
                       : inviteMethodPanel === 'search' ? 'manageGroup.searchUsersLabel'
+                      : inviteMethodPanel === 'placeholder' ? 'manageGroup.addOffApp'
                       : 'manageGroup.inviteFromFriends',
                   )}
                 </h3>
@@ -2378,6 +2533,42 @@ export default function ManageGroup() {
                       </div>
                     );
                   })()}
+                </div>
+              )}
+
+              {inviteMethodPanel === 'placeholder' && (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-text-muted px-1">{t('manageGroup.addOffAppHelp')}</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newParticipantName}
+                      onChange={(e) => setNewParticipantName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !addingParticipant) handleAddParticipant(); }}
+                      placeholder={t('manageGroup.addOffAppPlaceholder')}
+                      autoFocus
+                      maxLength={60}
+                      className="flex-1 min-w-0 px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
+                    />
+                    <button
+                      onClick={handleAddParticipant}
+                      disabled={addingParticipant || !newParticipantName.trim()}
+                      className="px-4 bg-primary text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all disabled:opacity-50 flex-shrink-0"
+                    >
+                      <span className={clsx('material-symbols-outlined text-[16px]', addingParticipant && 'animate-spin')}>{addingParticipant ? 'sync' : 'add'}</span>
+                      <span>{t('manageGroup.add')}</span>
+                    </button>
+                  </div>
+                  {participantError && <p className="text-[11px] font-medium text-error px-1">{participantError}</p>}
+                  {placeholders.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {placeholders.map((p) => (
+                        <span key={p.userId} className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-surface border border-border-subtle text-text-muted">
+                          {p.displayName}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </motion.div>

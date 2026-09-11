@@ -171,7 +171,11 @@ service cloud.firestore {
       allow create: if isUserVerified() && isValidGroup(incoming()) && incoming().createdBy == request.auth.uid;
       allow update: if (canModifyGroup(groupId) || existsAfter(/databases/$(database)/documents/members/$(request.auth.uid + '_' + groupId))) && (
         (isAdmin(groupId) && isValidGroup(incoming())) ||
-        (incoming().diff(existing()).affectedKeys().hasOnly(['totalSpending', 'totalIncome', 'memberCount', 'icon', 'coverImage', 'photoURL']))
+        // `participants` = the placeholder trip-roster map ({ id: { name, addedBy, linkedUserId,
+        // createdAt } }) — a name-only person whose id is used directly as a splitInfo.splits[]
+        // userId until they join and the server's /api/group/link-participant rewrites it. Any
+        // member can edit the roster, same "not admin-gated" model as group invites.
+        (incoming().diff(existing()).affectedKeys().hasOnly(['totalSpending', 'totalIncome', 'memberCount', 'icon', 'coverImage', 'photoURL', 'participants']))
       );
       allow delete: if isSignedIn() && resource.data.keys().hasAll(['createdBy']) && resource.data.createdBy == request.auth.uid;
 

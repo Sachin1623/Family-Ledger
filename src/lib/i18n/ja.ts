@@ -491,7 +491,7 @@ const ja = {
   'settlements.youOwe': 'あなたが支払う額',
   'settlements.whoOwesWho': '誰が誰に支払うか?',
   'settlements.noActiveDebts': 'この表示には未精算の債務はありません。',
-  'settlements.spendItems': '支出項目(割り勘対象)',
+  'settlements.spendItems': '支出項目',
   'settlements.you': 'あなた',
   'settlements.owesLine': '{{ower}}は{{receiver}}に支払う',
   'settlements.serverTrouble': 'サーバーへの接続に問題が発生しています — 最後に正常に読み込まれた残高を表示しています。',

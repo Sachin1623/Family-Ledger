@@ -21,6 +21,7 @@ import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
 import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
 
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
+import { buildRoster } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
@@ -62,6 +63,15 @@ export default function AddExpense() {
   const [splitType, setSplitType] = useState<'equally' | 'percentage' | 'amount'>('equally');
   const [memberSplits, setMemberSplits] = useState<Record<string, number>>({});
   const [images, setImages] = useState<string[]>([]);
+
+  // Inline "add a member" for split-enabled groups — lets the user add a placeholder trip
+  // participant (someone not on the app yet) right from the split picker, without navigating
+  // away to Manage Group. Writes straight to the live `groups` doc, so `groupMembers` (built via
+  // buildRoster, above) picks the new name up automatically via the existing useCollection query.
+  const [addingSplitMember, setAddingSplitMember] = useState(false);
+  const [newSplitMemberName, setNewSplitMemberName] = useState('');
+  const [addingSplitMemberBusy, setAddingSplitMemberBusy] = useState(false);
+  const [addSplitMemberError, setAddSplitMemberError] = useState<string | null>(null);
 
   // Optional "also make this recurring" — creates a normal recurringExpenses rule (same schema
   // RecurringExpenses.tsx writes) alongside the one-time entry being saved right now, so a user
@@ -113,7 +123,34 @@ export default function AddExpense() {
   const [groupMembersValue] = useCollection(
     groupId ? query(collection(db, 'members'), where('groupId', '==', groupId)) : null
   );
-  const groupMembers = groupMembersValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  const groupMembersReal = groupMembersValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  // `groupMembers` for the split pickers = real members + this group's placeholder trip
+  // participants (name-only people who can still owe a share — see lib/groupParticipants.ts).
+  // Their id flows straight into splitInfo.splits[].userId / paidBy; the balance engine already
+  // handles it, and Settlements/QuickView resolve the name via the same participant map.
+  const groupMembers = buildRoster(groupMembersReal, groups.find((g: any) => g.id === groupId));
+
+  const handleAddSplitMember = async () => {
+    const name = newSplitMemberName.trim();
+    if (!name || !groupId || !user || addingSplitMemberBusy) return;
+    setAddingSplitMemberBusy(true);
+    setAddSplitMemberError(null);
+    try {
+      const id = doc(collection(db, 'groups')).id; // reuse Firestore's id generator for a safe key
+      await updateDoc(doc(db, 'groups', groupId), {
+        [`participants.${id}`]: { name, addedBy: user.uid, linkedUserId: null, createdAt: new Date().toISOString() },
+      });
+      // They were just added specifically to be part of this expense — include them right away.
+      setSplitMembers((prev) => [...prev, id]);
+      setNewSplitMemberName('');
+      setAddingSplitMember(false);
+    } catch (err) {
+      console.error('Failed to add split participant:', err);
+      setAddSplitMemberError(t('addExpense.addParticipantFailed'));
+    } finally {
+      setAddingSplitMemberBusy(false);
+    }
+  };
 
   // A "settle up" deep link from Settlements.tsx's who-owes-who view or a payment-reminder tap
   // (see server.ts's /api/settlement-reminder and pushNotifications.ts/FeedList.tsx's
@@ -930,7 +967,50 @@ export default function AddExpense() {
                     )}
                   </button>
                 ))}
+                {!addingSplitMember && (
+                  <button
+                    type="button"
+                    onClick={() => { setAddingSplitMember(true); setAddSplitMemberError(null); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-dashed border-primary/40 text-[11px] font-bold text-primary hover:bg-primary/5 transition-all shadow-sm"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">person_add</span>
+                    {t('addExpense.addMember')}
+                  </button>
+                )}
               </div>
+              {addingSplitMember && (
+                <div className="px-1 space-y-1.5">
+                  <p className="text-[10px] text-text-muted">{t('addExpense.addMemberHint')}</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newSplitMemberName}
+                      onChange={(e) => setNewSplitMemberName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !addingSplitMemberBusy) handleAddSplitMember(); }}
+                      placeholder={t('addExpense.addMemberPlaceholder')}
+                      autoFocus
+                      maxLength={60}
+                      className="flex-1 min-w-0 px-3 py-2 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddSplitMember}
+                      disabled={addingSplitMemberBusy || !newSplitMemberName.trim()}
+                      className="px-3.5 bg-primary text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 active:scale-[0.98] transition-all disabled:opacity-50 shrink-0"
+                    >
+                      <span className={clsx('material-symbols-outlined text-[16px]', addingSplitMemberBusy && 'animate-spin')}>{addingSplitMemberBusy ? 'sync' : 'check'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAddingSplitMember(false); setNewSplitMemberName(''); setAddSplitMemberError(null); }}
+                      className="px-3.5 bg-white border border-border-subtle text-text-muted rounded-xl text-xs font-bold flex items-center justify-center shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </div>
+                  {addSplitMemberError && <p className="text-[10px] font-medium text-error">{addSplitMemberError}</p>}
+                </div>
+              )}
             </section>
 
             <section className="space-y-2">

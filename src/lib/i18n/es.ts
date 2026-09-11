@@ -474,7 +474,7 @@ const es = {
   'settlements.youOwe': 'Debes',
   'settlements.whoOwesWho': '¿Quién le debe a quién?',
   'settlements.noActiveDebts': 'No hay deudas activas en esta vista.',
-  'settlements.spendItems': 'Elementos de gasto (división activada)',
+  'settlements.spendItems': 'Elementos de gasto',
   'settlements.you': 'Tú',
   'settlements.owesLine': '{{ower}} le debe a {{receiver}}',
   'settlements.serverTrouble': 'Problemas para conectar con el servidor — mostrando los últimos saldos cargados correctamente.',

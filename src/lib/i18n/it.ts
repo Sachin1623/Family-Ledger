@@ -491,7 +491,7 @@ const it = {
   'settlements.youOwe': 'Devi',
   'settlements.whoOwesWho': 'Chi deve a chi?',
   'settlements.noActiveDebts': 'Nessun debito attivo in questa vista.',
-  'settlements.spendItems': 'Voci di spesa (divisione attiva)',
+  'settlements.spendItems': 'Voci di spesa',
   'settlements.you': 'Tu',
   'settlements.owesLine': '{{ower}} deve a {{receiver}}',
   'settlements.serverTrouble': 'Problemi nel raggiungere il server — vengono mostrati gli ultimi saldi caricati correttamente.',
