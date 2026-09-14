@@ -9,12 +9,13 @@ import { db } from '../lib/firebase';
 import { getCurrencySymbol } from '../lib/constants';
 import { todayLocalDateString } from '../lib/dateUtils';
 import {
-  Policy, POLICY_TYPES, PREMIUM_FREQUENCIES, PolicyType, PremiumFrequency,
+  Policy, POLICY_TYPES, PREMIUM_FREQUENCIES, PolicyType, PremiumFrequency, CoveredMember,
   toMinorUnits, fromMinorUnits, validatePolicyName, validateAmountMinor, validateRenewalDate,
   decryptPolicyAmounts, encryptPolicyAmounts,
 } from '../lib/policies';
 import { useSharePicker } from '../lib/useSharePicker';
 import SharePickerFields from '../components/SharePickerFields';
+import ImageAttachments from '../components/ImageAttachments';
 
 // Create/Edit — same form for both; editing loads the existing policy via the :policyId route
 // param. Structurally mirrors GoalWizard.tsx (same modal shell, same share picker — now via the
@@ -39,8 +40,10 @@ export default function PolicyWizard() {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
   const [policyNumber, setPolicyNumber] = useState('');
-  const [membersCovered, setMembersCovered] = useState<string[]>([]);
+  const [membersCovered, setMembersCovered] = useState<CoveredMember[]>([]);
   const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberId, setNewMemberId] = useState('');
+  const [images, setImages] = useState<string[]>([]);
   const [sumInsured, setSumInsured] = useState('');
   const [premiumAmount, setPremiumAmount] = useState('');
   const [premiumFrequency, setPremiumFrequency] = useState<PremiumFrequency | ''>('');
@@ -76,6 +79,7 @@ export default function PolicyWizard() {
         setProvider(p.provider);
         setPolicyNumber(p.policyNumber);
         setMembersCovered(p.membersCovered || []);
+        setImages(p.images || []);
         setSumInsured(p.sumInsuredMinor != null ? String(fromMinorUnits(p.sumInsuredMinor)) : '');
         setPremiumAmount(p.premiumAmountMinor != null ? String(fromMinorUnits(p.premiumAmountMinor)) : '');
         setPremiumFrequency(p.premiumFrequency || '');
@@ -93,11 +97,12 @@ export default function PolicyWizard() {
 
   const addMember = () => {
     const trimmed = newMemberName.trim();
-    if (!trimmed || membersCovered.includes(trimmed)) return;
-    setMembersCovered((prev) => [...prev, trimmed]);
+    if (!trimmed || membersCovered.some((m) => m.name === trimmed)) return;
+    setMembersCovered((prev) => [...prev, { name: trimmed, memberId: newMemberId.trim() || null }]);
     setNewMemberName('');
+    setNewMemberId('');
   };
-  const removeMember = (name: string) => setMembersCovered((prev) => prev.filter((m) => m !== name));
+  const removeMember = (name: string) => setMembersCovered((prev) => prev.filter((m) => m.name !== name));
 
   const handleSave = async () => {
     if (!user || saving) return;
@@ -129,6 +134,7 @@ export default function PolicyWizard() {
         await updateDoc(doc(db, 'policies', editingPolicy.id), {
           type, name: name.trim(), provider: provider.trim(), policyNumber: policyNumber.trim(),
           membersCovered,
+          images,
           sumInsuredMinor: encryptedAmounts.sumInsuredMinor,
           premiumAmountMinor: encryptedAmounts.premiumAmountMinor,
           premiumFrequency: premiumFrequency || null,
@@ -155,6 +161,7 @@ export default function PolicyWizard() {
           userId: user.uid,
           type, name: name.trim(), provider: provider.trim(), policyNumber: policyNumber.trim(),
           membersCovered,
+          images,
           sumInsuredMinor: null,
           premiumAmountMinor: null,
           premiumFrequency: premiumFrequency || null,
@@ -253,9 +260,10 @@ export default function PolicyWizard() {
             <p className="text-[10px] text-text-muted px-1">{t('policies.membersCoveredDesc')}</p>
             <div className="flex flex-wrap gap-1.5">
               {membersCovered.map((m) => (
-                <span key={m} className="flex items-center gap-1 bg-primary/5 border border-primary/20 text-primary text-xs font-bold px-2.5 py-1.5 rounded-full">
-                  {m}
-                  <button type="button" onClick={() => removeMember(m)} className="text-primary/60 hover:text-error">
+                <span key={m.name} className="flex items-center gap-1 bg-primary/5 border border-primary/20 text-primary text-xs font-bold px-2.5 py-1.5 rounded-full">
+                  {m.name}
+                  {m.memberId && <span className="font-medium text-primary/70">· {m.memberId}</span>}
+                  <button type="button" onClick={() => removeMember(m.name)} className="text-primary/60 hover:text-error">
                     <span className="material-symbols-outlined text-[14px] block">close</span>
                   </button>
                 </span>
@@ -268,10 +276,22 @@ export default function PolicyWizard() {
                 placeholder={t('policies.addMemberPlaceholder')}
                 className="flex-1 h-11 bg-white px-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
               />
-              <button type="button" onClick={addMember} disabled={!newMemberName.trim()} className="px-4 bg-primary text-white rounded-xl text-xs font-bold disabled:opacity-40">
+              <input
+                type="text" value={newMemberId} onChange={(e) => setNewMemberId(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addMember(); } }}
+                placeholder={t('policies.addMemberIdPlaceholder')}
+                className="w-32 h-11 bg-white px-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <button type="button" onClick={addMember} disabled={!newMemberName.trim()} className="px-4 bg-primary text-white rounded-xl text-xs font-bold disabled:opacity-40 shrink-0">
                 {t('policies.addMember')}
               </button>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('policies.photos')}</label>
+            <p className="text-[10px] text-text-muted px-1">{t('policies.photosDesc')}</p>
+            <ImageAttachments images={images} onChange={setImages} maxImages={5} label={t('policies.addPhoto')} />
           </div>
 
           <div className="grid grid-cols-2 gap-2">

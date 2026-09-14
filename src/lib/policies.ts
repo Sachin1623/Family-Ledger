@@ -6,10 +6,8 @@
 // data to stay compatible with here either, and a policy number/coverage detail is just as
 // sensitive as a real account balance.
 //
-// Document/photo attachments (ID card photos, scanned pages) are deliberately NOT part of this —
-// left out at the user's own request, to decide separately later. Adding an `images: string[]`
-// field afterward (reusing ImageAttachments.tsx, or something bigger) needs no migration; this
-// schema already has room for it.
+// Photos (policy card, scanned pages) reuse ImageAttachments.tsx exactly like AccountsHub's
+// transfer-proof photos — base64 data URIs on the doc itself, no Storage bucket in this app.
 
 import { encryptAmount, decryptAmount } from './fieldCrypto';
 
@@ -37,6 +35,15 @@ export const PREMIUM_FREQUENCIES: { id: PremiumFrequency; label: string }[] = [
 
 export type PolicyStatus = 'active' | 'lapsed' | 'archived';
 
+// Each covered person's own insurer-issued member/beneficiary ID — printed per-insured on most
+// family floater health cards (a single policy, one shared policyNumber, but each covered person
+// gets their own member ID on their own card). Optional since not every policy type has one
+// (e.g. a single-life term plan has nothing to add beyond the policy number itself).
+export interface CoveredMember {
+  name: string;
+  memberId: string | null;
+}
+
 export interface Policy {
   id: string;
   userId: string; // owner
@@ -46,7 +53,9 @@ export interface Policy {
   policyNumber: string;
   // Free-text names, not linked FamilyLedger accounts — matches how a real policy lists insureds
   // (very often a minor or a parent with no account of their own at all).
-  membersCovered: string[];
+  membersCovered: CoveredMember[];
+  // Base64 JPEG data URIs (policy card, scanned pages) — see ImageAttachments.tsx, capped at 5.
+  images: string[];
   sumInsuredMinor: number | null; // encrypted, integer minor units — 'policy' scope, see fieldCrypto.ts
   premiumAmountMinor: number | null; // encrypted
   premiumFrequency: PremiumFrequency | null;
@@ -72,6 +81,15 @@ export interface Policy {
   updatedAt: string;
 }
 
+// Policy Vault shipped before member IDs existed, so live records may still have
+// membersCovered as plain strings (the old shape) — normalize either shape to the current one
+// rather than migrating data, same as this app's usual "read-time normalize" convention.
+export function normalizeCoveredMembers(raw: any): CoveredMember[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((m) => (typeof m === 'string' ? { name: m, memberId: null } : { name: m?.name || '', memberId: m?.memberId || null }))
+    .filter((m) => m.name);
+}
+
 export const MAX_POLICY_AMOUNT_MINOR = 100_00_00_000_00; // ₹1,000,000,000.00 — same generous ceiling as goals.ts
 
 export function toMinorUnits(amount: number): number {
@@ -88,7 +106,7 @@ export async function decryptPolicyAmounts(raw: any): Promise<Policy> {
     raw.sumInsuredMinor == null ? Promise.resolve(null) : decryptAmount('policy', raw.id, raw.sumInsuredMinor),
     raw.premiumAmountMinor == null ? Promise.resolve(null) : decryptAmount('policy', raw.id, raw.premiumAmountMinor),
   ]);
-  return { ...raw, sumInsuredMinor, premiumAmountMinor } as Policy;
+  return { ...raw, sumInsuredMinor, premiumAmountMinor, membersCovered: normalizeCoveredMembers(raw.membersCovered), images: raw.images || [] } as Policy;
 }
 export async function decryptPoliciesList(raws: any[]): Promise<Policy[]> {
   return Promise.all(raws.map(decryptPolicyAmounts));

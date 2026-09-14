@@ -9,6 +9,7 @@ import { db } from '../lib/firebase';
 import { getCurrencySymbol } from '../lib/constants';
 import { Policy, POLICY_TYPES, PREMIUM_FREQUENCIES, decryptPolicyAmounts, fromMinorUnits, isRenewalDueSoon, isRenewalOverdue } from '../lib/policies';
 import { todayLocalDateString } from '../lib/dateUtils';
+import ImageLightbox from '../components/ImageLightbox';
 
 // Read-only view + Edit/Archive/Delete actions — same header/action-row treatment as
 // GoalDetail.tsx/AccountDetail.tsx. Role default is 'view' (not goals' 'edit') — see
@@ -37,6 +38,7 @@ export default function PolicyDetail() {
 
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (!policy || !isOwner || deleting) return;
@@ -147,7 +149,22 @@ export default function PolicyDetail() {
               <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('policies.membersCovered')}</p>
               <div className="flex flex-wrap gap-1.5">
                 {policy.membersCovered.map((m) => (
-                  <span key={m} className="bg-surface text-on-surface text-xs font-bold px-2.5 py-1 rounded-full">{m}</span>
+                  <span key={m.name} className="bg-surface text-on-surface text-xs font-bold px-2.5 py-1 rounded-full">
+                    {m.name}{m.memberId && <span className="text-text-muted font-medium"> · {m.memberId}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {policy.images?.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('policies.photos')}</p>
+              <div className="flex flex-wrap gap-2">
+                {policy.images.map((src, i) => (
+                  <button key={i} type="button" onClick={() => setLightboxSrc(src)}>
+                    <img src={src} alt="" className="w-16 h-16 object-cover rounded-xl border border-border-subtle" />
+                  </button>
                 ))}
               </div>
             </div>
@@ -205,6 +222,8 @@ export default function PolicyDetail() {
             </div>
           </div>
         )}
+
+        {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
       </main>
     </div>
   );

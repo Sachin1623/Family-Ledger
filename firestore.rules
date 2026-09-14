@@ -1353,8 +1353,7 @@ service cloud.firestore {
     // --- Policy Vault ---
     // Same dual sharing model as Financial Accounts, including its view-by-default choice (no
     // legacy data to stay compatible with, and a policy number/coverage detail is just as
-    // sensitive as a real account balance — see policies.ts's own doc comment). No attachment
-    // fields exist yet — deliberately deferred, see policies.ts's header comment.
+    // sensitive as a real account balance — see policies.ts's own doc comment).
     match /policies/{policyId} {
       function isPolicyViewer() {
         return isSignedIn() && (
@@ -1385,6 +1384,7 @@ service cloud.firestore {
                (!data.keys().hasAll(['provider']) || data.provider is string) &&
                (!data.keys().hasAll(['policyNumber']) || data.policyNumber is string) &&
                (!data.keys().hasAll(['membersCovered']) || data.membersCovered is list) &&
+               (!data.keys().hasAll(['images']) || data.images is list) &&
                (!data.keys().hasAll(['sumInsuredMinor']) || data.sumInsuredMinor == null || isValidAmountField(data.sumInsuredMinor)) &&
                (!data.keys().hasAll(['premiumAmountMinor']) || data.premiumAmountMinor == null || isValidAmountField(data.premiumAmountMinor)) &&
                (!data.keys().hasAll(['premiumFrequency']) || data.premiumFrequency == null || data.premiumFrequency in ['monthly', 'quarterly', 'halfyearly', 'yearly', 'oneTime']) &&
@@ -1410,7 +1410,7 @@ service cloud.firestore {
         (isPolicyEditor() && existing().userId != request.auth.uid &&
           isValidPolicy(incoming()) && incoming().userId == existing().userId &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'type', 'name', 'provider', 'policyNumber', 'membersCovered', 'sumInsuredMinor',
+            'type', 'name', 'provider', 'policyNumber', 'membersCovered', 'images', 'sumInsuredMinor',
             'premiumAmountMinor', 'premiumFrequency', 'currency', 'startDate', 'renewalDate',
             'reminderDaysBefore', 'lastRenewalReminderSentFor', 'notes', 'status', 'updatedAt'
           ]))
