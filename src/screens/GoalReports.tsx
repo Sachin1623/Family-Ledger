@@ -211,7 +211,7 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
       )}
 
       {chartRange && (
-        <div className="rounded-2xl border border-primary-container/20 shadow-sm p-4 pt-3 space-y-2 bg-gradient-to-br from-primary-container/10 via-white to-success/10 overflow-hidden">
+        <div className="rounded-2xl border border-primary-container/20 shadow-sm p-4 pt-3 space-y-2 bg-gradient-to-br from-primary-container/10 via-white to-success/10 overflow-hidden" data-tour="goals-horizon-chart">
           <h2 className="text-sm font-bold text-primary">{t('goals.goalHorizonChart')}</h2>
           <div className="relative" style={{ height: chartHeight }}>
             {positionedMarkers.map((m) => {

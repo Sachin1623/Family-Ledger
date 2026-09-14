@@ -29,6 +29,8 @@ import { computeNetSavingsBuckets } from '../lib/netSavings';
 import AccountsHub from './AccountsHub';
 import GoalAllocationManager from './GoalAllocationManager';
 import GoalReports from './GoalReports';
+import AccountsExplainerModal from '../components/AccountsExplainerModal';
+import { setGoalsHubTabFn } from '../lib/goalsHubTabRef';
 
 // Goals Dashboard — the home hub. Net savings is the user's own, AGGREGATED ACROSS EVERY GROUP
 // THEY BELONG TO for the current month (not scoped to any single group — see the header comment
@@ -70,6 +72,16 @@ export default function GoalsHub() {
   });
   const [showAccountsHelp, setShowAccountsHelp] = useState(false);
   const [showWorkflowGuide, setShowWorkflowGuide] = useState(false);
+
+  // Registers the 'goals-explore' tour's tab-switch hook (src/lib/goalsHubTabRef.ts) — see its own
+  // comment for why this needs to be an imperative ref rather than a prop.
+  useEffect(() => {
+    setGoalsHubTabFn((tab: string) => {
+      if ((VALID_GOALS_TABS as readonly string[]).includes(tab)) setGoalsTab(tab as any);
+    });
+    return () => setGoalsHubTabFn(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keeps the address bar's `?tab=` in sync with whichever tab is active, so a genuine browser
   // back press (not just the on-screen "New Goal" close button or the hardware/gesture back
@@ -578,6 +590,7 @@ export default function GoalsHub() {
                 key={tab.key}
                 type="button"
                 onClick={() => setGoalsTab(tab.key)}
+                data-tour={`goals-tab-${tab.key}`}
                 className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', goalsTab === tab.key ? 'bg-primary text-white' : 'text-text-muted')}
               >
                 {tab.label}
@@ -659,7 +672,7 @@ export default function GoalsHub() {
       )}
 
       {visibleOwnGoals.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-3">
+        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-3" data-tour="goals-list-fab-hint">
           <span className="text-4xl block">🎯</span>
           <p className="text-sm font-bold text-on-surface">{t('goals.emptyStateTitle')}</p>
           <p className="text-xs text-text-muted">{t('goals.emptyStateDesc')}</p>
@@ -668,7 +681,7 @@ export default function GoalsHub() {
           </button>
         </div>
       ) : (
-        <div className="space-y-3">{visibleOwnGoals.map((g) => renderGoalCard(g, false))}</div>
+        <div className="space-y-3" data-tour="goals-list-fab-hint">{visibleOwnGoals.map((g) => renderGoalCard(g, false))}</div>
       )}
 
       {sharedWithMeGoals.length > 0 && (
@@ -701,27 +714,7 @@ export default function GoalsHub() {
       )}
 
       {/* --- "What is Accounts for?" explainer --- */}
-      {showAccountsHelp && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowAccountsHelp(false)}>
-          <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary text-2xl">account_balance</span>
-              <h3 className="text-base font-black text-primary">{t('goals.accountsHelpTitle')}</h3>
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.accountsHelpWhatTitle')}</p>
-              <p className="text-sm text-on-surface leading-relaxed">{t('goals.accountsHelpWhatBody')}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('goals.accountsHelpBenefitTitle')}</p>
-              <p className="text-sm text-on-surface leading-relaxed">{t('goals.accountsHelpBenefitBody')}</p>
-            </div>
-            <button onClick={() => setShowAccountsHelp(false)} className="w-full py-3 bg-primary text-white font-bold rounded-xl">
-              {t('common.close')}
-            </button>
-          </div>
-        </div>
-      )}
+      {showAccountsHelp && <AccountsExplainerModal onClose={() => setShowAccountsHelp(false)} />}
 
       {/* --- "How Goals Works" guide — a full walkthrough of the actual funding chain (account ->
           goal -> allocation), each step ending in a real link into the tab/screen that does it,

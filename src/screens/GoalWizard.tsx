@@ -10,12 +10,21 @@ import { getCurrencySymbol } from '../lib/constants';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { useFriendships } from '../lib/useFriendships';
 import { useFamilies } from '../lib/useFamilies';
-import { Goal, toMinorUnits, fromMinorUnits, goalTotalMinor, validateGoalName, validateTargetAmount, validateTargetDate, decryptGoalAmounts, encryptGoalAmounts } from '../lib/goals';
+import { Goal, toMinorUnits, fromMinorUnits, goalTotalMinor, validateGoalName, validateTargetAmount, validateTargetDate, validateInflationRate, inflationAdjustedAmountMinor, decryptGoalAmounts, encryptGoalAmounts } from '../lib/goals';
 import { encryptAmount } from '../lib/fieldCrypto';
 import { unfreezeGoalReservations } from '../lib/accountAllocations';
 import ImageAttachments from '../components/ImageAttachments';
+import GoalExplainerModal from '../components/GoalExplainerModal';
+import { startTour } from '../lib/tourRef';
 
 const ICONS = ['🎯', '✈️', '🏠', '🚗', '🎓', '💍', '👶', '🏥', '🎉', '💻', '📱', '🛡️', '🏖️', '🐶', '🎸', '💰'];
+
+// First-time guided flow — same engine as CreateGroup.tsx's guide (progressive reveal, a glowing
+// highlight directly on the real field via the shared `.fl-tour-glow` CSS class, no floating
+// tooltip card). Create-mode only (`?guide=1`, set by the header's "Test: Create Goal Flow"
+// button) — editing an existing goal never shows this.
+const GUIDE_STEPS = ['icon', 'name', 'amount', 'date', 'inflation', 'notes'] as const;
+type GuideStepId = typeof GUIDE_STEPS[number];
 
 // Create/Edit — same form for both; editing loads the existing goal via the :goalId route param.
 // Sharing (optional group + specific friends/family, same dual model as RemindersHub.tsx's own
@@ -28,6 +37,34 @@ export default function GoalWizard() {
   const { goalId } = useParams<{ goalId?: string }>();
   const [searchParams] = useSearchParams();
   const isEditing = !!goalId;
+  const guide = searchParams.get('guide') === '1' && !isEditing;
+  // Part of the new-user onboarding chain (see OnboardingTour.tsx's 'group-explore' finish handler
+  // and AccountsHub.tsx's own onboardingChain) — `?onboarding=1` alongside `?guide=1` means: show
+  // the "what is a Goal?" explainer before the guide steps begin, and once saved, head into the
+  // 'goals-explore' tour instead of GoalWizard's normal post-create destination. A standalone
+  // "Create a Goal" from the Guides menu never carries this marker.
+  const onboardingChain = guide && searchParams.get('onboarding') === '1';
+  const [showGoalExplainer, setShowGoalExplainer] = useState(onboardingChain);
+  const [guideStepIndex, setGuideStepIndex] = useState(0);
+  const currentGuideStep: GuideStepId | null = guide && guideStepIndex < GUIDE_STEPS.length ? GUIDE_STEPS[guideStepIndex] : null;
+  const guideDone = !guide || guideStepIndex >= GUIDE_STEPS.length;
+  const guideReached = (step: GuideStepId) => !guide || GUIDE_STEPS.indexOf(step) <= guideStepIndex;
+  const guideActive = (step: GuideStepId) => currentGuideStep === step;
+  const goToNextGuideStep = () => setGuideStepIndex((i) => Math.min(i + 1, GUIDE_STEPS.length));
+  const skipGuide = () => setGuideStepIndex(GUIDE_STEPS.length);
+  const stepBadge = (step: GuideStepId) =>
+    guideActive(step) && (
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] font-black text-primary uppercase tracking-wider">
+          Step {GUIDE_STEPS.indexOf(step) + 1} of {GUIDE_STEPS.length}
+        </span>
+        <button type="button" onClick={skipGuide} className="text-[9px] font-bold text-text-muted hover:text-primary">
+          Skip guide
+        </button>
+      </div>
+    );
+  const guideWrapClass = (step: GuideStepId) =>
+    clsx(guideActive(step) && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-3 -m-3 bg-primary/5');
 
   // Editing always returns to that goal's own detail page (where the Edit button lives) — same as
   // the old plain `navigate(-1)` did for this branch, just not dependent on browser history actually
@@ -48,6 +85,11 @@ export default function GoalWizard() {
   const [name, setName] = useState('');
   const [targetAmount, setTargetAmount] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  // The amount entered above is always taken as TODAY's cost of whatever the goal is for — this is
+  // an optional annual rate that, together with targetDate, adjusts it forward to a future value
+  // (see inflationAdjustedAmountMinor in lib/goals.ts) at save time. Left blank, nothing changes
+  // from before this existed: the amount typed is exactly what's saved/tracked.
+  const [inflationRateInput, setInflationRateInput] = useState('');
   const [notes, setNotes] = useState('');
   const [icon, setIcon] = useState('🎯');
   const [images, setImages] = useState<string[]>([]);
@@ -84,7 +126,11 @@ export default function GoalWizard() {
         const g = await decryptGoalAmounts({ id: snap.id, ...(snap.data() as any) });
         setEditingGoal(g);
         setName(g.name);
-        setTargetAmount(String(fromMinorUnits(g.targetAmountMinor)));
+        // Editing always shows/edits TODAY's cost, never the already-inflated target — falling
+        // back to targetAmountMinor itself for a goal that has no inflation adjustment set, so
+        // this reads exactly as it did before that existed.
+        setTargetAmount(String(fromMinorUnits(g.targetAmountTodayMinor ?? g.targetAmountMinor)));
+        setInflationRateInput(g.inflationRatePct != null ? String(g.inflationRatePct) : '');
         setTargetDate(g.targetDate || '');
         setNotes(g.notes || '');
         setIcon(g.icon || '🎯');
@@ -129,6 +175,18 @@ export default function GoalWizard() {
     return fname.toLowerCase().includes(friendSearch.trim().toLowerCase());
   });
 
+  // Live preview for the inflation-rate field below — same calculation handleSave itself runs at
+  // save time, just recomputed on every keystroke so the user sees the adjusted figure before
+  // committing to it.
+  const previewInflationRatePct = inflationRateInput.trim() ? parseFloat(inflationRateInput) : null;
+  const previewAdjustedAmountMinor = inflationAdjustedAmountMinor(
+    toMinorUnits(parseFloat(targetAmount || '0')),
+    previewInflationRatePct,
+    targetDate || null,
+    todayLocalDateString(),
+  );
+  const showInflationPreview = !!previewInflationRatePct && previewInflationRatePct > 0 && !!targetDate && parseFloat(targetAmount || '0') > 0;
+
   const handleSave = async () => {
     if (!user || saving) return;
     const nextErrors: Record<string, string> = {};
@@ -141,8 +199,20 @@ export default function GoalWizard() {
       const dateErr = validateTargetDate(targetDate || null, todayLocalDateString());
       if (dateErr) nextErrors.targetDate = dateErr;
     }
+    const inflationRatePct = inflationRateInput.trim() ? parseFloat(inflationRateInput) : null;
+    if (inflationRatePct != null) {
+      const inflationErr = validateInflationRate(inflationRatePct);
+      if (inflationErr) nextErrors.inflationRate = inflationErr;
+    }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
+
+    // The amount typed is always TODAY's cost; when a rate is set, what's actually saved/tracked
+    // as targetAmountMinor is the future value at targetDate (see inflationAdjustedAmountMinor's
+    // own doc comment) — recomputed from TODAY regardless of create vs. edit, so editing a goal
+    // months later adjusts against however much runway is actually left, not a stale original date.
+    const adjustedAmountMinor = inflationAdjustedAmountMinor(amountMinor, inflationRatePct, targetDate || null, todayLocalDateString());
+    const targetAmountTodayMinorToSave = inflationRatePct != null ? amountMinor : null;
 
     setSaving(true);
     try {
@@ -156,11 +226,16 @@ export default function GoalWizard() {
         // no longer met, so it should behave like any other active goal again — reopened, with
         // every account's frozen share released back to tracking its live balance/% (not stuck
         // immutable), rather than staying permanently "done" against a target that no longer holds.
-        const reopening = editingGoal.status === 'completed' && amountMinor > goalTotalMinor(editingGoal);
-        const encryptedTarget = await encryptAmount('goal', editingGoal.id, amountMinor);
+        const reopening = editingGoal.status === 'completed' && adjustedAmountMinor > goalTotalMinor(editingGoal);
+        const [encryptedTarget, encryptedTargetToday] = await Promise.all([
+          encryptAmount('goal', editingGoal.id, adjustedAmountMinor),
+          targetAmountTodayMinorToSave == null ? Promise.resolve(null) : encryptAmount('goal', editingGoal.id, targetAmountTodayMinorToSave),
+        ]);
         await updateDoc(doc(db, 'goals', editingGoal.id), {
           name: name.trim(),
           targetAmountMinor: encryptedTarget,
+          targetAmountTodayMinor: encryptedTargetToday,
+          inflationRatePct,
           targetDate: targetDate || null,
           notes: notes.trim() || null,
           icon,
@@ -196,6 +271,7 @@ export default function GoalWizard() {
           accountAllocatedMinor: 0, // starts unfunded — the (repurposed) Allocation Manager or an account's own edit form is where it gets a share
           status: 'active',
           targetDate: targetDate || null,
+          inflationRatePct,
           notes: notes.trim() || null,
           icon,
           imageUrl: images[0] || null,
@@ -210,12 +286,18 @@ export default function GoalWizard() {
           updatedAt: nowIso,
           completedAt: null,
         });
-        const encryptedAmounts = await encryptGoalAmounts(ref.id, amountMinor, 0);
+        const encryptedAmounts = await encryptGoalAmounts(ref.id, adjustedAmountMinor, 0, targetAmountTodayMinorToSave);
         await updateDoc(ref, {
           targetAmountMinor: encryptedAmounts.targetAmountMinor,
           currentAmountMinor: encryptedAmounts.currentAmountMinor,
+          targetAmountTodayMinor: encryptedAmounts.targetAmountTodayMinor,
         });
-        navigate(`/goals/${ref.id}/allocate`);
+        if (onboardingChain) {
+          navigate('/goals');
+          startTour('goals-explore');
+        } else {
+          navigate(`/goals/${ref.id}/allocate`);
+        }
       }
     } catch (err) {
       console.error('Failed to save goal:', err);
@@ -239,6 +321,10 @@ export default function GoalWizard() {
     );
   }
 
+  if (showGoalExplainer) {
+    return <GoalExplainerModal onClose={() => setShowGoalExplainer(false)} />;
+  }
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeDestination}>
       <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -250,75 +336,161 @@ export default function GoalWizard() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.icon')}</label>
-        <div className="flex flex-wrap gap-2">
-          {ICONS.map((ic) => (
-            <button
-              key={ic}
-              type="button"
-              onClick={() => setIcon(ic)}
-              className={clsx('w-11 h-11 rounded-xl flex items-center justify-center text-xl border-2 transition-all', icon === ic ? 'border-primary bg-primary/10' : 'border-border-subtle bg-white')}
-            >
-              {ic}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.coverPhoto')}</label>
-        <ImageAttachments images={images} onChange={setImages} maxImages={1} label={t('goals.addCoverPhoto')} />
-      </div>
-
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.goalName')} <span className="text-error">*</span></label>
-        <input
-          type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('goals.goalNamePlaceholder')}
-          className={clsx('w-full h-12 bg-white px-4 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.name ? 'border-error' : 'border-border-subtle')}
-        />
-        {errors.name && <p className="text-xs text-error font-bold px-1">{errors.name}</p>}
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.targetAmount')} <span className="text-error">*</span></label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted">{getCurrencySymbol(currency)}</span>
-            <input
-              type="text" inputMode="decimal" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} placeholder="200000"
-              className={clsx('w-full h-12 bg-white pl-8 pr-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.targetAmount ? 'border-error' : 'border-border-subtle')}
-            />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.currency')}</label>
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-full h-12 bg-white px-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none">
-            {Array.from(new Set([currency, ...groups.map((g: any) => g.currency)].filter(Boolean))).map((c) => (
-              <option key={c} value={c}>{c} ({getCurrencySymbol(c)})</option>
+      {guideReached('icon') && (
+        <div className={clsx('space-y-1.5', guideWrapClass('icon'))}>
+          {stepBadge('icon')}
+          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.icon')}</label>
+          <p className="text-[10px] text-text-muted px-1">{t('goals.iconDesc')}</p>
+          <div className="flex flex-wrap gap-2">
+            {ICONS.map((ic) => (
+              <button
+                key={ic}
+                type="button"
+                onClick={() => { setIcon(ic); if (guideActive('icon')) goToNextGuideStep(); }}
+                className={clsx('w-11 h-11 rounded-xl flex items-center justify-center text-xl border-2 transition-all', icon === ic ? 'border-primary bg-primary/10' : 'border-border-subtle bg-white')}
+              >
+                {ic}
+              </button>
             ))}
-          </select>
+          </div>
+          {guideActive('icon') && (
+            <>
+              <p className="text-[10px] text-text-muted px-1">👉 Pick an icon that fits this goal — you can also add a cover photo just below.</p>
+              <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">Looks good, Next →</button>
+            </>
+          )}
         </div>
-      </div>
-      {errors.targetAmount && <p className="text-xs text-error font-bold px-1">{errors.targetAmount}</p>}
+      )}
 
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.targetDate')}</label>
-        <input
-          type="date" value={targetDate} min={!isEditing ? todayLocalDateString() : undefined} onChange={(e) => setTargetDate(e.target.value)}
-          className={clsx('w-full h-12 bg-white px-4 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.targetDate ? 'border-error' : 'border-border-subtle')}
-        />
-        {errors.targetDate && <p className="text-xs text-error font-bold px-1">{errors.targetDate}</p>}
-      </div>
+      {guideReached('icon') && (
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.coverPhoto')}</label>
+          <p className="text-[10px] text-text-muted px-1">{t('goals.coverPhotoDesc')}</p>
+          <ImageAttachments images={images} onChange={setImages} maxImages={1} label={t('goals.addCoverPhoto')} />
+        </div>
+      )}
 
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.notes')}</label>
-        <textarea
-          value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('goals.notesPlaceholder')}
-          className="w-full bg-white p-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
-        />
-      </div>
+      {guideReached('name') && (
+        <div className={clsx('space-y-1.5', guideWrapClass('name'))}>
+          {stepBadge('name')}
+          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.goalName')} <span className="text-error">*</span></label>
+          <p className="text-[10px] text-text-muted px-1">{t('goals.goalNameDesc')}</p>
+          <input
+            type="text" autoFocus={guideActive('name')} value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && guideActive('name') && name.trim()) { e.preventDefault(); goToNextGuideStep(); } }}
+            placeholder={t('goals.goalNamePlaceholder')}
+            className={clsx('w-full h-12 bg-white px-4 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.name ? 'border-error' : 'border-border-subtle')}
+          />
+          {errors.name && <p className="text-xs text-error font-bold px-1">{errors.name}</p>}
+          {guideActive('name') && (
+            <button type="button" onClick={goToNextGuideStep} disabled={!name.trim()} className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline">Next →</button>
+          )}
+        </div>
+      )}
 
+      {guideReached('amount') && (
+        <div className={guideWrapClass('amount')}>
+          {stepBadge('amount')}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.targetAmount')} <span className="text-error">*</span></label>
+              <p className="text-[10px] text-text-muted px-1">{t('goals.targetAmountDesc')}</p>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted">{getCurrencySymbol(currency)}</span>
+                <input
+                  type="text" inputMode="decimal" autoFocus={guideActive('amount')} value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} placeholder="200000"
+                  className={clsx('w-full h-12 bg-white pl-8 pr-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.targetAmount ? 'border-error' : 'border-border-subtle')}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.currency')}</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-full h-12 bg-white px-3 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none">
+                {Array.from(new Set([currency, ...groups.map((g: any) => g.currency)].filter(Boolean))).map((c) => (
+                  <option key={c} value={c}>{c} ({getCurrencySymbol(c)})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {errors.targetAmount && <p className="text-xs text-error font-bold px-1">{errors.targetAmount}</p>}
+          {guideActive('amount') && (
+            <button
+              type="button"
+              onClick={() => { if (parseFloat(targetAmount || '0') > 0) goToNextGuideStep(); }}
+              disabled={!(parseFloat(targetAmount || '0') > 0)}
+              className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline mt-1"
+            >
+              Next →
+            </button>
+          )}
+        </div>
+      )}
+
+      {guideReached('date') && (
+        <div className={clsx('space-y-1.5', guideWrapClass('date'))}>
+          {stepBadge('date')}
+          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.targetDate')}</label>
+          <p className="text-[10px] text-text-muted px-1">{t('goals.targetDateDesc')}</p>
+          <input
+            type="date" autoFocus={guideActive('date')} value={targetDate} min={!isEditing ? todayLocalDateString() : undefined} onChange={(e) => setTargetDate(e.target.value)}
+            className={clsx('w-full h-12 bg-white px-4 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.targetDate ? 'border-error' : 'border-border-subtle')}
+          />
+          {errors.targetDate && <p className="text-xs text-error font-bold px-1">{errors.targetDate}</p>}
+          {guideActive('date') && (
+            <button type="button" onClick={goToNextGuideStep} disabled={!targetDate} className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline">Next →</button>
+          )}
+        </div>
+      )}
+
+      {guideReached('inflation') && (
+        <div className={clsx('space-y-1.5', guideWrapClass('inflation'))}>
+          {stepBadge('inflation')}
+          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.inflationRate')}</label>
+          <p className="text-[10px] text-text-muted px-1">{t('goals.inflationRateDesc')}</p>
+          <div className="relative">
+            <input
+              type="text" inputMode="decimal" autoFocus={guideActive('inflation')} value={inflationRateInput}
+              onChange={(e) => setInflationRateInput(e.target.value)} placeholder="e.g. 6"
+              className={clsx('w-full h-12 bg-white pr-8 pl-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/20', errors.inflationRate ? 'border-error' : 'border-border-subtle')}
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted">%/yr</span>
+          </div>
+          {errors.inflationRate && <p className="text-xs text-error font-bold px-1">{errors.inflationRate}</p>}
+          {showInflationPreview && (
+            <p className="text-[11px] font-bold text-primary bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
+              {t('goals.inflationPreview', {
+                today: `${getCurrencySymbol(currency)}${targetAmount}`,
+                adjusted: `${getCurrencySymbol(currency)}${fromMinorUnits(previewAdjustedAmountMinor).toLocaleString()}`,
+                date: targetDate,
+              })}
+            </p>
+          )}
+          {!targetDate && inflationRateInput.trim() && (
+            <p className="text-[11px] text-text-muted px-1">{t('goals.inflationNeedsDate')}</p>
+          )}
+          {guideActive('inflation') && (
+            <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{inflationRateInput.trim() ? 'Next →' : 'Skip, Next →'}</button>
+          )}
+        </div>
+      )}
+
+      {guideReached('notes') && (
+        <div className={clsx('space-y-1.5', guideWrapClass('notes'))}>
+          {stepBadge('notes')}
+          <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.notes')}</label>
+          <p className="text-[10px] text-text-muted px-1">{t('goals.notesDesc')}</p>
+          <textarea
+            autoFocus={guideActive('notes')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('goals.notesPlaceholder')}
+            className="w-full bg-white p-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+          />
+          {guideActive('notes') && (
+            <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{notes.trim() ? 'Next →' : 'Skip, Next →'}</button>
+          )}
+        </div>
+      )}
+
+      {guideDone && (
+      <>
       <div className="space-y-1.5 pt-1 border-t border-border-subtle">
         <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.shareWith')}</label>
         <p className="text-[11px] text-text-muted px-1">{t('goals.shareWithDesc')}</p>
@@ -413,6 +585,8 @@ export default function GoalWizard() {
       <button type="button" onClick={handleSave} disabled={saving} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
         {saving ? t('goals.saving') : isEditing ? t('common.save') : t('goals.createGoal')}
       </button>
+      </>
+      )}
         </div>
       </div>
     </div>

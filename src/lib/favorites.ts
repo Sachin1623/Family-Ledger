@@ -25,6 +25,7 @@ export const FAVORITABLE_ITEMS: FavoritableItem[] = [
   { key: 'shared-reminders', to: '/reminders', icon: '⏰', label: 'Shared Reminders' },
   { key: 'shopping-lists', to: '/shopping-lists', icon: '🛒', label: 'Shopping Lists' },
   { key: 'personal-loans', to: '/personal-loans', icon: '🤝', label: 'Personal Loans' },
+  { key: 'policy-vault', to: '/policies', icon: '🛡️', label: 'Policy Vault' },
   { key: 'calculator', to: '/calculator', icon: '🧮', label: 'Calculator' },
   { key: 'financial-calculators', to: '/financial-calculators', icon: '🏦', label: 'Financial Calculators' },
   { key: 'recurring-expenses', to: '/recurring-expenses', icon: '🔁', label: 'Recurring Expenses' },

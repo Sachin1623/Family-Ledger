@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -23,9 +23,12 @@ import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
 import { resizeImageFile } from '../lib/imageUtils';
 import { useLanguage } from '../context/LanguageContext';
+import { setManageGroupTabFn } from '../lib/manageGroupTabRef';
+import { startTour } from '../lib/tourRef';
 import { Capacitor } from '@capacitor/core';
 import { Contacts, type ContactPayload } from '@capacitor-community/contacts';
 import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
+import WhatsAppIcon from '../components/WhatsAppIcon';
 
 export default function ManageGroup() {
   const { groupId } = useParams();
@@ -48,6 +51,13 @@ export default function ManageGroup() {
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userSearchResults, setUserSearchResults] = useState<FoundUser[]>([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
+  // Whether the email currently typed into the "Invite by Email" panel already belongs to a
+  // FamilyLedger account — reuses the same exact-email lookup the Search panel uses (see
+  // searchUsers in inviteApi.ts), just without the groupId filter, since this should say "yes,
+  // they're on the app" even if they already happen to be a member (that's a separate concern
+  // the actual invite submission already handles).
+  const [emailMatchedUser, setEmailMatchedUser] = useState<FoundUser | null>(null);
+  const [checkingEmailMatch, setCheckingEmailMatch] = useState(false);
   const [invitingUid, setInvitingUid] = useState<string | null>(null);
   const [invitedUids, setInvitedUids] = useState<Set<string>>(new Set());
 
@@ -69,9 +79,16 @@ export default function ManageGroup() {
   // gate here (unlike the first_expense trigger) — this is meant to fire again for every new
   // group, not just once ever.
   const [showNewGroupInvite, setShowNewGroupInvite] = useState(false);
+  // Part of the new-user onboarding chain — stays true across the invite step (however it ends)
+  // until the "show me around?" offer has actually been shown once, so a normal, unrelated later
+  // visit to this screen never re-triggers it. See showGroupTourOffer below.
+  const [newGroupOnboardingActive, setNewGroupOnboardingActive] = useState(false);
+  const [showGroupTourOffer, setShowGroupTourOffer] = useState(false);
+  const inviteChosenRef = useRef(false);
   useEffect(() => {
     if (searchParams.get('justCreated') !== '1') return;
     setShowNewGroupInvite(true);
+    setNewGroupOnboardingActive(true);
     const next = new URLSearchParams(searchParams);
     next.delete('justCreated');
     setSearchParams(next, { replace: true });
@@ -90,6 +107,21 @@ export default function ManageGroup() {
     setSearchParams(next, { replace: true });
   }, [searchParams]);
 
+  // AddFamilyMemberPrompt's "Invite People" action deep-links here as `?tab=invite` (from
+  // whichever screen it was shown on — this screen, or AddExpense.tsx after a first logged
+  // expense) so the user picks their own channel (WhatsApp, email, search, contacts…) instead of
+  // being forced straight into WhatsApp. Same reactive-param pattern as justCreated/inviteReminder
+  // above — this route is reused across same-pattern navigations, so a mount-only effect would
+  // miss a second deep link arriving while already on this screen.
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab !== 'overview' && tab !== 'members' && tab !== 'invite' && tab !== 'settings') return;
+    setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+  }, [searchParams]);
+
   const [groupIcon, setGroupIcon] = useState('🏠');
   const [showIconGrid, setShowIconGrid] = useState(false);
   const [recurringTypeFilter, setRecurringTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
@@ -99,6 +131,14 @@ export default function ManageGroup() {
   // invite/pending/leaderboard/members/danger zone all rendered at once); splitting it into
   // sections a visitor picks between keeps each screenful short and scannable.
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'invite' | 'settings'>('overview');
+  // Registers the 'group-explore' tour's tab-switch hook (src/lib/manageGroupTabRef.ts) — see its
+  // own comment for why this needs to be an imperative ref rather than a prop.
+  useEffect(() => {
+    setManageGroupTabFn((tab: string) => {
+      if (tab === 'overview' || tab === 'members' || tab === 'invite' || tab === 'settings') setActiveTab(tab);
+    });
+    return () => setManageGroupTabFn(null);
+  }, []);
   // Group Type used to be three always-visible, always-on-screen controls (type pills + two
   // toggles). Turned into a short 2-step flow instead — step 1 picks Regular vs One-off, step 2
   // configures the features that actually depend on that choice — so an admin sees one decision
@@ -125,6 +165,22 @@ export default function ManageGroup() {
   // Invite tab used to show all four invite methods (WhatsApp/SMS, email, user search, friends)
   // stacked and always expanded — now a picker menu, each method opening its own focused panel.
   const [inviteMethodPanel, setInviteMethodPanel] = useState<'whatsapp' | 'email' | 'search' | 'friends' | 'contacts' | 'placeholder' | null>(null);
+  // Lightweight step guide for the Invite tab — same visual language as CreateGroup.tsx's guide
+  // (glowing highlight directly on the real UI, no floating tooltip card), just two steps since
+  // this tab is "pick one method, then complete it" rather than a sequential form: highlight the
+  // method list until one's picked, then a short hint inside whichever panel opens. Set by
+  // AddFamilyMemberPrompt.tsx's "Invite People" button (`?tab=invite&guide=1`) — a manual visit to
+  // the Invite tab never shows this.
+  const inviteGuide = searchParams.get('guide') === '1';
+  const [inviteGuideSkipped, setInviteGuideSkipped] = useState(false);
+  const showInviteGuide = inviteGuide && !inviteGuideSkipped;
+  // Closing whichever invite-method panel was open (X button or backdrop tap) is the best proxy
+  // this screen has for "done with inviting" (sent, or gave up partway) — same moment "Skip" above
+  // uses to end the new-group onboarding chain's invite step, when it got this far via that chain.
+  const closeInviteMethodPanel = () => {
+    setInviteMethodPanel(null);
+    if (newGroupOnboardingActive) { setShowGroupTourOffer(true); setNewGroupOnboardingActive(false); }
+  };
   const [friendInviteSearch, setFriendInviteSearch] = useState('');
 
   // Placeholder participants — people added to a split group BY NAME who don't have an app
@@ -594,27 +650,72 @@ export default function ManageGroup() {
     }
   };
 
-  // Debounced live search as the user types their ID/email/name — mirrors the debounce pattern
-  // used elsewhere in this app for search-as-you-type (e.g. GlobalSearch.tsx). Declared here,
-  // above the loading/not-found early returns below, because hooks must run unconditionally on
-  // every render — placing this after those guards made it skip entirely on the first (loading)
-  // render and then run on every render after, which is exactly what triggered React's "Rendered
-  // more hooks than during the previous render" error.
+  // Debounced live search as the user types — mirrors the debounce pattern used elsewhere in this
+  // app for search-as-you-type (e.g. GlobalSearch.tsx). Declared here, above the loading/not-found
+  // early returns below, because hooks must run unconditionally on every render — placing this
+  // after those guards made it skip entirely on the first (loading) render and then run on every
+  // render after, which is exactly what triggered React's "Rendered more hooks than during the
+  // previous render" error.
+  //
+  // Two sources, always merged rather than an either/or branch on what the query "looks like" —
+  // a strict branch would misfire both ways (a 6-letter friend's name like "Rajput" contains none
+  // of the shortId alphabet's excluded characters and would wrongly route to an ID-only lookup;
+  // conversely a genuine short ID could coincidentally read as name-shaped). Friends are matched
+  // by name, client-side, over the already-loaded friends list — a stranger can NEVER be found
+  // this way, full stop. Separately, if the query could plausibly be a real ID or email, that's
+  // ALSO attempted against the server (searchUsers) — which only ever returns a match for a
+  // genuine exact ID/email; a name that happens to look ID-shaped just returns nothing there, same
+  // as any other non-match. The two result sets merge (server results can override a same-uid
+  // friend match with its real shortId).
   useEffect(() => {
     const q = userSearchQuery.trim();
     if (q.length < 2) {
       setUserSearchResults([]);
+      setSearchingUsers(false);
+      return;
+    }
+    const lowerQ = q.toLowerCase();
+    const friendMatches: FoundUser[] = addableFriends
+      .filter((f) => f.displayName?.toLowerCase().includes(lowerQ))
+      .map((f) => ({ uid: f.uid, displayName: f.displayName, photoURL: f.photoURL || '', shortId: null }));
+
+    const looksLikeIdOrEmail = q.includes('@') || /^[A-Za-z0-9]{4,8}$/.test(q);
+    if (!looksLikeIdOrEmail) {
+      setSearchingUsers(false);
+      setUserSearchResults(friendMatches);
       return;
     }
     setSearchingUsers(true);
     const handle = setTimeout(() => {
       searchUsers(q, groupId)
-        .then(setUserSearchResults)
+        .then((serverMatches) => {
+          const merged = new Map<string, FoundUser>();
+          friendMatches.forEach((f) => merged.set(f.uid, f));
+          serverMatches.forEach((s) => merged.set(s.uid, s));
+          setUserSearchResults(Array.from(merged.values()));
+        })
         .catch((err) => console.error('User search failed:', err))
         .finally(() => setSearchingUsers(false));
     }, 400);
     return () => clearTimeout(handle);
-  }, [userSearchQuery, groupId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userSearchQuery, groupId, addableFriends.map((f) => f.uid).join(',')]);
+
+  useEffect(() => {
+    const email = inviteEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setEmailMatchedUser(null);
+      return;
+    }
+    setCheckingEmailMatch(true);
+    const handle = setTimeout(() => {
+      searchUsers(email)
+        .then((results) => setEmailMatchedUser(results[0] || null))
+        .catch((err) => console.error('Email match check failed:', err))
+        .finally(() => setCheckingEmailMatch(false));
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [inviteEmail]);
 
   if (groupLoading || membersLoading) {
     return <div className="h-screen flex items-center justify-center">{t('manageGroup.loading')}</div>;
@@ -1054,7 +1155,7 @@ export default function ManageGroup() {
 
       <main className="flex-1 p-4 pb-16 max-w-4xl mx-auto w-full space-y-4">
         {/* Group Info & Icon Section */}
-        <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm">
+        <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm" data-tour="manage-group-identity">
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-4">
               <div className="relative">
@@ -1168,6 +1269,7 @@ export default function ManageGroup() {
             <button
               key={key}
               type="button"
+              data-tour={`manage-group-tab-${key}`}
               onClick={() => setActiveTab(key)}
               className={clsx(
                 'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
@@ -1199,7 +1301,7 @@ export default function ManageGroup() {
         </div>
 
         {/* Monthly Budget */}
-        <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
+        <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-budget">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-primary">
               {t('manageGroup.budgetHeader', { month: new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) })}
@@ -1331,6 +1433,7 @@ export default function ManageGroup() {
           <button
             type="button"
             onClick={() => setShowRecurringPanel(true)}
+            data-tour="manage-group-recurring-summary"
             className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
           >
             <div className="flex items-center gap-3 min-w-0">
@@ -1375,7 +1478,28 @@ export default function ManageGroup() {
               </button>
             </div>
 
-            <div className="pt-1 space-y-1.5">
+            {showInviteGuide && !inviteMethodPanel && (
+              <div className="flex items-start justify-between gap-2 bg-primary/5 border border-primary/20 rounded-2xl p-3">
+                <div className="flex items-start gap-2 min-w-0">
+                  <span className="material-symbols-outlined text-[18px] text-primary shrink-0">tips_and_updates</span>
+                  <p className="text-[11px] text-text-muted">
+                    <span className="font-black text-primary block">Pick how to invite</span>
+                    Tap any option below — WhatsApp, email, or search are the fastest if they're already on your phone or FamilyLedger.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInviteGuideSkipped(true);
+                    if (newGroupOnboardingActive) { setShowGroupTourOffer(true); setNewGroupOnboardingActive(false); }
+                  }}
+                  className="text-[9px] font-bold text-text-muted hover:text-primary shrink-0"
+                >
+                  Skip
+                </button>
+              </div>
+            )}
+            <div className={clsx('pt-1 space-y-1.5', showInviteGuide && !inviteMethodPanel && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-2 -m-2 bg-primary/5')}>
               {([
                 ...(Capacitor.isNativePlatform() ? [['contacts', 'contacts', 'manageGroup.browseContacts'] as const] : []),
                 ['whatsapp', 'chat', 'manageGroup.inviteViaWhatsapp'],
@@ -1393,7 +1517,11 @@ export default function ManageGroup() {
                   }}
                   className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border border-border-subtle bg-surface/30 hover:bg-surface transition-colors text-left"
                 >
-                  <span className="material-symbols-outlined text-primary text-[20px] shrink-0">{icon}</span>
+                  {key === 'whatsapp' ? (
+                    <WhatsAppIcon className="w-5 h-5 shrink-0 text-[#25D366]" />
+                  ) : (
+                    <span className="material-symbols-outlined text-primary text-[20px] shrink-0">{icon}</span>
+                  )}
                   <span className="flex-1 text-xs font-bold text-on-surface">{t(labelKey)}</span>
                   <span className="material-symbols-outlined text-text-muted text-[18px] shrink-0">chevron_right</span>
                 </button>
@@ -1507,7 +1635,7 @@ export default function ManageGroup() {
               {pokedAll ? t('manageGroup.everyonePoked') : pokingAll ? t('manageGroup.poking') : t('manageGroup.pokeAll')}
             </button>
           )}
-          <div className="space-y-3">
+          <div className="space-y-3" data-tour="manage-group-members-list">
             {members.map((member: any) => (
               <div key={member.id} className="bg-white p-4 rounded-2xl border border-border-subtle flex items-center justify-between shadow-sm group">
                 <div
@@ -1678,6 +1806,7 @@ export default function ManageGroup() {
             <button
               type="button"
               onClick={() => { setGroupTypeStep(1); setShowGroupTypeFlow(true); }}
+              data-tour="manage-group-settings-type"
               className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0">
@@ -2259,7 +2388,7 @@ export default function ManageGroup() {
       {/* Invite methods — each a focused floating panel, opened from the picker menu above. */}
       <AnimatePresence>
         {inviteMethodPanel && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40" onClick={() => setInviteMethodPanel(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40" onClick={closeInviteMethodPanel}>
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -2278,10 +2407,15 @@ export default function ManageGroup() {
                       : 'manageGroup.inviteFromFriends',
                   )}
                 </h3>
-                <button type="button" onClick={() => setInviteMethodPanel(null)} className="text-text-muted">
+                <button type="button" onClick={closeInviteMethodPanel} className="text-text-muted">
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
               </div>
+              {showInviteGuide && (
+                <p className="text-[11px] text-primary bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
+                  👉 Fill this in below, then tap Send/Invite to complete it.
+                </p>
+              )}
 
               {inviteMethodPanel === 'contacts' && (
                 <div className="space-y-2">
@@ -2376,7 +2510,7 @@ export default function ManageGroup() {
                       onClick={handleSendWhatsApp}
                       className="flex-1 bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
                     >
-                      <span className="material-symbols-outlined text-[18px]">chat</span>
+                      <WhatsAppIcon className="w-[18px] h-[18px]" />
                       WhatsApp
                     </button>
                     <button
@@ -2421,6 +2555,18 @@ export default function ManageGroup() {
                       <span>{t('manageGroup.send')}</span>
                     </button>
                   </div>
+                  {checkingEmailMatch && (
+                    <p className="text-[10px] text-text-muted px-1 flex items-center gap-1">
+                      <span className="material-symbols-outlined animate-spin text-[12px]">sync</span>
+                      Checking…
+                    </p>
+                  )}
+                  {!checkingEmailMatch && emailMatchedUser && (
+                    <p className="text-[11px] font-bold text-success px-1 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                      Already on FamilyLedger — they'll get a notification instead of an email invite.
+                    </p>
+                  )}
                   {inviteFeedback && (
                     <p className={clsx(
                       "text-[11px] font-medium px-1",
@@ -2581,8 +2727,42 @@ export default function ManageGroup() {
           trigger="group_created"
           groupId={groupId}
           groupName={group?.name}
-          onDismiss={() => setShowNewGroupInvite(false)}
+          onInvite={() => { inviteChosenRef.current = true; }}
+          onDismiss={() => {
+            setShowNewGroupInvite(false);
+            // "Maybe later" was chosen (not "Invite People", which sets inviteChosenRef first) —
+            // offer the group tour right now instead of waiting for an invite guide that isn't
+            // going to run this time.
+            if (newGroupOnboardingActive && !inviteChosenRef.current) {
+              setShowGroupTourOffer(true);
+              setNewGroupOnboardingActive(false);
+            }
+          }}
         />
+      )}
+      {showGroupTourOffer && groupId && (
+        <div className="fixed inset-0 bg-black/40 z-[200] flex items-center justify-center p-6" onClick={() => setShowGroupTourOffer(false)}>
+          <div className="relative w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl space-y-5" onClick={(e) => e.stopPropagation()}>
+            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto text-3xl">🧭</div>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-bold text-primary">Want a quick tour?</h3>
+              <p className="text-sm text-text-secondary leading-relaxed">
+                I'll show you around this group — its tabs, budget, and the quick-action icons on its Dashboard card.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setShowGroupTourOffer(false); startTour('group-explore', { groupId }); }}
+              className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[20px]">explore</span>
+              Show me around
+            </button>
+            <button type="button" onClick={() => setShowGroupTourOffer(false)} className="w-full text-center text-xs font-bold text-text-muted hover:text-primary">
+              Maybe later
+            </button>
+          </div>
+        </div>
       )}
       {showRecurringInvite && groupId && (
         <AddFamilyMemberPrompt

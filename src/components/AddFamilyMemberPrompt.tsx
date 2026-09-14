@@ -1,20 +1,20 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { buildGroupInviteWhatsAppUrl } from '../lib/inviteApi';
 
 // Three moments this shows: right after ANY group is created (every one, not just the user's
 // first — per explicit request, since every group needs its own people invited into it), right
 // after the user logs their first-ever expense (one-shot, gated by a real user-doc flag so it
 // can't re-fire on a fresh install/reinstall — see markInvitePromptSeen below), and the
 // every-10-days "still solo?" nudge for a group that's picked up no one after the first two (see
-// server.ts's /api/cron/send-daily-reminders invite-family check). The WhatsApp link itself
-// reuses the SAME /join/{groupId} mechanism ManageGroup.tsx's own invite tab already uses — this
-// doesn't invent a second invite system, just surfaces the existing one at these three moments
-// with a single tap instead of requiring the user to find their way to Manage Group > Invite
-// first. 'group_created' and 'recurring_reminder' both fire every time their own trigger condition
+// server.ts's /api/cron/send-daily-reminders invite-family check). The primary action deep-links
+// to Manage Group's own Invite tab (`?tab=invite`) rather than jumping straight into a WhatsApp
+// share — this used to skip straight to WhatsApp specifically, which meant anyone who'd rather
+// invite by email, search, contacts, or add a placeholder member had no way in from here at all.
+// 'group_created' and 'recurring_reminder' both fire every time their own trigger condition
 // is met again (a new group; the server's 10-day+still-solo gate) — only 'first_expense' has a
 // permanent "don't show again" flag, since by definition it can only ever be true once.
 export type AddFamilyMemberTrigger = 'group_created' | 'first_expense' | 'recurring_reminder';
@@ -58,14 +58,21 @@ export default function AddFamilyMemberPrompt({
   groupId,
   groupName,
   onDismiss,
+  onInvite,
 }: {
   trigger: AddFamilyMemberTrigger;
   groupId: string;
   groupName?: string;
   onDismiss: () => void;
+  // Optional — fires (before onDismiss) specifically when "Invite People" is chosen, not "Maybe
+  // later". Lets a caller (ManageGroup, for the 'group_created' trigger) tell the two dismissal
+  // paths apart, since both otherwise call onDismiss identically — used to decide whether to offer
+  // the new-user 'group-explore' tour immediately (Maybe later) or wait for the Invite tab's own
+  // guide to finish first (Invite People).
+  onInvite?: () => void;
 }) {
   const { user } = useAuth();
-  const [sending, setSending] = useState(false);
+  const navigate = useNavigate();
   const copy = COPY[trigger];
 
   const close = () => {
@@ -74,12 +81,12 @@ export default function AddFamilyMemberPrompt({
   };
 
   const handleInvite = () => {
-    setSending(true);
-    window.open(buildGroupInviteWhatsAppUrl(groupId, groupName), '_blank');
-    // No way to detect whether the user actually completed the WhatsApp share from here (same
-    // platform limitation as every other wa.me-based invite in this app) — closing right away
-    // assumes they will, matching how ManageGroup's own WhatsApp invite button behaves.
+    onInvite?.();
     close();
+    // `guide=1` shows ManageGroup's own lightweight step-by-step invite guide the first time
+    // someone lands on the Invite tab this way (see ManageGroup.tsx) — same idea as CreateGroup's
+    // guided flow, just for picking an invite method instead of filling in group fields.
+    navigate(`/groups/${groupId}/manage?tab=invite&guide=1`);
   };
 
   return (
@@ -108,11 +115,10 @@ export default function AddFamilyMemberPrompt({
           <button
             type="button"
             onClick={handleInvite}
-            disabled={sending}
-            className="w-full py-3.5 bg-[#25D366] text-white font-bold rounded-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-sm disabled:opacity-50"
+            className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-sm"
           >
-            <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>call</span>
-            Invite via WhatsApp
+            <span className="material-symbols-outlined text-[20px]">group_add</span>
+            Invite People
           </button>
           <button type="button" onClick={close} className="w-full text-center text-xs font-bold text-text-muted hover:text-primary">
             Maybe later

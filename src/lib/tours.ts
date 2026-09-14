@@ -6,10 +6,29 @@
 // up in the `?tour=` query param; `About.tsx` is what launches them (navigating to `route`
 // with `?tour=<id>` appended). The 'dashboard' tour is special-cased in OnboardingTour.tsx to
 // also auto-launch for brand-new accounts, exactly like the original single-tour version did.
+import { getTourContext } from './tourRef';
+import { setManageGroupTab } from './manageGroupTabRef';
+import { expandGroupTile } from './dashboardTileRef';
+import { setGoalsHubTab } from './goalsHubTabRef';
+
 export interface TourStep {
-  selector: string;
+  // A plain string for most steps; a function of the launch-time context (see tourRef.ts's
+  // getTourContext()) for a step whose target's data-tour id embeds something only known at
+  // launch time — e.g. 'group-explore's Dashboard-tile steps, which need to find THIS group's
+  // tile among however many are on screen, not just "the first one."
+  selector: string | ((ctx: Record<string, any>) => string);
   title: string;
   description: string;
+  // Optional — if set and the browser isn't already there, OnboardingTour.tsx navigates here
+  // before searching for `selector`. Lets one tour span more than one route (e.g. 'group-explore'
+  // hopping from ManageGroup to the Dashboard tile).
+  route?: string;
+  // Optional — an arbitrary side effect run (repeatedly, safely — see dashboardTileRef.ts's own
+  // comment) right before each attempt to find `selector`. Since this file is static data with no
+  // access to component state, these are always tiny functions from a ref-trigger module (e.g.
+  // manageGroupTabRef.ts, dashboardTileRef.ts, goalsHubTabRef.ts) — used to switch a tab or expand
+  // a tile so the target actually exists in the DOM to spotlight.
+  onEnter?: () => void;
 }
 
 export interface TourDef {
@@ -334,6 +353,165 @@ export const TOURS: TourDef[] = [
         selector: 'header-shop-toggle',
         title: 'Switch views anytime',
         description: 'This toggle in the header jumps you between your personal FamilyLedger view and Shopkeeper mode.',
+      },
+    ],
+  },
+  // Launched imperatively via src/lib/tourRef.ts's startTour('group-explore', { groupId }) — from
+  // ManageGroup.tsx's "show me around?" prompt (right after a new group's invite step ends, sent
+  // or skipped) and from the header's permanent "Explore Your Group" Guides menu item — never via
+  // `?tour=`, so `route` below is documentation only, not something OnboardingTour.tsx actually
+  // pattern-matches (ManageGroup's real route has a dynamic :groupId segment). Walks ManageGroup's
+  // own 4 tabs first (where the user is already standing), then hops to the Dashboard tile for the
+  // same group and expands it to explain its action icons — see manageGroupTabRef.ts/
+  // dashboardTileRef.ts for how each step gets its target to actually exist in the DOM.
+  {
+    id: 'group-explore',
+    route: '/groups/:groupId/manage',
+    icon: 'groups',
+    label: 'Explore Your Group',
+    blurb: "A tour of this group's tabs, budget, and the quick-action icons on its Dashboard card.",
+    steps: [
+      {
+        selector: 'manage-group-identity',
+        title: "This group's identity",
+        description: "Its icon, name, and description — tap any of them anytime to change how this group looks to everyone in it.",
+        onEnter: () => setManageGroupTab('overview'),
+      },
+      {
+        selector: 'manage-group-budget',
+        title: 'Monthly Budget',
+        description: 'Set a spending cap for the month here, and every expense logged against this group counts toward it automatically.',
+      },
+      {
+        selector: 'manage-group-recurring-summary',
+        title: 'Recurring expenses',
+        description: "Rent, subscriptions, anything repeating — set it up once here and you'll just be asked to confirm each time it's due.",
+      },
+      {
+        selector: 'manage-group-tab-members',
+        title: 'Members tab',
+        description: 'Everyone in this group, and a "Settle Up" link for each person to record a payment between just the two of you.',
+      },
+      {
+        selector: 'manage-group-members-list',
+        title: 'Everyone in this group',
+        description: 'Tap anyone here to see their profile, or settle up with them directly.',
+        onEnter: () => setManageGroupTab('members'),
+      },
+      {
+        selector: 'manage-group-tab-invite',
+        title: 'Invite tab',
+        description: "You've already seen this one — it's always here if you want to invite more people later.",
+      },
+      {
+        selector: 'manage-group-tab-settings',
+        title: 'Settings tab',
+        description: "Group type, expense splitting, and income tracking all live here — the group's own on/off switches.",
+      },
+      {
+        selector: 'manage-group-settings-type',
+        title: 'Group type & features',
+        description: 'Switch between a regular ongoing group and a one-off event, and turn expense splitting or income tracking on or off.',
+        onEnter: () => setManageGroupTab('settings'),
+      },
+      {
+        selector: (ctx) => `dashboard-tile-expand-${ctx.groupId}`,
+        title: 'Your group card',
+        description: 'Every group you belong to gets a card here on your Dashboard. Tap this icon to cycle through how much it shows.',
+        route: '/',
+        onEnter: () => { const { groupId } = getTourContext(); if (groupId) expandGroupTile(groupId); },
+      },
+      {
+        selector: (ctx) => `dashboard-group-actions-${ctx.groupId}`,
+        title: 'Group actions',
+        description: 'Budget, group type, recurring expenses, archiving — every setting for this group, one tap away, without leaving your Dashboard.',
+      },
+      {
+        selector: (ctx) => `dashboard-action-add-${ctx.groupId}`,
+        title: 'Add',
+        description: 'The fastest way to log a new expense to this group.',
+      },
+      {
+        selector: (ctx) => `dashboard-action-poke-${ctx.groupId}`,
+        title: 'Poke',
+        description: "Nudge every member of this group with a friendly reminder — useful if spending hasn't been logged in a while.",
+      },
+      {
+        selector: (ctx) => `dashboard-action-chat-${ctx.groupId}`,
+        title: 'Chat',
+        description: "This group's own chat — separate from expenses, for anything you want to discuss with everyone in it.",
+      },
+      {
+        selector: (ctx) => `dashboard-action-trends-${ctx.groupId}`,
+        title: 'Trends',
+        description: 'Charts and breakdowns of this group\'s spending — by category, by member, and over time.',
+      },
+      {
+        selector: (ctx) => `dashboard-action-report-${ctx.groupId}`,
+        title: 'Report',
+        description: 'The full transaction list for this group, with filters for category, member, date, and more.',
+      },
+      {
+        selector: (ctx) => `dashboard-budget-${ctx.groupId}`,
+        title: 'Budget at a glance',
+        description: "Once you've set a budget, its progress shows right here — no need to open the group at all to check it.",
+      },
+    ],
+  },
+  // Launched imperatively via startTour('goals-explore') — from OnboardingTour.tsx's own
+  // 'group-explore' finish handler (after the "want to track your savings & goals?" offer, once a
+  // first account and goal exist), and from the header's permanent "Explore Goals & Accounts"
+  // Guides menu item. Walks GoalsHub's 4 tabs one at a time via goalsHubTabRef.ts.
+  {
+    id: 'goals-explore',
+    route: '/goals',
+    icon: 'flag',
+    label: 'Explore Goals & Accounts',
+    blurb: 'A tour of the Reports, Goals, Accounts, and Allocation tabs.',
+    steps: [
+      {
+        selector: 'goals-tab-reports',
+        title: 'Reports tab',
+        description: 'Where you land here — a timeline of every goal, showing whether each is on track to hit its target date.',
+        onEnter: () => setGoalsHubTab('reports'),
+      },
+      {
+        selector: 'goals-horizon-chart',
+        title: 'Goal Horizon',
+        description: "Each goal's icon plotted at its projected (or target) completion date — color-coded so you can see what's on track, behind, or already done at a glance.",
+      },
+      {
+        selector: 'goals-tab-goals',
+        title: 'Goals tab',
+        description: 'The full list, each with its own progress bar and current vs. target amount.',
+      },
+      {
+        selector: 'goals-list-fab-hint',
+        title: 'Creating a new goal',
+        description: 'The 🎯 button in the bottom nav bar is how you start a new goal from anywhere — easy to miss since it replaces the usual Add Expense button while you\'re on this tab.',
+        onEnter: () => setGoalsHubTab('goals'),
+      },
+      {
+        selector: 'goals-tab-accounts',
+        title: 'Accounts tab',
+        description: 'Every real bank, cash, or investment account you\'ve set up — their balances and what they fund.',
+      },
+      {
+        selector: 'goals-accounts-list',
+        title: 'Your accounts',
+        description: 'Tap any account to see its details, or use the button below to add another.',
+        onEnter: () => setGoalsHubTab('accounts'),
+      },
+      {
+        selector: 'goals-tab-allocation',
+        title: 'Allocation tab',
+        description: 'The full picture of which accounts fund which goals, and by how much.',
+      },
+      {
+        selector: 'goals-allocation-list',
+        title: 'Funding, all in one place',
+        description: 'Every goal, with each contributing account\'s share — tap a row to change how much of that account counts toward this goal.',
+        onEnter: () => setGoalsHubTab('allocation'),
       },
     ],
   },

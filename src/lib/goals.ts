@@ -47,7 +47,23 @@ export interface Goal {
   id: string;
   userId: string; // owner — whose aggregated net savings funds this goal
   name: string;
-  targetAmountMinor: number; // integer minor units (e.g. paise) — all goal math stays integer
+  // integer minor units (e.g. paise) — all goal math stays integer. This is what's actually
+  // TRACKED — progress bar, "remaining", every projection in GoalReports/GoalAllocationManager —
+  // and, when an inflation rate is set (see below), it's the future value at targetDate, not what
+  // the user actually typed. Keeping it as the one number every other screen already reads means
+  // none of them needed to change for inflation support — only GoalWizard.tsx (which computes it)
+  // and GoalDetail.tsx (which shows the today's-value breakdown) know inflation exists at all.
+  targetAmountMinor: number;
+  // Inflation adjustment — set together by GoalWizard.tsx, or both left null (the amount the user
+  // types is then exactly what's tracked, same as before this existed). targetAmountTodayMinor is
+  // what the user actually typed — today's cost of whatever they're saving for — encrypted the
+  // same way targetAmountMinor is (see decryptGoalAmounts/encryptGoalAmounts below).
+  // inflationRatePct is an annual % (e.g. 6 for 6%), plaintext like every other rate field in this
+  // app (FinancialAccount.interestRatePct etc.) — not itself a monetary figure. See
+  // inflationAdjustedAmountMinor() for how the two combine with targetDate to produce the number
+  // actually stored in targetAmountMinor above.
+  inflationRatePct: number | null;
+  targetAmountTodayMinor: number | null;
   // Bucket #1 of 2 (see goalTotalMinor() below): monthly savings posting + manual Return-to-
   // Cash-Savings/Transfer-to-Other-Goals moves — never funded directly (see cashHoldingGoalId's
   // own doc comment: Cash Savings now receives 100% of net savings, full stop; a goal only ever
@@ -116,6 +132,32 @@ export interface GoalLedgerEntry {
 }
 
 export const MAX_GOAL_AMOUNT_MINOR = 100_00_00_000_00; // ₹1,000,000,000.00 — a generous ceiling, not a real ceiling on wealth
+export const MAX_INFLATION_RATE_PCT = 50; // sanity ceiling on the input, not a real economic limit
+
+// Compounds `todayAmountMinor` forward from `fromDateStr` to `targetDateStr` at `inflationRatePct`
+// per year (annual compounding on the exact fractional-year gap between the two dates, so editing
+// an existing goal months later recomputes against a shorter/longer remaining horizon rather than
+// always assuming a fresh "today"). Returns `todayAmountMinor` unchanged if there's no rate, no
+// target date, or the date isn't actually in the future — inflation-adjusting backward or against
+// zero time makes no sense, so those just fall back to a plain, unadjusted target.
+export function inflationAdjustedAmountMinor(
+  todayAmountMinor: number,
+  inflationRatePct: number | null | undefined,
+  targetDateStr: string | null | undefined,
+  fromDateStr: string,
+): number {
+  if (!inflationRatePct || inflationRatePct <= 0 || !targetDateStr) return todayAmountMinor;
+  const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
+  const years = (new Date(`${targetDateStr}T00:00:00`).getTime() - new Date(`${fromDateStr}T00:00:00`).getTime()) / msPerYear;
+  if (!Number.isFinite(years) || years <= 0) return todayAmountMinor;
+  return Math.round(todayAmountMinor * Math.pow(1 + inflationRatePct / 100, years));
+}
+
+export function validateInflationRate(ratePct: number): string | null {
+  if (!Number.isFinite(ratePct) || ratePct < 0) return 'Enter an inflation rate of 0% or more.';
+  if (ratePct > MAX_INFLATION_RATE_PCT) return `That inflation rate is too high (max ${MAX_INFLATION_RATE_PCT}%).`;
+  return null;
+}
 
 // --- Field-level encryption boundary ---
 // Firestore stores targetAmountMinor/currentAmountMinor/amountMinor as ciphertext (or, for
@@ -125,22 +167,32 @@ export const MAX_GOAL_AMOUNT_MINOR = 100_00_00_000_00; // ₹1,000,000,000.00 �
 // and in the screens, a Goal's amounts are already-decrypted plain numbers, exactly as before
 // encryption existed. See src/lib/fieldCrypto.ts for the actual crypto.
 export async function decryptGoalAmounts(raw: any): Promise<Goal> {
-  const [targetAmountMinor, currentAmountMinor, accountAllocatedMinor] = await Promise.all([
+  const [targetAmountMinor, currentAmountMinor, accountAllocatedMinor, targetAmountTodayMinor] = await Promise.all([
     decryptAmount('goal', raw.id, raw.targetAmountMinor),
     decryptAmount('goal', raw.id, raw.currentAmountMinor),
     decryptAmount('goal', raw.id, raw.accountAllocatedMinor ?? 0),
+    // decryptAmount() itself has no way to tell "never set" apart from "encrypts to zero" (a null/
+    // undefined input just passes through as 0) — checked here instead, so a goal with no
+    // inflation adjustment gets a real `null`, not a misleading 0.
+    raw.targetAmountTodayMinor == null ? Promise.resolve(null) : decryptAmount('goal', raw.id, raw.targetAmountTodayMinor),
   ]);
-  return { ...raw, targetAmountMinor, currentAmountMinor, accountAllocatedMinor } as Goal;
+  return { ...raw, targetAmountMinor, currentAmountMinor, accountAllocatedMinor, targetAmountTodayMinor, inflationRatePct: raw.inflationRatePct ?? null } as Goal;
 }
 export async function decryptGoalsList(raws: any[]): Promise<Goal[]> {
   return Promise.all(raws.map(decryptGoalAmounts));
 }
-export async function encryptGoalAmounts(goalId: string, targetAmountMinor: number, currentAmountMinor: number): Promise<{ targetAmountMinor: string; currentAmountMinor: string }> {
-  const [target, current] = await Promise.all([
+export async function encryptGoalAmounts(
+  goalId: string,
+  targetAmountMinor: number,
+  currentAmountMinor: number,
+  targetAmountTodayMinor?: number | null,
+): Promise<{ targetAmountMinor: string; currentAmountMinor: string; targetAmountTodayMinor: string | null }> {
+  const [target, current, today] = await Promise.all([
     encryptAmount('goal', goalId, targetAmountMinor),
     encryptAmount('goal', goalId, currentAmountMinor),
+    targetAmountTodayMinor == null ? Promise.resolve(null) : encryptAmount('goal', goalId, targetAmountTodayMinor),
   ]);
-  return { targetAmountMinor: target, currentAmountMinor: current };
+  return { targetAmountMinor: target, currentAmountMinor: current, targetAmountTodayMinor: today };
 }
 // A ledger entry's amountMinor is encrypted under its PARENT goal's scope (goalId), never its
 // own entry id — every viewer who can decrypt the goal can decrypt every entry in its history.

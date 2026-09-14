@@ -16,6 +16,8 @@ import { setOpenFeedPanelFn } from '../lib/feedPanelRef';
 import HeaderProfileBadge from './HeaderProfileBadge';
 import { useAppUpdateAvailable, hardReloadApp } from '../lib/appUpdate';
 import { openCalculator } from '../lib/calculatorRef';
+import { triggerNewUserGuide } from '../lib/newUserGuideRef';
+import { startTour } from '../lib/tourRef';
 import { checkAppPermissions, PermissionKey, PermissionStatus, PERMISSION_ORDER } from '../lib/appPermissions';
 import MissingPermissionsList from './MissingPermissionsList';
 
@@ -41,6 +43,10 @@ export default function Header() {
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
   )[0]?.docs.map((d) => d.data().groupId).slice().sort().join(',') || '';
   const groupIds = React.useMemo(() => (groupIdsKey ? groupIdsKey.split(',') : []), [groupIdsKey]);
+  // Guides menu's "Explore Your Group" — just needs SOME group of the user's to walk through, not
+  // necessarily the most recent (the tour itself is generic UI explanation, not group-specific
+  // content), so reusing this already-fetched id list avoids a second query.
+  const firstGroupId = groupIds[0];
   const [activitiesValue] = useCollection(
     groupIds.length > 0 ? query(collection(db, 'activities'), where('groupId', 'in', groupIds)) : null,
   );
@@ -104,6 +110,13 @@ export default function Header() {
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [feedOpen, setFeedOpen] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  // The permanent "Guides" section — every step-by-step guide/tour, grouped under one collapsible
+  // entry instead of listed flat, so the rest of the menu isn't dominated by it. Resets closed
+  // whenever the main menu itself closes, so it doesn't stay expanded the next time it's opened.
+  const [guidesMenuOpen, setGuidesMenuOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (!menuOpen) setGuidesMenuOpen(false);
+  }, [menuOpen]);
   const [feedGroupId, setFeedGroupId] = React.useState<string | undefined>(undefined);
 
   // "Recurring Expense Confirmation" menu entry + its red dot — same collection/filter
@@ -366,6 +379,95 @@ export default function Header() {
                           {cat.label}
                         </button>
                       ))}
+                      {/* Permanent "Guides" section — every step-by-step guide and spotlight tour
+                          in the app, relaunchable any time, grouped under this one collapsible
+                          entry rather than listed flat. Originally 5 dev-only "Test: ..." buttons
+                          that (per an exploration pass) weren't actually gated to localhost/dev in
+                          any environment — turned into a real, intentional, user-facing feature
+                          instead of leaving that as a latent bug. */}
+                      <div className="border-t border-border-subtle my-1" />
+                      <button
+                        onClick={() => setGuidesMenuOpen((v) => !v)}
+                        className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="flex items-center gap-3">
+                          <span className="material-symbols-outlined text-[20px] text-text-muted">explore</span>
+                          Guides
+                        </span>
+                        <span className={clsx('material-symbols-outlined text-[18px] text-text-muted transition-transform', guidesMenuOpen && 'rotate-180')}>
+                          expand_more
+                        </span>
+                      </button>
+                      {guidesMenuOpen && (
+                        <>
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/create-group?guide=1'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">restart_alt</span>
+                            Restart Full Walkthrough
+                          </button>
+                          <div className="border-t border-border-subtle my-1 mx-4" />
+                          <button
+                            onClick={() => { setMenuOpen(false); triggerNewUserGuide(); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">person</span>
+                            Update Your Profile
+                          </button>
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/create-group?guide=1'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">group_add</span>
+                            Create a Group
+                          </button>
+                          {firstGroupId && (
+                            <button
+                              onClick={() => { setMenuOpen(false); navigate(`/groups/${firstGroupId}/manage`); startTour('group-explore', { groupId: firstGroupId }); }}
+                              className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                            >
+                              <span className="material-symbols-outlined text-[18px] text-text-muted">groups</span>
+                              Explore Your Group
+                            </button>
+                          )}
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/goals/accounts?openAdd=1&guide=1'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">account_balance</span>
+                            Add a Financial Account
+                          </button>
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/goals/new?guide=1'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">flag</span>
+                            Create a Goal
+                          </button>
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/goals'); startTour('goals-explore'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">explore</span>
+                            Explore Goals & Accounts
+                          </button>
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/add-expense?guide=1'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">add_circle</span>
+                            Log an Expense
+                          </button>
+                          <button
+                            onClick={() => { setMenuOpen(false); navigate('/recurring-expenses?guide=1'); }}
+                            className="w-full flex items-center gap-3 pl-11 pr-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-text-muted">event_repeat</span>
+                            Set Up a Recurring Expense
+                          </button>
+                        </>
+                      )}
                     </>
                   )}
                 </div>

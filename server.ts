@@ -1858,6 +1858,64 @@ async function processExpenseReminders(db: Firestore): Promise<number> {
   return sentCount;
 }
 
+// Policy Vault's renewal nudge — full-collection scan (same acceptable-at-this-scale tradeoff as
+// processLoanReminders below), checked once a day rather than every 15 min since a renewal date
+// has no reason to need faster resolution. Fires once `today >= renewalDate - reminderDaysBefore`
+// (in the owner's OWN timezone, same reasoning as the DOB-reminder check further down — a renewal
+// date shouldn't shift by however far the server's UTC clock happens to be from where the owner
+// lives), and only actually marks itself sent (`lastRenewalReminderSentFor`) once a push has
+// genuinely been delivered — same "retry tomorrow if there was nothing to deliver to" tradeoff
+// processExpenseReminders' one-time case accepts above, rather than silently marking a reminder
+// "handled" when the owner never actually saw it. Editing a policy's renewalDate clears this guard
+// client-side (PolicyWizard.tsx), so changing the date always re-arms the reminder.
+async function processPolicyRenewalReminders(db: Firestore): Promise<number> {
+  const snap = await db.collection('policies').where('status', '==', 'active').get();
+  let sentCount = 0;
+
+  for (const policyDoc of snap.docs) {
+    const policy = policyDoc.data();
+    if (!policy.renewalDate || policy.lastRenewalReminderSentFor === policy.renewalDate) continue;
+
+    try {
+      const timeZone = (await getUserTimezone(db, policy.userId)) || 'UTC';
+      const today = todayDateStringInTimeZone(timeZone);
+      const daysBefore = typeof policy.reminderDaysBefore === 'number' ? policy.reminderDaysBefore : 30;
+      const warnFromDateObj = new Date(`${policy.renewalDate}T00:00:00`);
+      warnFromDateObj.setDate(warnFromDateObj.getDate() - daysBefore);
+      const warnFrom = warnFromDateObj.toISOString().slice(0, 10);
+      if (today < warnFrom) continue;
+
+      const privateSnap = await db.collection('users').doc(policy.userId).collection('private').doc('info').get();
+      const privateData = privateSnap.exists ? privateSnap.data()! : {};
+      if (privateData.policyRenewalReminderEnabled === false) {
+        // Opted out — mark handled anyway so this doesn't get re-evaluated every day for as long
+        // as the renewal window stays open, same as every other opted-out reminder type.
+        await policyDoc.ref.update({ lastRenewalReminderSentFor: policy.renewalDate });
+        continue;
+      }
+
+      const tokens = await collectPushTokens(db, [policy.userId], 'notificationsEnabled');
+      const overdue = today > policy.renewalDate;
+      const body = overdue
+        ? `"${policy.name}" was due for renewal on ${policy.renewalDate}.`
+        : `"${policy.name}" renews on ${policy.renewalDate} — don't let it lapse.`;
+      const sent = await sendPush(tokens, 'Policy renewal reminder', body, { type: 'policy_renewal', policyId: policyDoc.id });
+      if (sent > 0) {
+        sentCount++;
+        await logFeedActivity(db, {
+          userId: policy.userId, type: 'policy_renewal', description: body,
+          userName: 'Policy renewal reminder', data: { type: 'policy_renewal', policyId: policyDoc.id },
+        });
+        await policyDoc.ref.update({ lastRenewalReminderSentFor: policy.renewalDate });
+      }
+    } catch (err) {
+      console.error(`processPolicyRenewalReminders failed for policy ${policyDoc.id}:`, err);
+    }
+  }
+
+  return sentCount;
+}
+
 // Processes due to-do reminders for group-shared items only: sends a one-time push to the
 // item's creator (sharing a to-do with a group controls who can *see/edit* it, not who gets
 // reminded about it — see firestore.rules' /todos block). Personal (non-shared) to-dos are
@@ -4607,6 +4665,23 @@ async function startServer() {
           } else if (goal.groupId) {
             const memberSnap = await db.collection('members')
               .where('groupId', '==', goal.groupId).where('userId', '==', decoded.uid).limit(1).get();
+            authorized = !memberSnap.empty;
+          }
+        }
+      } else if (scopeType === 'policy') {
+        // Same shape as 'goal' above (owner OR shared friend OR shared group member), not
+        // 'account's owner-only check — Policy Vault records support the same shared-viewer model
+        // Goals does, so a shared viewer needs to be able to decrypt sumInsured/premium too.
+        const snap = await db.collection('policies').doc(scopeId).get();
+        if (snap.exists) {
+          const policy = snap.data()!;
+          if (policy.userId === decoded.uid) {
+            authorized = true;
+          } else if (Array.isArray(policy.friendUids) && policy.friendUids.includes(decoded.uid)) {
+            authorized = true;
+          } else if (policy.groupId) {
+            const memberSnap = await db.collection('members')
+              .where('groupId', '==', policy.groupId).where('userId', '==', decoded.uid).limit(1).get();
             authorized = !memberSnap.empty;
           }
         }
@@ -9017,12 +9092,15 @@ async function startServer() {
   });
 
   // Backs the "Search FamilyLedger Users" invite picker (see ManageGroup.tsx) — any signed-in
-  // user can look up others by their short ID, exact email, or a name substring, to invite them
-  // into a group directly instead of only sharing a link. Runs server-side (Admin SDK) rather
-  // than as a client Firestore query for two reasons: email isn't stored on the public `users`
-  // doc at all (only encrypted, in the private subcollection — see AuthContext.tsx), so an email
-  // lookup has to go through Firebase Auth; and keeping this server-side lets the response omit
-  // email entirely, so searching by name/ID never leaks anyone's email address to the searcher.
+  // user can look up others by their short ID or exact email, to invite them into a group
+  // directly instead of only sharing a link. Deliberately NOT a name search — that used to be a
+  // full `users` collection scan on every 2+ character keystroke (a real cost/scale problem as
+  // the user base grows) AND let anyone fish for other people's accounts by typing common names,
+  // which ID/exact-email lookup doesn't allow. Runs server-side (Admin SDK) rather than as a
+  // client Firestore query because email isn't stored on the public `users` doc at all (only
+  // encrypted, in the private subcollection — see AuthContext.tsx), so an email lookup has to go
+  // through Firebase Auth; keeping this server-side also lets the response omit email entirely,
+  // so an ID search never leaks anyone's email address to the searcher.
   app.post('/api/search-users', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
@@ -9054,20 +9132,6 @@ async function startServer() {
         } catch (err: any) {
           if (err?.code !== 'auth/user-not-found') console.error('search-users email lookup error:', err);
         }
-      }
-
-      // Name substring match — a full collection scan + in-memory filter, simpler than
-      // maintaining a lower-cased mirror field just for this. Fine at this app's current user
-      // count; would need revisiting (e.g. a `displayNameLower` field + prefix query) if the user
-      // base grows enough for this to become a real cost.
-      if (matches.size < 10) {
-        const lowerQuery = query.toLowerCase();
-        const snap = await adminDb.collection('users').get();
-        snap.docs.forEach((d) => {
-          if (matches.has(d.id)) return;
-          const displayName = String(d.data()?.displayName || '');
-          if (displayName.toLowerCase().includes(lowerQuery)) matches.set(d.id, { uid: d.id, ...d.data() });
-        });
       }
 
       const results = Array.from(matches.values())
@@ -10053,6 +10117,10 @@ async function startServer() {
       const birthdaysWished = perUserResults.filter((r) => r.birthdayWished).length;
       const birthdayTodosCreated = perUserResults.reduce((sum, r) => sum + r.birthdayTodos, 0);
       const oldActivitiesDeleted = await cleanupOldActivities(db);
+      // Independent whole-collection scan (Policy Vault renewals), not per-user like everything
+      // above it — see processPolicyRenewalReminders' own comment for why once-a-day is the right
+      // cadence for this.
+      const policyRenewalRemindersSent = await processPolicyRenewalReminders(db);
 
       return res.json({
         ok: true,
@@ -10065,6 +10133,7 @@ async function startServer() {
         birthdayTodosCreated,
         usersScanned: usersSnap.size,
         oldActivitiesDeleted,
+        policyRenewalRemindersSent,
       });
     } catch (error) {
       console.error('cron/send-daily-reminders error:', error);
@@ -10181,6 +10250,80 @@ async function startServer() {
     } catch (error) {
       console.error('cron/send-weekly-summary error:', error);
       return res.status(500).json({ error: 'Weekly summary job failed.' });
+    }
+  });
+
+  // Runs once a week (Cloud Scheduler job `familyledger-account-goal-nudge`, registered separately
+  // — see project notes, no Cloud Scheduler IaC lives in this repo for any cron job). Nudges any
+  // user who genuinely has nothing set up yet — zero financial accounts AND zero real goals (same
+  // computeGoalsAndAccountsSnapshot the weekly summary above already uses) — with a push AND, in
+  // the same write, a plain `accountGoalNudge` field on their own `users/{uid}` doc. That field is
+  // what actually drives the in-app popup (AccountGoalNudgePrompt.tsx, reading it off the already-
+  // live profile stream every screen has via AuthContext) — so the popup shows identically whether
+  // the push was tapped or the app happened to already be open when this ran; push delivery isn't
+  // even required for it to work. Same `x-cron-secret` guard, `testUid`/`testEmail` override, and
+  // per-user `Promise.all` shape as every other cron job here.
+  app.post('/api/cron/send-account-goal-nudge', async (req, res) => {
+    const providedSecret = req.headers['x-cron-secret'];
+    if (!process.env.CRON_SECRET || providedSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    if (!adminDb) return res.status(500).json({ error: 'Firestore not available.' });
+    const db = adminDb;
+
+    try {
+      const nowIso = new Date().toISOString();
+      const sixDaysAgoIso = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      const usersSnap = await db.collection('users').select('displayName').get();
+      const testUidRaw = String(req.body?.testUid || '');
+      const testEmailRaw = String(req.body?.testEmail || '');
+      let targetUserDocs = usersSnap.docs;
+      if (testUidRaw) {
+        targetUserDocs = usersSnap.docs.filter((d) => d.id === testUidRaw);
+      } else if (testEmailRaw) {
+        const authUser = await admin.auth().getUserByEmail(testEmailRaw).catch(() => null);
+        targetUserDocs = usersSnap.docs.filter((d) => d.id === authUser?.uid);
+      }
+
+      const results = await Promise.all(
+        targetUserDocs.map(async (userDoc) => {
+          const uid = userDoc.id;
+          const privateRef = db.collection('users').doc(uid).collection('private').doc('info');
+          const privateSnap = await privateRef.get();
+          const privateData = privateSnap.exists ? privateSnap.data()! : {};
+          // On-by-default, same convention as every other reminder type — only an explicit `false`
+          // opts out.
+          if (privateData.accountGoalNudgeEnabled === false) return { sent: false };
+          // Guards against a manual re-trigger (or a misconfigured scheduler firing twice) double-
+          // sending inside the same week — same `last<Thing>ReminderSentAt` interval-gate idiom
+          // send-daily-reminders already uses for its own reminder types.
+          if (typeof privateData.lastAccountGoalNudgeSentAt === 'string' && privateData.lastAccountGoalNudgeSentAt > sixDaysAgoIso) {
+            return { sent: false };
+          }
+          const { goalsTracked, accountsMonitored } = await computeGoalsAndAccountsSnapshot(db, uid);
+          if (goalsTracked > 0 || accountsMonitored > 0) return { sent: false };
+
+          const message = "You haven't set up any accounts or goals yet — takes about 2 minutes, and it's where FamilyLedger tracks what you're actually saving toward.";
+          const tokens = await collectPushTokens(db, [uid], 'notificationsEnabled');
+          const pushSuccessCount = await sendPush(tokens, 'Track your real savings', message, { type: 'account_goal_nudge' });
+          await Promise.all([
+            privateRef.set({ lastAccountGoalNudgeSentAt: nowIso }, { merge: true }),
+            db.collection('users').doc(uid).set({ accountGoalNudge: { message, createdAt: nowIso } }, { merge: true }),
+          ]);
+          return { sent: pushSuccessCount > 0 };
+        }),
+      );
+
+      return res.json({
+        ok: true,
+        totalUsers: usersSnap.size,
+        usersProcessed: targetUserDocs.length,
+        nudgesSent: results.filter((r) => r.sent).length,
+      });
+    } catch (error) {
+      console.error('cron/send-account-goal-nudge error:', error);
+      return res.status(500).json({ error: 'Account/goal nudge job failed.' });
     }
   });
 

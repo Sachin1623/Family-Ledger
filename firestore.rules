@@ -1129,7 +1129,13 @@ service cloud.firestore {
                (!data.keys().hasAll(['friendUids']) || data.friendUids is list) &&
                (!data.keys().hasAll(['groupRole']) || data.groupRole == null || data.groupRole in ['view', 'edit']) &&
                (!data.keys().hasAll(['friendRoles']) || data.friendRoles is map) &&
-               (!data.keys().hasAll(['isCashHolding']) || data.isCashHolding is bool);
+               (!data.keys().hasAll(['isCashHolding']) || data.isCashHolding is bool) &&
+               // Inflation adjustment (optional, added together or not at all by GoalWizard.tsx) —
+               // targetAmountTodayMinor follows the same encrypted-or-plain shape as every other
+               // amount field; inflationRatePct is a plain rate, never encrypted (same convention
+               // as FinancialAccount.interestRatePct).
+               (!data.keys().hasAll(['targetAmountTodayMinor']) || data.targetAmountTodayMinor == null || isValidAmountField(data.targetAmountTodayMinor)) &&
+               (!data.keys().hasAll(['inflationRatePct']) || data.inflationRatePct == null || (data.inflationRatePct is number && data.inflationRatePct >= 0));
       }
 
       allow read: if isGoalViewer();
@@ -1342,6 +1348,74 @@ service cloud.firestore {
         allow read: if isParentViewer();
         allow create: if isSignedIn() && isValidAccountLog(incoming()) && incoming().createdBy == request.auth.uid && isParentEditor();
       }
+    }
+
+    // --- Policy Vault ---
+    // Same dual sharing model as Financial Accounts, including its view-by-default choice (no
+    // legacy data to stay compatible with, and a policy number/coverage detail is just as
+    // sensitive as a real account balance — see policies.ts's own doc comment). No attachment
+    // fields exist yet — deliberately deferred, see policies.ts's header comment.
+    match /policies/{policyId} {
+      function isPolicyViewer() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
+        );
+      }
+      function isPolicyEditor() {
+        return isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != null && canModifyGroup(resource.data.groupId) &&
+            resource.data.keys().hasAll(['groupRole']) && resource.data.groupRole == 'edit') ||
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]) &&
+            resource.data.keys().hasAll(['friendRoles']) && resource.data.friendRoles.keys().hasAny([request.auth.uid]) &&
+            resource.data.friendRoles[request.auth.uid] == 'edit')
+        );
+      }
+      function isValidPolicy(data) {
+        return data.keys().hasAll(['userId', 'type', 'name', 'currency', 'status', 'createdBy', 'createdByName', 'createdAt', 'updatedAt']) &&
+               data.userId is string && data.userId.size() > 0 &&
+               data.type is string && data.type in ['health', 'life', 'term', 'vehicle', 'home', 'travel', 'other'] &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 80 &&
+               data.currency is string &&
+               data.status is string && data.status in ['active', 'lapsed', 'archived'] &&
+               data.createdBy is string && data.createdByName is string &&
+               data.createdAt is string && data.updatedAt is string &&
+               (!data.keys().hasAll(['provider']) || data.provider is string) &&
+               (!data.keys().hasAll(['policyNumber']) || data.policyNumber is string) &&
+               (!data.keys().hasAll(['membersCovered']) || data.membersCovered is list) &&
+               (!data.keys().hasAll(['sumInsuredMinor']) || data.sumInsuredMinor == null || isValidAmountField(data.sumInsuredMinor)) &&
+               (!data.keys().hasAll(['premiumAmountMinor']) || data.premiumAmountMinor == null || isValidAmountField(data.premiumAmountMinor)) &&
+               (!data.keys().hasAll(['premiumFrequency']) || data.premiumFrequency == null || data.premiumFrequency in ['monthly', 'quarterly', 'halfyearly', 'yearly', 'oneTime']) &&
+               (!data.keys().hasAll(['startDate']) || data.startDate == null || data.startDate is string) &&
+               (!data.keys().hasAll(['renewalDate']) || data.renewalDate == null || data.renewalDate is string) &&
+               (!data.keys().hasAll(['reminderDaysBefore']) || data.reminderDaysBefore is int) &&
+               (!data.keys().hasAll(['lastRenewalReminderSentFor']) || data.lastRenewalReminderSentFor == null || data.lastRenewalReminderSentFor is string) &&
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 2000)) &&
+               (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
+               (!data.keys().hasAll(['friendUids']) || data.friendUids is list) &&
+               (!data.keys().hasAll(['groupRole']) || data.groupRole == null || data.groupRole in ['view', 'edit']) &&
+               (!data.keys().hasAll(['friendRoles']) || data.friendRoles is map);
+      }
+      allow read: if isPolicyViewer();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().createdBy == request.auth.uid && isValidPolicy(incoming()) &&
+        (!incoming().keys().hasAll(['groupId']) || incoming().groupId == null || canModifyGroup(incoming().groupId));
+      allow update: if isSignedIn() && (
+        (existing().userId == request.auth.uid && isValidPolicy(incoming()) && incoming().userId == existing().userId &&
+          (!incoming().keys().hasAll(['groupId']) || incoming().groupId == null || canModifyGroup(incoming().groupId))) ||
+        // Shared editor: may update the policy's own data fields, but never delete, never reassign
+        // ownership, never change the sharing settings themselves — only the owner decides who
+        // it's shared with, same as Financial Accounts.
+        (isPolicyEditor() && existing().userId != request.auth.uid &&
+          isValidPolicy(incoming()) && incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'type', 'name', 'provider', 'policyNumber', 'membersCovered', 'sumInsuredMinor',
+            'premiumAmountMinor', 'premiumFrequency', 'currency', 'startDate', 'renewalDate',
+            'reminderDaysBefore', 'lastRenewalReminderSentFor', 'notes', 'status', 'updatedAt'
+          ]))
+      );
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
     // --- Pending recurring-expense confirmations ---

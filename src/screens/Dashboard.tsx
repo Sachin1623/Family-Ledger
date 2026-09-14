@@ -18,6 +18,8 @@ import { useLanguage } from '../context/LanguageContext';
 import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
 import ImageLightbox from '../components/ImageLightbox';
 import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
+import { setExpandGroupTileFn } from '../lib/dashboardTileRef';
+import AccountsExplainerModal from '../components/AccountsExplainerModal';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -107,6 +109,31 @@ export default function Dashboard() {
   const [membershipsValue, membershipsLoading] = useCollection(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null
   );
+
+  // Motivation banner — shown only for a user with genuinely nothing set up yet (no financial
+  // account, no goal beyond the automatic Cash Savings catch-all), same "zero accounts AND zero
+  // goals" check server.ts's computeGoalsAndAccountsSnapshot uses for the weekly nudge cron, just
+  // done client-side here since Dashboard already has a live profile/auth context to key off of.
+  // Dismissal is per-session only (plain state, not persisted) — the whole point is this keeps
+  // coming back until the user actually sets something up, rather than being silenceable forever.
+  const [financialAccountsValue] = useCollection(
+    user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null,
+  );
+  const [goalsForBannerValue] = useCollection(
+    user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null,
+  );
+  const hasAnyAccount = (financialAccountsValue?.docs || []).some((d) => !d.data().archived);
+  const hasAnyRealGoal = (goalsForBannerValue?.docs || []).some((d) => {
+    const data = d.data();
+    return data.status !== 'archived' && !data.isCashHolding;
+  });
+  const [accountsGoalsBannerDismissed, setAccountsGoalsBannerDismissed] = useState(false);
+  // Waits for both queries to actually resolve (not `undefined`, i.e. still loading) before
+  // deciding to show — otherwise every user would flash the banner for a moment on every load.
+  const showAccountsGoalsBanner =
+    !!user && financialAccountsValue !== undefined && goalsForBannerValue !== undefined
+    && !hasAnyAccount && !hasAnyRealGoal && !accountsGoalsBannerDismissed;
+  const [showBannerAccountsExplainer, setShowBannerAccountsExplainer] = useState(false);
 
   const memberships = membershipsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [];
 
@@ -263,8 +290,52 @@ export default function Dashboard() {
     }
   };
 
+  // Registers the 'group-explore' tour's "expand this specific tile" hook (dashboardTileRef.ts) —
+  // jumps a tile straight to state 3 (same as three taps of cycleGroupState above) so its action
+  // icons/budget/recent-spend exist in the DOM for the tour to spotlight, without depending on
+  // whichever state a real user last left the tile in.
+  useEffect(() => {
+    setExpandGroupTileFn((groupId: string) => {
+      setRevealedGroupIds((prev) => (prev.has(groupId) ? prev : new Set(prev).add(groupId)));
+      setExpandedGroupIds((prev) => (prev.has(groupId) ? prev : new Set(prev).add(groupId)));
+    });
+    return () => setExpandGroupTileFn(null);
+  }, []);
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-24">
+      {showAccountsGoalsBanner && (
+        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
+          <span className="text-2xl shrink-0">💰</span>
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="text-sm font-bold text-primary">Track your real savings, too</p>
+            <p className="text-xs text-text-muted leading-relaxed">
+              You haven't set up any accounts or goals yet — separate from your group expenses, this is where FamilyLedger tracks what you're actually saving toward.
+            </p>
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowBannerAccountsExplainer(true)}
+                className="text-xs font-bold text-primary hover:underline"
+              >
+                Set it up →
+              </button>
+              <button
+                type="button"
+                onClick={() => setAccountsGoalsBannerDismissed(true)}
+                className="text-xs font-bold text-text-muted hover:text-primary"
+              >
+                Not now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showBannerAccountsExplainer && (
+        <AccountsExplainerModal
+          onClose={() => { setShowBannerAccountsExplainer(false); navigate('/goals/accounts?openAdd=1&guide=1&onboarding=1'); }}
+        />
+      )}
       {favoriteItems.length > 0 && (
         <section>
           <button
@@ -798,10 +869,10 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            <button onClick={stopAnd(() => setShowQuickActions(true))} title="Group actions" className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
+            <button onClick={stopAnd(() => setShowQuickActions(true))} title="Group actions" data-tour={`dashboard-group-actions-${groupId}`} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
               <span className="material-symbols-outlined text-[20px] block">more_vert</span>
             </button>
-            <button onClick={stopAnd(onToggleCollapse)} title={tileState === 1 ? t('dashboard.revealTooltip') : tileState === 2 ? t('dashboard.expandTooltip') : t('dashboard.collapseTooltip')} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
+            <button onClick={stopAnd(onToggleCollapse)} title={tileState === 1 ? t('dashboard.revealTooltip') : tileState === 2 ? t('dashboard.expandTooltip') : t('dashboard.collapseTooltip')} data-tour={`dashboard-tile-expand-${groupId}`} className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-full transition-colors">
               <span className="material-symbols-outlined text-[20px] block">
                 {tileState === 1 ? 'keyboard_double_arrow_down' : tileState === 2 ? 'expand_more' : 'expand_less'}
               </span>
@@ -819,26 +890,26 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             budget card below — 5 evenly-spaced, slightly larger icons instead of packing tighter
             to make room for a 6th thing on this row. Same 5 actions, same handlers/tooltips as
             before — purely a visual redesign, not a functional change. */}
-        <div className="flex items-center justify-between gap-1">
-          <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+        <div className="flex items-center justify-between gap-1" data-tour={`dashboard-action-row-${groupId}`}>
+          <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} data-tour={`dashboard-action-add-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionAdd')}</span>
           </button>
-          <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+          <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-lg">{poked ? '✅' : '✋'}</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionPoke')}</span>
           </button>
-          <span onClick={(e) => e.stopPropagation()} className="flex-1 flex flex-col items-center gap-1 py-0.5">
+          <span onClick={(e) => e.stopPropagation()} data-tour={`dashboard-action-chat-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5">
             <span className="relative w-11 h-11 rounded-2xl bg-pink-100 flex items-center justify-center">
               <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
             </span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionChat')}</span>
           </span>
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+          <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} data-tour={`dashboard-action-trends-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-blue-100 flex items-center justify-center text-lg">📊</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionTrends')}</span>
           </button>
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+          <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} data-tour={`dashboard-action-report-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-teal-100 flex items-center justify-center text-lg">🧾</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionReport')}</span>
           </button>
@@ -852,7 +923,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             budget set, the month picker just gets its own row instead of an empty 70% slot next
             to it. */}
         {budgetStatus ? (
-          <div className="flex items-stretch gap-2">
+          <div className="flex items-stretch gap-2" data-tour={`dashboard-budget-${groupId}`}>
             <div className="w-[70%] bg-surface-container/40 rounded-2xl p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">

@@ -190,6 +190,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'poke': return 'back_hand';
       case 'made_admin': return 'verified_user';
       case 'expense_reminder': return 'notifications_active';
+      case 'policy_renewal': return 'shield';
       case 'settlement_reminder': return 'payments';
       case 'loan_reminder': case 'loan_installment_due': case 'loan_activity': return 'payments';
       case 'admin_feedback': return 'feedback';
@@ -209,7 +210,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
   const getActivityColor = (type: string) => {
     if (type === 'delete_expense' || type === 'group_deleted' || type === 'recurring_deleted') return 'bg-error';
     if (type === 'weekly_summary') return 'bg-accent';
-    if (type === 'recurring_confirm_pending' || type === 'budget_reminder' || type === 'expense_reminder' || type === 'settlement_reminder' || type === 'todo_reminder' || type === 'loan_reminder' || type === 'loan_installment_due') return 'bg-warning';
+    if (type === 'recurring_confirm_pending' || type === 'budget_reminder' || type === 'expense_reminder' || type === 'settlement_reminder' || type === 'todo_reminder' || type === 'loan_reminder' || type === 'loan_installment_due' || type === 'policy_renewal') return 'bg-warning';
     if (type === 'system_update') return 'bg-primary';
     if (type === 'reminder_set' || type === 'reminder_activity') return 'bg-primary';
     if (type === 'feedback_resolved') return 'bg-success';
@@ -497,6 +498,13 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
             <p className="text-sm font-medium text-on-surface">{t('feed.expenseReminderActivity')}</p>
           </div>
         );
+      case 'policy_renewal':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-warning uppercase tracking-wider">{t('feed.policyRenewalLabel')}</p>
+            <p className="text-sm font-medium text-on-surface">{activity.description}</p>
+          </div>
+        );
       case 'todo_reminder':
         return (
           <div className="space-y-1">
@@ -711,6 +719,8 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
               goTo(`/add-expense?${params.toString()}`);
             } else if (type === 'todo_reminder') {
               goTo('/todo');
+            } else if (type === 'policy_renewal' && data.policyId) {
+              goTo(`/policies/${data.policyId}`);
             } else if ((type === 'loan_reminder' || type === 'loan_installment_due' || type === 'loan_activity') && data.contactId) {
               goTo(`/personal-loans/${data.contactId}`);
             } else if (type === 'budget_reminder' && activity.groupId) {

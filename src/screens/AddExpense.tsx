@@ -26,6 +26,17 @@ import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
+// First-time guided flow through this form — same engine as CreateGroup.tsx / GoalWizard.tsx /
+// AccountsHub.tsx's Add Account modal (progressive reveal, a glow highlight directly on the real
+// field via the shared `.fl-tour-glow` CSS class, no floating tooltip card). Only runs when
+// `?guide=1` arrives with none of this screen's OTHER deep-link params also present — a real poke/
+// reminder/settle-up/group-tile link should always behave normally, never accidentally launch the
+// walkthrough. 'favorite' and 'split' both auto-skip themselves when there's nothing to act on
+// (see the effect below) — no favorites saved yet, or the group has splitting off / too few
+// members.
+const GUIDE_STEPS = ['amount', 'group', 'favorite', 'description', 'category', 'recurring', 'split'] as const;
+type GuideStepId = typeof GUIDE_STEPS[number];
+
 export default function AddExpense() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -254,6 +265,7 @@ export default function AddExpense() {
   const [showFavorites, setShowFavorites] = useState(false);
 
   const handlePickFavorite = (fav: any) => {
+    if (guideActive('favorite')) goToNextGuideStep();
     setDescription(fav.description || '');
     setAmount(fav.amount != null ? String(fav.amount) : '');
     // A favorited income entry needs the type switched too, or its category id (drawn from
@@ -279,6 +291,37 @@ export default function AddExpense() {
       console.error('Failed to remove favorite:', err);
     }
   };
+
+  const guide = searchParams.get('guide') === '1' && !searchParams.get('groupId') && !searchParams.get('settleWith') && !searchParams.get('reminderId');
+  const [guideStepIndex, setGuideStepIndex] = useState(0);
+  const currentGuideStep: GuideStepId | null = guide && guideStepIndex < GUIDE_STEPS.length ? GUIDE_STEPS[guideStepIndex] : null;
+  const guideDone = !guide || guideStepIndex >= GUIDE_STEPS.length;
+  const guideReached = (step: GuideStepId) => !guide || GUIDE_STEPS.indexOf(step) <= guideStepIndex;
+  const guideActive = (step: GuideStepId) => currentGuideStep === step;
+  const goToNextGuideStep = () => setGuideStepIndex((i) => Math.min(i + 1, GUIDE_STEPS.length));
+  const skipGuide = () => setGuideStepIndex(GUIDE_STEPS.length);
+  const stepBadge = (step: GuideStepId) =>
+    guideActive(step) && (
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] font-black text-primary uppercase tracking-wider">
+          Step {GUIDE_STEPS.indexOf(step) + 1} of {GUIDE_STEPS.length}
+        </span>
+        <button type="button" onClick={skipGuide} className="text-[9px] font-bold text-text-muted hover:text-primary">
+          Skip guide
+        </button>
+      </div>
+    );
+  const guideWrapClass = (step: GuideStepId) =>
+    clsx(guideActive(step) && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-3 -m-3 bg-primary/5');
+  const splitApplies = entryType === 'expense' && !!selectedGroup?.splitEnabled && groupMembers.length > 0;
+  // Nothing to act on for these two steps in every case — skip straight past rather than showing
+  // an empty/inapplicable step: 'favorite' still has value with zero favorites (it explains the
+  // star toggle), so that one is NOT auto-skipped; 'split' truly has nothing to show when the
+  // group doesn't split expenses (or this is income), so that one is.
+  React.useEffect(() => {
+    if (guide && currentGuideStep === 'split' && !splitApplies) goToNextGuideStep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guide, currentGuideStep, splitApplies]);
 
   // Description autocomplete — reuses the SAME query already loaded for the budget-remaining
   // calculation above (all of this group's expenses), so this costs nothing extra to add.
@@ -592,7 +635,9 @@ export default function AddExpense() {
             </div>
           )}
 
-          <section className="bg-white p-3 rounded-2xl border border-border-subtle shadow-sm" data-tour="expense-amount">
+          {guideReached('amount') && (
+          <section className={clsx("bg-white p-3 rounded-2xl border border-border-subtle shadow-sm", guideWrapClass('amount'))} data-tour="expense-amount">
+          {stepBadge('amount')}
           <div className="flex items-start justify-between gap-2 mb-1">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.amount')} <span className="text-error">*</span></label>
             {groupId && budget && (() => {
@@ -658,8 +703,22 @@ export default function AddExpense() {
             )}
           </div>
           {formErrors.amount && <p className="text-xs text-error font-bold text-center mt-1">{formErrors.amount}</p>}
+          {guideActive('amount') && (
+            <button
+              type="button"
+              onClick={() => { if (evaluatedAmount && evaluatedAmount > 0) goToNextGuideStep(); }}
+              disabled={!(evaluatedAmount && evaluatedAmount > 0)}
+              className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline mt-1"
+            >
+              Next →
+            </button>
+          )}
         </section>
+        )}
 
+        {guideReached('group') && (
+        <div className={clsx("space-y-1.5", guideWrapClass('group'))}>
+        {stepBadge('group')}
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
             {groupLocked && selectedGroup ? (
@@ -681,7 +740,11 @@ export default function AddExpense() {
                 <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.group')} <span className="text-error">*</span></label>
                 <select
                   value={groupId}
-                  onChange={(e) => { setGroupId(e.target.value); if (formErrors.group) setFormErrors((prev) => ({ ...prev, group: '' })); }}
+                  onChange={(e) => {
+                    setGroupId(e.target.value);
+                    if (formErrors.group) setFormErrors((prev) => ({ ...prev, group: '' }));
+                    if (guideActive('group') && e.target.value) goToNextGuideStep();
+                  }}
                   className={clsx('w-full h-11 bg-white px-3 rounded-xl border outline-none focus:ring-2 focus:ring-primary/20 text-sm font-bold text-primary', formErrors.group ? 'border-error' : 'border-border-subtle')}
                 >
                   <option value="">{t('addExpense.selectGroup')}</option>
@@ -698,9 +761,27 @@ export default function AddExpense() {
             <ImageAttachments images={images} onChange={setImages} label={t('addExpense.addReceiptPhoto')} />
           </div>
         </div>
+        {guideActive('group') && groupId && (
+          <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Next →</button>
+        )}
+        </div>
+        )}
 
+        {guideReached('favorite') && (
+          <div className="space-y-1.5">
+            {stepBadge('favorite')}
+            <p className="text-[10px] text-text-muted px-1">
+              {favorites.length > 0
+                ? '👉 Tap a favorite below to instantly reuse it, or tap the ⭐ at the top of this form to save what you\'re entering now as a new favorite.'
+                : '👉 Tap the ⭐ at the top of this form to save this expense as a favorite — it\'ll show up here next time for one-tap reuse.'}
+            </p>
+            {guideActive('favorite') && (
+              <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Next →</button>
+            )}
+          </div>
+        )}
         {favorites.length > 0 && (
-          <section className="bg-white rounded-2xl border border-border-subtle overflow-hidden">
+          <section className={clsx("bg-white rounded-2xl border border-border-subtle overflow-hidden", guideWrapClass('favorite'))}>
             <button
               type="button"
               onClick={() => setShowFavorites((v) => !v)}
@@ -767,6 +848,9 @@ export default function AddExpense() {
           </section>
         )}
 
+        {guideReached('description') && (
+        <div className={clsx("space-y-1.5", guideWrapClass('description'))}>
+        {stepBadge('description')}
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1 relative">
             <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.description')} <span className="text-error">*</span></label>
@@ -808,8 +892,15 @@ export default function AddExpense() {
             />
           </div>
         </div>
+        {guideActive('description') && (
+          <button type="button" onClick={goToNextGuideStep} disabled={!description.trim()} className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline px-1">Next →</button>
+        )}
+        </div>
+        )}
 
-        <section className="space-y-1.5" data-tour="expense-category">
+        {guideReached('category') && (
+        <section className={clsx("space-y-1.5", guideWrapClass('category'))} data-tour="expense-category">
+          {stepBadge('category')}
           <div className="flex items-center justify-between px-1">
             <h2 className="text-[10px] font-bold text-primary uppercase tracking-widest opacity-60">{t('addExpense.category')}</h2>
             {/* Informational only — set by the group's owner/admin in Manage Group, every member
@@ -832,7 +923,7 @@ export default function AddExpense() {
               return (
                 <button
                   key={cat.id}
-                  onClick={() => setCategory(cat.id)}
+                  onClick={() => { setCategory(cat.id); if (guideActive('category')) goToNextGuideStep(); }}
                   className={clsx(
                     "flex flex-col items-center justify-center p-1 rounded-lg border transition-all active:scale-95 gap-0.5 min-h-[51px]",
                     category === cat.id
@@ -850,9 +941,15 @@ export default function AddExpense() {
               );
             })}
           </div>
+          {guideActive('category') && (
+            <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Looks good, Next →</button>
+          )}
         </section>
+        )}
 
-        <section className="bg-white p-3 rounded-2xl border border-border-subtle space-y-3">
+        {guideReached('recurring') && (
+        <section className={clsx("bg-white p-3 rounded-2xl border border-border-subtle space-y-3", guideWrapClass('recurring'))}>
+            {stepBadge('recurring')}
             <button
               type="button"
               onClick={() => setMakeRecurring((v) => !v)}
@@ -883,14 +980,19 @@ export default function AddExpense() {
                 <FrequencyPicker config={recurFreqConfig} onChange={setRecurFreqConfig} />
               </div>
             )}
+            {guideActive('recurring') && (
+              <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{makeRecurring ? 'Next →' : 'Skip, Next →'}</button>
+            )}
           </section>
+        )}
 
-        {entryType === 'expense' && selectedGroup?.splitEnabled && groupMembers.length > 0 && (
-          <motion.div 
+        {guideReached('split') && splitApplies && (
+          <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
-            className="space-y-4 border-t border-border-subtle pt-4 mt-2 overflow-hidden"
+            className={clsx("space-y-4 border-t border-border-subtle pt-4 mt-2 overflow-hidden", guideWrapClass('split'))}
           >
+            {stepBadge('split')}
             <section className="space-y-2">
               <h2 className="px-1 text-[11px] font-bold text-primary uppercase tracking-widest">{t('addExpense.whoPaid')}</h2>
               <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar px-1">
@@ -1108,6 +1210,16 @@ export default function AddExpense() {
                 )}
               </section>
             )}
+            {guideActive('split') && (
+              <button
+                type="button"
+                onClick={() => { if (paidBy && splitMembers.length > 0) goToNextGuideStep(); }}
+                disabled={!(paidBy && splitMembers.length > 0)}
+                className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline px-1"
+              >
+                Next →
+              </button>
+            )}
           </motion.div>
         )}
 
@@ -1123,6 +1235,7 @@ export default function AddExpense() {
           opened from. Either way, markExpenseAdded() inside handleSave hands the id(s) off to
           Dashboard.tsx so the group tile highlights (and auto-expands to show) whatever was just
           added, the moment the user actually gets back there. */}
+      {guideDone && (
       <div
         className="absolute left-4 right-4 z-[95] flex items-center justify-end gap-2"
         style={{ bottom: showKeypad ? '16rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}
@@ -1145,6 +1258,7 @@ export default function AddExpense() {
           {loading ? t('addExpense.saving') : t('common.save')}
         </button>
       </div>
+      )}
 
       {showKeypad && (
         <AmountKeypad

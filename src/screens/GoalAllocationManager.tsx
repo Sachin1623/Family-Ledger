@@ -102,9 +102,9 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
       <p className={clsx('text-xs text-text-muted', !embedded && '-mt-3')}>{t('goals.allocationManagerSubtitle')}</p>
 
       {goals.length === 0 ? (
-        <p className="text-sm text-text-muted text-center py-8">{t('goals.noActiveGoalsForAllocation')}</p>
+        <p className="text-sm text-text-muted text-center py-8" data-tour="goals-allocation-list">{t('goals.noActiveGoalsForAllocation')}</p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3" data-tour="goals-allocation-list">
           {goals.map((g) => {
             const rows = rowsByGoal.get(g.id) || [];
             const sym = getCurrencySymbol(g.currency);

@@ -59,9 +59,12 @@ export interface FoundUser {
   shortId: string | null;
 }
 
-// Searches other FamilyLedger users by short ID, exact email, or a name substring — used by the
-// invite picker to find someone to add directly instead of only sharing a join link. Results
-// exclude the caller and (when groupId is passed) anyone already in that group.
+// Searches other FamilyLedger users by short ID or exact email ONLY — deliberately no name
+// search (see server.ts's /api/search-users for why: cost/scale, and it let anyone fish for
+// accounts by common name). Used by the invite picker to find someone to add directly instead of
+// only sharing a join link, and by ManageGroup.tsx's email panel to check whether a typed email
+// already belongs to a FamilyLedger account. Results exclude the caller and (when groupId is
+// passed) anyone already in that group.
 export async function searchUsers(query: string, groupId?: string): Promise<FoundUser[]> {
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) throw new Error('Not signed in.');

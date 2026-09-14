@@ -45,6 +45,14 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo(`/groups/${data.groupId}?chat=1`);
   } else if (data.type === 'weekly_summary') {
     navigateTo('/weekly-summary');
+  } else if (data.type === 'account_goal_nudge') {
+    // No special-case routing needed beyond landing on Dashboard — the popup itself is driven by
+    // the `accountGoalNudge` field the cron job already wrote to this user's own doc (see
+    // AccountGoalNudgePrompt.tsx), which is already streamed into every screen via AuthContext, so
+    // it shows itself here (or anywhere else) regardless of whether this tap is what triggered it.
+    navigateTo('/');
+  } else if (data.type === 'policy_renewal' && data.policyId) {
+    navigateTo(`/policies/${data.policyId}`);
   } else if (data.type === 'feedback_reply' || data.type === 'feedback_resolved') {
     navigateTo('/feedback');
   } else if (data.type === 'admin_feedback') {

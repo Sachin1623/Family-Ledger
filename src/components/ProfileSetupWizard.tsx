@@ -4,6 +4,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { CURRENCY_SYMBOLS, COUNTRIES, NUMBER_SYSTEMS, NumberSystem } from '../lib/constants';
+import { setTriggerNewUserGuideFn } from '../lib/newUserGuideRef';
 
 // A 6-step guided setup for a genuinely brand-new account: display name -> currency -> country ->
 // number format -> date of birth -> hand off into Create Group. Mounted once, globally, in
@@ -57,6 +58,23 @@ export default function ProfileSetupWizard() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, profile, location.pathname]);
+
+  // Lets the header's "Test: New User Guide" button (localhost testing only) replay this whole
+  // flow on demand, regardless of `hasCompletedProfileSetup` — same registration idiom as
+  // calculatorRef.ts/feedPanelRef.ts. Prefills from the current profile (same as the real
+  // auto-launch above) so a returning test account doesn't have to retype everything.
+  useEffect(() => {
+    setTriggerNewUserGuideFn(() => {
+      setNameInput(profile?.displayName && profile.displayName !== 'User' ? profile.displayName : '');
+      setCurrencyInput(profile?.currency || null);
+      setCountryInput(profile?.country || null);
+      setNumberSystemInput(profile?.numberSystem || null);
+      setDobInput(profile?.dateOfBirth || '');
+      setStep(0);
+      setActive(true);
+    });
+    return () => setTriggerNewUserGuideFn(null);
+  }, [profile]);
 
   const finishSetup = async () => {
     if (!user) return;
@@ -332,7 +350,7 @@ export default function ProfileSetupWizard() {
             </div>
             <button
               type="button"
-              onClick={() => { finishSetup(); navigate('/create-group'); }}
+              onClick={() => { finishSetup(); navigate('/create-group?guide=1'); }}
               className="w-full py-3 bg-primary text-white font-bold rounded-xl flex items-center justify-center gap-2"
             >
               <span className="material-symbols-outlined text-[18px]">group_add</span>

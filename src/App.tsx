@@ -80,6 +80,9 @@ import AccountsHub from './screens/AccountsHub';
 import AccountDetail from './screens/AccountDetail';
 import PersonalLoans from './screens/PersonalLoans';
 import LoanContactDetail from './screens/LoanContactDetail';
+import PolicyVault from './screens/PolicyVault';
+import PolicyWizard from './screens/PolicyWizard';
+import PolicyDetail from './screens/PolicyDetail';
 import ShopProfile from './screens/shop/ShopProfile';
 import ShopCustomers from './screens/shop/ShopCustomers';
 import ShopCustomerDetail from './screens/shop/ShopCustomerDetail';
@@ -108,6 +111,7 @@ import BroadcastBanner from './components/BroadcastBanner';
 import AppLockScreen from './components/AppLockScreen';
 import LudoTurnIndicator from './components/LudoTurnIndicator';
 import GameTurnIndicator from './components/GameTurnIndicator';
+import AccountGoalNudgePrompt from './components/AccountGoalNudgePrompt';
 import GlobalReminderScheduler from './components/GlobalReminderScheduler';
 import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
 import GlobalAlarmRingingBanner from './components/GlobalAlarmRingingBanner';
@@ -283,6 +287,7 @@ export default function App() {
           <InviteBanner />
           <ProfileSetupWizard />
           <OnboardingTour />
+          <AccountGoalNudgePrompt />
           <div className="min-h-screen bg-surface font-sans text-on-surface flex flex-col">
             <Header />
             <FloatingCalculator />
@@ -365,6 +370,10 @@ export default function App() {
               <Route path="/goals/:goalId/allocate" element={<AuthenticatedLayout><GoalFundingSetup /></AuthenticatedLayout>} />
               <Route path="/personal-loans" element={<AuthenticatedLayout><PersonalLoans /></AuthenticatedLayout>} />
               <Route path="/personal-loans/:contactId" element={<AuthenticatedLayout><LoanContactDetail /></AuthenticatedLayout>} />
+              <Route path="/policies" element={<AuthenticatedLayout><PolicyVault /></AuthenticatedLayout>} />
+              <Route path="/policies/new" element={<AuthenticatedLayout><PolicyWizard /></AuthenticatedLayout>} />
+              <Route path="/policies/:policyId" element={<AuthenticatedLayout><PolicyDetail /></AuthenticatedLayout>} />
+              <Route path="/policies/:policyId/edit" element={<AuthenticatedLayout><PolicyWizard /></AuthenticatedLayout>} />
 
               {/* Shopkeeper mode */}
               <Route path="/shop/profile" element={<AuthenticatedLayout><ShopProfile /></AuthenticatedLayout>} />

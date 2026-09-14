@@ -40,6 +40,15 @@ import ImageLightbox from '../components/ImageLightbox';
 // src/lib/accountAllocations.ts's applyAccountChange() — see its own header comment for why that's
 // the only place this ever happens. Every save also writes one entry to this account's own
 // financialAccounts/{id}/log subcollection — the "History" button below shows it.
+
+// First-time guided flow through the Add Account form — same engine as CreateGroup.tsx / GoalWizard.tsx
+// (progressive reveal, a glow highlight directly on the real field via the shared `.fl-tour-glow` CSS
+// class, no floating tooltip card). Add-mode only (`?guide=1`, set by the header's "Test: Create Account
+// Flow" button) — editing an existing account never shows this. Order matches the form's own visual
+// layout top-to-bottom so progressive reveal never has to reorder anything.
+const GUIDE_STEPS = ['name', 'type', 'balance', 'nominees', 'balanceAsOf', 'interest', 'contribution', 'allocate'] as const;
+type GuideStepId = typeof GUIDE_STEPS[number];
+
 export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { embedded?: boolean; onShowGoalsHelp?: () => void } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -222,6 +231,42 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
   const allocTotal: number = Object.keys(allocPcts).reduce((s: number, k: string) => s + (allocPcts[k] || 0), 0);
   const nomineeTotal: number = nominees.reduce((s, n) => s + (n.pct || 0), 0);
 
+  const guide = searchParams.get('guide') === '1' && !editingAccount;
+  // Part of the new-user onboarding chain (see OnboardingTour.tsx's 'group-explore' finish
+  // handler) — `?onboarding=1` alongside `?guide=1` means "after this account is saved, continue
+  // straight into the Create Goal guide" instead of just closing the form. A standalone "Add a
+  // Financial Account" from the Guides menu never carries this marker, so it behaves exactly as it
+  // does today.
+  const onboardingChain = guide && searchParams.get('onboarding') === '1';
+  const [guideStepIndex, setGuideStepIndex] = useState(0);
+  const currentGuideStep: GuideStepId | null = guide && guideStepIndex < GUIDE_STEPS.length ? GUIDE_STEPS[guideStepIndex] : null;
+  const guideDone = !guide || guideStepIndex >= GUIDE_STEPS.length;
+  const guideReached = (step: GuideStepId) => !guide || GUIDE_STEPS.indexOf(step) <= guideStepIndex;
+  const guideActive = (step: GuideStepId) => currentGuideStep === step;
+  const goToNextGuideStep = () => setGuideStepIndex((i) => Math.min(i + 1, GUIDE_STEPS.length));
+  const skipGuide = () => setGuideStepIndex(GUIDE_STEPS.length);
+  const stepBadge = (step: GuideStepId) =>
+    guideActive(step) && (
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] font-black text-primary uppercase tracking-wider">
+          Step {GUIDE_STEPS.indexOf(step) + 1} of {GUIDE_STEPS.length}
+        </span>
+        <button type="button" onClick={skipGuide} className="text-[9px] font-bold text-text-muted hover:text-primary">
+          Skip guide
+        </button>
+      </div>
+    );
+  const guideWrapClass = (step: GuideStepId) =>
+    clsx(guideActive(step) && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-3 -m-3 bg-primary/5');
+  // The "allocate" step only has content when the account has goals it could allocate into — skip
+  // straight past it (rather than showing a step with nothing to act on) when there are none.
+  useEffect(() => {
+    if (guide && currentGuideStep === 'allocate' && linkableGoals.length === 0 && hiddenAllocations.length === 0) {
+      goToNextGuideStep();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guide, currentGuideStep, linkableGoals.length, hiddenAllocations.length]);
+
   // --- Share With helpers — same shape as GoalWizard.tsx's own (group + family toggle + friend
   // search/toggle, each with a 'view'/'edit' role) ---
   const isFamilyFullySelected = (familyId: string) => {
@@ -281,6 +326,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
     setShareFriendRoles({});
     setAllocSectionExpanded(false);
     setFormError(null);
+    setGuideStepIndex(0);
     setShowForm(true);
   };
   const openEdit = (a: FinancialAccount) => {
@@ -477,6 +523,9 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
       const { justCompletedGoals } = await applyAccountChange(accountId, balanceMinor, newAllocations, actorName, fields);
       notifyGoalsMet(justCompletedGoals);
       setShowForm(false);
+      if (onboardingChain) {
+        navigate('/goals/new?guide=1&onboarding=1');
+      }
     } catch (err) {
       console.error('Failed to save account:', err);
       setFormError(t('goals.saveFailed'));
@@ -732,13 +781,13 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
       )}
 
       {activeAccounts.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-2">
+        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-2" data-tour="goals-accounts-list">
           <span className="text-3xl block">🏦</span>
           <p className="text-sm font-bold text-on-surface">{t('accounts.emptyTitle')}</p>
           <p className="text-xs text-text-muted">{t('accounts.emptyDesc')}</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2" data-tour="goals-accounts-list">
           {activeAccounts.map((a) => {
             const meta = ACCOUNT_TYPES.find((tp) => tp.id === a.type);
             const unallocatedMinor = accountUnallocatedMinor(a);
@@ -866,41 +915,77 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
-            <input
-              type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('accounts.namePlaceholder')} autoFocus
-              className="w-full h-12 bg-surface px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <div className="flex flex-wrap gap-1.5">
-              {ACCOUNT_TYPES.map((tp) => (
-                <button
-                  key={tp.id} type="button" onClick={() => setType(tp.id)}
-                  className={clsx('px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1', type === tp.id ? 'border-primary bg-primary/10 text-primary' : 'border-border-subtle text-text-muted')}
-                >
-                  <span>{tp.icon}</span>{t(`accounts.type.${tp.id}`)}
-                </button>
-              ))}
-            </div>
-            <input
-              type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder={t('accounts.accountNumberPlaceholder')}
-              className="w-full h-12 bg-surface px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted">{getCurrencySymbol(currency)}</span>
+            {guideReached('name') && (
+              <div className={clsx('space-y-1.5', guideWrapClass('name'))}>
+                {stepBadge('name')}
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.name')}</label>
+                <p className="text-[10px] text-text-muted px-1">{t('accounts.nameDesc')}</p>
                 <input
-                  type="text" inputMode="decimal" value={balanceInput} onChange={(e) => setBalanceInput(e.target.value)}
-                  placeholder={editingAccount ? t('accounts.balancePlaceholder') : t('accounts.startingBalancePlaceholder')}
-                  className="w-full h-12 bg-surface pl-8 pr-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                  type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('accounts.namePlaceholder')} autoFocus={guideActive('name') || !guide}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && guideActive('name') && name.trim()) { e.preventDefault(); goToNextGuideStep(); } }}
+                  className="w-full h-12 bg-surface px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
                 />
+                {guideActive('name') && (
+                  <button type="button" onClick={goToNextGuideStep} disabled={!name.trim()} className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline mt-1">Next →</button>
+                )}
               </div>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-24 h-12 bg-surface px-2 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none">
-                {Array.from(new Set([currency, 'INR', 'USD', 'EUR', 'GBP'])).map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            {!editingAccount && <p className="text-[11px] text-text-muted">{t('accounts.startingBalanceNote')}</p>}
+            )}
+            {guideReached('type') && (
+              <div className={clsx('space-y-1.5', guideWrapClass('type'))}>
+                {stepBadge('type')}
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.type')}</label>
+                <p className="text-[10px] text-text-muted px-1">{t('accounts.typeDesc')}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {ACCOUNT_TYPES.map((tp) => (
+                    <button
+                      key={tp.id} type="button" onClick={() => { setType(tp.id); if (guideActive('type')) goToNextGuideStep(); }}
+                      className={clsx('px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1', type === tp.id ? 'border-primary bg-primary/10 text-primary' : 'border-border-subtle text-text-muted')}
+                    >
+                      <span>{tp.icon}</span>{t(`accounts.type.${tp.id}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {guideReached('balance') && (
+              <div className={clsx('space-y-2', guideWrapClass('balance'))}>
+                {stepBadge('balance')}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.accountNumber')}</label>
+                  <input
+                    type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder={t('accounts.accountNumberPlaceholder')}
+                    className="w-full h-12 bg-surface px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  <p className="text-[11px] text-text-muted px-1">{t('accounts.accountNumberNote')}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.balance')}</label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted">{getCurrencySymbol(currency)}</span>
+                      <input
+                        type="text" inputMode="decimal" autoFocus={guideActive('balance')} value={balanceInput} onChange={(e) => setBalanceInput(e.target.value)}
+                        placeholder={editingAccount ? t('accounts.balancePlaceholder') : t('accounts.startingBalancePlaceholder')}
+                        className="w-full h-12 bg-surface pl-8 pr-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-24 h-12 bg-surface px-2 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none">
+                      {Array.from(new Set([currency, 'INR', 'USD', 'EUR', 'GBP'])).map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-text-muted px-1">{editingAccount ? t('accounts.balanceDesc') : t('accounts.startingBalanceNote')}</p>
+                </div>
+                {guideActive('balance') && (
+                  <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">Next →</button>
+                )}
+              </div>
+            )}
 
-            <div className="space-y-1.5">
+            {guideReached('nominees') && (
+            <div className={clsx('space-y-1.5', guideWrapClass('nominees'))}>
+              {stepBadge('nominees')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.nomineesOptional')}</label>
+              <p className="text-[10px] text-text-muted px-1">{t('accounts.nomineesDesc')}</p>
               <div className="space-y-2">
                 {nominees.map((nom, idx) => (
                   <div key={idx} className="flex items-center gap-2 bg-surface rounded-xl p-2.5">
@@ -936,15 +1021,28 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                   {t('accounts.nomineeAllocationTotal', { pct: nomineeTotal })}
                 </p>
               )}
+              {guideActive('nominees') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{nominees.length ? 'Next →' : 'Skip, Next →'}</button>
+              )}
             </div>
-            <div className="space-y-1.5">
+            )}
+            {guideReached('balanceAsOf') && (
+            <div className={clsx('space-y-1.5', guideWrapClass('balanceAsOf'))}>
+              {stepBadge('balanceAsOf')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.balanceAsOf')}</label>
+              <p className="text-[10px] text-text-muted px-1">{t('accounts.balanceAsOfDesc')}</p>
               <input
                 type="date" value={balanceAsOf} max={todayLocalDateString()} onChange={(e) => setBalanceAsOf(e.target.value)}
                 className="w-full h-12 bg-surface px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
               />
+              {guideActive('balanceAsOf') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">Next →</button>
+              )}
             </div>
-            <div className="space-y-1.5">
+            )}
+            {guideReached('interest') && (
+            <div className={clsx('space-y-1.5', guideWrapClass('interest'))}>
+              {stepBadge('interest')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.interestRateOptional')}</label>
               <div className="relative">
                 <input
@@ -954,6 +1052,8 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-text-muted">%</span>
               </div>
             </div>
+            )}
+            {guideReached('interest') && (
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.compoundFrequencyLabel')}</label>
               <select
@@ -979,9 +1079,15 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                 </div>
               )}
               <p className="text-[11px] text-text-muted px-1">{compoundFrequency ? t('accounts.interestAutoApplyNote') : t('accounts.interestRateNote')}</p>
+              {guideActive('interest') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{interestRateInput ? 'Next →' : 'Skip, Next →'}</button>
+              )}
             </div>
+            )}
 
-            <div className="space-y-1.5">
+            {guideReached('contribution') && (
+            <div className={clsx('space-y-1.5', guideWrapClass('contribution'))}>
+              {stepBadge('contribution')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.contributionOptional')}</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
@@ -1012,9 +1118,14 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                 />
               )}
               <p className="text-[11px] text-text-muted px-1">{t('accounts.contributionNote')}</p>
+              {guideActive('contribution') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{contributionAmountInput ? 'Next →' : 'Skip, Next →'}</button>
+              )}
             </div>
-            {(linkableGoals.length > 0 || hiddenAllocations.length > 0) && (
-              <div className="space-y-1.5">
+            )}
+            {guideReached('allocate') && (linkableGoals.length > 0 || hiddenAllocations.length > 0) && (
+              <div className={clsx('space-y-1.5', guideWrapClass('allocate'))}>
+                {stepBadge('allocate')}
                 <button
                   type="button"
                   onClick={() => setAllocSectionExpanded((v) => !v)}
@@ -1026,6 +1137,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                     <span className={clsx('material-symbols-outlined text-[16px] transition-transform', allocSectionExpanded && 'rotate-180')}>expand_more</span>
                   </span>
                 </button>
+                <p className="text-[10px] text-text-muted px-1">{t('accounts.allocateToGoalsDesc')}</p>
                 {allocSectionExpanded && (
                   <>
                     <div className="space-y-2">
@@ -1065,9 +1177,12 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                     )}
                   </>
                 )}
+                {guideActive('allocate') && (
+                  <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">{allocTotal > 0 ? 'Next →' : 'Skip, Next →'}</button>
+                )}
               </div>
             )}
-            {(!editingAccount || editingAccount.userId === user?.uid) && (
+            {guideDone && (!editingAccount || editingAccount.userId === user?.uid) && (
               <div className="space-y-1.5 pt-1 border-t border-border-subtle">
                 <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.shareWith')}</label>
                 <p className="text-[11px] text-text-muted px-1">{t('accounts.shareWithDesc')}</p>
@@ -1159,15 +1274,19 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                 )}
               </div>
             )}
-            {formError && <p className="text-xs text-error font-bold">{formError}</p>}
-            <div className="flex gap-2">
-              <button onClick={() => setShowForm(false)} disabled={saving} className="flex-1 py-3 border border-border-subtle text-text-muted font-bold rounded-xl disabled:opacity-50">
-                {t('common.cancel')}
-              </button>
-              <button onClick={handleSaveAccount} disabled={saving} className="flex-1 py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
-                {saving ? t('goals.saving') : t('common.save')}
-              </button>
-            </div>
+            {guideDone && (
+              <>
+                {formError && <p className="text-xs text-error font-bold">{formError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={() => setShowForm(false)} disabled={saving} className="flex-1 py-3 border border-border-subtle text-text-muted font-bold rounded-xl disabled:opacity-50">
+                    {t('common.cancel')}
+                  </button>
+                  <button onClick={handleSaveAccount} disabled={saving} className="flex-1 py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
+                    {saving ? t('goals.saving') : t('common.save')}
+                  </button>
+                </div>
+              </>
+            )}
             </div>
           </div>
         </div>

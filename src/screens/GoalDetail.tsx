@@ -836,6 +836,14 @@ export default function GoalDetail() {
                 {currencySymbol}{fromMinorUnits(totalMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 <span className="text-sm text-text-muted font-bold"> / {currencySymbol}{fromMinorUnits(goal.targetAmountMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
               </p>
+              {goal.inflationRatePct != null && goal.targetAmountTodayMinor != null && (
+                <p className="text-[11px] text-text-muted">
+                  {t('goals.inflationBreakdown', {
+                    today: `${currencySymbol}${fromMinorUnits(goal.targetAmountTodayMinor).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+                    rate: goal.inflationRatePct,
+                  })}
+                </p>
+              )}
               {/* Two separately-tracked buckets, always shown together — see goals.ts's
                   goalTotalMinor() doc comment for why these are never merged into one number. */}
               <div className="flex items-center justify-center gap-3 text-[11px] text-text-muted">

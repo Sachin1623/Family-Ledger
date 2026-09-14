@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useLocation } from 'react-router-dom';
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { TOUR_BY_ID } from '../lib/tours';
+import { setStartTourFn, getTourContext } from '../lib/tourRef';
+import AccountsExplainerModal from './AccountsExplainerModal';
 
 // Mounted once, globally, in App.tsx (not per-screen) so it survives navigation and can run any
 // tour from the registry in src/lib/tours.ts, not just the original single onboarding sequence.
@@ -18,13 +20,26 @@ function findStepElement(selector: string): HTMLElement | null {
 export default function OnboardingTour() {
   const { user, profile } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTourId, setActiveTourId] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [, forceRerender] = useState(0);
+  const [showAccountsGoalsOffer, setShowAccountsGoalsOffer] = useState(false);
+  const [showAccountsExplainer, setShowAccountsExplainer] = useState(false);
 
   const activeTour = activeTourId ? TOUR_BY_ID[activeTourId] : null;
+
+  // Registers the imperative launch surface (src/lib/tourRef.ts) — lets the new-user onboarding
+  // chain and the header's "Guides" menu start any tour by id without a `?tour=` route round-trip.
+  useEffect(() => {
+    setStartTourFn((id: string) => {
+      setStepIndex(0);
+      setActiveTourId(id);
+    });
+    return () => setStartTourFn(null);
+  }, []);
 
   // Decides whether a tour should be running at all. Two ways in: (1) an explicit `?tour=<id>`
   // whose target route matches where we currently are — set by About.tsx's tiles navigating
@@ -67,14 +82,30 @@ export default function OnboardingTour() {
     if (!activeTour) return;
     let cancelled = false;
     let attempts = 0;
+    // Tracks whichever real DOM element currently has the glow class, so it can be cleared the
+    // instant the step changes (or the tour ends) — never left glowing on a stale target.
+    let glowedEl: HTMLElement | null = null;
 
     const measure = () => {
       if (cancelled) return;
       const step = activeTour.steps[stepIndex];
-      const el = step ? findStepElement(step.selector) : null;
+      // Both are safe to call repeatedly — a navigate() to the already-current path is a no-op,
+      // and onEnter() (a ref-trigger dispatch — see dashboardTileRef.ts's own comment) is a no-op
+      // until the target screen has actually mounted and registered itself. Calling them on every
+      // retry attempt (not just once) is what lets a single step hop routes AND prime a tab/tile
+      // before its target exists to find.
+      if (step?.route && step.route !== window.location.pathname) navigate(step.route);
+      step?.onEnter?.();
+      const resolvedSelector = step ? (typeof step.selector === 'function' ? step.selector(getTourContext()) : step.selector) : null;
+      const el = resolvedSelector ? findStepElement(resolvedSelector) : null;
       if (el) {
         setRect(el.getBoundingClientRect());
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (glowedEl !== el) {
+          glowedEl?.classList.remove('fl-tour-glow');
+          el.classList.add('fl-tour-glow');
+          glowedEl = el;
+        }
       } else if (attempts < 10) {
         attempts += 1;
         setTimeout(measure, 200);
@@ -92,9 +123,11 @@ export default function OnboardingTour() {
     window.addEventListener('scroll', onViewportChange, true);
     return () => {
       cancelled = true;
+      glowedEl?.classList.remove('fl-tour-glow');
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('scroll', onViewportChange, true);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTour, stepIndex]);
 
   useEffect(() => {
@@ -104,11 +137,18 @@ export default function OnboardingTour() {
 
   const finish = () => {
     const finishedDashboard = activeTourId === 'dashboard';
+    // Part of the new-user onboarding chain (see tours.ts's 'group-explore' entry) — finishing
+    // this specific tour is the "end of the group phase" milestone, so instead of just closing it
+    // offers the next phase (Accounts/Goals) rather than silently ending.
+    const finishedGroupExplore = activeTourId === 'group-explore';
     setActiveTourId(null);
     if (finishedDashboard && user) {
       setDoc(doc(db, 'users', user.uid), { hasSeenOnboarding: true }, { merge: true }).catch((err) =>
         console.error('Failed to save onboarding completion:', err),
       );
+    }
+    if (finishedGroupExplore) {
+      setShowAccountsGoalsOffer(true);
     }
     if (searchParams.get('tour')) {
       const next = new URLSearchParams(searchParams);
@@ -117,10 +157,48 @@ export default function OnboardingTour() {
     }
   };
 
-  if (!activeTour) return null;
+  const step = activeTour?.steps[stepIndex];
 
-  const step = activeTour.steps[stepIndex];
-  if (!step) return null;
+  if (!activeTour || !step) {
+    // No spotlight tour running — still need to render the post-'group-explore' offer/explainer
+    // modals below, since `finish()` clears activeTourId before either of those becomes relevant.
+    return (
+      <>
+        {showAccountsGoalsOffer && (
+          <div className="fixed inset-0 bg-black/40 z-[253] flex items-center justify-center p-4" onClick={() => setShowAccountsGoalsOffer(false)}>
+            <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-2xl">savings</span>
+                <h3 className="text-base font-black text-primary">Track your savings & goals too?</h3>
+              </div>
+              <p className="text-sm text-on-surface leading-relaxed">
+                FamilyLedger can also track your real bank/investment accounts and what you're saving toward — separate from group expenses. Want a quick walkthrough setting one of each up?
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowAccountsGoalsOffer(false)}
+                  className="flex-1 py-3 border border-border-subtle text-text-muted font-bold rounded-xl"
+                >
+                  Not now
+                </button>
+                <button
+                  onClick={() => { setShowAccountsGoalsOffer(false); setShowAccountsExplainer(true); }}
+                  className="flex-1 py-3 bg-primary text-white font-bold rounded-xl"
+                >
+                  Yes, show me
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showAccountsExplainer && (
+          <AccountsExplainerModal
+            onClose={() => { setShowAccountsExplainer(false); navigate('/goals/accounts?openAdd=1&guide=1&onboarding=1'); }}
+          />
+        )}
+      </>
+    );
+  }
 
   const pad = 8;
   const spotlightStyle: React.CSSProperties = rect

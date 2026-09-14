@@ -11,15 +11,16 @@
 // the backend itself would mean the backend could never compute anything over the data at all —
 // out of scope here; see the comment atop that endpoint for the fuller reasoning.
 //
-// Coverage note: this currently protects Goals (target/current amounts, ledger entries) and
-// Financial Accounts (balances, monthly snapshots) — the collections built for those features.
-// The older, much larger `expenses`/`groups`/`groupBudgets` collections (and everything that
-// reads them — Dashboard, Analysis Summary, Settlements, Recurring Expenses, Personal Loans) are
-// NOT yet covered; that's a separate, larger follow-up phase, not silently skipped.
+// Coverage note: this currently protects Goals (target/current amounts, ledger entries),
+// Financial Accounts (balances, monthly snapshots), and Policy Vault (sum insured/premium
+// amounts) — the collections built for those features. The older, much larger
+// `expenses`/`groups`/`groupBudgets` collections (and everything that reads them — Dashboard,
+// Analysis Summary, Settlements, Recurring Expenses, Personal Loans) are NOT yet covered; that's a
+// separate, larger follow-up phase, not silently skipped.
 
 import { auth } from './firebase';
 
-export type EncryptionScopeType = 'user' | 'goal' | 'account';
+export type EncryptionScopeType = 'user' | 'goal' | 'account' | 'policy';
 
 const keyCache = new Map<string, Promise<CryptoKey>>();
 const ENC_PREFIX = 'enc:v1:';

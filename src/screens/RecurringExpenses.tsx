@@ -30,6 +30,15 @@ const toDateOnly = (d: Date) => {
 const categoryInfoFor = (rule: any) =>
   (rule.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).find((c) => c.id === rule.category);
 
+// First-time guided flow through the "new rule" form — same engine as CreateGroup.tsx /
+// GoalWizard.tsx / AccountsHub.tsx's Add Account modal / AddExpense.tsx (progressive reveal, a
+// glow highlight directly on the real field via the shared `.fl-tour-glow` CSS class, no floating
+// tooltip card). New-rule-mode only (`?guide=1`, set by the header's "Test: Recurring Flow"
+// button) — editing an existing rule never shows this. 'type' and 'split' both auto-skip
+// themselves when there's nothing to act on (see the effect below).
+const GUIDE_STEPS = ['group', 'type', 'categoryAmount', 'details', 'startDate', 'frequency', 'split'] as const;
+type GuideStepId = typeof GUIDE_STEPS[number];
+
 export default function RecurringExpenses() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -256,6 +265,43 @@ export default function RecurringExpenses() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const guide = searchParams.get('guide') === '1' && !editingRuleId;
+  const openedGuideRef = React.useRef(false);
+  useEffect(() => {
+    if (guide && !openedGuideRef.current) {
+      openedGuideRef.current = true;
+      resetFormFields();
+      setShowForm(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guide]);
+  const [guideStepIndex, setGuideStepIndex] = useState(0);
+  const currentGuideStep: GuideStepId | null = guide && guideStepIndex < GUIDE_STEPS.length ? GUIDE_STEPS[guideStepIndex] : null;
+  const guideDone = !guide || guideStepIndex >= GUIDE_STEPS.length;
+  const guideReached = (step: GuideStepId) => !guide || GUIDE_STEPS.indexOf(step) <= guideStepIndex;
+  const guideActive = (step: GuideStepId) => currentGuideStep === step;
+  const goToNextGuideStep = () => setGuideStepIndex((i) => Math.min(i + 1, GUIDE_STEPS.length));
+  const skipGuide = () => setGuideStepIndex(GUIDE_STEPS.length);
+  const stepBadge = (step: GuideStepId) =>
+    guideActive(step) && (
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] font-black text-primary uppercase tracking-wider">
+          Step {GUIDE_STEPS.indexOf(step) + 1} of {GUIDE_STEPS.length}
+        </span>
+        <button type="button" onClick={skipGuide} className="text-[9px] font-bold text-text-muted hover:text-primary">
+          Skip guide
+        </button>
+      </div>
+    );
+  const guideWrapClass = (step: GuideStepId) =>
+    clsx(guideActive(step) && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-3 -m-3 bg-primary/5');
+  const splitApplies = entryType !== 'income' && !!selectedGroup?.splitEnabled && groupMembers.length > 0;
+  React.useEffect(() => {
+    if (guide && currentGuideStep === 'type' && !selectedGroup?.incomeEnabled) goToNextGuideStep();
+    if (guide && currentGuideStep === 'split' && !splitApplies) goToNextGuideStep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guide, currentGuideStep, selectedGroup?.incomeEnabled, splitApplies]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = evaluateAmountSum(amount);
@@ -428,7 +474,9 @@ export default function RecurringExpenses() {
             <h2 className="text-sm font-bold text-primary">
               {editingRuleId ? t('recurring.editRule') : t('recurring.newRule')}
             </h2>
-            <div className="space-y-1">
+            {guideReached('group') && (
+            <div className={clsx('space-y-1', guideWrapClass('group'))}>
+              {stepBadge('group')}
               <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('common.group')}</label>
               {editingRuleId ? (
                 <p className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm text-text-muted">
@@ -437,7 +485,7 @@ export default function RecurringExpenses() {
               ) : (
                 <select
                   value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
+                  onChange={(e) => { setGroupId(e.target.value); if (guideActive('group') && e.target.value) goToNextGuideStep(); }}
                   required
                   className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
                 >
@@ -448,12 +496,15 @@ export default function RecurringExpenses() {
                 </select>
               )}
             </div>
+            )}
 
-            {selectedGroup?.incomeEnabled && (
-              <div className="grid grid-cols-2 gap-2">
+            {guideReached('type') && selectedGroup?.incomeEnabled && (
+              <div className={clsx('space-y-1.5', guideWrapClass('type'))}>
+                {stepBadge('type')}
+                <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setType('expense')}
+                  onClick={() => { setType('expense'); if (guideActive('type')) goToNextGuideStep(); }}
                   className={clsx(
                     'py-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5',
                     entryType === 'expense' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
@@ -464,7 +515,7 @@ export default function RecurringExpenses() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setType('income')}
+                  onClick={() => { setType('income'); if (guideActive('type')) goToNextGuideStep(); }}
                   className={clsx(
                     'py-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5',
                     entryType === 'income' ? 'bg-success text-white border-success' : 'bg-white text-text-muted border-border-subtle',
@@ -473,10 +524,14 @@ export default function RecurringExpenses() {
                   <span className="material-symbols-outlined text-[16px]">add_circle</span>
                   {t('addExpense.income')}
                 </button>
+                </div>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            {guideReached('categoryAmount') && (
+            <div className={clsx('space-y-1.5', guideWrapClass('categoryAmount'))}>
+              {stepBadge('categoryAmount')}
+              <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('common.category')}</label>
                 <select
@@ -504,26 +559,48 @@ export default function RecurringExpenses() {
                   <p className="text-xs font-bold text-success px-1">= {evaluateAmountSum(amount)!.toFixed(2)}</p>
                 )}
               </div>
+              </div>
+              {guideActive('categoryAmount') && (
+                <button
+                  type="button"
+                  onClick={() => { if (evaluateAmountSum(amount) && evaluateAmountSum(amount)! > 0) goToNextGuideStep(); }}
+                  disabled={!(evaluateAmountSum(amount) && evaluateAmountSum(amount)! > 0)}
+                  className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline px-1"
+                >
+                  Next →
+                </button>
+              )}
             </div>
+            )}
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('recurring.descriptionOptional')}</label>
-              <input
-                type="text"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={t('recurring.descPlaceholder')}
-                maxLength={100}
-                className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-              />
+            {guideReached('details') && (
+            <div className={clsx('space-y-4', guideWrapClass('details'))}>
+              {stepBadge('details')}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('recurring.descriptionOptional')}</label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('recurring.descPlaceholder')}
+                  maxLength={100}
+                  className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.photoOptional')}</label>
+                <ImageAttachments images={images} onChange={setImages} />
+              </div>
+              {guideActive('details') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">{description.trim() || images.length ? 'Next →' : 'Skip, Next →'}</button>
+              )}
             </div>
+            )}
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.photoOptional')}</label>
-              <ImageAttachments images={images} onChange={setImages} />
-            </div>
-
-            <div className="space-y-1">
+            {guideReached('startDate') && (
+            <div className={clsx('space-y-1', guideWrapClass('startDate'))}>
+              {stepBadge('startDate')}
               <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('recurring.startDate')}</label>
               <input
                 type="date"
@@ -532,12 +609,25 @@ export default function RecurringExpenses() {
                 className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
               />
               <p className="text-[10px] text-text-muted px-1">{t('recurring.startDateHelp')}</p>
+              {guideActive('startDate') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Next →</button>
+              )}
             </div>
+            )}
 
-            <FrequencyPicker config={freqConfig} onChange={setFreqConfig} />
+            {guideReached('frequency') && (
+            <div className={clsx('space-y-1.5', guideWrapClass('frequency'))}>
+              {stepBadge('frequency')}
+              <FrequencyPicker config={freqConfig} onChange={setFreqConfig} />
+              {guideActive('frequency') && (
+                <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Looks good, Next →</button>
+              )}
+            </div>
+            )}
 
-            {entryType !== 'income' && selectedGroup?.splitEnabled && groupMembers.length > 0 && (
-              <div className="space-y-4 border-t border-border-subtle pt-4">
+            {guideReached('split') && entryType !== 'income' && selectedGroup?.splitEnabled && groupMembers.length > 0 && (
+              <div className={clsx("space-y-4 border-t border-border-subtle pt-4", guideWrapClass('split'))}>
+                {stepBadge('split')}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between px-1">
                     <h2 className="text-[11px] font-bold text-primary uppercase tracking-widest">{t('addExpense.sharedWith')}</h2>
@@ -663,9 +753,20 @@ export default function RecurringExpenses() {
                     )}
                   </div>
                 )}
+                {guideActive('split') && (
+                  <button
+                    type="button"
+                    onClick={() => { if (splitMembers.length > 0) goToNextGuideStep(); }}
+                    disabled={splitMembers.length === 0}
+                    className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline px-1"
+                  >
+                    Next →
+                  </button>
+                )}
               </div>
             )}
 
+            {guideDone && (
             <div className="flex gap-2">
               <button
                 type="button"
@@ -682,6 +783,7 @@ export default function RecurringExpenses() {
                 {saving ? t('common.saving') : editingRuleId ? t('groupExpenses.saveChanges') : t('common.save')}
               </button>
             </div>
+            )}
           </form>
         )}
 
