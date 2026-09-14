@@ -292,7 +292,7 @@ export default function Header() {
                     with zero visible pixels. `fixed` escapes that clip entirely, same as
                     GlobalSearch/FeedPanel below already do (both `position: fixed`), which is
                     exactly why those never showed this symptom. */}
-                <div className="fixed right-4 top-[calc(60px+env(safe-area-inset-top)+4px)] z-50 w-56 bg-white rounded-2xl border border-border-subtle shadow-xl py-1.5 overflow-hidden">
+                <div className="fixed right-4 top-[calc(60px+env(safe-area-inset-top)+4px)] z-50 w-56 max-h-[calc(100vh-80px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-white rounded-2xl border border-border-subtle shadow-xl py-1.5 overflow-y-auto overscroll-contain">
                   {/* Always the very first item (when native — nothing to manage on web), so it's
                       never buried behind whichever of the conditional entries below happen to be
                       showing. The red dot mirrors the one on the hamburger icon itself. */}

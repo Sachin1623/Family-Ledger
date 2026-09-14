@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from './AuthContext';
 import { LANGUAGES, ENABLED_LANGUAGES, LanguageCode } from '../lib/i18n/languages';
@@ -109,7 +109,15 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       // non-fatal — the picker will just default to English again next visit on this device
     }
     if (user) {
-      setDoc(doc(db, 'users', user.uid), { language: lang }, { merge: true }).catch((err) =>
+      // updateDoc, not setDoc(...,{merge:true}) — this can fire within moments of a brand-new
+      // sign-in (the language picker itself is one of the very first things a new user sees), and
+      // a merge-write reaching Firestore before the account's own creation logic has run would
+      // CREATE the user doc with only `language` set, silently skipping `hasSeenOnboarding: false`/
+      // `hasCompletedProfileSetup: false` forever — see AuthContext.tsx's matching comment for the
+      // full reasoning. updateDoc can only touch an EXISTING doc, so this just fails harmlessly on
+      // that exact race (caught below); the preference is still applied locally either way
+      // (setLanguageState + localStorage above), and syncs to the doc on the next change/login.
+      updateDoc(doc(db, 'users', user.uid), { language: lang }).catch((err) =>
         console.error('Failed to save language preference:', err),
       );
     }

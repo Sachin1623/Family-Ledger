@@ -1,5 +1,5 @@
 import React from 'react';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -29,7 +29,17 @@ export default function BroadcastBanner() {
   const handleClose = () => {
     setDismissed(true);
     if (user && broadcast?.id) {
-      setDoc(doc(db, 'users', user.uid), { lastSeenBroadcastId: broadcast.id }, { merge: true }).catch((err) =>
+      // updateDoc, not setDoc(...,{merge:true}) — this banner is mounted globally and can be
+      // dismissed within moments of a brand-new account's very first sign-in (it renders above
+      // even ProfileSetupWizard, z-[280] vs z-[260], so a new user often sees and closes it before
+      // anything else). A merge-write reaching Firestore before the account's own creation logic
+      // (Login.tsx's createOrUpdateUserRecords / AuthContext.tsx's syncProfile) would CREATE the
+      // user doc with only this one field, silently skipping `hasSeenOnboarding: false`/
+      // `hasCompletedProfileSetup: false` forever — see those two files' matching comments for the
+      // full reasoning. updateDoc can only touch an EXISTING doc, so on that exact race this just
+      // fails harmlessly (caught below); the broadcast re-shows and marks itself seen normally on
+      // the very next render once the real doc exists.
+      updateDoc(doc(db, 'users', user.uid), { lastSeenBroadcastId: broadcast.id }).catch((err) =>
         console.error('Failed to record broadcast as seen:', err),
       );
     }

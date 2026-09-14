@@ -66,7 +66,7 @@ export default function Navigation() {
   if (shopMode) {
     fab = null;
   } else if (goalsTab === 'goals') {
-    fab = { to: '/goals/new?from=goals', label: t('goals.newGoal'), icon: '🎯' };
+    fab = { to: '/goals/new?from=goals', label: t('goals.newGoal'), icon: '🎯', tour: 'goals-list-fab-hint' };
   } else if (goalsTab === 'accounts') {
     fab = { to: '/goals?tab=accounts&openAdd=1', label: t('accounts.addAccount'), icon: '🏦' };
   } else if (isGoalsArea) {

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth, db, setAnalyticsUserId } from '../lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, onSnapshot, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, getDocs, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firebase';
 import { encryptPII, decryptPII } from '../lib/encryption';
 import { updateGlobalStats } from '../services/statsService';
@@ -93,11 +93,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // If profile documents don't exist, we wait slightly to see if the signup flow in Login.tsx is creating them
             let isPublicMissing = !publicSnap.exists();
             let isPrivateMissing = !privateSnap.exists();
+            // Tracks whichever snapshot is most current — reassigned below if the re-check runs —
+            // so the backfill check further down never reads stale pre-wait data.
+            let latestPublicSnap = publicSnap;
 
             if (isPublicMissing || isPrivateMissing) {
               await new Promise(resolve => setTimeout(resolve, 600));
               if (currentAuthUid !== myUid) return;
-              
+
               // Fetch again to check if Login.tsx already created them
               const [freshPublicSnap, freshPrivateSnap] = await Promise.all([
                 getDoc(userDocRef),
@@ -105,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ]);
               isPublicMissing = !freshPublicSnap.exists();
               isPrivateMissing = !freshPrivateSnap.exists();
+              latestPublicSnap = freshPublicSnap;
             }
 
             if (isPublicMissing) {
@@ -131,6 +135,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               });
               // Increment global user count
               await updateGlobalStats({ users: 1 });
+            } else {
+              // Self-healing backfill, regardless of WHICH of several possible writers (a broadcast
+              // dismissal, a language pick, a short-ID assignment, this doc's own lastLoginAt touch
+              // — all hardened this session to use updateDoc instead of a create-capable merge
+              // write, see each one's own comment) still won a race and created this doc first,
+              // missing these two onboarding flags. Rather than trying to win every such race
+              // (unbounded — even a server-side trigger outside this codebase could theoretically
+              // beat all of them), this repairs the damage after the fact: if the flags are simply
+              // ABSENT (not explicitly false — an established pre-existing account never has this
+              // condition true) AND Firebase Auth's own metadata says this is the account's very
+              // first sign-in ever (creationTime === lastSignInTime, a strong, tamper-proof signal
+              // independent of anything this app's own client code raced on), it's safe to backfill
+              // both flags now so ProfileSetupWizard/OnboardingTour still auto-launch correctly.
+              const existingPublicData = latestPublicSnap.data();
+              const missingOnboardingFlags = existingPublicData && existingPublicData.hasCompletedProfileSetup === undefined && existingPublicData.hasSeenOnboarding === undefined;
+              const isFirstEverSignIn = authUser.metadata.creationTime && authUser.metadata.creationTime === authUser.metadata.lastSignInTime;
+              if (missingOnboardingFlags && isFirstEverSignIn) {
+                await updateDoc(userDocRef, { hasSeenOnboarding: false, hasCompletedProfileSetup: false }).catch(err =>
+                  console.error('Failed to backfill onboarding flags:', err),
+                );
+              }
             }
 
             if (isPrivateMissing) {
@@ -233,7 +258,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // explicit country choice from Profile.tsx/ProfileSetupWizard (stored as `country` on the
         // PRIVATE info doc) — both merge into the same flat client-side `profile` object, so this
         // auto-detected value silently clobbered the user's real pick on every single login.
-        setDoc(userDocRef, { lastLoginAt: nowIso, lastActiveAt: nowIso, approxCountry: getApproxCountry() }, { merge: true }).catch((err) =>
+        // updateDoc, not setDoc(...,{merge:true}) — this fires immediately, racing well ahead of
+        // syncProfile()'s own existence-check-then-create sequence above (which awaits two getDocs,
+        // sometimes a 600ms wait, then a re-check, before ever writing). A merge-write reaching
+        // Firestore first would CREATE the doc with only these three fields, making syncProfile's
+        // own `isPublicMissing` check see a doc that already exists — silently skipping its
+        // `hasSeenOnboarding: false` / `hasCompletedProfileSetup: false` initialization forever, so
+        // neither ProfileSetupWizard nor the dashboard tour would ever auto-launch for that account.
+        // updateDoc can only ever touch an EXISTING doc, never create one, which removes that race
+        // entirely — on a genuinely brand-new account this simply fails harmlessly (caught below)
+        // until syncProfile's own create has landed, then a later login fills these fields in fine.
+        updateDoc(userDocRef, { lastLoginAt: nowIso, lastActiveAt: nowIso, approxCountry: getApproxCountry() }).catch((err) =>
           console.error('lastLoginAt update failed:', err),
         );
       } else {

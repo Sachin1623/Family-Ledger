@@ -9083,7 +9083,15 @@ async function startServer() {
       }
       if (!shortId) return res.status(500).json({ error: 'Could not generate a unique ID — try again.' });
 
-      await userRef.set({ shortId }, { merge: true });
+      // update(), not set(...,{merge:true}) — this fires from the client in the same breath as
+      // AuthContext.tsx's own new-account creation (both kick off right after getIdToken()
+      // resolves), and a merge-write reaching here before that client-side creation lands would
+      // CREATE the user doc with only `shortId` set, silently skipping `hasSeenOnboarding: false`/
+      // `hasCompletedProfileSetup: false` forever (see AuthContext.tsx's matching fix for the full
+      // reasoning). update() can only touch an EXISTING doc; failing here on a genuinely first-ever
+      // login is fine — this endpoint is idempotent and re-called on every subsequent login.
+      if (!snap.exists) return res.status(409).json({ error: 'Account still being created — try again shortly.' });
+      await userRef.update({ shortId });
       return res.json({ shortId });
     } catch (error) {
       console.error('ensure-short-id error:', error);

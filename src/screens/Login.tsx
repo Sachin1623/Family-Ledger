@@ -92,6 +92,16 @@ export default function Login() {
     };
     if (!existingData) {
       userUpdate.joinedAt = new Date().toISOString();
+      // This write runs synchronously, right here, immediately after sign-in/sign-up resolves —
+      // which wins the race against AuthContext.tsx's own onAuthStateChanged-driven creation logic
+      // almost every time (that one awaits two getDocs, sometimes a 600ms wait, then a re-check,
+      // before it ever writes). Without these two fields set explicitly `false` HERE, on the doc's
+      // actual first write, AuthContext.tsx's own creation block finds the doc already exists and
+      // skips its own initialization — meaning ProfileSetupWizard and the dashboard spotlight tour
+      // (both gated on these being explicitly `false`, not just absent) would never auto-launch for
+      // a genuinely brand-new account. Keep these in sync with AuthContext.tsx's matching comment.
+      userUpdate.hasSeenOnboarding = false;
+      userUpdate.hasCompletedProfileSetup = false;
     }
     if (!existingData?.displayName) {
       userUpdate.displayName =

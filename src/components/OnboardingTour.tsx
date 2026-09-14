@@ -25,7 +25,6 @@ export default function OnboardingTour() {
   const [activeTourId, setActiveTourId] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
-  const [, forceRerender] = useState(0);
   const [showAccountsGoalsOffer, setShowAccountsGoalsOffer] = useState(false);
   const [showAccountsExplainer, setShowAccountsExplainer] = useState(false);
 
@@ -82,9 +81,31 @@ export default function OnboardingTour() {
     if (!activeTour) return;
     let cancelled = false;
     let attempts = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
     // Tracks whichever real DOM element currently has the glow class, so it can be cleared the
     // instant the step changes (or the tour ends) — never left glowing on a stale target.
     let glowedEl: HTMLElement | null = null;
+    // `rect` is a snapshot of the PREVIOUS step's target position and stays that way in state
+    // until this step's own target is actually found — without clearing it here, a step whose
+    // target takes a moment to appear (still retrying, e.g. right after a route hop or a
+    // conditionally-rendered section like a budget card that doesn't exist for this particular
+    // group) visibly spotlights the WRONG, stale element for however long the retry takes, even
+    // though its own glow class was already correctly removed. Clearing it up front means the
+    // overlay just dims the whole screen with no cutout while genuinely searching, instead of
+    // lying about where the real target is.
+    setRect(null);
+
+    // scrollIntoView's "smooth" behavior is an animation, not instant — a rect taken in the same
+    // tick it's called reflects where the element was BEFORE scrolling, not where it ends up. That
+    // mismatch is exactly what made the spotlight land in the wrong place on any step whose target
+    // wasn't already on-screen (every step this session added that lives further down a page, or
+    // behind a tab/route switch the step's own onEnter just triggered). Measuring again once the
+    // scroll has had time to finish — and on every resize/scroll event from then on, not just once
+    // — keeps the spotlight glued to the real element instead of a stale snapshot.
+    const remeasure = (el: HTMLElement) => {
+      if (cancelled) return;
+      setRect(el.getBoundingClientRect());
+    };
 
     const measure = () => {
       if (cancelled) return;
@@ -99,13 +120,17 @@ export default function OnboardingTour() {
       const resolvedSelector = step ? (typeof step.selector === 'function' ? step.selector(getTourContext()) : step.selector) : null;
       const el = resolvedSelector ? findStepElement(resolvedSelector) : null;
       if (el) {
-        setRect(el.getBoundingClientRect());
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         if (glowedEl !== el) {
           glowedEl?.classList.remove('fl-tour-glow');
           el.classList.add('fl-tour-glow');
           glowedEl = el;
         }
+        remeasure(el); // immediate feedback...
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        // ...then again once the smooth scroll (and any layout/animation it interrupted, e.g. a
+        // tab switch's own fade-in) has actually settled. 400ms comfortably covers this app's
+        // scroll/transition durations without being long enough to feel laggy.
+        settleTimer = setTimeout(() => remeasure(el), 400);
       } else if (attempts < 10) {
         attempts += 1;
         setTimeout(measure, 200);
@@ -118,11 +143,15 @@ export default function OnboardingTour() {
     };
 
     measure();
-    const onViewportChange = () => forceRerender((n) => n + 1);
+    // Re-measures the ACTUAL current element's position on resize/scroll, rather than just forcing
+    // a re-render off a stale rect (which is all this used to do — a re-render alone recomputes
+    // the overlay's style from the same unchanged `rect` state, so it never actually moved).
+    const onViewportChange = () => { if (glowedEl) remeasure(glowedEl); };
     window.addEventListener('resize', onViewportChange);
     window.addEventListener('scroll', onViewportChange, true);
     return () => {
       cancelled = true;
+      if (settleTimer) clearTimeout(settleTimer);
       glowedEl?.classList.remove('fl-tour-glow');
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('scroll', onViewportChange, true);
@@ -149,6 +178,17 @@ export default function OnboardingTour() {
     }
     if (finishedGroupExplore) {
       setShowAccountsGoalsOffer(true);
+      // The plain 'dashboard' tour's own auto-launch effect (above) re-evaluates on every render
+      // and would otherwise fire immediately here — same route ('/'), same still-`false`
+      // hasSeenOnboarding for a brand-new account — stealing focus before this offer ever gets
+      // shown, and covering strictly less ground than 'group-explore' (which the user just
+      // finished) already did. Marking onboarding seen here, not just when the older tour itself
+      // runs, is what stops that collision.
+      if (user) {
+        setDoc(doc(db, 'users', user.uid), { hasSeenOnboarding: true }, { merge: true }).catch((err) =>
+          console.error('Failed to save onboarding completion:', err),
+        );
+      }
     }
     if (searchParams.get('tour')) {
       const next = new URLSearchParams(searchParams);

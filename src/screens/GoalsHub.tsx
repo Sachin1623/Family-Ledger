@@ -672,7 +672,7 @@ export default function GoalsHub() {
       )}
 
       {visibleOwnGoals.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-3" data-tour="goals-list-fab-hint">
+        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-3">
           <span className="text-4xl block">🎯</span>
           <p className="text-sm font-bold text-on-surface">{t('goals.emptyStateTitle')}</p>
           <p className="text-xs text-text-muted">{t('goals.emptyStateDesc')}</p>
@@ -681,7 +681,7 @@ export default function GoalsHub() {
           </button>
         </div>
       ) : (
-        <div className="space-y-3" data-tour="goals-list-fab-hint">{visibleOwnGoals.map((g) => renderGoalCard(g, false))}</div>
+        <div className="space-y-3">{visibleOwnGoals.map((g) => renderGoalCard(g, false))}</div>
       )}
 
       {sharedWithMeGoals.length > 0 && (
