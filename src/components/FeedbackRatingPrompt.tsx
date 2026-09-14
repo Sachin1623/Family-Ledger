@@ -8,6 +8,10 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
 
+// Only Android has a live store listing right now (see the Play Store release memory notes) —
+// used as a fallback when the native in-app review dialog doesn't show.
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+
 // Every 50 XP earned (see userPoints/{uid}.xp, awarded via claimPoints across the app), nudge the
 // user to either rate the app or tell us what's wrong — native-only, since there's no app store
 // listing to rate from the web build. "Stops if already rated" is interpreted the only way that's
@@ -53,7 +57,20 @@ export default function FeedbackRatingPrompt() {
     if (busy) return;
     setBusy(true);
     try {
-      await InAppReview.requestReview().catch((err) => console.warn('requestReview unavailable:', err));
+      try {
+        await InAppReview.requestReview();
+      } catch (err) {
+        // The native in-app review dialog fails outright — reliably, not just occasionally — for
+        // an app that wasn't installed FROM the store (a sideloaded/manually-distributed test
+        // build is exactly that case). It can also legitimately no-op even on a real store
+        // install, since Google enforces its own quota on how often it'll actually show. Either
+        // way, falling back to the store listing page itself means "Rate the app" still does
+        // something useful instead of silently nothing.
+        console.warn('requestReview unavailable, falling back to store listing:', err);
+        if (Capacitor.getPlatform() === 'android') {
+          window.open(PLAY_STORE_URL, '_blank');
+        }
+      }
       await recordShown({ hasRequestedAppReview: true });
     } finally {
       setBusy(false);
