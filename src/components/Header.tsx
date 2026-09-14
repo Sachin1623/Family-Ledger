@@ -2,6 +2,8 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { db } from '../lib/firebase';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +16,8 @@ import { setOpenFeedPanelFn } from '../lib/feedPanelRef';
 import HeaderProfileBadge from './HeaderProfileBadge';
 import { useAppUpdateAvailable, hardReloadApp } from '../lib/appUpdate';
 import { openCalculator } from '../lib/calculatorRef';
+import { checkAppPermissions, PermissionKey, PermissionStatus, PERMISSION_ORDER } from '../lib/appPermissions';
+import MissingPermissionsList from './MissingPermissionsList';
 
 export default function Header() {
   const navigate = useNavigate();
@@ -101,6 +105,45 @@ export default function Header() {
   const [feedOpen, setFeedOpen] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [feedGroupId, setFeedGroupId] = React.useState<string | undefined>(undefined);
+
+  // "Recurring Expense Confirmation" menu entry + its red dot — same collection/filter
+  // RecurringApprovals.tsx itself queries (client-side status filter to avoid a composite index
+  // for a screen this low-traffic).
+  const [pendingRecurringValue] = useCollection(
+    user ? query(collection(db, 'pendingRecurringExpenses'), where('userId', '==', user.uid)) : null,
+  );
+  const pendingRecurringCount = (pendingRecurringValue?.docs || []).filter((d) => d.data().status === 'pending').length;
+
+  // "App Permissions" menu entry + its red dot — always checked (no 24h snooze, unlike
+  // AppPermissionsReminder.tsx's own auto-popup) since this is a persistent status indicator the
+  // user can act on anytime, not a nag. Native-only; nothing to check on web.
+  const [missingPermissions, setMissingPermissions] = React.useState<PermissionKey[]>([]);
+  const [permissionsModalOpen, setPermissionsModalOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (!user || !Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    const refreshPermissions = async () => {
+      const status: PermissionStatus | null = await checkAppPermissions();
+      if (!status || cancelled) return;
+      setMissingPermissions(PERMISSION_ORDER.filter((key) => status[key] === false));
+    };
+    refreshPermissions();
+    // Re-check on foreground too — covers the user following an "Enable" link out to Settings
+    // and back, same pattern as AppPermissionsReminder.tsx / GlobalAlarmRingingBanner.
+    const sub = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) refreshPermissions();
+    });
+    return () => {
+      cancelled = true;
+      sub.then((h) => h.remove()).catch(() => {});
+    };
+  }, [user]);
+
+  // The hamburger icon's own red dot is an aggregate — it lights up whenever ANY individual menu
+  // entry has one, so the icon itself is always a reliable "something in here needs you" signal
+  // without having to remember which specific item to check. Add future menu-item red dots to
+  // this list too, rather than introducing a second, separate aggregate.
+  const anyMenuRedDot = missingPermissions.length > 0 || pendingRecurringCount > 0;
 
   // Lets other components (a group card's Feed button, say) open this SAME slide-over — see
   // feedPanelRef.ts. Mirrors NavigationBridge's setNavigateFn registration pattern in App.tsx.
@@ -218,6 +261,9 @@ export default function Header() {
               title="Menu"
             >
               <span className="material-symbols-outlined">menu</span>
+              {anyMenuRedDot && (
+                <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-error border-2 border-white" />
+              )}
             </button>
             {menuOpen && (
               <>
@@ -234,6 +280,43 @@ export default function Header() {
                     GlobalSearch/FeedPanel below already do (both `position: fixed`), which is
                     exactly why those never showed this symptom. */}
                 <div className="fixed right-4 top-[calc(60px+env(safe-area-inset-top)+4px)] z-50 w-56 bg-white rounded-2xl border border-border-subtle shadow-xl py-1.5 overflow-hidden">
+                  {/* Always the very first item (when native — nothing to manage on web), so it's
+                      never buried behind whichever of the conditional entries below happen to be
+                      showing. The red dot mirrors the one on the hamburger icon itself. */}
+                  {Capacitor.isNativePlatform() && (
+                    <>
+                      <button
+                        onClick={() => { setMenuOpen(false); setPermissionsModalOpen(true); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="relative material-symbols-outlined text-[20px] text-text-muted">
+                          privacy_tip
+                          {missingPermissions.length > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-error border border-white" />
+                          )}
+                        </span>
+                        App Permissions
+                      </button>
+                      <div className="border-t border-border-subtle my-1" />
+                    </>
+                  )}
+                  {user && (
+                    <>
+                      <button
+                        onClick={() => { setMenuOpen(false); navigate('/recurring-approvals'); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="relative material-symbols-outlined text-[20px] text-text-muted">
+                          event_repeat
+                          {pendingRecurringCount > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-error border border-white" />
+                          )}
+                        </span>
+                        Recurring Expense Confirmation
+                      </button>
+                      <div className="border-t border-border-subtle my-1" />
+                    </>
+                  )}
                   {hasShopAccess && (
                     <button
                       data-tour="header-shop-toggle"
@@ -311,6 +394,34 @@ export default function Header() {
       </div>
       <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <FeedPanel open={feedOpen} onClose={() => setFeedOpen(false)} initialGroupId={feedGroupId} />
+      {permissionsModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[22px] text-primary">privacy_tip</span>
+                </div>
+                <h2 className="text-base font-black text-primary">App Permissions</h2>
+              </div>
+              <button type="button" onClick={() => setPermissionsModalOpen(false)} className="shrink-0 text-text-muted p-1">
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            {missingPermissions.length > 0 ? (
+              <MissingPermissionsList
+                missing={missingPermissions}
+                onEnable={(key) => setMissingPermissions((prev) => prev.filter((k) => k !== key))}
+              />
+            ) : (
+              <div className="flex items-center gap-2 bg-success/10 text-success rounded-2xl p-3">
+                <span className="material-symbols-outlined text-[20px]">check_circle</span>
+                <p className="text-sm font-bold">All permissions are granted.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

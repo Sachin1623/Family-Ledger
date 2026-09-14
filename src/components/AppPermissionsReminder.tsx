@@ -3,7 +3,8 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { checkAppPermissions, openPermissionSettings, PermissionKey, PermissionStatus } from '../lib/appPermissions';
+import { checkAppPermissions, PermissionKey, PermissionStatus, PERMISSION_ORDER } from '../lib/appPermissions';
+import MissingPermissionsList from './MissingPermissionsList';
 
 // Device-local, not per-account — an OS permission grant lives on the device/install, not the
 // signed-in user, so this deliberately does NOT go through Firestore the way the feedback/rating
@@ -12,11 +13,6 @@ const SNOOZE_KEY = 'fl_permissions_reminder_snoozed_until';
 // Re-checked every time the app comes to the foreground, but the popup itself only actually shows
 // at most this often — "check occasionally," not nag on every single launch.
 const SNOOZE_HOURS = 24;
-
-// Which gaps we ever surface, and in what order — notifications/alarm-reliability first since
-// those affect the app's core reminder features; contacts/microphone are lower-stakes (only used
-// by specific optional flows: inviting from contacts, voice chat in games).
-const PERMISSION_ORDER: PermissionKey[] = ['notifications', 'exactAlarm', 'batteryOptimization', 'contacts', 'microphone'];
 
 export default function AppPermissionsReminder() {
   const { user } = useAuth();
@@ -58,13 +54,6 @@ export default function AppPermissionsReminder() {
     setVisible(false);
   };
 
-  const enable = (key: PermissionKey) => {
-    openPermissionSettings(key);
-    // Leave the rest of the list up (they may fix more than one in a row); this one drops off
-    // now and the next foreground check will confirm whether it's actually resolved.
-    setMissing((prev) => prev.filter((k) => k !== key));
-  };
-
   useEffect(() => {
     if (visible && missing.length === 0) setVisible(false);
   }, [missing, visible]);
@@ -83,26 +72,14 @@ export default function AppPermissionsReminder() {
             <p className="text-xs text-text-muted mt-0.5">{t('permissions.reminderBody')}</p>
           </div>
         </div>
-        <div className="space-y-2">
-          {missing.map((key) => (
-            <div
-              key={key}
-              className="flex items-center justify-between gap-3 bg-surface rounded-2xl p-3 border border-border-subtle"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-on-surface">{t(`permissions.${key}`)}</p>
-                <p className="text-[11px] text-text-muted">{t(`permissions.${key}Why`)}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => enable(key)}
-                className="shrink-0 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-bold active:scale-95 transition-all"
-              >
-                {t('permissions.enable')}
-              </button>
-            </div>
-          ))}
-        </div>
+        <MissingPermissionsList
+          missing={missing}
+          onEnable={(key) => {
+            // Leave the rest of the list up (they may fix more than one in a row); this one drops
+            // off now and the next foreground check will confirm whether it's actually resolved.
+            setMissing((prev) => prev.filter((k) => k !== key));
+          }}
+        />
         <button type="button" onClick={snooze} className="w-full py-2 text-text-muted font-bold text-xs">
           {t('permissions.remindLater')}
         </button>

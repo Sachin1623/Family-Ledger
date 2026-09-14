@@ -31,8 +31,18 @@ export default function ShopProfile() {
   const [staffError, setStaffError] = useState<string | null>(null);
 
   const [newCategory, setNewCategory] = useState('');
+  const [newCategoryPrice, setNewCategoryPrice] = useState('');
+  const [newCategoryCost, setNewCategoryCost] = useState('');
   const [savingCategory, setSavingCategory] = useState(false);
-  const categories: string[] = shop?.categories || [];
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editPrice, setEditPrice] = useState('');
+  const [editCost, setEditCost] = useState('');
+  const [savingCategoryPricing, setSavingCategoryPricing] = useState(false);
+  // Categories used to be a plain string[] — normalize old shop docs on read so existing
+  // categories keep working with no migration step; every NEW write always uses the object shape.
+  const categories: { name: string; price?: number; cost?: number }[] = (shop?.categories || []).map(
+    (c: any) => (typeof c === 'string' ? { name: c } : c),
+  );
 
   const startEdit = () => {
     setShopName(shop?.shopName || '');
@@ -96,18 +106,22 @@ export default function ShopProfile() {
     e.preventDefault();
     if (!shopId || !newCategory.trim()) return;
     const trimmed = newCategory.trim();
-    if (categories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+    if (categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) {
       setNewCategory('');
       return;
     }
+    const price = newCategoryPrice.trim() ? parseFloat(newCategoryPrice) : undefined;
+    const cost = newCategoryCost.trim() ? parseFloat(newCategoryCost) : undefined;
     setSavingCategory(true);
     try {
       await updateDoc(doc(db, 'shops', shopId), {
-        categories: [...categories, trimmed],
+        categories: [...categories, { name: trimmed, ...(price != null && !isNaN(price) ? { price } : {}), ...(cost != null && !isNaN(cost) ? { cost } : {}) }],
         updatedAt: new Date().toISOString(),
       });
       logShopActivity(shopId, 'category_added', `${user?.displayName || 'Someone'} added category "${trimmed}"`, user?.displayName || undefined);
       setNewCategory('');
+      setNewCategoryPrice('');
+      setNewCategoryCost('');
     } catch (err) {
       console.error('Failed to add category:', err);
     } finally {
@@ -115,15 +129,44 @@ export default function ShopProfile() {
     }
   };
 
-  const handleRemoveCategory = async (category: string) => {
+  const handleRemoveCategory = async (categoryName: string) => {
     if (!shopId) return;
     try {
       await updateDoc(doc(db, 'shops', shopId), {
-        categories: categories.filter((c) => c !== category),
+        categories: categories.filter((c) => c.name !== categoryName),
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
       console.error('Failed to remove category:', err);
+    }
+  };
+
+  const startEditCategoryPricing = (c: { name: string; price?: number; cost?: number }) => {
+    setEditingCategory(c.name);
+    setEditPrice(c.price != null ? String(c.price) : '');
+    setEditCost(c.cost != null ? String(c.cost) : '');
+  };
+
+  const handleSaveCategoryPricing = async (e: React.FormEvent, categoryName: string) => {
+    e.preventDefault();
+    if (!shopId) return;
+    const price = editPrice.trim() ? parseFloat(editPrice) : undefined;
+    const cost = editCost.trim() ? parseFloat(editCost) : undefined;
+    setSavingCategoryPricing(true);
+    try {
+      await updateDoc(doc(db, 'shops', shopId), {
+        categories: categories.map((c) =>
+          c.name === categoryName
+            ? { name: c.name, ...(price != null && !isNaN(price) ? { price } : {}), ...(cost != null && !isNaN(cost) ? { cost } : {}) }
+            : c,
+        ),
+        updatedAt: new Date().toISOString(),
+      });
+      setEditingCategory(null);
+    } catch (err) {
+      console.error('Failed to update category pricing:', err);
+    } finally {
+      setSavingCategoryPricing(false);
     }
   };
 
@@ -250,35 +293,103 @@ export default function ShopProfile() {
             {categories.length === 0 ? (
               <p className="text-xs text-text-muted italic">No categories yet — add some below to speed up sales entry.</p>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-2">
                 {categories.map((c) => (
-                  <span key={c} className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 bg-[#7C3AED]/10 text-[#7C3AED] rounded-full text-xs font-bold">
-                    {c}
-                    {isOwner && (
-                      <button onClick={() => handleRemoveCategory(c)} className="hover:text-error">
-                        <span className="material-symbols-outlined text-[14px]">close</span>
-                      </button>
+                  <div key={c.name} className="flex items-center justify-between gap-2 bg-surface rounded-xl border border-border-subtle p-2.5">
+                    {editingCategory === c.name ? (
+                      <form onSubmit={(e) => handleSaveCategoryPricing(e, c.name)} className="flex-1 flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-[#7C3AED] shrink-0">{c.name}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editPrice}
+                          onChange={(e) => setEditPrice(e.target.value)}
+                          placeholder="Price"
+                          className="w-20 bg-white p-1.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editCost}
+                          onChange={(e) => setEditCost(e.target.value)}
+                          placeholder="Cost"
+                          className="w-20 bg-white p-1.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                        />
+                        <button
+                          type="submit"
+                          disabled={savingCategoryPricing}
+                          className="px-2.5 py-1 bg-[#7C3AED] text-white rounded-lg text-[11px] font-bold disabled:opacity-50"
+                        >
+                          {savingCategoryPricing ? '…' : 'Save'}
+                        </button>
+                        <button type="button" onClick={() => setEditingCategory(null)} className="px-2.5 py-1 text-[11px] font-bold text-text-muted">
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-[#7C3AED] truncate">{c.name}</p>
+                          <p className="text-[10px] text-text-muted">
+                            {c.price != null || c.cost != null
+                              ? `Price ${c.price != null ? c.price : '—'} · Cost ${c.cost != null ? c.cost : '—'}`
+                              : 'No default price/cost set'}
+                          </p>
+                        </div>
+                        {isOwner && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => startEditCategoryPricing(c)} className="text-text-muted hover:text-[#7C3AED] p-1" title="Edit price/cost">
+                              <span className="material-symbols-outlined text-[16px]">edit</span>
+                            </button>
+                            <button onClick={() => handleRemoveCategory(c.name)} className="text-text-muted hover:text-error p-1" title="Remove category">
+                              <span className="material-symbols-outlined text-[16px]">close</span>
+                            </button>
+                          </div>
+                        )}
+                      </>
                     )}
-                  </span>
+                  </div>
                 ))}
               </div>
             )}
             {isOwner && (
-              <form onSubmit={handleAddCategory} className="flex gap-2">
+              <form onSubmit={handleAddCategory} className="space-y-2 pt-2 border-t border-border-subtle">
                 <input
                   type="text"
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value)}
                   placeholder="New category name"
-                  className="flex-1 bg-surface p-2.5 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                  className="w-full bg-surface p-2.5 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
                 />
-                <button
-                  type="submit"
-                  disabled={savingCategory || !newCategory.trim()}
-                  className="px-4 py-2 bg-[#7C3AED] text-white rounded-xl text-sm font-bold disabled:opacity-50"
-                >
-                  {savingCategory ? '…' : 'Add'}
-                </button>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newCategoryPrice}
+                    onChange={(e) => setNewCategoryPrice(e.target.value)}
+                    placeholder="Price (optional)"
+                    className="flex-1 min-w-0 bg-surface p-2.5 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newCategoryCost}
+                    onChange={(e) => setNewCategoryCost(e.target.value)}
+                    placeholder="Cost (optional)"
+                    className="flex-1 min-w-0 bg-surface p-2.5 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingCategory || !newCategory.trim()}
+                    className="px-4 py-2 bg-[#7C3AED] text-white rounded-xl text-sm font-bold disabled:opacity-50 shrink-0"
+                  >
+                    {savingCategory ? '…' : 'Add'}
+                  </button>
+                </div>
               </form>
             )}
           </div>

@@ -18,6 +18,13 @@ export interface PermissionStatus {
 
 export type PermissionKey = keyof PermissionStatus;
 
+// Which gaps ever get surfaced, and in what order — notifications/alarm-reliability first since
+// those affect the app's core reminder features; contacts/microphone are lower-stakes (only used
+// by specific optional flows: inviting from contacts, voice chat in games). Shared by
+// AppPermissionsReminder.tsx (the auto-popup) and Header.tsx (the always-on menu entry + red dot)
+// so both ever agree on the same list and the same order.
+export const PERMISSION_ORDER: PermissionKey[] = ['notifications', 'exactAlarm', 'batteryOptimization', 'contacts', 'microphone'];
+
 interface AppPermissionsPluginApi {
   checkAll(): Promise<PermissionStatus>;
   openAppSettings(): Promise<void>;

@@ -83,6 +83,22 @@ export default function ShopSales() {
 
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
   const visibleSales = pendingCostOnly ? sales.filter((s) => s.costPending) : sales;
+  // Categories used to be a plain string[] — normalize old shop docs the same way ShopProfile.tsx
+  // does, so a shop that hasn't touched its category list since this shipped still works fine.
+  const categoryList: { name: string; price?: number; cost?: number }[] = useMemo(
+    () => (shop?.categories || []).map((c: any) => (typeof c === 'string' ? { name: c } : c)),
+    [shop?.categories],
+  );
+
+  // Selecting a category prefills its default price/cost, if it has any set — only into whichever
+  // of the two fields is still blank, so it never clobbers something the shopkeeper already typed.
+  const handleCategoryChange = (value: string) => {
+    setCategory(value);
+    const picked = categoryList.find((c) => c.name === value);
+    if (!picked) return;
+    if (picked.price != null && !price.trim()) setPrice(String(picked.price));
+    if (picked.cost != null && !cost.trim()) setCost(String(picked.cost));
+  };
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -324,15 +340,15 @@ export default function ShopSales() {
                 required
                 className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none"
               />
-              {(shop?.categories || []).length > 0 ? (
+              {categoryList.length > 0 ? (
                 <select
                   value={category}
-                  onChange={(e) => setCategory(e.target.value)}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
                   className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none"
                 >
                   <option value="">Category (optional)</option>
-                  {(shop.categories as string[]).map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                  {categoryList.map((c) => (
+                    <option key={c.name} value={c.name}>{c.name}</option>
                   ))}
                   <option value="__other__">Other…</option>
                 </select>

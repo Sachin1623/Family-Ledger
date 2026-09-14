@@ -1,4 +1,5 @@
 import React from 'react';
+import { Capacitor } from '@capacitor/core';
 import { resizeImageFile } from '../lib/imageUtils';
 import ImageLightbox from './ImageLightbox';
 
@@ -78,11 +79,30 @@ export default function ImageAttachments({ images, onChange, maxImages = 3, labe
         </div>
       )}
       {images.length < maxImages && (
-        <label className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-border-subtle text-xs font-bold text-primary hover:bg-surface ${processing ? 'opacity-60' : 'cursor-pointer'}`}>
-          <span className="material-symbols-outlined text-[18px]">add_photo_alternate</span>
-          {processing ? 'Processing…' : `${label}${maxImages > 1 ? ` (${images.length}/${maxImages})` : ''}`}
-          <input type="file" accept="image/*" multiple={maxImages > 1} className="hidden" onChange={handleFiles} disabled={processing} />
-        </label>
+        Capacitor.getPlatform() === 'android' ? (
+          // Android gets a direct "Camera" shortcut alongside "Gallery" — `capture="environment"`
+          // on its own file input opens the native camera app directly instead of the OS's
+          // combined photo/file picker, same pattern already used in ShopSales.tsx's item photo.
+          // Camera capture is inherently one-at-a-time, so that input skips `multiple`.
+          <div className="flex flex-wrap gap-2">
+            <label className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-border-subtle text-xs font-bold text-primary hover:bg-surface ${processing ? 'opacity-60' : 'cursor-pointer'}`}>
+              <span className="material-symbols-outlined text-[18px]">photo_camera</span>
+              {processing ? 'Processing…' : 'Camera'}
+              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFiles} disabled={processing} />
+            </label>
+            <label className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-border-subtle text-xs font-bold text-primary hover:bg-surface ${processing ? 'opacity-60' : 'cursor-pointer'}`}>
+              <span className="material-symbols-outlined text-[18px]">add_photo_alternate</span>
+              {processing ? 'Processing…' : `Gallery${maxImages > 1 ? ` (${images.length}/${maxImages})` : ''}`}
+              <input type="file" accept="image/*" multiple={maxImages > 1} className="hidden" onChange={handleFiles} disabled={processing} />
+            </label>
+          </div>
+        ) : (
+          <label className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-border-subtle text-xs font-bold text-primary hover:bg-surface ${processing ? 'opacity-60' : 'cursor-pointer'}`}>
+            <span className="material-symbols-outlined text-[18px]">add_photo_alternate</span>
+            {processing ? 'Processing…' : `${label}${maxImages > 1 ? ` (${images.length}/${maxImages})` : ''}`}
+            <input type="file" accept="image/*" multiple={maxImages > 1} className="hidden" onChange={handleFiles} disabled={processing} />
+          </label>
+        )
       )}
       {error && <p className="text-[11px] text-error font-bold">{error}</p>}
       {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}

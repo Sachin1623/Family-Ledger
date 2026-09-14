@@ -1018,6 +1018,9 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                         {isGroupFavorite && (
                           <span className="material-symbols-outlined text-[13px] text-warning shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} title="Favorite">star</span>
                         )}
+                        {expense.images?.length > 0 && (
+                          <span className="material-symbols-outlined text-[13px] text-text-muted/70 shrink-0" title="Has a photo">photo_camera</span>
+                        )}
                         <span className="text-sm truncate">{expense.description}</span>
                       </div>
                       <span className={clsx("text-sm font-bold flex-none ml-2", isIncomeRow ? "text-[#0F7A38]" : "text-primary")}>

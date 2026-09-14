@@ -184,8 +184,11 @@ export default function GroupAnalysisSummary() {
   // Quick month/year filters — multi-select (e.g. "every January and July across 2024 and 2025"),
   // empty means "no restriction" for that axis. Kept independent of `timeStep`/`viewType` (which
   // only control how the chart GROUPS/labels data, not which expenses are included at all).
-  const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
-  const [selectedYears, setSelectedYears] = useState<number[]>([]);
+  // Defaults to the CURRENT month/year rather than "no restriction" — landing on this screen
+  // should show this month's spend by default, not a lifetime total; "Clear All" (below) still
+  // resets to true all-time, since that's a deliberate, distinct action from the initial view.
+  const [selectedMonths, setSelectedMonths] = useState<number[]>(() => [new Date().getMonth()]);
+  const [selectedYears, setSelectedYears] = useState<number[]>(() => [new Date().getFullYear()]);
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [bookmarks, setBookmarks] = useState<AnalysisBookmark[]>([]);
   const [newBookmarkName, setNewBookmarkName] = useState('');
