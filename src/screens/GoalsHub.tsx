@@ -263,6 +263,52 @@ export default function GoalsHub() {
     return () => { cancelled = true; };
   }, [ownAccountsValue, groupSharedAccountsForHorizonValue, friendSharedAccountsForHorizonValue]);
 
+  // Read-only "someone else's Goals tab" data — only relevant while actually viewing a specific
+  // person's switcher pill (isOwnView false). "Share My Reports" only decides whether that
+  // person's pill even shows up in the switcher (see useReportsSharing.ts) — it is NOT a blanket
+  // access grant, so this is NOT a broad userId==viewingUid query. It's sharedWithMeGoals (already
+  // fetched above for "Mine"'s own Shared-With-Me section) filtered down to just this one owner —
+  // i.e. only whatever THAT PERSON has individually shared with me (group or friend), same as
+  // everywhere else in this app. A real user testing this caught the broader version showing goals
+  // that were never actually shared with the viewer — this is the fix for that.
+  const visibleViewedGoals = useMemo(
+    () => sharedWithMeGoals.filter((g) => g.userId === viewingUid && g.status !== 'archived' && !g.isCashHolding),
+    [sharedWithMeGoals, viewingUid],
+  );
+
+  const [viewedLedgersByGoal, setViewedLedgersByGoal] = useState<Map<string, GoalLedgerEntry[]>>(new Map());
+  useEffect(() => {
+    if (visibleViewedGoals.length === 0) { setViewedLedgersByGoal(new Map()); return; }
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        visibleViewedGoals.map(async (g) => {
+          const snap = await getDocs(collection(db, 'goals', g.id, 'ledger'));
+          const raw = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+          return [g.id, await decryptLedgerEntries(g.id, raw)] as const;
+        }),
+      );
+      if (!cancelled) setViewedLedgersByGoal(new Map(entries));
+    })();
+    return () => { cancelled = true; };
+  }, [visibleViewedGoals.map((g) => g.id).join(',')]);
+
+  // Same idea as sharedWithMeGoals above, for accounts — own accounts are already fetched
+  // (ownAccountsValue below); this is just the shared ones, kept separate from allAccounts (which
+  // merges own+shared for OWN goal-card projections) so a specific person's view can be filtered
+  // to just what THEY shared, not the viewer's own accounts too.
+  const [sharedAccounts, setSharedAccounts] = useState<FinancialAccount[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const byId = new Map<string, any>();
+    groupSharedAccountsForHorizonValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    friendSharedAccountsForHorizonValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setSharedAccounts(decrypted); })
+      .catch((err) => console.error('Failed to decrypt shared accounts:', err));
+    return () => { cancelled = true; };
+  }, [groupSharedAccountsForHorizonValue, friendSharedAccountsForHorizonValue, user?.uid]);
+  const viewedAccounts = useMemo(() => sharedAccounts.filter((a) => a.userId === viewingUid), [sharedAccounts, viewingUid]);
+
   const [posting, setPosting] = useState(false);
   const [postResult, setPostResult] = useState<{ cashHoldingCreditMinor: number } | null>(null);
   const [postError, setPostError] = useState<string | null>(null);
@@ -491,7 +537,15 @@ export default function GoalsHub() {
     }
   };
 
-  const renderGoalCard = (g: Goal, sharedBadge: boolean) => {
+  // `ledgers`/`accountsForProjection` default to the viewer's own data (ledgersByGoal/allAccounts,
+  // both defined above) — the "someone else's Goals tab" render below passes the viewed person's
+  // own ledgers/accounts instead, so goalHorizonDate() below projects off the right person's data.
+  const renderGoalCard = (
+    g: Goal,
+    sharedBadge: boolean,
+    ledgers: Map<string, GoalLedgerEntry[]> = ledgersByGoal,
+    accountsForProjection: FinancialAccount[] = allAccounts,
+  ) => {
     const sym = getCurrencySymbol(g.currency || defaultCurrency);
     // No target, no progress bar, no projection — it's a running balance, not something being
     // worked toward. Tinted distinctly so it doesn't read as "just another goal" in the list.
@@ -515,13 +569,13 @@ export default function GoalsHub() {
       );
     }
     const pct = goalProgressPct(g);
-    const projected = g.status === 'completed' ? null : goalHorizonDate(g, ledgersByGoal.get(g.id) || [], allAccounts);
+    const projected = g.status === 'completed' ? null : goalHorizonDate(g, ledgers.get(g.id) || [], accountsForProjection);
     // A goal can reach its target passively (a linked account's balance simply grows past it)
     // without ever being explicitly Marked Completed — status stays 'active', so `projected`
     // above is null (nothing left to project) even though it's genuinely done. This derives the
     // real date it got there either way, so the card reads "Met {date}" instead of a misleading
     // "Projection unavailable."
-    const reachedDate = goalTargetReachedAt(g, ledgersByGoal.get(g.id) || []);
+    const reachedDate = goalTargetReachedAt(g, ledgers.get(g.id) || []);
     // How far the actual projection (from the real savings/interest rate feeding this goal) sits
     // from the date the user originally aimed for — positive means later than hoped (behind),
     // zero or negative means on schedule or ahead. Only shown when there's something to compare:
@@ -673,14 +727,20 @@ export default function GoalsHub() {
       {goalsTab === 'allocation' && <GoalAllocationManager embedded viewingUid={viewingUid} />}
 
       {goalsTab === 'goals' && !isOwnView && (
-        // This tab's own content (monthly-savings posting, goal creation, cash holding) is all
-        // interactive/owner-only and doesn't make sense read-only for someone else's account — the
-        // Reports and Accounts tabs already show the viewed person's real numbers, so this just
-        // redirects attention there instead of trying to render a disabled copy of the whole page.
-        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-2">
-          <span className="material-symbols-outlined text-3xl text-text-muted">visibility</span>
-          <p className="text-sm font-bold text-on-surface">{t('goals.reportsViewingOthers', { name: viewingSharer?.displayName || t('common.someone') })}</p>
-          <p className="text-xs text-text-muted">{t('goals.viewingOthersGoalsTabHint')}</p>
+        // This tab's own INTERACTIVE content (monthly-savings posting, goal creation, cash
+        // holding) is owner-only and doesn't make sense here — but the goal list itself, with real
+        // progress + projections, is exactly what a reports-share is for, so this renders the
+        // viewed person's goals read-only (same cards as "Mine", just fed by their own data) rather
+        // than a redirect message with nothing on it.
+        <div className="space-y-3">
+          {visibleViewedGoals.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-2">
+              <span className="material-symbols-outlined text-3xl text-text-muted">flag</span>
+              <p className="text-sm font-bold text-on-surface">{t('goals.noActiveGoalsForAllocation')}</p>
+            </div>
+          ) : (
+            visibleViewedGoals.map((g) => renderGoalCard(g, false, viewedLedgersByGoal, viewedAccounts))
+          )}
         </div>
       )}
       {goalsTab === 'goals' && isOwnView && (

@@ -23,30 +23,31 @@ export default function GoalAllocationManager({ embedded = false, viewingUid }: 
   const { t } = useLanguage();
   const navigate = useNavigate();
 
-  // Browsing someone else's whole shared Reports & Timeline (see GoalsHub.tsx's switcher) — a
-  // reports-share grants "everything," so this becomes a plain userId==viewingUid query for BOTH
-  // goals and accounts (no union needed), permitted by firestore.rules' hasReportsAccessTo(). See
-  // AccountsHub.tsx's matching isViewingOther for the same pattern.
+  // Browsing someone else's switcher pill (see GoalsHub.tsx's switcher) — "Share My Reports" only
+  // controls whether that person's pill shows up at all (see useReportsSharing.ts); it is NOT a
+  // blanket access grant. This view is scoped to whatever that person has individually shared with
+  // me (group or friend), filtered to just their uid — NOT a broad userId==viewingUid query, which
+  // would show goals/accounts that were never actually shared with the viewer (a real user testing
+  // this caught exactly that on the Accounts tab). See AccountsHub.tsx's matching isViewingOther.
   const isViewingOther = !!viewingUid && viewingUid !== user?.uid;
 
   // Own + shared (group or friend) goals and accounts — same union pattern GoalsHub.tsx (goals
-  // list) and AccountsHub.tsx (accounts list) already use. Previously this screen only ever
-  // queried the viewer's own userId==uid for both, so any goal or account someone else shared
-  // with the viewer was silently absent here even though it showed correctly everywhere else —
-  // reported as "shared accounts aren't showing" specifically on this Allocation Overview tab.
-  const [membershipsValue] = useCollection(user && !isViewingOther ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  // list) and AccountsHub.tsx (accounts list) already use. The shared queries run regardless of
+  // isViewingOther now (not just for "Mine") since a specific person's view is now built by
+  // filtering these same "shared with me" results down to just their uid, not a separate query.
+  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const cappedGroupIds = (membershipsValue?.docs.map((d) => d.data().groupId) || []).slice(0, 30);
 
   const [ownGoalsValue] = useCollection(user && !isViewingOther ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
-  const [groupSharedGoalsValue] = useCollection(!isViewingOther && cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedGoalsValue] = useCollection(user && !isViewingOther ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [viewedGoalsValue] = useCollection(isViewingOther && viewingUid ? query(collection(db, 'goals'), where('userId', '==', viewingUid)) : null);
+  const [groupSharedGoalsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
   const [goals, setGoals] = useState<Goal[]>([]);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();
     if (isViewingOther) {
-      viewedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      groupSharedGoalsValue?.docs.forEach((d) => { if (d.data().userId === viewingUid) byId.set(d.id, { id: d.id, ...d.data() }); });
+      friendSharedGoalsValue?.docs.forEach((d) => { if (d.data().userId === viewingUid) byId.set(d.id, { id: d.id, ...d.data() }); });
     } else {
       ownGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
       groupSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
@@ -56,18 +57,18 @@ export default function GoalAllocationManager({ embedded = false, viewingUid }: 
     decryptGoalsList(raw).then((decrypted) => { if (!cancelled) setGoals(decrypted); })
       .catch((err) => console.error('Failed to decrypt goals:', err));
     return () => { cancelled = true; };
-  }, [isViewingOther, ownGoalsValue, groupSharedGoalsValue, friendSharedGoalsValue, viewedGoalsValue]);
+  }, [isViewingOther, viewingUid, ownGoalsValue, groupSharedGoalsValue, friendSharedGoalsValue]);
 
   const [ownAccountsValue] = useCollection(user && !isViewingOther ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
-  const [groupSharedAccountsValue] = useCollection(!isViewingOther && cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedAccountsValue] = useCollection(user && !isViewingOther ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [viewedAccountsValue] = useCollection(isViewingOther && viewingUid ? query(collection(db, 'financialAccounts'), where('userId', '==', viewingUid)) : null);
+  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();
     if (isViewingOther) {
-      viewedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      groupSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId === viewingUid) byId.set(d.id, { id: d.id, ...d.data() }); });
+      friendSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId === viewingUid) byId.set(d.id, { id: d.id, ...d.data() }); });
     } else {
       ownAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
       groupSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
@@ -76,7 +77,7 @@ export default function GoalAllocationManager({ embedded = false, viewingUid }: 
     decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAccounts(decrypted); })
       .catch((err) => console.error('Failed to decrypt accounts:', err));
     return () => { cancelled = true; };
-  }, [isViewingOther, ownAccountsValue, groupSharedAccountsValue, friendSharedAccountsValue, viewedAccountsValue]);
+  }, [isViewingOther, viewingUid, ownAccountsValue, groupSharedAccountsValue, friendSharedAccountsValue]);
 
   // Same non-owner effective-role resolution as AccountsHub.tsx's own canEditAccount — kept as a
   // local duplicate rather than a shared import, matching this codebase's established convention

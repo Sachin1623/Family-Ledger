@@ -154,17 +154,48 @@ export default function GoalDetail() {
       ? query(collection(db, 'financialAccounts'), where('userId', '==', goal.userId), where('allocatedGoalIds', 'array-contains', goal.id))
       : null,
   );
+  // Same query-provability constraint as above applies in reverse for a NON-owner shared viewer:
+  // there's no single filter that proves "I can see this because I'm in friendUids OR my group is
+  // groupId," so this can't be one query either. Instead: the viewer's own "accounts shared with
+  // me" (friendUids/group, each independently provable — the same simple shape every other screen
+  // in this app already uses), filtered client-side down to this one goal's owner+allocation. This
+  // used to be skipped entirely for non-owners (isOwner-gated below too), which hid the whole
+  // Allocations/Contributions section from a shared viewer even on a goal actually shared with
+  // them — reported directly by a real user testing this ("can't see allocation and contribution
+  // tab on the shared goal").
+  const [membershipsForGoalValue] = useCollection(goal && !isOwner && user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const cappedGroupIdsForGoal = (membershipsForGoalValue?.docs.map((d) => d.data().groupId) || []).slice(0, 30);
+  const [friendSharedAccountsForGoalValue] = useCollection(
+    goal && !isOwner && !goal.isCashHolding && user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null,
+  );
+  const [groupSharedAccountsForGoalValue] = useCollection(
+    goal && !isOwner && !goal.isCashHolding && cappedGroupIdsForGoal.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIdsForGoal)) : null,
+  );
   // Full decrypted accounts (not just the display-ready summary below) — goalHorizonDate needs
   // each linked account's interest rate/compounding and SIP schedule, not just its current % share.
   const [linkedFullAccounts, setLinkedFullAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
     if (!goal) { setLinkedFullAccounts([]); return; }
-    const raws = linkedAccountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+    let raws: any[];
+    if (isOwner) {
+      raws = linkedAccountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+    } else {
+      const byId = new Map<string, any>();
+      friendSharedAccountsForGoalValue?.docs.forEach((d) => {
+        const data = d.data();
+        if (data.userId === goal.userId && (data.allocatedGoalIds || []).includes(goal.id)) byId.set(d.id, { id: d.id, ...data });
+      });
+      groupSharedAccountsForGoalValue?.docs.forEach((d) => {
+        const data = d.data();
+        if (data.userId === goal.userId && (data.allocatedGoalIds || []).includes(goal.id)) byId.set(d.id, { id: d.id, ...data });
+      });
+      raws = Array.from(byId.values());
+    }
     decryptAccountsList(raws).then((decrypted) => { if (!cancelled) setLinkedFullAccounts(decrypted); })
       .catch((err) => console.error('Failed to decrypt linked accounts:', err));
     return () => { cancelled = true; };
-  }, [linkedAccountsValue, goal?.id]);
+  }, [isOwner, linkedAccountsValue, friendSharedAccountsForGoalValue, groupSharedAccountsForGoalValue, goal?.id, goal?.userId]);
   const linkedAccounts = useMemo(
     () =>
       goal
@@ -977,7 +1008,10 @@ export default function GoalDetail() {
         </div>
       )}
 
-      {isOwner && !goal.isCashHolding && (
+      {!goal.isCashHolding && (
+        // View-only for a non-owner (no "Edit Allocation"/"Reset Allocation" buttons below this —
+        // those stay isOwner-gated) — but the breakdown itself is core information about a shared
+        // goal, same as everywhere else a shared item shows its real numbers, not a mutation.
         <div className="space-y-2.5">
           <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
             <button

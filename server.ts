@@ -4668,12 +4668,30 @@ async function startServer() {
     }
 
     try {
+      // NOTE: this used to also accept a "share my whole Reports & Timeline" grant
+      // (users/{ownerUid}.reportsSharedWith) as authorization here, matching a matching grant that
+      // used to be in firestore.rules — removed from both: it over-shared, handing a reports-share
+      // recipient every one of the owner's goals/accounts, not just the ones actually, individually
+      // shared with them. "Share My Reports" only controls the switcher-pill UI now (see
+      // useReportsSharing.ts) — read/decrypt access is still exactly owner OR friendUids OR
+      // shared-group-member, same as every other viewer check in this file.
       let authorized = false;
       if (scopeType === 'user') {
         authorized = scopeId === decoded.uid;
       } else if (scopeType === 'account') {
         const snap = await db.collection('financialAccounts').doc(scopeId).get();
-        authorized = snap.exists && snap.data()?.userId === decoded.uid;
+        if (snap.exists) {
+          const account = snap.data()!;
+          if (account.userId === decoded.uid) {
+            authorized = true;
+          } else if (Array.isArray(account.friendUids) && account.friendUids.includes(decoded.uid)) {
+            authorized = true;
+          } else if (account.groupId) {
+            const memberSnap = await db.collection('members')
+              .where('groupId', '==', account.groupId).where('userId', '==', decoded.uid).limit(1).get();
+            authorized = !memberSnap.empty;
+          }
+        }
       } else if (scopeType === 'goal') {
         const snap = await db.collection('goals').doc(scopeId).get();
         if (snap.exists) {
@@ -4689,9 +4707,10 @@ async function startServer() {
           }
         }
       } else if (scopeType === 'policy') {
-        // Same shape as 'goal' above (owner OR shared friend OR shared group member), not
-        // 'account's owner-only check — Policy Vault records support the same shared-viewer model
-        // Goals does, so a shared viewer needs to be able to decrypt sumInsured/premium too.
+        // Same shape as 'goal'/'account' above (owner OR shared friend OR shared group member) —
+        // Policy Vault records support the same shared-viewer model, so a shared viewer needs to
+        // be able to decrypt sumInsured/premium too. No reportsSharedWith check here: a reports
+        // share is Goals+Accounts only, by design — Policy Vault has its own separate share grant.
         const snap = await db.collection('policies').doc(scopeId).get();
         if (snap.exists) {
           const policy = snap.data()!;

@@ -55,24 +55,51 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Browsing someone else's whole shared Reports & Timeline (see GoalsHub.tsx's switcher) — a
-  // reports-share grants "everything," so this becomes a plain userId==viewingUid query (no
-  // union with own/individually-shared items needed) and every mutation control below is hidden.
-  // Permitted by firestore.rules' hasReportsAccessTo(), same as GoalReports.tsx's own switch.
+  // Browsing someone else's switcher pill (see GoalsHub.tsx's switcher) — "Share My Reports" only
+  // controls whether that person's pill shows up at all (see useReportsSharing.ts); it is NOT a
+  // blanket access grant. This view is scoped to sharedWithMeAccounts below (owned by someone else,
+  // shared with me via group or friend), filtered to just this one owner — NOT a broad
+  // userId==viewingUid query, which would show accounts that were never actually shared with the
+  // viewer (a real user testing this caught exactly that). Every mutation control below stays
+  // hidden while viewing someone else either way.
   const isViewingOther = !!viewingUid && viewingUid !== user?.uid;
-  const [accountsValue] = useCollection(
-    isViewingOther
-      ? query(collection(db, 'financialAccounts'), where('userId', '==', viewingUid))
-      : (user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null),
-  );
-  const [allAccounts, setAllAccounts] = useState<FinancialAccount[]>([]);
+
+  // --- Sharing (accounts, group/friend membership + role data) --- Hoisted above the main
+  // accounts query (this block used to sit much further down, only feeding its own "Shared With
+  // Me" section) because `allAccounts` below now needs sharedWithMeAccounts too, to build a
+  // specific shared-owner's filtered view instead of a broad userId==viewingUid query.
+  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const groupIds = membershipsValue?.docs.map((d) => d.data().groupId) || [];
+  const cappedGroupIds = groupIds.slice(0, 30); // Firestore 'in' query cap, same as elsewhere in this app
+  const [groupsValue] = useCollection(groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds.slice(0, 30))) : null);
+  const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+  const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(user?.uid);
+  const { families: myFamilies, membersByFamilyId } = useFamilies(user?.uid);
+
+  // --- Accounts shared with me (owned by someone else, visible to me via group or friend share) ---
+  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [sharedWithMeAccounts, setSharedWithMeAccounts] = useState<FinancialAccount[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const byId = new Map<string, any>();
+    groupSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    friendSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setSharedWithMeAccounts(decrypted); })
+      .catch((err) => console.error('Failed to decrypt shared accounts:', err));
+    return () => { cancelled = true; };
+  }, [groupSharedAccountsValue, friendSharedAccountsValue, user?.uid]);
+
+  const [accountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [ownAccounts, setOwnAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
     const raw = accountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
-    decryptAccountsList(raw).then((decrypted) => { if (!cancelled) setAllAccounts(decrypted); })
+    decryptAccountsList(raw).then((decrypted) => { if (!cancelled) setOwnAccounts(decrypted); })
       .catch((err) => console.error('Failed to decrypt accounts:', err));
     return () => { cancelled = true; };
   }, [accountsValue]);
+  const allAccounts = isViewingOther ? sharedWithMeAccounts.filter((a) => a.userId === viewingUid) : ownAccounts;
   const activeAccounts = allAccounts; // no archiving — every account the user creates stays visible
   const defaultCurrency = allAccounts[0]?.currency || 'INR';
   const totalMinor = activeAccounts.reduce((s, a) => s + a.currentBalanceMinor, 0);
@@ -171,32 +198,6 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   // goal. Amount fields aren't decrypted here since only id/name/icon are needed for the picker.
   const [linkableGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid), where('status', '==', 'active')) : null);
   const linkableGoals = (linkableGoalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []).filter((g: any) => !g.isCashHolding);
-
-  // --- Sharing (accounts, group/friend membership + role data) ---
-  // Same dual model as GoalWizard.tsx's own Share With — group memberships/list, friends, and
-  // families all needed for both the Share With picker on the Add/Edit form below AND for the
-  // "shared with me" queries further down.
-  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
-  const groupIds = membershipsValue?.docs.map((d) => d.data().groupId) || [];
-  const cappedGroupIds = groupIds.slice(0, 30); // Firestore 'in' query cap, same as elsewhere in this app
-  const [groupsValue] = useCollection(groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds.slice(0, 30))) : null);
-  const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
-  const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(user?.uid);
-  const { families: myFamilies, membersByFamilyId } = useFamilies(user?.uid);
-
-  // --- Accounts shared with me (owned by someone else, visible to me via group or friend share) ---
-  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [sharedWithMeAccounts, setSharedWithMeAccounts] = useState<FinancialAccount[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    const byId = new Map<string, any>();
-    groupSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
-    friendSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
-    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setSharedWithMeAccounts(decrypted); })
-      .catch((err) => console.error('Failed to decrypt shared accounts:', err));
-    return () => { cancelled = true; };
-  }, [groupSharedAccountsValue, friendSharedAccountsValue, user?.uid]);
 
   // --- Add/edit account form ---
   const [showInfo, setShowInfo] = useState(false);

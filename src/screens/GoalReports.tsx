@@ -18,11 +18,17 @@ import { useReportsSharing } from '../lib/useReportsSharing';
 // `viewingUid` prop (owned by GoalsHub.tsx, which also renders the Mine/switcher pills shared
 // across all 4 tabs — see its own comment for why this couldn't stay local to just this screen):
 //  - "Mine" (viewingUid === my own uid, or omitted — the standalone /goals/reports route has no
-//    switcher, so this always defaults to "mine" there): own goals/accounts UNION whatever's
-//    individually shared with me (group or friend) — same pattern GoalAllocationManager.tsx uses.
-//  - Someone else's shared reports (viewingUid !== my uid): a reports-share is all-or-nothing by
-//    design (see the Share button below), so this switches to a plain userId==viewingUid query for
-//    BOTH collections instead of the union — permitted by firestore.rules' hasReportsAccessTo().
+//    switcher, so this always defaults to "mine" there): totals/chart/Horizon View are OWN goals
+//    ONLY — a separate "Shared With Me" section below lists whatever's individually shared with me
+//    (group or friend), same split GoalsHub.tsx's own Goals tab already uses. Blending shared items
+//    into "Mine"'s own totals used to make an account with zero goals of its own show someone
+//    else's totals as if they were hers — reported directly by a real user testing this.
+//  - Someone else's switcher pill selected (viewingUid !== my uid): ONLY that person's goals/
+//    accounts that are ALSO individually shared with me (friendUids/groupId) — NOT their whole
+//    portfolio. "Share My Reports" only controls whether a person's pill appears in the switcher at
+//    all; it is NOT a blanket access grant (a real user caught this in testing: a reports-share
+//    recipient could see goals that were never actually shared with them). Same friendUids/groupId
+//    read permission as everywhere else in this app — see firestore.rules' isGoalViewer().
 // If goals use different currencies, the aggregate totals below display in whichever currency the
 // FIRST goal uses (a simplification — this app has no cross-currency conversion anywhere).
 export default function GoalReports({ embedded = false, viewingUid: viewingUidProp }: { embedded?: boolean; viewingUid?: string } = {}) {
@@ -36,88 +42,119 @@ export default function GoalReports({ embedded = false, viewingUid: viewingUidPr
 
   const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const cappedGroupIds = (membershipsValue?.docs.map((d) => d.data().groupId) || []).slice(0, 30);
-  const [ownGoalsValue] = useCollection(user && isOwnView ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
-  const [groupSharedGoalsValue] = useCollection(isOwnView && cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedGoalsValue] = useCollection(user && isOwnView ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [viewedGoalsValue] = useCollection(!isOwnView && viewingUid ? query(collection(db, 'goals'), where('userId', '==', viewingUid)) : null);
-  const [allGoals, setAllGoals] = useState<Goal[]>([]);
+  // Own + individually-shared-with-me queries run regardless of isOwnView now — the shared ones
+  // are also how a specific person's switcher view gets its data (filtered to that one owner
+  // below), not just "Mine"'s separate Shared-With-Me section.
+  const [ownGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
+  const [groupSharedGoalsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [ownGoals, setOwnGoals] = useState<Goal[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const raw = ownGoalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+    decryptGoalsList(raw).then((decrypted) => { if (!cancelled) setOwnGoals(decrypted); })
+      .catch((err) => console.error('Failed to decrypt goals:', err));
+    return () => { cancelled = true; };
+  }, [ownGoalsValue]);
+  const [sharedGoals, setSharedGoals] = useState<Goal[]>([]);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();
-    if (isOwnView) {
-      ownGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-      groupSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-      friendSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-    } else {
-      viewedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-    }
-    decryptGoalsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAllGoals(decrypted); })
-      .catch((err) => console.error('Failed to decrypt goals:', err));
+    groupSharedGoalsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    friendSharedGoalsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    decryptGoalsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setSharedGoals(decrypted); })
+      .catch((err) => console.error('Failed to decrypt shared goals:', err));
     return () => { cancelled = true; };
-  }, [isOwnView, ownGoalsValue, groupSharedGoalsValue, friendSharedGoalsValue, viewedGoalsValue]);
-  const reportableGoals = allGoals.filter((g) => g.status !== 'archived');
+  }, [groupSharedGoalsValue, friendSharedGoalsValue, user?.uid]);
+
+  const reportableGoals = (isOwnView ? ownGoals : sharedGoals.filter((g) => g.userId === viewingUid)).filter((g) => g.status !== 'archived');
+  // Only populated in "Mine" mode — a specific person's switcher view IS already "shared with me,"
+  // so a second copy of the same distinction inside it would be redundant.
+  const sharedReportableGoals = isOwnView ? sharedGoals.filter((g) => g.status !== 'archived') : [];
   const currencySymbol = getCurrencySymbol(reportableGoals[0]?.currency);
 
   const [ledgersByGoal, setLedgersByGoal] = useState<Map<string, GoalLedgerEntry[]>>(new Map());
+  // Tracks whether ledgersByGoal above reflects the CURRENT goal set, not a stale/empty Map left
+  // over from before they loaded — the chart/horizon below gate on this instead of rendering the
+  // instant goals arrive. Ledger entries feed goalHorizonDate()'s real projection; rendering one
+  // frame before they're in produced a "no ledger yet" projection (often a different date,
+  // sometimes none at all), then a second, different-looking render once they arrived a moment
+  // later — visually a "for a second it's fine, then the chart crumbles/repositions" glitch, worse
+  // (and more visible) on a switch to someone else's shared view, where nothing is cached yet and
+  // this fetch is slower than the goal list itself.
+  const ledgerGoals = useMemo(() => [...reportableGoals, ...sharedReportableGoals], [reportableGoals, sharedReportableGoals]);
+  const [ledgersReady, setLedgersReady] = useState(false);
   useEffect(() => {
-    if (reportableGoals.length === 0) { setLedgersByGoal(new Map()); return; }
+    setLedgersReady(false);
+    if (ledgerGoals.length === 0) { setLedgersByGoal(new Map()); setLedgersReady(true); return; }
     let cancelled = false;
     (async () => {
       const entries = await Promise.all(
-        reportableGoals.map(async (g) => {
+        ledgerGoals.map(async (g) => {
           const snap = await getDocs(collection(db, 'goals', g.id, 'ledger'));
           const raw = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
           return [g.id, await decryptLedgerEntries(g.id, raw)] as const;
         }),
       );
-      if (!cancelled) setLedgersByGoal(new Map(entries));
+      if (!cancelled) { setLedgersByGoal(new Map(entries)); setLedgersReady(true); }
     })();
     return () => { cancelled = true; };
-  }, [reportableGoals.map((g) => g.id).join(',')]);
+  }, [ledgerGoals.map((g) => g.id).join(',')]);
 
-  // Every account visible to the viewer — own+shared when viewing "Mine", or every account the
-  // viewed owner has when viewing someone's shared reports — decrypted, feeds goalHorizonDate()
-  // below with each linked account's interest rate/compounding and SIP schedule, not just its
-  // balance.
-  const [ownAccountsValue] = useCollection(user && isOwnView ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
-  const [groupSharedAccountsValue] = useCollection(isOwnView && cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedAccountsValue] = useCollection(user && isOwnView ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [viewedAccountsValue] = useCollection(!isOwnView && viewingUid ? query(collection(db, 'financialAccounts'), where('userId', '==', viewingUid)) : null);
-  const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
+  // Every account visible to the viewer — decrypted, feeds goalHorizonDate() below with each
+  // linked account's interest rate/compounding and SIP schedule, not just its balance. Same
+  // own-vs-shared split as goals above: "Mine" projects off own+shared (a goal she owns can
+  // legitimately be funded by a jointly-shared account); a specific person's switcher view projects
+  // off only accounts THAT PERSON has individually shared with me.
+  const [ownAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [ownAccounts, setOwnAccounts] = useState<FinancialAccount[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const raw = ownAccountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+    decryptAccountsList(raw).then((decrypted) => { if (!cancelled) setOwnAccounts(decrypted); })
+      .catch((err) => console.error('Failed to decrypt accounts:', err));
+    return () => { cancelled = true; };
+  }, [ownAccountsValue]);
+  const [sharedAccounts, setSharedAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();
-    if (isOwnView) {
-      ownAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-      groupSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-      friendSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-    } else {
-      viewedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
-    }
-    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAccounts(decrypted); })
-      .catch((err) => console.error('Failed to decrypt accounts:', err));
+    groupSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    friendSharedAccountsValue?.docs.forEach((d) => { if (d.data().userId !== user?.uid) byId.set(d.id, { id: d.id, ...d.data() }); });
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setSharedAccounts(decrypted); })
+      .catch((err) => console.error('Failed to decrypt shared accounts:', err));
     return () => { cancelled = true; };
-  }, [isOwnView, ownAccountsValue, groupSharedAccountsValue, friendSharedAccountsValue, viewedAccountsValue]);
+  }, [groupSharedAccountsValue, friendSharedAccountsValue, user?.uid]);
+  const accounts = useMemo(() => {
+    if (isOwnView) {
+      const byId = new Map<string, FinancialAccount>();
+      [...ownAccounts, ...sharedAccounts].forEach((a) => byId.set(a.id, a));
+      return Array.from(byId.values());
+    }
+    return sharedAccounts.filter((a) => a.userId === viewingUid);
+  }, [isOwnView, ownAccounts, sharedAccounts, viewingUid]);
 
-  const horizon = useMemo(() => {
+  const buildHorizon = (goals: Goal[]) => goals
     // Cash Savings has no target and no projection (see goalProgressPct/goalHorizonDate — both
     // already resolve to "nothing" for a target-0 goal), so it'd only clutter this timeline. Its
     // balance still counts toward Total Accumulated below — it's real money, just untargeted.
-    return reportableGoals
-      .filter((g) => g.status === 'active' && !g.isCashHolding)
-      .map((g) => {
-        const ledger = ledgersByGoal.get(g.id) || [];
-        return { goal: g, projected: goalHorizonDate(g, ledger, accounts), reachedDate: goalTargetReachedAt(g, ledger) };
-      })
-      .sort((a, b) => {
-        const aDate = a.reachedDate || a.projected;
-        const bDate = b.reachedDate || b.projected;
-        if (!aDate && !bDate) return 0;
-        if (!aDate) return 1;
-        if (!bDate) return -1;
-        return aDate.localeCompare(bDate);
-      });
-  }, [reportableGoals, ledgersByGoal, accounts]);
+    .filter((g) => g.status === 'active' && !g.isCashHolding)
+    .map((g) => {
+      const ledger = ledgersByGoal.get(g.id) || [];
+      return { goal: g, projected: goalHorizonDate(g, ledger, accounts), reachedDate: goalTargetReachedAt(g, ledger) };
+    })
+    .sort((a, b) => {
+      const aDate = a.reachedDate || a.projected;
+      const bDate = b.reachedDate || b.projected;
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return 1;
+      if (!bDate) return -1;
+      return aDate.localeCompare(bDate);
+    });
+  const horizon = useMemo(() => buildHorizon(reportableGoals), [reportableGoals, ledgersByGoal, accounts]);
+  const sharedHorizon = useMemo(() => buildHorizon(sharedReportableGoals), [sharedReportableGoals, ledgersByGoal, accounts]);
 
   // --- "Goal Horizon" chart: a single year-axis timeline with every placeable goal's icon plotted
   // at its own completion date. A goal with a real projected date (goalHorizonDate) plots there,
@@ -259,6 +296,59 @@ export default function GoalReports({ embedded = false, viewingUid: viewingUidPr
     }
   };
 
+  // Shared by both the "Mine" Horizon View list and the "Shared With Me" list below it — same
+  // ladder-item look either way; `shared` just adds the small "shared with you" group badge next
+  // to the name, matching GoalsHub.tsx's own goal-card convention for the same distinction.
+  const renderHorizonItem = ({ goal, projected, reachedDate }: { goal: Goal; projected: string | null; reachedDate: string | null }, shared: boolean) => {
+    // Same "how far off target" reasoning as GoalsHub.tsx's own goal cards — only shown when
+    // there's a real target date AND a real projection to compare it to; a goal already at/past
+    // target has nothing left to compare (it's done).
+    const monthsBehindTarget = !reachedDate && goal.targetDate && projected
+      ? (() => {
+          const [ty, tm] = goal.targetDate.split('-').map(Number);
+          const [py, pm] = projected.split('-').map(Number);
+          return (py - ty) * 12 + (pm - tm);
+        })()
+      : null;
+    return (
+      <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}?from=reports`)}>
+        <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', reachedDate ? 'bg-success' : projected ? 'bg-primary' : 'bg-border-subtle')} />
+        <div className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3">
+          <span className="text-xl shrink-0">{goal.icon || '🎯'}</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-on-surface truncate flex items-center gap-1">
+              {goal.name}
+              {shared && <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('goals.sharedWithYou')}>group</span>}
+            </p>
+            <p className="text-[11px] text-text-muted flex items-center gap-1">
+              {reachedDate
+                ? t('goals.metOn', { date: reachedDate })
+                : (projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable'))}
+              {reachedDate && (
+                <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0 bg-success/10 text-success">
+                  {t('goals.statusCompleted')}
+                </span>
+              )}
+              {monthsBehindTarget !== null && (
+                <span className={clsx(
+                  'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
+                  monthsBehindTarget <= 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning',
+                )}>
+                  {monthsBehindTarget <= 0
+                    ? (monthsBehindTarget <= -1 ? t('goals.aheadOfTarget', { months: Math.abs(monthsBehindTarget) }) : t('goals.onTrack'))
+                    : t('goals.behindTarget', { months: monthsBehindTarget })}
+                </span>
+              )}
+            </p>
+          </div>
+          <span className="text-xs font-bold text-primary shrink-0">
+            {getCurrencySymbol(goal.currency)}{formatAmountCompact(fromMinorUnits(Math.max(0, goal.targetAmountMinor - goalTotalMinor(goal))), goal.currency, profile?.numberSystem)} {t('goals.toGo')}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className={embedded ? 'space-y-5' : 'p-4 md:p-8 max-w-2xl mx-auto space-y-5 pb-24'}>
       {!embedded && (
@@ -293,7 +383,11 @@ export default function GoalReports({ embedded = false, viewingUid: viewingUidPr
         <p className="text-xs font-bold text-success text-center">{t('goals.completedCount', { count: completedCount })}</p>
       )}
 
-      {chartRange && (
+      {reportableGoals.length > 0 && !ledgersReady && (
+        <div className="rounded-2xl border border-border-subtle shadow-sm p-4 h-40 bg-surface animate-pulse" />
+      )}
+
+      {chartRange && ledgersReady && (
         <div className="rounded-2xl border border-primary-container/20 shadow-sm p-4 pt-3 space-y-2 bg-gradient-to-br from-primary-container/10 via-white to-success/10 overflow-hidden" data-tour="goals-horizon-chart">
           <h2 className="text-sm font-bold text-primary">{t('goals.goalHorizonChart')}</h2>
           <div className="relative" style={{ height: chartHeight }}>
@@ -375,62 +469,42 @@ export default function GoalReports({ embedded = false, viewingUid: viewingUidPr
 
       <div className="space-y-2">
         <h2 className="text-sm font-bold text-primary px-1">{t('goals.horizonView')}</h2>
-        {horizon.length === 0 ? (
+        {!ledgersReady && reportableGoals.length > 0 ? (
+          <div className="space-y-2">
+            {reportableGoals.slice(0, 3).map((g) => <div key={g.id} className="h-16 rounded-xl bg-surface animate-pulse" />)}
+          </div>
+        ) : horizon.length === 0 ? (
           <p className="text-xs text-text-muted text-center py-8">{t('goals.noActiveGoalsForAllocation')}</p>
         ) : (
           <div className="relative pl-6">
             <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-border-subtle" />
             <div className="space-y-4">
-              {horizon.map(({ goal, projected, reachedDate }) => {
-                // Same "how far off target" reasoning as GoalsHub.tsx's own goal cards — only
-                // shown when there's a real target date AND a real projection to compare it to;
-                // a goal already at/past target has nothing left to compare (it's done).
-                const monthsBehindTarget = !reachedDate && goal.targetDate && projected
-                  ? (() => {
-                      const [ty, tm] = goal.targetDate.split('-').map(Number);
-                      const [py, pm] = projected.split('-').map(Number);
-                      return (py - ty) * 12 + (pm - tm);
-                    })()
-                  : null;
-                return (
-                  <div key={goal.id} className="relative cursor-pointer" onClick={() => navigate(`/goals/${goal.id}?from=reports`)}>
-                    <span className={clsx('absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white shadow', reachedDate ? 'bg-success' : projected ? 'bg-primary' : 'bg-border-subtle')} />
-                    <div className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 flex items-center gap-3">
-                      <span className="text-xl shrink-0">{goal.icon || '🎯'}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-on-surface truncate">{goal.name}</p>
-                        <p className="text-[11px] text-text-muted flex items-center gap-1">
-                          {reachedDate
-                            ? t('goals.metOn', { date: reachedDate })
-                            : (projected ? t('goals.projectedMet', { date: projected }) : t('goals.projectionUnavailable'))}
-                          {reachedDate && (
-                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0 bg-success/10 text-success">
-                              {t('goals.statusCompleted')}
-                            </span>
-                          )}
-                          {monthsBehindTarget !== null && (
-                            <span className={clsx(
-                              'px-1.5 py-0.5 rounded-full text-[9px] font-black shrink-0',
-                              monthsBehindTarget <= 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning',
-                            )}>
-                              {monthsBehindTarget <= 0
-                                ? (monthsBehindTarget <= -1 ? t('goals.aheadOfTarget', { months: Math.abs(monthsBehindTarget) }) : t('goals.onTrack'))
-                                : t('goals.behindTarget', { months: monthsBehindTarget })}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <span className="text-xs font-bold text-primary shrink-0">
-                        {getCurrencySymbol(goal.currency)}{formatAmountCompact(fromMinorUnits(Math.max(0, goal.targetAmountMinor - goalTotalMinor(goal))), goal.currency, profile?.numberSystem)} {t('goals.toGo')}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+              {horizon.map((entry) => renderHorizonItem(entry, false))}
             </div>
           </div>
         )}
       </div>
+
+      {isOwnView && sharedReportableGoals.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-bold text-primary px-1 flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[16px]">group</span>
+            {t('goals.sharedWithMe')}
+          </h2>
+          {!ledgersReady ? (
+            <div className="space-y-2">
+              {sharedReportableGoals.slice(0, 3).map((g) => <div key={g.id} className="h-16 rounded-xl bg-surface animate-pulse" />)}
+            </div>
+          ) : (
+            <div className="relative pl-6">
+              <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-border-subtle" />
+              <div className="space-y-4">
+                {sharedHorizon.map((entry) => renderHorizonItem(entry, true))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showSharePicker && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !savingShare && setShowSharePicker(false)}>

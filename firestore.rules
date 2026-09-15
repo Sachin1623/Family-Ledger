@@ -127,17 +127,13 @@ service cloud.firestore {
       );
     }
 
-    // Whether `ownerUid` has granted the CALLER access to their whole Reports & Timeline view
-    // (users/{ownerUid}.reportsSharedWith — an array of viewer uids, written directly by the owner
-    // via the users/{userId} update rule below, no separate grant doc needed). Deliberately used
-    // only in isGoalViewer()/isAccountViewer() below, never their Editor counterparts — a reports
-    // share is always read-only, by design (see GoalReports.tsx's share picker).
-    function hasReportsAccessTo(ownerUid) {
-      let path = /databases/$(database)/documents/users/$(ownerUid);
-      return isSignedIn() && exists(path) &&
-        get(path).data.keys().hasAll(['reportsSharedWith']) &&
-        get(path).data.reportsSharedWith.hasAny([request.auth.uid]);
-    }
+    // NOTE: this app used to have a hasReportsAccessTo(ownerUid) function here, granting a
+    // "Share My Reports" recipient (users/{ownerUid}.reportsSharedWith) blanket read access to
+    // EVERY one of that owner's goals/accounts. Removed — it over-shared: a real user's reports
+    // recipient could read goals/accounts they were never individually shared, not just the ones
+    // actually shared with them. "Share My Reports" now only controls whether that person appears
+    // as a switcher pill in the UI (see useReportsSharing.ts) — the underlying read access is
+    // still, as everywhere else, ONLY via a goal's/account's own friendUids/groupId grant.
 
     // Strictly the original creator of the group — not any 'owner'-role member.
     // Used to gate group deletion, member removal, and invite management to
@@ -1098,8 +1094,7 @@ service cloud.firestore {
         return isSignedIn() && (
           resource.data.userId == request.auth.uid ||
           (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
-          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid])) ||
-          hasReportsAccessTo(resource.data.userId)
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
         );
       }
       // Same viewer check, gated to only the share(s) that actually grant 'edit' — an absent role
@@ -1181,8 +1176,7 @@ service cloud.firestore {
           return isSignedIn() && (
             g.userId == request.auth.uid ||
             (g.groupId != null && canModifyGroup(g.groupId)) ||
-            (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid])) ||
-            hasReportsAccessTo(g.userId)
+            (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid]))
           );
         }
         // Mirrors the top-level goal doc's own isGoalEditor() — a boost needs 'edit', not just
@@ -1256,8 +1250,7 @@ service cloud.firestore {
         return isSignedIn() && (
           resource.data.userId == request.auth.uid ||
           (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
-          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid])) ||
-          hasReportsAccessTo(resource.data.userId)
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
         );
       }
       function isAccountEditor() {
@@ -1335,8 +1328,7 @@ service cloud.firestore {
           return isSignedIn() && (
             a.userId == request.auth.uid ||
             (a.keys().hasAll(['groupId']) && a.groupId != null && canModifyGroup(a.groupId)) ||
-            (a.keys().hasAll(['friendUids']) && a.friendUids.hasAny([request.auth.uid])) ||
-            hasReportsAccessTo(a.userId)
+            (a.keys().hasAll(['friendUids']) && a.friendUids.hasAny([request.auth.uid]))
           );
         }
         function isParentEditor() {
