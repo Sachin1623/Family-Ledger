@@ -213,17 +213,26 @@ export default function GoalsHub() {
     return () => { cancelled = true; };
   }, [visibleOwnGoals.map((g) => g.id).join(',')]);
 
-  // Every one of the owner's own accounts, decrypted — feeds goalHorizonDate() below with each
-  // linked account's interest rate/compounding and SIP schedule, not just its balance.
+  // Every account visible to the viewer — own AND shared (group or friend) — decrypted, feeding
+  // goalHorizonDate() below with each linked account's interest rate/compounding and SIP schedule,
+  // not just its balance. This card renders both the viewer's own goals AND sharedWithMeGoals (see
+  // the two renderGoalCard() call sites below), so an own-only query here silently produced no/
+  // wrong projections for a shared goal funded by an account the viewer doesn't own themselves —
+  // same bug class already fixed in GoalAllocationManager.tsx, see its own matching comment.
   const [ownAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
-  const [ownAccounts, setOwnAccounts] = useState<FinancialAccount[]>([]);
+  const [groupSharedAccountsForHorizonValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsForHorizonValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [allAccounts, setAllAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const raw = ownAccountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
-    decryptAccountsList(raw).then((decrypted) => { if (!cancelled) setOwnAccounts(decrypted); })
+    const byId = new Map<string, any>();
+    ownAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    groupSharedAccountsForHorizonValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    friendSharedAccountsForHorizonValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAllAccounts(decrypted); })
       .catch((err) => console.error('Failed to decrypt accounts:', err));
     return () => { cancelled = true; };
-  }, [ownAccountsValue]);
+  }, [ownAccountsValue, groupSharedAccountsForHorizonValue, friendSharedAccountsForHorizonValue]);
 
   const [posting, setPosting] = useState(false);
   const [postResult, setPostResult] = useState<{ cashHoldingCreditMinor: number } | null>(null);
@@ -477,7 +486,7 @@ export default function GoalsHub() {
       );
     }
     const pct = goalProgressPct(g);
-    const projected = g.status === 'completed' ? null : goalHorizonDate(g, ledgersByGoal.get(g.id) || [], ownAccounts);
+    const projected = g.status === 'completed' ? null : goalHorizonDate(g, ledgersByGoal.get(g.id) || [], allAccounts);
     // A goal can reach its target passively (a linked account's balance simply grows past it)
     // without ever being explicitly Marked Completed — status stays 'active', so `projected`
     // above is null (nothing left to project) even though it's genuinely done. This derives the

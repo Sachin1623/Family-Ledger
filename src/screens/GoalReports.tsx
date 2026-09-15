@@ -9,28 +9,51 @@ import { db } from '../lib/firebase';
 import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
 import { Goal, GoalLedgerEntry, goalHorizonDate, goalTargetReachedAt, goalTotalMinor, fromMinorUnits, decryptGoalsList, decryptLedgerEntries } from '../lib/goals';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
+import { useFriendships } from '../lib/useFriendships';
+import { useFamilies } from '../lib/useFamilies';
+import { useReportsSharing } from '../lib/useReportsSharing';
 
 // Reports & Timeline (Horizon View) — a chronological ladder of every active goal's projected
-// completion, plus total accumulated + total-still-targeted wealth across every one of the
-// user's own goals (archived ones excluded, same reasoning as everywhere else this session
-// treats "archived" as out of the active picture but never actually gone). Goals are user-level,
-// so this is always "my" reports — not scoped to any one group. If goals use different
-// currencies, the aggregate totals below display in whichever currency the FIRST goal uses
-// (a simplification — this app has no cross-currency conversion anywhere).
+// completion, plus total accumulated + total-still-targeted wealth. Two view modes:
+//  - "Mine" (viewingUid === my own uid): own goals/accounts UNION whatever's individually shared
+//    with me (group or friend) — same pattern GoalsHub.tsx/GoalAllocationManager.tsx use.
+//  - Someone else's shared reports (viewingUid !== my uid): a reports-share is all-or-nothing by
+//    design (see the Share button below), so this switches to a plain userId==viewingUid query for
+//    BOTH collections instead of the union — permitted by firestore.rules' hasReportsAccessTo().
+// If goals use different currencies, the aggregate totals below display in whichever currency the
+// FIRST goal uses (a simplification — this app has no cross-currency conversion anywhere).
 export default function GoalReports({ embedded = false }: { embedded?: boolean } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
-  const [goalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
+  const { sharedWithMe, saving: savingShare, save: saveReportsShare } = useReportsSharing(user?.uid);
+  const [viewingUid, setViewingUid] = useState<string | undefined>(user?.uid);
+  useEffect(() => { setViewingUid(user?.uid); }, [user?.uid]);
+  const isOwnView = viewingUid === user?.uid;
+  const viewingSharer = sharedWithMe.find((s) => s.uid === viewingUid);
+
+  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const cappedGroupIds = (membershipsValue?.docs.map((d) => d.data().groupId) || []).slice(0, 30);
+  const [ownGoalsValue] = useCollection(user && isOwnView ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
+  const [groupSharedGoalsValue] = useCollection(isOwnView && cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedGoalsValue] = useCollection(user && isOwnView ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [viewedGoalsValue] = useCollection(!isOwnView && viewingUid ? query(collection(db, 'goals'), where('userId', '==', viewingUid)) : null);
   const [allGoals, setAllGoals] = useState<Goal[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const raw = goalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
-    decryptGoalsList(raw).then((decrypted) => { if (!cancelled) setAllGoals(decrypted); })
+    const byId = new Map<string, any>();
+    if (isOwnView) {
+      ownGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      groupSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      friendSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    } else {
+      viewedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    }
+    decryptGoalsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAllGoals(decrypted); })
       .catch((err) => console.error('Failed to decrypt goals:', err));
     return () => { cancelled = true; };
-  }, [goalsValue]);
+  }, [isOwnView, ownGoalsValue, groupSharedGoalsValue, friendSharedGoalsValue, viewedGoalsValue]);
   const reportableGoals = allGoals.filter((g) => g.status !== 'archived');
   const currencySymbol = getCurrencySymbol(reportableGoals[0]?.currency);
 
@@ -51,17 +74,29 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
     return () => { cancelled = true; };
   }, [reportableGoals.map((g) => g.id).join(',')]);
 
-  // Every one of the user's own accounts, decrypted — feeds goalHorizonDate() below with each
-  // linked account's interest rate/compounding and SIP schedule, not just its balance.
-  const [accountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  // Every account visible to the viewer — own+shared when viewing "Mine", or every account the
+  // viewed owner has when viewing someone's shared reports — decrypted, feeds goalHorizonDate()
+  // below with each linked account's interest rate/compounding and SIP schedule, not just its
+  // balance.
+  const [ownAccountsValue] = useCollection(user && isOwnView ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [groupSharedAccountsValue] = useCollection(isOwnView && cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useCollection(user && isOwnView ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [viewedAccountsValue] = useCollection(!isOwnView && viewingUid ? query(collection(db, 'financialAccounts'), where('userId', '==', viewingUid)) : null);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const raw = accountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
-    decryptAccountsList(raw).then((decrypted) => { if (!cancelled) setAccounts(decrypted); })
+    const byId = new Map<string, any>();
+    if (isOwnView) {
+      ownAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      groupSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      friendSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    } else {
+      viewedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    }
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAccounts(decrypted); })
       .catch((err) => console.error('Failed to decrypt accounts:', err));
     return () => { cancelled = true; };
-  }, [accountsValue]);
+  }, [isOwnView, ownAccountsValue, groupSharedAccountsValue, friendSharedAccountsValue, viewedAccountsValue]);
 
   const horizon = useMemo(() => {
     // Cash Savings has no target and no projection (see goalProgressPct/goalHorizonDate — both
@@ -186,6 +221,26 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
   const totalTargetMinor = reportableGoals.reduce((s, g) => s + g.targetAmountMinor, 0);
   const completedCount = reportableGoals.filter((g) => g.status === 'completed').length;
 
+  // --- "Share my Reports" picker — friends + family only (no groups, always view-only; see this
+  // plan's own confirmed answer: a reports-share is all-or-nothing, never edit). Seeded from
+  // profile.reportsSharedWith (already live via useAuth(), no separate query needed for MY OWN
+  // current grant list) each time the picker opens, so re-opening after a save shows the truth.
+  const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(user?.uid);
+  const { families: myFamilies, membersByFamilyId } = useFamilies(user?.uid);
+  const [showSharePicker, setShowSharePicker] = useState(false);
+  const [pickerSelectedUids, setPickerSelectedUids] = useState<string[]>([]);
+  const openSharePicker = () => {
+    setPickerSelectedUids(profile?.reportsSharedWith || []);
+    setShowSharePicker(true);
+  };
+  const togglePickerUid = (uid: string) => {
+    setPickerSelectedUids((prev) => (prev.includes(uid) ? prev.filter((u) => u !== uid) : [...prev, uid]));
+  };
+  const handleSaveShare = async () => {
+    await saveReportsShare(pickerSelectedUids);
+    setShowSharePicker(false);
+  };
+
   return (
     <div className={embedded ? 'space-y-5' : 'p-4 md:p-8 max-w-2xl mx-auto space-y-5 pb-24'}>
       {!embedded && (
@@ -195,6 +250,42 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
             <span className="material-symbols-outlined text-[20px] block">close</span>
           </button>
         </div>
+      )}
+
+      {sharedWithMe.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          <button
+            type="button" onClick={() => setViewingUid(user?.uid)}
+            className={clsx('px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition-colors', isOwnView ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle')}
+          >
+            {t('goals.reportsViewMine')}
+          </button>
+          {sharedWithMe.map((s) => (
+            <button
+              key={s.uid} type="button" onClick={() => setViewingUid(s.uid)}
+              className={clsx('px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition-colors', viewingUid === s.uid ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle')}
+            >
+              {s.displayName}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!isOwnView && (
+        <p className="text-xs font-bold text-text-muted flex items-center gap-1.5 px-1">
+          <span className="material-symbols-outlined text-[16px]">visibility</span>
+          {t('goals.reportsViewingOthers', { name: viewingSharer?.displayName || t('common.someone') })}
+        </p>
+      )}
+
+      {isOwnView && (
+        <button
+          type="button" onClick={openSharePicker}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-bold"
+        >
+          <span className="material-symbols-outlined text-[16px]">share</span>
+          {(profile?.reportsSharedWith || []).length > 0 ? t('goals.reportsSharedCount', { count: (profile?.reportsSharedWith || []).length }) : t('goals.shareMyReports')}
+        </button>
       )}
 
       <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 flex items-center justify-between gap-3">
@@ -348,6 +439,68 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
           </div>
         )}
       </div>
+
+      {showSharePicker && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !savingShare && setShowSharePicker(false)}>
+          <div className="bg-white w-full max-w-sm rounded-2xl p-5 space-y-3 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-black text-primary">{t('goals.shareMyReports')}</h3>
+            <p className="text-xs text-text-muted">{t('goals.shareMyReportsDesc')}</p>
+            <div className="flex-1 overflow-y-auto space-y-3">
+              {myFamilies.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('goals.family')}</p>
+                  {myFamilies.map((fam: any) => {
+                    const fmembers: any[] = membersByFamilyId.get(fam.id) || [];
+                    return fmembers.filter((m) => m.userId !== user?.uid).map((m) => {
+                      const selected = pickerSelectedUids.includes(m.userId);
+                      return (
+                        <button
+                          key={m.userId} type="button" onClick={() => togglePickerUid(m.userId)}
+                          className={clsx('w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all', selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle')}
+                        >
+                          <img src={m.photoURL || `https://ui-avatars.com/api/?name=${m.displayName}`} className="w-6 h-6 rounded-full object-cover shrink-0" alt="" />
+                          <span className="flex-1 min-w-0 text-xs font-bold truncate">{m.displayName}</span>
+                          <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                            {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                          </span>
+                        </button>
+                      );
+                    });
+                  })}
+                </div>
+              )}
+              {acceptedFriends.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('goals.friends')}</p>
+                  {acceptedFriends.map(({ friendUid }) => {
+                    const friend = friendUsersByUid.get(friendUid);
+                    const selected = pickerSelectedUids.includes(friendUid);
+                    return (
+                      <button
+                        key={friendUid} type="button" onClick={() => togglePickerUid(friendUid)}
+                        className={clsx('w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all', selected ? 'bg-primary/5 border-primary' : 'bg-white border-border-subtle')}
+                      >
+                        <img src={friend?.photoURL || `https://ui-avatars.com/api/?name=${friend?.displayName || '?'}`} className="w-6 h-6 rounded-full object-cover shrink-0" alt="" />
+                        <span className="flex-1 min-w-0 text-xs font-bold truncate">{friend?.displayName || t('common.someone')}</span>
+                        <span className={clsx('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border-subtle')}>
+                          {selected && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {myFamilies.length === 0 && acceptedFriends.length === 0 && (
+                <p className="text-xs text-text-muted text-center py-4">{t('goals.noFriendsOrFamilyYet')}</p>
+              )}
+            </div>
+            <button onClick={handleSaveShare} disabled={savingShare} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
+              {savingShare ? t('goals.saving') : t('common.save')}
+            </button>
+            <button onClick={() => setShowSharePicker(false)} disabled={savingShare} className="w-full py-2 text-xs font-bold text-text-muted">{t('common.close')}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
+import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -13,6 +14,9 @@ import { currentLocalMonthKey } from '../lib/dateUtils';
 import { updateGlobalStats } from '../services/statsService';
 import { useLanguage } from '../context/LanguageContext';
 import { EXPENSE_CATEGORIES, getCurrencySymbol } from '../lib/constants';
+import { useFriendships } from '../lib/useFriendships';
+import { useFamilies } from '../lib/useFamilies';
+import { useAllGroupMembers } from '../lib/useAllGroupMembers';
 
 type SubPanel = null | 'addMembers' | 'budget' | 'budgetCategory' | 'exitDelete';
 
@@ -164,6 +168,52 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
   const [searchingUsers, setSearchingUsers] = useState(false);
   const [invitingUid, setInvitingUid] = useState<string | null>(null);
   const [invitedUids, setInvitedUids] = useState<Set<string>>(new Set());
+
+  // "People you already know" — friends, family, and co-members from any other group the caller
+  // belongs to, combined into one directly-tappable list. The exact-ID/email search below stays
+  // reserved for people who AREN'T already connected (see its own placeholder) — making someone
+  // hunt down a random short ID for a friend they already have on the app is bad UX, and this was
+  // reported as exactly that confusion (typed a friend's first name into the ID/email box, got
+  // nothing back).
+  const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(user?.uid);
+  const { membersByFamilyId } = useFamilies(user?.uid);
+  const [myMembershipsValue] = useCollection(
+    user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
+  );
+  const myGroupIds = React.useMemo(
+    () => Array.from(new Set((myMembershipsValue?.docs || []).map((d: any) => d.data().groupId))),
+    [myMembershipsValue],
+  );
+  const { sortedMembers: coGroupMembers } = useAllGroupMembers(myGroupIds, user?.uid);
+
+  const existingMemberUidSet = React.useMemo(() => new Set(members.map((m: any) => m.userId)), [members]);
+
+  const knownPeople = React.useMemo(() => {
+    const map = new Map<string, FoundUser>();
+    acceptedFriends.forEach(({ friendUid }) => {
+      const u = friendUsersByUid.get(friendUid);
+      if (u) map.set(friendUid, { uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, shortId: null });
+    });
+    Array.from(membersByFamilyId.values()).flat().forEach((row: any) => {
+      if (row.userId === user?.uid) return;
+      map.set(row.userId, { uid: row.userId, displayName: row.displayName, photoURL: row.photoURL, shortId: null });
+    });
+    coGroupMembers.forEach((m: any) => {
+      if (!map.has(m.userId)) map.set(m.userId, { uid: m.userId, displayName: m.displayName || 'Someone', photoURL: m.photoURL || '', shortId: null });
+    });
+    return Array.from(map.values())
+      .filter((u) => !existingMemberUidSet.has(u.uid))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [acceptedFriends, friendUsersByUid, membersByFamilyId, coGroupMembers, existingMemberUidSet, user?.uid]);
+
+  // Purely client-side filter — knownPeople is already fully loaded in memory, so there's no
+  // reason to round-trip to the server the way the exact-ID/email search below has to.
+  const [knownPeopleFilter, setKnownPeopleFilter] = useState('');
+  const filteredKnownPeople = React.useMemo(() => {
+    const q = knownPeopleFilter.trim().toLowerCase();
+    if (!q) return knownPeople;
+    return knownPeople.filter((u) => u.displayName?.toLowerCase().includes(q));
+  }, [knownPeople, knownPeopleFilter]);
 
   useEffect(() => {
     const q = userSearchQuery.trim();
@@ -461,6 +511,49 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
 
           {subPanel === 'addMembers' && (
             <div className="p-2 space-y-4">
+              {knownPeople.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[14px]">group</span>
+                    People You Know
+                  </label>
+                  {knownPeople.length > 5 && (
+                    <input
+                      type="text"
+                      value={knownPeopleFilter}
+                      onChange={(e) => setKnownPeopleFilter(e.target.value)}
+                      placeholder="Filter by name…"
+                      className="w-full bg-surface p-2.5 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  )}
+                  {filteredKnownPeople.length === 0 && (
+                    <p className="text-[11px] text-text-muted px-1">No one matches "{knownPeopleFilter}".</p>
+                  )}
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                    {filteredKnownPeople.map((u) => (
+                      <div key={u.uid} className="flex items-center gap-2 p-2 rounded-xl bg-surface-container/50">
+                        <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center">
+                          {u.photoURL ? (
+                            <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-xs font-bold text-primary">{u.displayName?.slice(0, 1)}</span>
+                          )}
+                        </div>
+                        <span className="text-sm font-bold text-on-surface truncate flex-1">{u.displayName}</span>
+                        <button
+                          onClick={() => handleInviteFoundUser(u)}
+                          disabled={invitingUid === u.uid || invitedUids.has(u.uid)}
+                          className="text-xs font-bold text-primary px-3 py-1.5 rounded-lg bg-primary/10 disabled:opacity-50 shrink-0"
+                        >
+                          {invitedUids.has(u.uid) ? 'Invited' : invitingUid === u.uid ? '…' : 'Add'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="h-px bg-border-subtle my-1" />
+                </div>
+              )}
+
               <button
                 onClick={handleWhatsAppShare}
                 className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border border-border-subtle hover:bg-surface-container transition-colors text-left"
@@ -505,6 +598,9 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                   className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 {searchingUsers && <p className="text-xs text-text-muted px-1">Searching…</p>}
+                {!searchingUsers && userSearchQuery.trim().length >= 2 && userSearchResults.length === 0 && (
+                  <p className="text-[11px] text-text-muted px-1">{t('manageGroup.noMatchingUsers')}</p>
+                )}
                 {userSearchResults.length > 0 && (
                   <div className="space-y-1.5 max-h-48 overflow-y-auto">
                     {userSearchResults.map((u) => (

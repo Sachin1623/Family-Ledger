@@ -23,25 +23,54 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
   const { t } = useLanguage();
   const navigate = useNavigate();
 
-  const [goalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
+  // Own + shared (group or friend) goals and accounts — same union pattern GoalsHub.tsx (goals
+  // list) and AccountsHub.tsx (accounts list) already use. Previously this screen only ever
+  // queried the viewer's own userId==uid for both, so any goal or account someone else shared
+  // with the viewer was silently absent here even though it showed correctly everywhere else —
+  // reported as "shared accounts aren't showing" specifically on this Allocation Overview tab.
+  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const cappedGroupIds = (membershipsValue?.docs.map((d) => d.data().groupId) || []).slice(0, 30);
+
+  const [ownGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
+  const [groupSharedGoalsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
   const [goals, setGoals] = useState<Goal[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const raw = (goalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []).filter((g: any) => g.status === 'active' && !g.isCashHolding);
+    const byId = new Map<string, any>();
+    ownGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    groupSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    friendSharedGoalsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    const raw = Array.from(byId.values()).filter((g: any) => g.status === 'active' && !g.isCashHolding);
     decryptGoalsList(raw).then((decrypted) => { if (!cancelled) setGoals(decrypted); })
       .catch((err) => console.error('Failed to decrypt goals:', err));
     return () => { cancelled = true; };
-  }, [goalsValue]);
+  }, [ownGoalsValue, groupSharedGoalsValue, friendSharedGoalsValue]);
 
-  const [accountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [ownAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
-    const raw = accountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
-    decryptAccountsList(raw).then((decrypted) => { if (!cancelled) setAccounts(decrypted); })
+    const byId = new Map<string, any>();
+    ownAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    groupSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    friendSharedAccountsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    decryptAccountsList(Array.from(byId.values())).then((decrypted) => { if (!cancelled) setAccounts(decrypted); })
       .catch((err) => console.error('Failed to decrypt accounts:', err));
     return () => { cancelled = true; };
-  }, [accountsValue]);
+  }, [ownAccountsValue, groupSharedAccountsValue, friendSharedAccountsValue]);
+
+  // Same non-owner effective-role resolution as AccountsHub.tsx's own canEditAccount — kept as a
+  // local duplicate rather than a shared import, matching this codebase's established convention
+  // for small per-screen permission checks (see e.g. GroupQuickActionsMenu.tsx's header comment).
+  const canEditAccount = (a: FinancialAccount): boolean => {
+    if (!user) return false;
+    if (a.userId === user.uid) return true;
+    if (a.friendUids?.includes(user.uid)) return (a.friendRoles?.[user.uid] || 'view') === 'edit';
+    return (a.groupRole || 'view') === 'edit';
+  };
 
   // Every account→goal allocation, flattened and grouped by goal — {goalId: {accountId: entry}}.
   const rowsByGoal = new Map<string, { account: FinancialAccount; pct: number; reserved: boolean; amountMinor: number }[]>();
@@ -148,15 +177,20 @@ export default function GoalAllocationManager({ embedded = false }: { embedded?:
                         : r.amountMinor + lastEntry.perSourceCumulativeMinor[sourceIdx];
                       const currentTargetPct = g.targetAmountMinor > 0 ? Math.round((r.amountMinor / g.targetAmountMinor) * 100) : 0;
                       const finalTargetPct = g.targetAmountMinor > 0 ? Math.round((finalAmountMinor / g.targetAmountMinor) * 100) : 0;
+                      const editable = canEditAccount(r.account);
                       return (
                         <button
                           key={r.account.id} type="button"
-                          onClick={() => openEdit(g.id, g.name, r.account.id, r.pct)}
-                          className="w-full bg-surface hover:bg-primary/5 rounded-xl px-3 py-2 text-left space-y-0.5 transition-colors"
+                          onClick={() => editable && openEdit(g.id, g.name, r.account.id, r.pct)}
+                          disabled={!editable}
+                          className={clsx('w-full bg-surface rounded-xl px-3 py-2 text-left space-y-0.5 transition-colors', editable ? 'hover:bg-primary/5' : 'cursor-default opacity-80')}
                         >
                           <div className="flex items-center gap-1.5">
                             <span className="material-symbols-outlined text-[14px] text-primary shrink-0">account_balance</span>
                             <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{r.account.name}</span>
+                            {!editable && (
+                              <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('goals.shareRoleView')}>visibility</span>
+                            )}
                             {r.reserved && (
                               <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">{t('goals.reserved')}</span>
                             )}

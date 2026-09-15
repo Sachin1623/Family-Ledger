@@ -127,6 +127,18 @@ service cloud.firestore {
       );
     }
 
+    // Whether `ownerUid` has granted the CALLER access to their whole Reports & Timeline view
+    // (users/{ownerUid}.reportsSharedWith — an array of viewer uids, written directly by the owner
+    // via the users/{userId} update rule below, no separate grant doc needed). Deliberately used
+    // only in isGoalViewer()/isAccountViewer() below, never their Editor counterparts — a reports
+    // share is always read-only, by design (see GoalReports.tsx's share picker).
+    function hasReportsAccessTo(ownerUid) {
+      let path = /databases/$(database)/documents/users/$(ownerUid);
+      return isSignedIn() && exists(path) &&
+        get(path).data.keys().hasAll(['reportsSharedWith']) &&
+        get(path).data.reportsSharedWith.hasAny([request.auth.uid]);
+    }
+
     // Strictly the original creator of the group — not any 'owner'-role member.
     // Used to gate group deletion, member removal, and invite management to
     // exactly one person per group, regardless of who else holds admin/owner roles.
@@ -1086,7 +1098,8 @@ service cloud.firestore {
         return isSignedIn() && (
           resource.data.userId == request.auth.uid ||
           (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
-          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid])) ||
+          hasReportsAccessTo(resource.data.userId)
         );
       }
       // Same viewer check, gated to only the share(s) that actually grant 'edit' — an absent role
@@ -1242,7 +1255,8 @@ service cloud.firestore {
         return isSignedIn() && (
           resource.data.userId == request.auth.uid ||
           (resource.data.keys().hasAll(['groupId']) && resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
-          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid]))
+          (resource.data.keys().hasAll(['friendUids']) && resource.data.friendUids.hasAny([request.auth.uid])) ||
+          hasReportsAccessTo(resource.data.userId)
         );
       }
       function isAccountEditor() {
