@@ -5,7 +5,7 @@ import { useCollection } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
 import { Goal, GoalLedgerEntry, goalHorizonDate, goalTargetReachedAt, goalTotalMinor, fromMinorUnits, decryptGoalsList, decryptLedgerEntries } from '../lib/goals';
 import { FinancialAccount, decryptAccountsList } from '../lib/accounts';
@@ -14,24 +14,25 @@ import { useFamilies } from '../lib/useFamilies';
 import { useReportsSharing } from '../lib/useReportsSharing';
 
 // Reports & Timeline (Horizon View) — a chronological ladder of every active goal's projected
-// completion, plus total accumulated + total-still-targeted wealth. Two view modes:
-//  - "Mine" (viewingUid === my own uid): own goals/accounts UNION whatever's individually shared
-//    with me (group or friend) — same pattern GoalsHub.tsx/GoalAllocationManager.tsx use.
+// completion, plus total accumulated + total-still-targeted wealth. Two view modes, driven by the
+// `viewingUid` prop (owned by GoalsHub.tsx, which also renders the Mine/switcher pills shared
+// across all 4 tabs — see its own comment for why this couldn't stay local to just this screen):
+//  - "Mine" (viewingUid === my own uid, or omitted — the standalone /goals/reports route has no
+//    switcher, so this always defaults to "mine" there): own goals/accounts UNION whatever's
+//    individually shared with me (group or friend) — same pattern GoalAllocationManager.tsx uses.
 //  - Someone else's shared reports (viewingUid !== my uid): a reports-share is all-or-nothing by
 //    design (see the Share button below), so this switches to a plain userId==viewingUid query for
 //    BOTH collections instead of the union — permitted by firestore.rules' hasReportsAccessTo().
 // If goals use different currencies, the aggregate totals below display in whichever currency the
 // FIRST goal uses (a simplification — this app has no cross-currency conversion anywhere).
-export default function GoalReports({ embedded = false }: { embedded?: boolean } = {}) {
+export default function GoalReports({ embedded = false, viewingUid: viewingUidProp }: { embedded?: boolean; viewingUid?: string } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
-  const { sharedWithMe, saving: savingShare, save: saveReportsShare } = useReportsSharing(user?.uid);
-  const [viewingUid, setViewingUid] = useState<string | undefined>(user?.uid);
-  useEffect(() => { setViewingUid(user?.uid); }, [user?.uid]);
+  const { saving: savingShare, save: saveReportsShare } = useReportsSharing(user?.uid);
+  const viewingUid = viewingUidProp ?? user?.uid;
   const isOwnView = viewingUid === user?.uid;
-  const viewingSharer = sharedWithMe.find((s) => s.uid === viewingUid);
 
   const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const cappedGroupIds = (membershipsValue?.docs.map((d) => d.data().groupId) || []).slice(0, 30);
@@ -237,8 +238,25 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
     setPickerSelectedUids((prev) => (prev.includes(uid) ? prev.filter((u) => u !== uid) : [...prev, uid]));
   };
   const handleSaveShare = async () => {
+    // Only the newly-added uids get notified — re-saving with the same selection (or removing
+    // someone) shouldn't re-notify anyone already in the list.
+    const previouslyShared = new Set(profile?.reportsSharedWith || []);
+    const newlyAdded = pickerSelectedUids.filter((uid) => !previouslyShared.has(uid));
     await saveReportsShare(pickerSelectedUids);
     setShowSharePicker(false);
+    if (newlyAdded.length > 0) {
+      const actorName = profile?.displayName || user?.displayName || 'Someone';
+      auth.currentUser
+        ?.getIdToken()
+        .then((idToken) =>
+          fetch('/api/health/notify-glucose-shared', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ friendUids: newlyAdded, readingLabel: '', kind: 'reports', actorName }),
+          }),
+        )
+        .catch((err) => console.error('notify reports-shared failed:', err));
+    }
   };
 
   return (
@@ -250,32 +268,6 @@ export default function GoalReports({ embedded = false }: { embedded?: boolean }
             <span className="material-symbols-outlined text-[20px] block">close</span>
           </button>
         </div>
-      )}
-
-      {sharedWithMe.length > 0 && (
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-          <button
-            type="button" onClick={() => setViewingUid(user?.uid)}
-            className={clsx('px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition-colors', isOwnView ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle')}
-          >
-            {t('goals.reportsViewMine')}
-          </button>
-          {sharedWithMe.map((s) => (
-            <button
-              key={s.uid} type="button" onClick={() => setViewingUid(s.uid)}
-              className={clsx('px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition-colors', viewingUid === s.uid ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle')}
-            >
-              {s.displayName}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {!isOwnView && (
-        <p className="text-xs font-bold text-text-muted flex items-center gap-1.5 px-1">
-          <span className="material-symbols-outlined text-[16px]">visibility</span>
-          {t('goals.reportsViewingOthers', { name: viewingSharer?.displayName || t('common.someone') })}
-        </p>
       )}
 
       {isOwnView && (

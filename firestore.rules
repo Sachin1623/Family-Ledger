@@ -1181,7 +1181,8 @@ service cloud.firestore {
           return isSignedIn() && (
             g.userId == request.auth.uid ||
             (g.groupId != null && canModifyGroup(g.groupId)) ||
-            (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid]))
+            (g.keys().hasAll(['friendUids']) && g.friendUids.hasAny([request.auth.uid])) ||
+            hasReportsAccessTo(g.userId)
           );
         }
         // Mirrors the top-level goal doc's own isGoalEditor() — a boost needs 'edit', not just
@@ -1334,7 +1335,8 @@ service cloud.firestore {
           return isSignedIn() && (
             a.userId == request.auth.uid ||
             (a.keys().hasAll(['groupId']) && a.groupId != null && canModifyGroup(a.groupId)) ||
-            (a.keys().hasAll(['friendUids']) && a.friendUids.hasAny([request.auth.uid]))
+            (a.keys().hasAll(['friendUids']) && a.friendUids.hasAny([request.auth.uid])) ||
+            hasReportsAccessTo(a.userId)
           );
         }
         function isParentEditor() {

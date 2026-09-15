@@ -191,6 +191,9 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'made_admin': return 'verified_user';
       case 'expense_reminder': return 'notifications_active';
       case 'policy_renewal': return 'shield';
+      case 'account_shared': return 'account_balance';
+      case 'goal_shared': return 'flag';
+      case 'reports_shared': return 'show_chart';
       case 'settlement_reminder': return 'payments';
       case 'loan_reminder': case 'loan_installment_due': case 'loan_activity': return 'payments';
       case 'admin_feedback': return 'feedback';
@@ -219,6 +222,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
     if (type === 'edit_expense' || type === 'recurring_created' || type === 'recurring_changed') return 'bg-secondary';
     if (type === 'add_expense' || type === 'add_income' || type === 'join' || type === 'todo_completed') return 'bg-success';
     if (type.includes('group') || type === 'invite' || type === 'invite_received' || type === 'friend_request' || type === 'friend_accepted') return 'bg-primary';
+    if (type === 'account_shared' || type === 'goal_shared' || type === 'reports_shared') return 'bg-primary';
     if (type === 'poke' || type.endsWith('_poke')) return 'bg-warning';
     if (type.endsWith('_invite')) return 'bg-primary';
     if (type.endsWith('_chat') || type === 'dm_chat') return 'bg-secondary';
@@ -503,6 +507,27 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
           <div className="space-y-1">
             <p className="text-[10px] font-bold text-warning uppercase tracking-wider">{t('feed.policyRenewalLabel')}</p>
             <p className="text-sm font-medium text-on-surface">{activity.description}</p>
+          </div>
+        );
+      case 'account_shared':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">{t('feed.accountSharedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">{t('feed.accountSharedActivity', { name: activity.userName || t('common.someone'), account: activity.data?.contextLabel || '' })}</p>
+          </div>
+        );
+      case 'goal_shared':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">{t('feed.goalSharedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">{t('feed.goalSharedActivity', { name: activity.userName || t('common.someone'), goal: activity.data?.contextLabel || '' })}</p>
+          </div>
+        );
+      case 'reports_shared':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">{t('feed.reportsSharedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">{t('feed.reportsSharedActivity', { name: activity.userName || t('common.someone') })}</p>
           </div>
         );
       case 'todo_reminder':

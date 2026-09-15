@@ -5,7 +5,7 @@ import { useCollection } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { getCurrencySymbol } from '../lib/constants';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { useFriendships } from '../lib/useFriendships';
@@ -298,6 +298,22 @@ export default function GoalWizard() {
         } else {
           navigate(`/goals/${ref.id}/allocate`);
         }
+      }
+      // Only the newly-added friends get notified — re-saving with the same share list (or
+      // removing someone) shouldn't re-notify anyone already on it.
+      const previouslyShared = new Set(isEditing && editingGoal ? (editingGoal.friendUids || []) : []);
+      const newlyAdded = shareFriendUids.filter((uid) => !previouslyShared.has(uid));
+      if (newlyAdded.length > 0) {
+        auth.currentUser
+          ?.getIdToken()
+          .then((idToken) =>
+            fetch('/api/health/notify-glucose-shared', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ friendUids: newlyAdded, readingLabel: name.trim(), kind: 'goal', actorName }),
+            }),
+          )
+          .catch((err) => console.error('notify goal-shared failed:', err));
       }
     } catch (err) {
       console.error('Failed to save goal:', err);

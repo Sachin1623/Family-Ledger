@@ -146,6 +146,12 @@ export default function Dashboard() {
   const [groupsMetaValue] = useCollection(
     membershipGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', membershipGroupIds.slice(0, 30))) : null
   );
+  // This is a SEPARATE, chained listener (only starts once membershipGroupIds is known), so it
+  // resolves a moment AFTER membershipsLoading already flips false — during that gap,
+  // groupsMetaValue is still undefined, archivedGroupIds below would read as empty, and every
+  // archived group would briefly render in the ACTIVE grid before "jumping" into the archived
+  // section once this catches up. `groupsMetaReady` gates the split below so that never renders.
+  const groupsMetaReady = membershipGroupIds.length === 0 || groupsMetaValue !== undefined;
   const archivedGroupIds = useMemo(() => {
     const set = new Set<string>();
     groupsMetaValue?.docs.forEach((d) => { if (d.data().archived) set.add(d.id); });
@@ -395,7 +401,7 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {membershipsLoading ? (
+        {membershipsLoading || !groupsMetaReady ? (
           <div className="col-span-full py-20 text-center text-text-muted">{t('dashboard.loading')}</div>
         ) : activeMemberships.length === 0 && archivedMemberships.length === 0 ? (
           // Invite-flow spec's first step: a user with literally no group yet can't do anything

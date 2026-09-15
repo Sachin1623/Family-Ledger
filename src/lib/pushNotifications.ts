@@ -100,6 +100,12 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo('/health/blood-pressure');
   } else if (data.type === 'medicine_reminder' || data.type === 'medicine_logged' || data.type === 'medicine_missed') {
     navigateTo('/health/medicines');
+  } else if (data.type === 'account_shared') {
+    navigateTo('/goals/accounts');
+  } else if (data.type === 'goal_shared') {
+    navigateTo('/goals');
+  } else if (data.type === 'reports_shared') {
+    navigateTo('/goals?tab=reports');
   } else if (data.type === 'shared_reminder') {
     // The scheduled-trigger local notification always carries a reminderId (opens that specific
     // reminder's card directly); the "someone shared a reminder with you" group-activity push

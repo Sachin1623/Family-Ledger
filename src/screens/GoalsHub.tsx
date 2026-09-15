@@ -31,6 +31,7 @@ import GoalAllocationManager from './GoalAllocationManager';
 import GoalReports from './GoalReports';
 import AccountsExplainerModal from '../components/AccountsExplainerModal';
 import { setGoalsHubTabFn } from '../lib/goalsHubTabRef';
+import { useReportsSharing } from '../lib/useReportsSharing';
 
 // Goals Dashboard — the home hub. Net savings is the user's own, AGGREGATED ACROSS EVERY GROUP
 // THEY BELONG TO for the current month (not scoped to any single group — see the header comment
@@ -38,10 +39,38 @@ import { setGoalsHubTabFn } from '../lib/goalsHubTabRef';
 // Savings" is this app's stand-in for the spec's automatic month-end closure (a deliberate user
 // action rather than a cron job) — idempotent via the userGoalMonths/{uid}_{monthKey} guard doc.
 export default function GoalsHub() {
+  // Measures the `fixed` header block's real rendered height (see its own comment below) so the
+  // scrollable content can be padded to clear it exactly, on every device/safe-area combination,
+  // instead of a hardcoded guess that silently drifted out of sync and clipped new content.
+  const fixedHeaderRef = React.useRef<HTMLDivElement>(null);
+  const [fixedHeaderHeight, setFixedHeaderHeight] = useState(160);
+  useEffect(() => {
+    const el = fixedHeaderRef.current;
+    if (!el) return;
+    const measure = () => setFixedHeaderHeight(el.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
+
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // "Mine" / shared-with-me-by-X switcher — lives here (not inside GoalReports.tsx alone) so
+  // switching applies across all 4 tabs at once: Reports, Goals, Accounts, and Allocation Overview
+  // all re-scope to whoever's selected. Originally scoped only to the Reports tab, but a
+  // reports-share is defined as "everything" (see useReportsSharing's own doc comment) — a viewer
+  // couldn't actually browse the shared person's individual accounts anywhere, reported as "the
+  // accounts are not visible to the person shared with."
+  const { sharedWithMe } = useReportsSharing(user?.uid);
+  const [viewingUid, setViewingUid] = useState<string | undefined>(user?.uid);
+  useEffect(() => { setViewingUid(user?.uid); }, [user?.uid]);
+  const isOwnView = viewingUid === user?.uid;
+  const viewingSharer = sharedWithMe.find((s) => s.uid === viewingUid);
 
   const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const groupIds = useMemo(() => membershipsValue?.docs.map((d) => d.data().groupId) || [], [membershipsValue]);
@@ -564,9 +593,13 @@ export default function GoalsHub() {
           element on every mobile WebView, which silently breaks `sticky`'s containing-block
           resolution. `fixed` always resolves against the real viewport regardless. Top offset
           matches Header.tsx's real rendered height so this sits directly below it, not overlapping;
-          the scrollable content below (pt-40/md:pt-44) is padded to clear THIS block's own height
-          instead, since it no longer reserves space in normal flow. */}
-      <div className="fixed top-[calc(60px+env(safe-area-inset-top))] left-0 right-0 z-10 bg-white border-b border-border-subtle">
+          the scrollable content below is padded by this block's own MEASURED height (see
+          fixedHeaderRef/fixedHeaderHeight below), not a hardcoded guess — a fixed pt-40/pt-44 used
+          to assume this block was always the same height, but it grows (an extra tab-bar row, a
+          taller env(safe-area-inset-top) on some phones' notches) and a stale hardcoded offset let
+          it visually overlap/clip the first bit of scrollable content underneath, reported as "the
+          Mine/shared-with switcher gets cut off at the top" on some phones. */}
+      <div ref={fixedHeaderRef} className="fixed top-[calc(60px+env(safe-area-inset-top))] left-0 right-0 z-10 bg-white border-b border-border-subtle">
         <div className="px-4 md:px-8 pt-4 md:pt-8 pb-3 md:pb-4 max-w-2xl mx-auto space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -609,12 +642,48 @@ export default function GoalsHub() {
         </div>
       </div>
 
-    <div className="px-4 md:px-8 pt-40 md:pt-44 max-w-2xl mx-auto space-y-5 pb-24">
-      {goalsTab === 'reports' && <GoalReports embedded />}
-      {goalsTab === 'accounts' && <AccountsHub embedded onShowGoalsHelp={() => setShowAccountsHelp(true)} />}
-      {goalsTab === 'allocation' && <GoalAllocationManager embedded />}
+    <div className="px-4 md:px-8 max-w-2xl mx-auto space-y-5 pb-24" style={{ paddingTop: fixedHeaderHeight + 16 }}>
+      {sharedWithMe.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          <button
+            type="button" onClick={() => setViewingUid(user?.uid)}
+            className={clsx('px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition-colors', isOwnView ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle')}
+          >
+            {t('goals.reportsViewMine')}
+          </button>
+          {sharedWithMe.map((s) => (
+            <button
+              key={s.uid} type="button" onClick={() => setViewingUid(s.uid)}
+              className={clsx('px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition-colors', viewingUid === s.uid ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle')}
+            >
+              {s.displayName}
+            </button>
+          ))}
+        </div>
+      )}
+      {!isOwnView && (
+        <p className="text-xs font-bold text-text-muted flex items-center gap-1.5 px-1">
+          <span className="material-symbols-outlined text-[16px]">visibility</span>
+          {t('goals.reportsViewingOthers', { name: viewingSharer?.displayName || t('common.someone') })}
+        </p>
+      )}
 
-      {goalsTab === 'goals' && (
+      {goalsTab === 'reports' && <GoalReports embedded viewingUid={viewingUid} />}
+      {goalsTab === 'accounts' && <AccountsHub embedded onShowGoalsHelp={() => setShowAccountsHelp(true)} viewingUid={viewingUid} />}
+      {goalsTab === 'allocation' && <GoalAllocationManager embedded viewingUid={viewingUid} />}
+
+      {goalsTab === 'goals' && !isOwnView && (
+        // This tab's own content (monthly-savings posting, goal creation, cash holding) is all
+        // interactive/owner-only and doesn't make sense read-only for someone else's account — the
+        // Reports and Accounts tabs already show the viewed person's real numbers, so this just
+        // redirects attention there instead of trying to render a disabled copy of the whole page.
+        <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-8 text-center space-y-2">
+          <span className="material-symbols-outlined text-3xl text-text-muted">visibility</span>
+          <p className="text-sm font-bold text-on-surface">{t('goals.reportsViewingOthers', { name: viewingSharer?.displayName || t('common.someone') })}</p>
+          <p className="text-xs text-text-muted">{t('goals.viewingOthersGoalsTabHint')}</p>
+        </div>
+      )}
+      {goalsTab === 'goals' && isOwnView && (
       <>
       {/* Net savings + post-month card */}
       <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-5 space-y-3">

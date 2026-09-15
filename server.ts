@@ -4534,9 +4534,17 @@ async function startServer() {
         bp: { title: 'Blood pressure reading shared', verb: 'logged a blood pressure reading', unit: ' mmHg', pushType: 'bp_logged' },
         medicine: { title: 'Medicine dose shared', verb: 'logged a medicine dose', unit: '', pushType: 'medicine_logged' },
         reminder: { title: 'Reminder shared', verb: 'set a reminder', unit: '', pushType: 'shared_reminder' },
+        // Account/goal/reports sharing (AccountsHub.tsx, GoalWizard.tsx, GoalReports.tsx) — same
+        // push+Feed mechanism as the health trackers above, `label` carries the account/goal name
+        // (or is omitted for a reports-share, which covers everything rather than one named item).
+        account: { title: 'Account shared with you', verb: 'shared a financial account with you', unit: '', pushType: 'account_shared' },
+        goal: { title: 'Goal shared with you', verb: 'shared a goal with you', unit: '', pushType: 'goal_shared' },
+        reports: { title: 'Reports & Timeline shared with you', verb: 'shared their Reports & Timeline with you', unit: '', pushType: 'reports_shared' },
       };
       const info = KIND_INFO[kind] || KIND_INFO.glucose;
-      const body = `${actorName || 'Someone'} ${info.verb}: ${label}${info.unit}${contextLabel ? ` (${contextLabel})` : ''}${kind === 'reminder' ? ' — tap to accept or decline' : ''}`;
+      // `reports` has no single named item to append (a reports-share covers everything, not one
+      // account/goal) — every other kind keeps the ": <label>" suffix.
+      const body = `${actorName || 'Someone'} ${info.verb}${label ? `: ${label}${info.unit}` : ''}${contextLabel ? ` (${contextLabel})` : ''}${kind === 'reminder' ? ' — tap to accept or decline' : ''}`;
       const tokens = await collectPushTokens(adminDb, recipientUids, 'notificationsEnabled');
       const pushData: Record<string, string> = { type: info.pushType };
       if (kind === 'reminder' && reminderId) pushData.reminderId = String(reminderId);
@@ -4557,6 +4565,18 @@ async function startServer() {
             logFeedActivity(adminDb, { userId: uid, type: 'reminder_set', description: label, userName: actorName, data: feedData }),
           ),
         ]);
+      }
+      // Account/goal/reports shares — recipient-only Feed entry (unlike the reminder case above,
+      // the ACTOR already sees their own share reflected in the item's own UI — e.g. AccountsHub's
+      // "Shared with N" badge — so logging it again for them here would be redundant).
+      if (kind === 'account' || kind === 'goal' || kind === 'reports') {
+        const feedType = kind === 'account' ? 'account_shared' : kind === 'goal' ? 'goal_shared' : 'reports_shared';
+        const feedData = label ? { contextLabel: label } : {};
+        await Promise.all(
+          recipientUids.map((uid: string) =>
+            logFeedActivity(adminDb, { userId: uid, type: feedType, description: label || '', userName: actorName, data: feedData }),
+          ),
+        );
       }
 
       return res.json({ sent });

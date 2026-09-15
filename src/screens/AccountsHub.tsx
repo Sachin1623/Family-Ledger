@@ -5,7 +5,7 @@ import { useCollection } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { getCurrencySymbol, formatAmountCompact } from '../lib/constants';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { toMinorUnits, fromMinorUnits } from '../lib/goals';
@@ -49,13 +49,22 @@ import ImageLightbox from '../components/ImageLightbox';
 const GUIDE_STEPS = ['name', 'type', 'balance', 'nominees', 'balanceAsOf', 'interest', 'contribution', 'allocate'] as const;
 type GuideStepId = typeof GUIDE_STEPS[number];
 
-export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { embedded?: boolean; onShowGoalsHelp?: () => void } = {}) {
+export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewingUid }: { embedded?: boolean; onShowGoalsHelp?: () => void; viewingUid?: string } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const [accountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  // Browsing someone else's whole shared Reports & Timeline (see GoalsHub.tsx's switcher) — a
+  // reports-share grants "everything," so this becomes a plain userId==viewingUid query (no
+  // union with own/individually-shared items needed) and every mutation control below is hidden.
+  // Permitted by firestore.rules' hasReportsAccessTo(), same as GoalReports.tsx's own switch.
+  const isViewingOther = !!viewingUid && viewingUid !== user?.uid;
+  const [accountsValue] = useCollection(
+    isViewingOther
+      ? query(collection(db, 'financialAccounts'), where('userId', '==', viewingUid))
+      : (user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null),
+  );
   const [allAccounts, setAllAccounts] = useState<FinancialAccount[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -522,6 +531,24 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
       };
       const { justCompletedGoals } = await applyAccountChange(accountId, balanceMinor, newAllocations, actorName, fields);
       notifyGoalsMet(justCompletedGoals);
+      // Only the newly-added friends get notified — re-saving with the same share list (or a
+      // shared editor's own save, which never touches sharing at all) shouldn't re-notify anyone.
+      if (isOwnerSave) {
+        const previouslyShared = new Set(editingAccount?.friendUids || []);
+        const newlyAdded = shareFriendUids.filter((uid) => !previouslyShared.has(uid));
+        if (newlyAdded.length > 0) {
+          auth.currentUser
+            ?.getIdToken()
+            .then((idToken) =>
+              fetch('/api/health/notify-glucose-shared', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ friendUids: newlyAdded, readingLabel: trimmed, kind: 'account', actorName }),
+              }),
+            )
+            .catch((err) => console.error('notify account-shared failed:', err));
+        }
+      }
       setShowForm(false);
       if (onboardingChain) {
         navigate('/goals/new?guide=1&onboarding=1');
@@ -767,13 +794,13 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
           already becomes "New Account" while this tab is active, so a second button here would
           just duplicate it. The standalone /goals/accounts route has no such FAB, so it keeps this
           as its only way to add an account. */}
-      {!embedded && (
+      {!embedded && !isViewingOther && (
         <button type="button" onClick={openAdd} className="w-full py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-bold flex items-center justify-center gap-1.5">
           <span className="material-symbols-outlined text-[16px]">add</span>
           {t('accounts.addAccount')}
         </button>
       )}
-      {activeAccounts.length > 1 && (
+      {!isViewingOther && activeAccounts.length > 1 && (
         <button type="button" onClick={openTransfer} className="w-full py-2.5 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-bold flex items-center justify-center gap-1.5">
           <span className="material-symbols-outlined text-[16px]">swap_horiz</span>
           {t('accounts.transferFunds')}
@@ -860,18 +887,24 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
                   </p>
                 </div>
                 <div className="flex items-center justify-end gap-1 pt-1 border-t border-border-subtle">
-                  <button onClick={() => openShare(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('accounts.shareDetails')}>
-                    <span className="material-symbols-outlined text-[16px] block">share</span>
-                  </button>
+                  {!isViewingOther && (
+                    <button onClick={() => openShare(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('accounts.shareDetails')}>
+                      <span className="material-symbols-outlined text-[16px] block">share</span>
+                    </button>
+                  )}
                   <button onClick={() => setHistoryAccount(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('accounts.history')}>
                     <span className="material-symbols-outlined text-[16px] block">history</span>
                   </button>
-                  <button onClick={() => openEdit(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('common.edit')}>
-                    <span className="material-symbols-outlined text-[16px] block">edit</span>
-                  </button>
-                  <button onClick={() => { setDeletingAccount(a); setDeleteError(null); }} className="p-1.5 text-text-muted hover:bg-error/10 hover:text-error rounded-full" aria-label={t('common.delete')}>
-                    <span className="material-symbols-outlined text-[16px] block">delete</span>
-                  </button>
+                  {!isViewingOther && (
+                    <>
+                      <button onClick={() => openEdit(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('common.edit')}>
+                        <span className="material-symbols-outlined text-[16px] block">edit</span>
+                      </button>
+                      <button onClick={() => { setDeletingAccount(a); setDeleteError(null); }} className="p-1.5 text-text-muted hover:bg-error/10 hover:text-error rounded-full" aria-label={t('common.delete')}>
+                        <span className="material-symbols-outlined text-[16px] block">delete</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             );
@@ -879,7 +912,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp }: { emb
         </div>
       )}
 
-      {sharedWithMeAccounts.length > 0 && (
+      {!isViewingOther && sharedWithMeAccounts.length > 0 && (
         <div className="space-y-2">
           <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('accounts.sharedWithMe')}</p>
           {sharedWithMeAccounts.map((a) => {
