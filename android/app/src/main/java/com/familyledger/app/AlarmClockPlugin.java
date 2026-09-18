@@ -1,10 +1,8 @@
 package com.familyledger.app;
 
-import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Build;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -153,32 +151,13 @@ public class AlarmClockPlugin extends Plugin {
         call.resolve();
     }
 
-    @PluginMethod
-    public void checkFullScreenIntentPermission(PluginCall call) {
-        JSObject result = new JSObject();
-        result.put("granted", canUseFullScreenIntent());
-        call.resolve(result);
-    }
+    // This used to also expose checkFullScreenIntentPermission/requestFullScreenIntentPermission
+    // (Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT) here — removed 2026-09-18 along with the
+    // USE_FULL_SCREEN_INTENT manifest permission itself, after Play Console rejected the app under
+    // the Full-Screen Intent Permission policy. See AndroidManifest.xml's own comment for the full
+    // reasoning; the takeover screen still works without either.
 
-    @PluginMethod
-    public void requestFullScreenIntentPermission(PluginCall call) {
-        if (!canUseFullScreenIntent()) {
-            try {
-                Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT);
-                intent.setData(Uri.parse("package:" + getContext().getPackageName()));
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(intent);
-            } catch (Exception e) {
-                // Some OEM builds/emulator images don't expose this settings screen — nothing more
-                // to do from here; the permission just stays whatever it already was.
-            }
-        }
-        JSObject result = new JSObject();
-        result.put("granted", canUseFullScreenIntent());
-        call.resolve(result);
-    }
-
-    // Separate from "Full screen notifications" above — this is standard Android's own battery
+    // This is standard Android's own battery
     // optimization exemption (what "Ignore battery optimizations" / "No restrictions" does when
     // toggled manually in Settings). Confirmed via a real device this session: without this, an
     // OEM's own background-management layer (seen on a Vivo phone specifically) can silently drop
@@ -214,13 +193,5 @@ public class AlarmClockPlugin extends Plugin {
     private boolean isIgnoringBatteryOptimizations() {
         android.os.PowerManager pm = (android.os.PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         return pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
-    }
-
-    private boolean canUseFullScreenIntent() {
-        // Below Android 14 (API 34) there's no such gate — a declared USE_FULL_SCREEN_INTENT
-        // permission is enough on its own.
-        if (Build.VERSION.SDK_INT < 34) return true;
-        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-        return nm != null && nm.canUseFullScreenIntent();
     }
 }

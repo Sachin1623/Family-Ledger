@@ -22,10 +22,15 @@ import androidx.core.app.NotificationCompat;
 /**
  * The actual "ringing" — a foreground service (not just a notification) so the alarm sound and
  * vibration keep going reliably even though the triggering BroadcastReceiver has already
- * returned. Also puts up the full-screen-intent notification AND directly starts AlarmActivity
- * itself; some OEMs defer a bare full-screen intent when the app isn't already foregrounded
- * (background-activity-start restrictions), so starting the activity from a foreground service is
- * a second, more reliable path to actually getting the takeover screen on top of the lock screen.
+ * returned. Directly starts AlarmActivity itself (an already-foregrounded service is exempt from
+ * Android's background-activity-start restrictions) — this is the ONLY path to the takeover
+ * screen now; a notification-level setFullScreenIntent() fallback used to also request it, but
+ * that required the USE_FULL_SCREEN_INTENT permission, which Play Console rejected this app for
+ * (its declared category is finance/productivity, not alarm/clock — see AndroidManifest.xml's own
+ * comment). Removed 2026-09-18 rather than appealed, since Play's fix instructions were explicit
+ * and non-negotiable. The notification below still shows (high-priority, ALARM category, ongoing)
+ * and is still tappable to stop the ring — it just won't itself force the screen on if the direct
+ * startActivity() below is ever refused by a stricter OEM.
  */
 public class AlarmRingingService extends Service {
     static final String CHANNEL_ID = "familyledger_alarms";
@@ -83,14 +88,10 @@ public class AlarmRingingService extends Service {
         activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
         int piFlags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
-        // Auto-popup launch (fired once, right now, by startActivity() below AND by the system via
-        // setFullScreenIntent) — deliberately does NOT stop the ringing on its own; the alarm is
-        // supposed to keep ringing until the user actually acts on it, same as any real alarm clock.
-        PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(this, id, activityIntent, piFlags);
 
-        // A SEPARATE PendingIntent (distinct request code, extra EXTRA_STOP_ON_OPEN flag) just for
-        // the notification's own tap target. Reusing fullScreenPendingIntent here — as this used to
-        // — meant tapping the notification itself (rather than one of AlarmActivity's own in-screen
+        // A distinct PendingIntent (its own request code, extra EXTRA_STOP_ON_OPEN flag) for the
+        // notification's own tap target — reusing activityIntent's PendingIntent as-is would mean
+        // tapping the notification itself (rather than one of AlarmActivity's own in-screen
         // buttons) just re-showed the same ringing screen with the sound still going: "opening the
         // app" from the notification silently did nothing to the alarm. AlarmActivity.bind() checks
         // this extra and stops the ringing the moment it's opened this way, in addition to the
@@ -110,7 +111,6 @@ public class AlarmRingingService extends Service {
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
             .setContentIntent(tapPendingIntent)
             .setOngoing(true)
             .setAutoCancel(false);
@@ -127,8 +127,9 @@ public class AlarmRingingService extends Service {
         try {
             startActivity(activityIntent);
         } catch (Exception ignored) {
-            // The full-screen-intent notification above is still up as a fallback if this direct
-            // launch is refused (e.g. a stricter OEM background-start policy).
+            // The ongoing notification above is still up as a fallback if this direct launch is
+            // refused (e.g. a stricter OEM background-start policy) — tapping it still opens
+            // AlarmActivity and stops the ring, it just won't force the screen on by itself.
         }
 
         startRinging();

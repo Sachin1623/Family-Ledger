@@ -109,11 +109,20 @@
          alarm-clock-style takeover — one shared Android capability, two different call sites. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
-    <!-- Medicine reminders' alarm-clock-style takeover (see AlarmReceiver/AlarmRingingService/
-         AlarmActivity/AlarmClockPlugin under android/app/src/main/java/com/familyledger/app) — a
-         custom native feature, since @capacitor/local-notifications has no concept of a
-         full-screen, rings-over-silent-mode takeover the way a real alarm clock does. -->
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Medicine reminders' alarm-clock-style takeover used to also declare
+         USE_FULL_SCREEN_INTENT here (see AlarmReceiver/AlarmRingingService/AlarmActivity/
+         AlarmClockPlugin under android/app/src/main/java/com/familyledger/app) — removed
+         2026-09-18 after Play Console rejected the app under the Full-Screen Intent Permission
+         policy ("permission use is not directly related to your app's core purpose" — this app's
+         declared category is finance/productivity, not alarm/clock, and Play does not grant an
+         exception just because one feature genuinely behaves like an alarm). The takeover screen
+         still works WITHOUT this permission: AlarmRingingService directly starts AlarmActivity
+         from its own foreground service (Android's background-activity-start exemption for an
+         already-foregrounded service, not this permission), and AlarmActivity's
+         setShowWhenLocked()/setTurnScreenOn() are what actually put it over the lock screen —
+         neither of those requires USE_FULL_SCREEN_INTENT. Only the notification-level
+         setFullScreenIntent() fallback (for the rare case a stricter OEM blocks the direct
+         service-start path) is lost; see AlarmRingingService's own comment for the removed call. -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

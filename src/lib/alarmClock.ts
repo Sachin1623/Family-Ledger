@@ -38,8 +38,6 @@ interface AlarmClockNativePlugin {
   schedule(opts: AlarmClockSchedule): Promise<void>;
   cancel(opts: { id: number }): Promise<void>;
   cancelAll(): Promise<void>;
-  checkFullScreenIntentPermission(): Promise<{ granted: boolean }>;
-  requestFullScreenIntentPermission(): Promise<{ granted: boolean }>;
   checkBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
   requestBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
   // Currently-ringing controls — so the app can show its own Snooze/Dismiss the whole time an
@@ -137,32 +135,14 @@ export function onRingingAlarmChange(
   };
 }
 
-// Mirrors requestExactAlarmPermission() in pushNotifications.ts — same one-time-ask, redirect-to-
-// Settings pattern, for the separate "Full screen notifications" Android permission (distinct from
-// "Alarms & reminders"; a takeover alarm needs both). Called once from initPushNotifications so it
-// happens the same place/time as every other startup permission ask in this app.
-const FULL_SCREEN_ASKED_KEY = 'familyledger_full_screen_intent_asked';
+// This file used to also export requestAlarmTakeoverPermission() here — a one-time-ask,
+// redirect-to-Settings prompt for the "Full screen notifications" Android permission. Removed
+// 2026-09-18 along with the native USE_FULL_SCREEN_INTENT permission itself, after Play Console
+// rejected the app under the Full-Screen Intent Permission policy (this app's declared category
+// is finance/productivity, not alarm/clock). See AndroidManifest.xml's own comment for the full
+// reasoning — the takeover screen still works without it, so there's nothing left to ask for.
 
-export async function requestAlarmTakeoverPermission() {
-  if (!isSupported()) return;
-  try {
-    if (localStorage.getItem(FULL_SCREEN_ASKED_KEY)) return;
-    const status = await native.checkFullScreenIntentPermission();
-    if (status.granted) {
-      localStorage.setItem(FULL_SCREEN_ASKED_KEY, '1');
-      return;
-    }
-    localStorage.setItem(FULL_SCREEN_ASKED_KEY, '1');
-    const proceed = window.confirm(
-      'For medicine reminders to ring like a real alarm clock — even over silent mode — FamilyLedger needs the "Full screen notifications" permission. Open Settings to allow it now?'
-    );
-    if (proceed) await native.requestFullScreenIntentPermission();
-  } catch (err) {
-    console.error('Failed to check/request full-screen intent permission:', err);
-  }
-}
-
-// Same one-time-ask pattern as requestAlarmTakeoverPermission above, for standard Android's own
+// One-time-ask pattern, for standard Android's own
 // battery-optimization exemption — confirmed via a real device this session that without it, an
 // OEM's own background-management layer (seen on a Vivo phone) can silently drop an alarm's
 // broadcast before it ever reaches AlarmReceiver, with zero trace: no crash, no error, nothing.
