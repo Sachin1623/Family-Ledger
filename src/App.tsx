@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
+import { StatusBar } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
 import { setNavigateFn } from './lib/navigationRef';
 import { getParentPath } from './lib/navigationParents';
@@ -163,6 +164,20 @@ const NavigationBridge = () => {
     window.scrollTo(0, 0);
     document.querySelector('main')?.scrollTo(0, 0);
   }, [location.pathname]);
+
+  // Android 15+ (targetSdk 35+) makes edge-to-edge display mandatory and Android 16 removes the
+  // opt-out entirely — the WebView now draws behind the system status bar by default regardless
+  // of app intent, with zero native inset handling of our own (no WindowCompat call, no
+  // OnApplyWindowInsetsListener in MainActivity.java). Header.tsx's own env(safe-area-inset-top)
+  // padding assumed that value was always 0 on Android, which stopped being true the moment a
+  // device actually runs 15/16 — reported as the header/profile-picture badge rendering cut off
+  // under the status bar. setOverlaysWebView(false) explicitly insets the WebView below the
+  // status bar again, overriding the forced-edge-to-edge default. No-ops (and is safe to call) on
+  // iOS/older Android/web — only actually changes anything on an affected device.
+  React.useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    StatusBar.setOverlaysWebView({ overlay: false }).catch((err) => console.error('Failed to set status bar overlay:', err));
+  }, []);
 
   // Android App Links (verified deep links, see AndroidManifest.xml + assetlinks.json)
   // launch the app with the tapped URL, but Capacitor doesn't automatically navigate the
