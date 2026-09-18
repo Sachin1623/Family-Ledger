@@ -103,12 +103,35 @@ export default function ExpenseQuickView({
               </div>
               <div className="bg-surface p-3 rounded-xl border border-border-subtle">
                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('addExpense.paidBy')}</p>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-5 h-5 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center text-[9px] font-bold text-primary">
-                    {payerPhoto ? <img src={payerPhoto} alt="" className="w-full h-full object-cover" /> : payerName.slice(0, 1)}
+                {/* Multiple payers (expense.payers) — resolved straight from the `members` prop
+                    already passed in, rather than asking every caller to also compute a payers
+                    list; the single-payer case below still uses the caller's own payerName/
+                    payerPhoto (already resolved there, including the "me"/participant-name
+                    fallbacks each caller already handles). */}
+                {Array.isArray(expense.payers) && expense.payers.length > 0 ? (
+                  <div className="space-y-1">
+                    {expense.payers.map((p: any) => {
+                      const m = members.find((mem) => mem.userId === p.userId);
+                      const name = p.userId === user?.uid ? t('common.me') : (m?.displayName || t('common.unknown'));
+                      return (
+                        <div key={p.userId} className="flex items-center gap-1.5">
+                          <div className="w-5 h-5 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center text-[9px] font-bold text-primary">
+                            {m?.photoURL ? <img src={m.photoURL} alt="" className="w-full h-full object-cover" /> : name.slice(0, 1)}
+                          </div>
+                          <span className="text-sm font-bold text-primary truncate flex-1">{name}</span>
+                          <span className="text-xs font-bold text-text-muted shrink-0">{currencySymbol}{(p.amount || 0).toFixed(2)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <span className="text-sm font-bold text-primary truncate">{payerName}</span>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-5 h-5 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center text-[9px] font-bold text-primary">
+                      {payerPhoto ? <img src={payerPhoto} alt="" className="w-full h-full object-cover" /> : payerName.slice(0, 1)}
+                    </div>
+                    <span className="text-sm font-bold text-primary truncate">{payerName}</span>
+                  </div>
+                )}
               </div>
             </div>
 

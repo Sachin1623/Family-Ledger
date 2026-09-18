@@ -2,6 +2,9 @@ interface PromptExpense {
   amount: number;
   category: string;
   paidBy: string;
+  // Multiple payers (each person's own contribution) — see settleMath.ts's memberContribution()
+  // for the same convention used everywhere else this app attributes "how much did X pay."
+  payers?: { userId: string; amount: number }[];
   date: string;
 }
 
@@ -35,7 +38,11 @@ export function buildGroupAiPrompt(params: {
 
   const byMember: Record<string, number> = {};
   expenses.forEach((e) => {
-    byMember[e.paidBy] = (byMember[e.paidBy] || 0) + e.amount;
+    if (e.payers && e.payers.length > 0) {
+      e.payers.forEach((p) => { byMember[p.userId] = (byMember[p.userId] || 0) + p.amount; });
+    } else {
+      byMember[e.paidBy] = (byMember[e.paidBy] || 0) + e.amount;
+    }
   });
   const memberLines = Object.entries(byMember)
     .sort((a, b) => b[1] - a[1])

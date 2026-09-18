@@ -13,6 +13,7 @@ import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { parseLocalDate, currentLocalMonthKey } from '../lib/dateUtils';
 import ImageAttachments from '../components/ImageAttachments';
 import ExpenseQuickView from '../components/ExpenseQuickView';
+import PayerPicker from '../components/PayerPicker';
 import FrequencyPicker from '../components/FrequencyPicker';
 import { FrequencyConfig, nextOccurrenceAfter, sanitizeFrequencyConfig } from '../lib/frequency';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
@@ -70,6 +71,12 @@ export default function GroupExpenses() {
   // only ever updates to the last successfully evaluated number, since everything else in this
   // modal — split previews, validation totals — reads that as a live plain number).
   const [amountInput, setAmountInput] = useState('');
+  // Multiple payers, same separate-atoms shape AddExpense.tsx uses (see PayerPicker.tsx) —
+  // re-initialized from editingExpense.payers every time the edit modal opens (below), since
+  // "which mode is the picker in" isn't itself a persisted field.
+  const [editPayerMode, setEditPayerMode] = useState<'single' | 'multiple'>('single');
+  const [editPayerIds, setEditPayerIds] = useState<string[]>([]);
+  const [editPayerAmounts, setEditPayerAmounts] = useState<Record<string, number>>({});
   const [editLoading, setEditLoading] = useState(false);
   // Where to send the user once they're done with the edit modal (save, delete, or just close) —
   // set when they arrived here via ExpenseQuickView's "Edit or Delete" button from somewhere OTHER
@@ -222,6 +229,15 @@ export default function GroupExpenses() {
     if (target) {
       setEditingExpense(target);
       setAmountInput(String(target.amount));
+      if (Array.isArray(target.payers) && target.payers.length > 0) {
+        setEditPayerMode('multiple');
+        setEditPayerIds(target.payers.map((p: any) => p.userId));
+        setEditPayerAmounts(Object.fromEntries(target.payers.map((p: any) => [p.userId, p.amount])));
+      } else {
+        setEditPayerMode('single');
+        setEditPayerIds([]);
+        setEditPayerAmounts({});
+      }
       setViewingExpense(null);
       if (stateReturnTo) setReturnTo(stateReturnTo);
       if (stateExpenseId) navigate(location.pathname, { replace: true, state: {} });
@@ -268,17 +284,20 @@ export default function GroupExpenses() {
 
   const filteredExpenses = useMemo(() => {
     return allExpenses.filter(exp => {
-      const payer = members.find(m => m.userId === exp.paidBy);
-      const payerName = (payer?.displayName || '').toLowerCase();
+      // A multi-payer expense (exp.payers) can match a search/filter on ANY of its payers, not
+      // just the primary one in exp.paidBy — same "match any" reasoning as
+      // groupParticipants.ts's participantExpenseCount.
+      const payerIds: string[] = Array.isArray(exp.payers) && exp.payers.length > 0 ? exp.payers.map((p: any) => p.userId) : [exp.paidBy];
+      const payerNames = payerIds.map((id) => (members.find(m => m.userId === id)?.displayName || '').toLowerCase());
       const category = (exp.type === 'income' ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === exp.category);
       const categoryName = (category?.name || '').toLowerCase();
 
       const matchesSearch = !searchTerm ||
         (exp.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        payerName.includes(searchTerm.toLowerCase()) ||
+        payerNames.some((name) => name.includes(searchTerm.toLowerCase())) ||
         categoryName.includes(searchTerm.toLowerCase());
 
-      const matchesMember = !selectedMemberId || exp.paidBy === selectedMemberId;
+      const matchesMember = !selectedMemberId || payerIds.includes(selectedMemberId);
       const matchesCategory = !selectedCategory || exp.category === selectedCategory;
       const matchesType = selectedType === 'all' || (selectedType === 'income' ? exp.type === 'income' : exp.type !== 'income');
       const matchesDate = (!startDate || (exp.date && exp.date >= startDate)) && (!endDate || (exp.date && exp.date <= endDate));
@@ -398,6 +417,33 @@ export default function GroupExpenses() {
       }
     }
 
+    // Same "amounts must add up to the total" validation AddExpense.tsx's own multi-payer save
+    // does, for the payer side of THIS edit.
+    if (editPayerMode === 'multiple') {
+      if (editPayerIds.length === 0) {
+        alert('Please select at least one payer.');
+        return;
+      }
+      if (editPayerIds.some((uid) => (editPayerAmounts[uid] || 0) < 0)) {
+        alert('Payer amounts cannot be negative.');
+        return;
+      }
+      const totalPaid = editPayerIds.reduce((sum, uid) => sum + (editPayerAmounts[uid] || 0), 0);
+      if (Math.abs(totalPaid - finalAmount) > 0.01) {
+        alert(`Total paid must equal the expense amount (${finalAmount.toFixed(2)}). Current total: ${totalPaid.toFixed(2)}`);
+        return;
+      }
+    }
+
+    // Multiple payers writes `payers` alongside `paidBy` (set to the first payer), same
+    // convention AddExpense.tsx's own save uses — see its comment. Switching an expense BACK to a
+    // single payer explicitly clears a previously-saved `payers` field (deleteField(), same
+    // pattern this function already uses for `images`/`splitInfo` below) rather than leaving a
+    // stale multi-payer list the balance engine would otherwise keep preferring.
+    const payerFields = editPayerMode === 'multiple' && editPayerIds.length > 0
+      ? { paidBy: editPayerIds[0], payers: editPayerIds.map((uid) => ({ userId: uid, amount: editPayerAmounts[uid] || 0 })) }
+      : { paidBy: editingExpense.paidBy, payers: deleteField() };
+
     setEditLoading(true);
 
     try {
@@ -440,7 +486,7 @@ export default function GroupExpenses() {
             amount: finalAmount,
             category: editingExpense.category,
             date: editingExpense.date,
-            paidBy: editingExpense.paidBy,
+            ...payerFields,
             type: editingExpense.type || 'expense',
             updatedAt: new Date().toISOString(),
             images: editingExpense.images?.length ? editingExpense.images : deleteField(),
@@ -505,7 +551,7 @@ export default function GroupExpenses() {
             amount: finalAmount,
             category: editingExpense.category,
             date: editingExpense.date,
-            paidBy: editingExpense.paidBy,
+            ...payerFields,
             type: editingExpense.type || 'expense',
             updatedAt: new Date().toISOString(),
             images: editingExpense.images?.length ? editingExpense.images : deleteField(),
@@ -1412,33 +1458,19 @@ export default function GroupExpenses() {
 
                 {editingExpense.splitInfo && (
                   <div className="space-y-4 border-t border-border-subtle pt-4 mt-2">
-                    <section className="space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.whoPaid')}</label>
-                      <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar px-1">
-                        {editingGroupMembers.map(member => (
-                          <button
-                            key={member.userId}
-                            type="button"
-                            onClick={() => setEditingExpense({...editingExpense, paidBy: member.userId})}
-                            className={clsx(
-                              "flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all shadow-sm shrink-0",
-                              editingExpense.paidBy === member.userId 
-                                ? "bg-primary text-white border-primary" 
-                                : "bg-white text-on-surface border-border-subtle hover:bg-surface-container"
-                            )}
-                          >
-                            <div className="w-4 h-4 rounded-full overflow-hidden bg-primary/10">
-                              {member.photoURL ? (
-                                <img src={member.photoURL} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                <span className="material-symbols-outlined text-[10px] flex items-center justify-center h-full">person</span>
-                              )}
-                            </div>
-                            {member.userId === user?.uid ? t('common.me') : member.displayName}
-                          </button>
-                        ))}
-                      </div>
-                    </section>
+                    <PayerPicker
+                      members={editingGroupMembers}
+                      amount={evaluateAmountSum(amountInput) ?? editingExpense.amount ?? 0}
+                      currencySymbol={getCurrencySymbol(allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency)}
+                      payerMode={editPayerMode}
+                      setPayerMode={setEditPayerMode}
+                      paidBy={editingExpense.paidBy}
+                      setPaidBy={(uid) => setEditingExpense({ ...editingExpense, paidBy: uid })}
+                      payerIds={editPayerIds}
+                      setPayerIds={setEditPayerIds}
+                      payerAmounts={editPayerAmounts}
+                      setPayerAmounts={setEditPayerAmounts}
+                    />
 
                     <section className="space-y-2">
                       <div className="flex items-center justify-between px-1">

@@ -67,6 +67,7 @@ export function participantExpenseCount(participantId: string, expenses: any[]):
   return (expenses || []).filter(
     (e) =>
       e.paidBy === participantId ||
+      (e.payers || []).some((p: any) => p.userId === participantId) ||
       (e.splitInfo?.splits || []).some((s: any) => s.userId === participantId),
   ).length;
 }

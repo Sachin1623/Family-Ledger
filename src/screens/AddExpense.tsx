@@ -19,6 +19,7 @@ import { getParentPath } from '../lib/navigationParents';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
 import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
+import PayerPicker from '../components/PayerPicker';
 
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
 import { buildRoster } from '../lib/groupParticipants';
@@ -70,6 +71,12 @@ export default function AddExpense() {
   const [showKeypad, setShowKeypad] = useState(false);
 
   const [paidBy, setPaidBy] = useState('');
+  // Multiple payers ("we both chipped in for this") — deliberately separate atoms from paidBy
+  // rather than replacing it; a single-payer expense is written exactly as before with these
+  // simply unused. See PayerPicker.tsx's own header comment for why this is a shared component.
+  const [payerMode, setPayerMode] = useState<'single' | 'multiple'>('single');
+  const [payerIds, setPayerIds] = useState<string[]>([]);
+  const [payerAmounts, setPayerAmounts] = useState<Record<string, number>>({});
   const [splitMembers, setSplitMembers] = useState<string[]>([]);
   const [splitType, setSplitType] = useState<'equally' | 'percentage' | 'amount'>('equally');
   const [memberSplits, setMemberSplits] = useState<Record<string, number>>({});
@@ -391,6 +398,24 @@ export default function AddExpense() {
       }
     }
 
+    // Same "amounts must add up to the total" validation the split-by-amount block above already
+    // does, just for the payer side instead of the beneficiary side.
+    if (payerMode === 'multiple') {
+      if (payerIds.length === 0) {
+        alert('Please select at least one payer.');
+        return;
+      }
+      if (payerIds.some((uid) => (payerAmounts[uid] || 0) < 0)) {
+        alert('Payer amounts cannot be negative.');
+        return;
+      }
+      const totalPaid = payerIds.reduce((sum, uid) => sum + (payerAmounts[uid] || 0), 0);
+      if (Math.abs(totalPaid - evaluatedAmount) > 0.01) {
+        alert(`Total paid must equal the expense amount (${currencySymbol}${evaluatedAmount.toFixed(2)}). Current total: ${currencySymbol}${totalPaid.toFixed(2)}`);
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       // No transaction: transaction.get() requires a live server round trip and simply cannot
@@ -406,13 +431,21 @@ export default function AddExpense() {
       const expenseRef = doc(collection(db, 'expenses'));
       const activityRef = doc(collection(db, 'activities'));
 
+      // Multiple payers writes `payers` (each person's own real contribution) ALONGSIDE `paidBy`
+      // (set to the first payer) — never `payers` alone. `paidBy` staying populated is what keeps
+      // every older/not-yet-multi-payer-aware read path (CSV export, the AI prompt summary, etc.)
+      // safe from a null reference, even though the balance engine (settleMath.ts's netBalances)
+      // prefers `payers` when it's present.
       const expenseDoc: any = {
         groupId,
         amount: evaluatedAmount,
         description,
         category,
         date,
-        paidBy: paidBy || user.uid,
+        paidBy: payerMode === 'multiple' ? (payerIds[0] || user.uid) : (paidBy || user.uid),
+        ...(payerMode === 'multiple' && payerIds.length > 0
+          ? { payers: payerIds.map((uid) => ({ userId: uid, amount: payerAmounts[uid] || 0 })) }
+          : {}),
         paymentMethod,
         addedBy: user.uid,
         type: entryType,
@@ -993,38 +1026,24 @@ export default function AddExpense() {
             className={clsx("space-y-4 border-t border-border-subtle pt-4 mt-2 overflow-hidden", guideWrapClass('split'))}
           >
             {stepBadge('split')}
-            <section className="space-y-2">
-              <h2 className="px-1 text-[11px] font-bold text-primary uppercase tracking-widest">{t('addExpense.whoPaid')}</h2>
-              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar px-1">
-                {groupMembers.map(member => (
-                  <button
-                    key={member.userId}
-                    type="button"
-                    onClick={() => setPaidBy(member.userId)}
-                    className={clsx(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all shadow-sm shrink-0",
-                      paidBy === member.userId 
-                        ? "bg-primary text-white border-primary" 
-                        : "bg-white text-on-surface border-border-subtle hover:bg-surface-container"
-                    )}
-                  >
-                    <div className="w-5 h-5 rounded-full overflow-hidden bg-primary/10">
-                      {member.photoURL ? (
-                        <img src={member.photoURL} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <span className="material-symbols-outlined text-[12px] flex items-center justify-center h-full">person</span>
-                      )}
-                    </div>
-                    {member.userId === user?.uid ? t('common.me') : member.displayName}
-                  </button>
-                ))}
-              </div>
-            </section>
+            <PayerPicker
+              members={groupMembers}
+              amount={evaluatedAmount || 0}
+              currencySymbol={currencySymbol}
+              payerMode={payerMode}
+              setPayerMode={setPayerMode}
+              paidBy={paidBy}
+              setPaidBy={setPaidBy}
+              payerIds={payerIds}
+              setPayerIds={setPayerIds}
+              payerAmounts={payerAmounts}
+              setPayerAmounts={setPayerAmounts}
+            />
 
             <section className="space-y-2">
               <div className="flex items-center justify-between px-1">
                 <h2 className="text-[11px] font-bold text-primary uppercase tracking-widest">{t('addExpense.sharedWith')}</h2>
-                <button 
+                <button
                   onClick={() => {
                     if (splitMembers.length === groupMembers.length) {
                       setSplitMembers([]);

@@ -15,6 +15,7 @@ import { buildGroupAiPrompt } from '../lib/buildAiPrompt';
 import { parseLocalDate, todayLocalDateString, currentLocalMonthKey } from '../lib/dateUtils';
 import { shareOrDownloadFile } from '../lib/fileShare';
 import { useLanguage } from '../context/LanguageContext';
+import { memberContribution } from '../lib/settleMath';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -474,7 +475,9 @@ export default function GroupAnalysisSummary() {
 
   const expenses = useMemo(() => {
     if (!selectedMemberId) return categoryFilteredExpenses;
-    return categoryFilteredExpenses.filter(exp => exp.paidBy === selectedMemberId);
+    // "Did this member pay any of it" — a multi-payer expense stays in a selected member's
+    // filtered list as long as they contributed something, even if they weren't the sole payer.
+    return categoryFilteredExpenses.filter(exp => memberContribution(exp, selectedMemberId) > 0);
   }, [categoryFilteredExpenses, selectedMemberId]);
 
   // Essential vs Optional split of whatever's currently in `expenses` — same filtered scope the
@@ -567,8 +570,15 @@ export default function GroupAnalysisSummary() {
     source.forEach((exp: any) => {
       if (!exp.paidBy) return;
       const mk = String(exp.date || '').slice(0, 7);
-      if (mk === thisMonthKey) thisMonth[exp.paidBy] = (thisMonth[exp.paidBy] || 0) + exp.amount;
-      else if (mk === lastMonthKey) lastMonth[exp.paidBy] = (lastMonth[exp.paidBy] || 0) + exp.amount;
+      // Multi-payer aware: each payer is credited only their own contribution, not the full
+      // expense amount — see memberContribution()'s own comment.
+      const payerIds: string[] = Array.isArray(exp.payers) && exp.payers.length > 0 ? exp.payers.map((p: any) => p.userId) : [exp.paidBy];
+      payerIds.forEach((uid) => {
+        const amt = memberContribution(exp, uid);
+        if (amt === 0) return;
+        if (mk === thisMonthKey) thisMonth[uid] = (thisMonth[uid] || 0) + amt;
+        else if (mk === lastMonthKey) lastMonth[uid] = (lastMonth[uid] || 0) + amt;
+      });
     });
     return { thisMonth, lastMonth };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -640,6 +650,29 @@ export default function GroupAnalysisSummary() {
     const dataMap: Record<string, { value: number; essential: number; optional: number; income: number; label: string }> = {};
 
     expenses.forEach(exp => {
+      // Multi-payer, member view: one bucket update per payer, each crediting only their own
+      // contribution — everywhere else on this screen a multi-payer expense's full amount would
+      // otherwise get double- (or triple-) counted once per payer instead of split between them.
+      if (viewType === 'member' && Array.isArray(exp.payers) && exp.payers.length > 0) {
+        const isIncomeExp = exp.type === 'income';
+        const expGroupForMember = selectedGroupId === 'all' ? allGroups.find((g: any) => g.id === exp.groupId) : groupData;
+        const classificationForMember = !isIncomeExp ? getCategoryClassification(expGroupForMember, exp.category) : null;
+        exp.payers.forEach((p: any) => {
+          const amt = p.amount || 0;
+          if (amt === 0) return;
+          const memberLabel = groupMembers.find(m => m.userId === p.userId)?.displayName || t('common.unknown');
+          const prevMember = dataMap[p.userId] || { value: 0, essential: 0, optional: 0, income: 0, label: memberLabel };
+          dataMap[p.userId] = {
+            value: prevMember.value + amt,
+            essential: prevMember.essential + (classificationForMember === 'essential' ? amt : 0),
+            optional: prevMember.optional + (classificationForMember === 'optional' ? amt : 0),
+            income: prevMember.income + (isIncomeExp ? amt : 0),
+            label: memberLabel,
+          };
+        });
+        return;
+      }
+
       let key = '';
       let label = '';
 
@@ -750,13 +783,18 @@ export default function GroupAnalysisSummary() {
     const csvContent = [
       headers.join(','),
       ...expenses.map(exp => {
-        const member = groupMembers.find(m => m.userId === exp.paidBy);
+        // Multi-payer: list every payer with their own contribution in one cell rather than
+        // splitting into extra CSV rows, which would change what a row means for anyone else
+        // consuming this export (still one row per expense, always).
+        const memberCell = Array.isArray(exp.payers) && exp.payers.length > 0
+          ? exp.payers.map((p: any) => `${groupMembers.find(m => m.userId === p.userId)?.displayName || p.userId} (${p.amount || 0})`).join('; ')
+          : (groupMembers.find(m => m.userId === exp.paidBy)?.displayName || exp.paidBy);
         const group = allGroups.find(g => g.id === exp.groupId);
         return [
           exp.date,
           `"${exp.description.replace(/"/g, '""')}"`,
           exp.category,
-          member?.displayName || exp.paidBy,
+          `"${String(memberCell).replace(/"/g, '""')}"`,
           exp.amount,
           group?.currency || 'USD',
           `"${group?.name.replace(/"/g, '""') || exp.groupId}"`,
@@ -1645,23 +1683,25 @@ export default function GroupAnalysisSummary() {
               <div className="space-y-6">
                 {[...groupMembers]
                   .sort((a: any, b: any) => {
-                    const spendOf = (m: any) => categoryMemberContributionExpenses.filter(exp => exp.paidBy === m.userId).reduce((acc, curr) => acc + curr.amount, 0);
+                    // Multi-payer aware: each member's own contribution, not the full amount of
+                    // every expense they happened to be one of several payers on.
+                    const spendOf = (m: any) => categoryMemberContributionExpenses.reduce((acc, curr) => acc + memberContribution(curr, m.userId), 0);
                     return spendOf(b) - spendOf(a);
                   })
                   .map((member: any) => {
-                  const memberExpenses = categoryMemberContributionExpenses.filter(exp => exp.paidBy === member.userId);
-                  const contribution = memberExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+                  const memberExpenses = categoryMemberContributionExpenses.filter(exp => memberContribution(exp, member.userId) > 0);
+                  const contribution = memberExpenses.reduce((acc, curr) => acc + memberContribution(curr, member.userId), 0);
                   // Split so one lump "contribution" number never hides how much of it was really
                   // income vs. actual spend — same reasoning as the Categories/Groups tabs.
-                  const memberExpenseTotal = memberExpenses.filter((exp: any) => exp.type !== 'income').reduce((acc, curr) => acc + curr.amount, 0);
-                  const memberIncomeTotal = memberExpenses.filter((exp: any) => exp.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
+                  const memberExpenseTotal = memberExpenses.filter((exp: any) => exp.type !== 'income').reduce((acc, curr) => acc + memberContribution(curr, member.userId), 0);
+                  const memberIncomeTotal = memberExpenses.filter((exp: any) => exp.type === 'income').reduce((acc, curr) => acc + memberContribution(curr, member.userId), 0);
                   const total = categoryMemberContributionExpenses.reduce((acc, curr) => acc + curr.amount, 0);
                   const pct = total > 0 ? (contribution / total) * 100 : 0;
-                  
+
                   // Sort categories by amount
                   const catBuckets: Record<string, number> = {};
                   memberExpenses.forEach(exp => {
-                    catBuckets[exp.category] = (catBuckets[exp.category] || 0) + exp.amount;
+                    catBuckets[exp.category] = (catBuckets[exp.category] || 0) + memberContribution(exp, member.userId);
                   });
                   const sortedCats = Object.entries(catBuckets).sort((a, b) => b[1] - a[1]);
 

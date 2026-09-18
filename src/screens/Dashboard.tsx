@@ -20,6 +20,7 @@ import ImageLightbox from '../components/ImageLightbox';
 import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
 import { setExpandGroupTileFn } from '../lib/dashboardTileRef';
 import AccountsExplainerModal from '../components/AccountsExplainerModal';
+import { netBalances, simplifyDebts } from '../lib/settleMath';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -679,18 +680,23 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   // group has ever had (not scoped to a month), matching what a real outstanding balance is.
   const myGroupBalance = useMemo(() => {
     if (!user) return 0;
-    let bal = 0;
-    expenses.forEach((e: any) => {
-      const payerId = e.paidBy;
-      const splits = e.splitInfo?.splits || [];
-      splits.forEach((split: any) => {
-        const benefitId = split.userId;
-        if (payerId === benefitId) return;
-        if (benefitId === user.uid) bal -= split.amount;
-        if (payerId === user.uid) bal += split.amount;
-      });
-    });
-    return bal;
+    // Shared with Settlements.tsx and the GroupExpenses retroactive-edit warning — one netting
+    // implementation (including multi-payer expenses), not a second copy that could silently
+    // drift out of sync with theirs. See settleMath.ts's own header comment.
+    return netBalances(expenses)[user.uid] || 0;
+  }, [expenses, user]);
+
+  // The per-person breakdown behind myGroupBalance above — same minimal-transaction settle-up
+  // plan Settlements.tsx computes (via the shared simplifyDebts, extracted from there so this
+  // doesn't risk a second, subtly-different algorithm), scoped to just this group's expenses and
+  // filtered to the entries that actually involve the current user. Reported directly: the single
+  // net total ("You owe ₹500") didn't say TO WHOM, which matters as soon as a group has 3+ members.
+  // Only meaningful at the fully-expanded tile state (alongside Latest Spend below) — the
+  // one-line summary at tileState 2 stays a single line on purpose.
+  const myGroupSettlements = useMemo(() => {
+    if (!user) return [];
+    const allSettlements = simplifyDebts(netBalances(expenses));
+    return allSettlements.filter((s) => s.owerId === user.uid || s.receiverId === user.uid);
   }, [expenses, user]);
   // Which month this card's stats are scoped to — defaults to (and, on every fresh mount, always
   // starts back at) the real current month; see the month-picker button group's own comment for
@@ -976,6 +982,39 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             </span>
           </div>
         )}
+
+        {/* Per-person breakdown behind the net total above — who specifically, not just how much
+            overall. Only at the fully-expanded tile state; the single-line summary above already
+            covers the quick-glance case. */}
+        {tileState === 3 && myGroupSettlements.length > 0 && (() => {
+          // `members` alone is only REAL members (the `members` collection query) — a debt can
+          // just as easily involve a placeholder trip participant (name-only, added straight from
+          // Add Expense, stored on the group doc's own `participants` map instead, see
+          // groupParticipants.ts). Without buildRoster() merging both in, a placeholder's name
+          // never resolves and this always fell back to "Someone" — reported directly. Same
+          // pattern the quickViewExpense payer lookup below already uses.
+          const roster = buildRoster(members as any[], group);
+          return (
+          <div className="space-y-1 px-1">
+            {myGroupSettlements.map((s) => {
+              const iOwe = s.owerId === user?.uid;
+              const otherId = iOwe ? s.receiverId : s.owerId;
+              const other = roster.find((m: any) => m.userId === otherId);
+              const otherName = other?.displayName || t('common.someone');
+              return (
+                <div key={`${s.owerId}-${s.receiverId}`} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="text-text-muted truncate">
+                    {iOwe ? t('settlements.youOweTo', { name: otherName }) : t('settlements.owesYouFrom', { name: otherName })}
+                  </span>
+                  <span className={clsx('font-bold shrink-0', iOwe ? 'text-error' : 'text-success')}>
+                    {currencySymbol}{formatAmountCompact(s.amount, group?.currency, profile?.numberSystem)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          );
+        })()}
         </>
         )}
 

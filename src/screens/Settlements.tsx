@@ -11,6 +11,7 @@ import { parseLocalDate } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
 import SettlementDetailModal, { SettlementDetailInfo } from '../components/SettlementDetailModal';
 import ExpenseQuickView from '../components/ExpenseQuickView';
+import { netBalances, simplifyDebts } from '../lib/settleMath';
 
 interface Balance {
   userId: string;
@@ -146,25 +147,12 @@ export default function Settlements() {
 
     relevantGroupIds.forEach((gid: string) => {
       const groupExpenses = expenses.filter(e => e.groupId === gid);
-      const groupBalances: Record<string, number> = {};
-
-      groupExpenses.forEach(expense => {
-        const payerId = expense.paidBy;
-        const splits = expense.splitInfo?.splits || [];
-        if (splits.length === 0) return;
-
-        splits.forEach((split: any) => {
-          const benefitId = split.userId;
-          const benefitAmount = split.amount;
-
-          if (payerId !== benefitId) {
-            // benefitId owes payerId, within this group only
-            groupBalances[benefitId] = (groupBalances[benefitId] || 0) - benefitAmount;
-            groupBalances[payerId] = (groupBalances[payerId] || 0) + benefitAmount;
-            globalBalances[benefitId] = (globalBalances[benefitId] || 0) - benefitAmount;
-            globalBalances[payerId] = (globalBalances[payerId] || 0) + benefitAmount;
-          }
-        });
+      // Shared with Dashboard.tsx's GroupCard and the GroupExpenses retroactive-edit warning —
+      // one netting implementation (including multi-payer expenses), not a second copy that could
+      // silently drift out of sync with theirs. See settleMath.ts's own header comment.
+      const groupBalances = netBalances(groupExpenses);
+      Object.entries(groupBalances).forEach(([uid, amt]) => {
+        globalBalances[uid] = (globalBalances[uid] || 0) + amt;
       });
 
       const userGroupBalance = groupBalances[user?.uid || ''] || 0;
@@ -174,21 +162,9 @@ export default function Settlements() {
       }
 
       const groupName = groups.find((g: any) => g.id === gid)?.name || 'Group';
-      const owers = Object.entries(groupBalances)
-        .filter(([_, bal]) => bal < -0.01)
-        .sort((a, b) => a[1] - b[1]); // Sort by most debt
-      const receivers = Object.entries(groupBalances)
-        .filter(([_, bal]) => bal > 0.01)
-        .sort((a, b) => b[1] - a[1]); // Sort by most owed
-
-      // Simple algorithm to match owers to receivers, scoped to this group's members only
-      let owerIdx = 0;
-      let receiverIdx = 0;
-      while (owerIdx < owers.length && receiverIdx < receivers.length) {
-        const [owerId, owerBal] = owers[owerIdx];
-        const [receiverId, receiverBal] = receivers[receiverIdx];
-        const amount = Math.min(Math.abs(owerBal), receiverBal);
-
+      // Same minimal-transaction matching as before, scoped to this group's members only — now
+      // via the shared simplifyDebts() rather than an inline copy of the same algorithm.
+      simplifyDebts(groupBalances).forEach(({ owerId, receiverId, amount }) => {
         settlements.push({
           owerId,
           owerName: allMembers[owerId]?.displayName || 'Unknown',
@@ -200,13 +176,7 @@ export default function Settlements() {
           groupId: gid,
           groupName,
         });
-
-        owers[owerIdx][1] += amount;
-        receivers[receiverIdx][1] -= amount;
-
-        if (Math.abs(owers[owerIdx][1]) < 0.01) owerIdx++;
-        if (Math.abs(receivers[receiverIdx][1]) < 0.01) receiverIdx++;
-      }
+      });
     });
 
     // Per-currency only now — a single blended currentBalance (summed across every group
@@ -561,17 +531,48 @@ export default function Settlements() {
 
                   <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border-subtle/50">
                     <div className="space-y-1">
-                      <span className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('settlements.addedBy')}</span>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-4 h-4 rounded-full overflow-hidden bg-primary/10 border border-border-subtle">
-                          {allMembers[expense.paidBy]?.photoURL ? (
-                            <img src={allMembers[expense.paidBy].photoURL} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="flex items-center justify-center h-full text-[8px] font-bold">{payerName.slice(0, 1)}</div>
-                          )}
+                      {/* This was labeled "Added by" but always showed expense.paidBy, not
+                          expense.addedBy — a real mislabel (who paid vs. who happened to log it
+                          in the app aren't necessarily the same person). Fixed to actually say
+                          "Paid by," and now shows the amount too, not just the name. */}
+                      <span className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('addExpense.paidBy')}</span>
+                      {Array.isArray(expense.payers) && expense.payers.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {expense.payers.map((p: any) => {
+                            const name = allMembers[p.userId]?.displayName || t('common.unknown');
+                            const isMe = p.userId === user?.uid;
+                            return (
+                              <div key={p.userId} className="flex items-center gap-1.5">
+                                <div className="w-4 h-4 rounded-full overflow-hidden bg-primary/10 border border-border-subtle shrink-0">
+                                  {allMembers[p.userId]?.photoURL ? (
+                                    <img src={allMembers[p.userId].photoURL} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="flex items-center justify-center h-full text-[8px] font-bold">{name.slice(0, 1)}</div>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-bold text-primary truncate">
+                                  {isMe ? t('common.me') : name.split(' ')[0]}
+                                  <span className="text-text-muted font-bold"> · {currencySymbol}{formatAmountCompact(p.amount || 0, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}</span>
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
-                        <span className="text-[10px] font-bold text-primary">{payerIsMe ? t('common.me') : payerName.split(' ')[0]}</span>
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-4 h-4 rounded-full overflow-hidden bg-primary/10 border border-border-subtle shrink-0">
+                            {allMembers[expense.paidBy]?.photoURL ? (
+                              <img src={allMembers[expense.paidBy].photoURL} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="flex items-center justify-center h-full text-[8px] font-bold">{payerName.slice(0, 1)}</div>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-bold text-primary truncate">
+                            {payerIsMe ? t('common.me') : payerName.split(' ')[0]}
+                            <span className="text-text-muted font-bold"> · {currencySymbol}{formatAmountCompact(expense.amount, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}</span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <span className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('addExpense.splitWith')}</span>
