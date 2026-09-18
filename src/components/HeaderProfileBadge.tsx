@@ -58,6 +58,16 @@ export default function HeaderProfileBadge() {
   const initial = profile?.displayName?.slice(0, 1) || user.displayName?.slice(0, 1);
   const compactCoins = formatCompactCoins(coins);
 
+  // w-12 h-12 below (not the 44px avatar's own w-11 h-11) — the extra 4px is deliberate headroom
+  // for the level chip, which used to sit at -top-1.5/-left-1.5 (i.e. OUTSIDE this button's own
+  // box). That negative offset depended on Header.tsx's row never clipping it — true most of the
+  // time, but the row also has overflow-x-auto (for narrow-device horizontal scroll, see its own
+  // comment), and per the CSS spec, setting only one overflow axis to non-visible forces the OTHER
+  // axis to compute as `auto` too — so the row was ALSO silently clipping vertical overflow the
+  // whole time. On some real devices (reported: the header/profile badge visibly cut off) that
+  // clipped the chip, sometimes the whole avatar. The chip is now positioned at top-0/left-0 —
+  // fully INSIDE this button's own box, so no ancestor's overflow behavior (this one or any future
+  // one) can ever clip it again, regardless of how tight the row gets.
   return (
     <motion.button
       ref={ref}
@@ -65,16 +75,16 @@ export default function HeaderProfileBadge() {
       onClick={() => navigate('/profile')}
       animate={pulsing ? { scale: [1, 1.15, 1] } : { scale: 1 }}
       transition={{ duration: 0.5 }}
-      className="relative w-11 h-11 shrink-0 active:scale-95 transition-transform"
+      className="relative w-12 h-12 shrink-0 active:scale-95 transition-transform"
       title="View Profile"
     >
-      {/* Rank/level chip — bold solid circle overlapping the top-left corner, sized to actually
-          read at a glance rather than a tiny sliver. `warning` (amber) is a plain color choice
-          here, not its usual semantic "caution" meaning — this app's theme has no `accent` token. */}
-      <span className="absolute -top-1.5 -left-1.5 z-10 w-5 h-5 rounded-full bg-warning shadow-md flex items-center justify-center">
+      {/* Rank/level chip — bold solid circle over the top-left corner, sized to actually read at a
+          glance rather than a tiny sliver. `warning` (amber) is a plain color choice here, not its
+          usual semantic "caution" meaning — this app's theme has no `accent` token. */}
+      <span className="absolute top-0 left-0 z-10 w-5 h-5 rounded-full bg-warning shadow-md flex items-center justify-center">
         <span className="text-white text-[10px] font-black leading-none">{level}</span>
       </span>
-      <span className="block w-full h-full rounded-full overflow-hidden border-[3px] border-border-subtle bg-primary/10 relative shadow-sm">
+      <span className="absolute bottom-0 right-0 w-11 h-11 rounded-full overflow-hidden border-[3px] border-border-subtle bg-primary/10 shadow-sm">
         {profileImage ? (
           <img src={profileImage} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
         ) : (
