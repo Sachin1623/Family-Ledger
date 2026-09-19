@@ -552,7 +552,7 @@ export default function Settlements() {
                                 </div>
                                 <span className="text-[10px] font-bold text-primary truncate">
                                   {isMe ? t('common.me') : name.split(' ')[0]}
-                                  <span className="text-text-muted font-bold"> · {currencySymbol}{formatAmountCompact(p.amount || 0, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}</span>
+                                  <span className="text-text-muted font-bold"> · {selectedGroupId === 'overall' ? getCurrencySymbol(groups.find(g => g.id === expense.groupId)?.currency) : currencySymbol}{formatAmountCompact(p.amount || 0, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}</span>
                                 </span>
                               </div>
                             );
@@ -569,7 +569,7 @@ export default function Settlements() {
                           </div>
                           <span className="text-[10px] font-bold text-primary truncate">
                             {payerIsMe ? t('common.me') : payerName.split(' ')[0]}
-                            <span className="text-text-muted font-bold"> · {currencySymbol}{formatAmountCompact(expense.amount, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}</span>
+                            <span className="text-text-muted font-bold"> · {selectedGroupId === 'overall' ? getCurrencySymbol(groups.find(g => g.id === expense.groupId)?.currency) : currencySymbol}{formatAmountCompact(expense.amount, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}</span>
                           </span>
                         </div>
                       )}
