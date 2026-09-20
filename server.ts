@@ -6240,6 +6240,29 @@ async function startServer() {
       });
     }
 
+    const stillIn = players.filter((p: any) => !p.eliminated);
+    const shouldFinishTable = table.format === 'single' || stillIn.length <= 1;
+
+    // Resolve the table winner and award points FIRST, before any write below — awardGamePoints
+    // performs its own tx.get reads internally, and Firestore transactions require every read to
+    // happen before any write. (This ordering bug is exactly what caused a real "Unable to process
+    // declaration" 500 in production: the deal/table tx.update calls used to run first, so ANY
+    // deal that finished with a real winner — not just an invalid-declare-continues deal — threw.)
+    let tableWinnerUid: string | null = null;
+    if (shouldFinishTable) {
+      tableWinnerUid =
+        table.format === 'single'
+          ? ctx.winnerUid
+          : stillIn.length === 1
+          ? stillIn[0].uid
+          : players.slice().sort((a: any, b: any) => a.cumulativeScore - b.cumulativeScore || a.seatIndex - b.seatIndex)[0]?.uid || null;
+
+      if (tableWinnerUid) {
+        await awardGamePoints(tx, db, { gameType: 'rummy13', gameId: ctx.tableRef.id, playerUids: players.map((p: any) => p.uid), winnerUids: [tableWinnerUid] });
+      }
+    }
+
+    // Every write from here on — reads are done.
     tx.update(ctx.dealRef, {
       status: ctx.endedBy === 'void' ? 'void' : 'finished',
       finishedAt: nowIso,
@@ -6256,20 +6279,7 @@ async function startServer() {
       invalidDeclareUid: ctx.invalidDeclareUid || null,
     };
 
-    const stillIn = players.filter((p: any) => !p.eliminated);
-    const shouldFinishTable = table.format === 'single' || stillIn.length <= 1;
-
     if (shouldFinishTable) {
-      const tableWinnerUid: string | null =
-        table.format === 'single'
-          ? ctx.winnerUid
-          : stillIn.length === 1
-          ? stillIn[0].uid
-          : players.slice().sort((a: any, b: any) => a.cumulativeScore - b.cumulativeScore || a.seatIndex - b.seatIndex)[0]?.uid || null;
-
-      if (tableWinnerUid) {
-        await awardGamePoints(tx, db, { gameType: 'rummy13', gameId: ctx.tableRef.id, playerUids: players.map((p: any) => p.uid), winnerUids: [tableWinnerUid] });
-      }
       tx.update(ctx.tableRef, { status: 'finished', players, winnerUid: tableWinnerUid, finishedAt: nowIso, lastDealSummary: summary });
       if (tableWinnerUid) {
         recordGameOutcome(tx, db, ctx.tableRef.id, {
