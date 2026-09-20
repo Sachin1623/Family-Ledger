@@ -12,6 +12,7 @@ import {
   getAllGroupCategories, getCategoryNameOverride, makeCustomCategoryId, CustomCategory,
 } from '../lib/constants';
 import { inviteToGroup, inviteUserToGroup, searchUsers, linkGroupParticipant, FoundUser } from '../lib/inviteApi';
+import { logGrowthEvent } from '../lib/growthEvents';
 import { placeholderRows, participantInUse, participantExpenseCount, participantInRecurringUse } from '../lib/groupParticipants';
 import { useFriendships } from '../lib/useFriendships';
 import { claimPoints, getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
@@ -785,6 +786,7 @@ export default function ManageGroup() {
       ? `https://wa.me/${digits}?text=${encodeURIComponent(buildInviteShareMessage())}`
       : `https://wa.me/?text=${encodeURIComponent(buildInviteShareMessage())}`;
     window.open(url, '_blank');
+    logGrowthEvent('invite_whatsapp', user?.uid);
   };
 
   const handleSendSms = () => {
@@ -792,6 +794,7 @@ export default function ManageGroup() {
       ? `sms:${contactPhone}?body=${encodeURIComponent(buildInviteShareMessage())}`
       : `sms:?body=${encodeURIComponent(buildInviteShareMessage())}`;
     window.location.href = url;
+    logGrowthEvent('invite_sms', user?.uid);
   };
 
   const handleEmailInvite = async () => {
@@ -806,8 +809,10 @@ export default function ManageGroup() {
         setInviteFeedback({ type: 'error', text: t('manageGroup.alreadyInGroup', { name: email }) });
       } else if (result.method === 'push') {
         setInviteFeedback({ type: 'success', text: t('manageGroup.alreadyOnAppNotified', { name: email }) });
+        logGrowthEvent('invite_inapp', user?.uid);
       } else {
         setInviteFeedback({ type: 'success', text: t('manageGroup.inviteEmailSent', { email }) });
+        logGrowthEvent('invite_email', user?.uid);
       }
       setInviteEmail('');
     } catch (error) {
@@ -827,6 +832,7 @@ export default function ManageGroup() {
       } else {
         setInvitedUids((prev) => new Set(prev).add(foundUser.uid));
         setInviteFeedback({ type: 'success', text: t('manageGroup.userNotified', { name: foundUser.displayName }) });
+        logGrowthEvent('invite_inapp', user?.uid);
       }
     } catch (error) {
       setInviteFeedback({ type: 'error', text: error instanceof Error ? error.message : t('manageGroup.failedToSendInvite') });

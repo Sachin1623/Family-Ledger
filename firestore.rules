@@ -1441,6 +1441,13 @@ service cloud.firestore {
       allow create: if isSignedIn() && incoming().uid == request.auth.uid;
     }
 
+    // --- Growth events (analytics) ---
+    // Written by the client on every invite send / "Spread the Word" share action, for the
+    // admin Growth tab. Same shape and access as loginEvents above.
+    match /growthEvents/{eventId} {
+      allow create: if isSignedIn() && incoming().uid == request.auth.uid;
+    }
+
     // --- Personal Loans ("financial support given to/taken from family & friends") ---
     // Deliberately NOT group-based: a contact may never sign up for the app at all, so this
     // models a "contact" as a lightweight, owner-private record (just a name to start) that can

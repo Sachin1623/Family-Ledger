@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { inviteToGroup, inviteUserToGroup, searchUsers, FoundUser } from '../lib/inviteApi';
+import { logGrowthEvent } from '../lib/growthEvents';
 import { claimPoints } from '../lib/pointsApi';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { evaluateAmountSum } from '../lib/amountMath';
@@ -236,6 +237,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     const inviterName = profile?.displayName || user?.displayName || 'A friend';
     const message = `Hi! ${inviterName} is inviting you to join the group "${group?.name}" on FamilyLedger. Join here: ${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+    logGrowthEvent('invite_whatsapp', user?.uid);
   };
 
   const handleEmailInvite = async (e: React.FormEvent) => {
@@ -250,8 +252,10 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
         setInviteFeedback({ type: 'error', text: t('manageGroup.alreadyInGroup', { name: email }) });
       } else if (result.method === 'push') {
         setInviteFeedback({ type: 'success', text: t('manageGroup.alreadyOnAppNotified', { name: email }) });
+        logGrowthEvent('invite_inapp', user?.uid);
       } else {
         setInviteFeedback({ type: 'success', text: t('manageGroup.inviteEmailSent', { email }) });
+        logGrowthEvent('invite_email', user?.uid);
       }
       setInviteEmail('');
     } catch (err) {
@@ -270,6 +274,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
       } else {
         setInvitedUids((prev) => new Set(prev).add(foundUser.uid));
         setInviteFeedback({ type: 'success', text: t('manageGroup.userNotified', { name: foundUser.displayName }) });
+        logGrowthEvent('invite_inapp', user?.uid);
       }
     } catch (err) {
       setInviteFeedback({ type: 'error', text: err instanceof Error ? err.message : t('manageGroup.failedToSendInvite') });

@@ -3724,6 +3724,69 @@ async function startServer() {
     }
   });
 
+  // Growth tab — is the invite flow and "Spread the Word" share flow actually getting used?
+  // Rolling 7-day windows rather than calendar weeks (Mon-Sun) — simpler, no timezone-dependent
+  // week-start logic, and "this week vs previous week" reads the same either way.
+  app.get('/api/admin/analytics/growth', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const db = adminDb;
+
+    const INVITE_TYPES = ['invite_whatsapp', 'invite_sms', 'invite_email', 'invite_inapp'] as const;
+    const SHARE_TYPES = ['share_whatsapp', 'share_facebook', 'share_twitter', 'share_linkedin', 'share_native', 'share_link_only'] as const;
+
+    try {
+      const now = Date.now();
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const thisWeekStart = now - 7 * DAY_MS;
+      const previousWeekStart = now - 14 * DAY_MS;
+      const since = new Date(previousWeekStart).toISOString();
+
+      const snap = await db.collection('growthEvents').where('createdAt', '>=', since).get();
+
+      const makeBucket = () => ({
+        total: 0,
+        byChannel: Object.fromEntries([...INVITE_TYPES, ...SHARE_TYPES].map((t) => [t, 0])) as Record<string, number>,
+      });
+      const invites = { thisWeek: makeBucket(), previousWeek: makeBucket() };
+      const shares = { thisWeek: makeBucket(), previousWeek: makeBucket() };
+      const perDay = new Map<string, { invites: number; shares: number }>();
+
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const type = String(data.type || '');
+        const createdAtMs = new Date(data.createdAt).getTime();
+        if (!Number.isFinite(createdAtMs)) return;
+
+        const isInvite = (INVITE_TYPES as readonly string[]).includes(type);
+        const isShare = (SHARE_TYPES as readonly string[]).includes(type);
+        if (!isInvite && !isShare) return;
+
+        const window = createdAtMs >= thisWeekStart ? 'thisWeek' : createdAtMs >= previousWeekStart ? 'previousWeek' : null;
+        if (window) {
+          const bucket = (isInvite ? invites : shares)[window];
+          bucket.total += 1;
+          bucket.byChannel[type] = (bucket.byChannel[type] || 0) + 1;
+        }
+
+        const day = String(data.createdAt).slice(0, 10);
+        if (!perDay.has(day)) perDay.set(day, { invites: 0, shares: 0 });
+        const dayBucket = perDay.get(day)!;
+        if (isInvite) dayBucket.invites += 1;
+        else dayBucket.shares += 1;
+      });
+
+      const dailyTrend = Array.from(perDay.entries())
+        .map(([day, b]) => ({ day, ...b }))
+        .sort((a, b) => a.day.localeCompare(b.day));
+
+      return res.json({ invites, shares, dailyTrend });
+    } catch (error) {
+      console.error('admin/analytics/growth error:', error);
+      return res.status(500).json({ error: 'Unable to load growth analytics.' });
+    }
+  });
+
   app.get('/api/admin/analytics/inactive', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;

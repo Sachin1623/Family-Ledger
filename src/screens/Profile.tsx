@@ -22,6 +22,7 @@ import { DEFAULT_PUBLIC_PROFILE_SETTINGS, PublicProfileSettings } from '../lib/p
 import { clearFieldCryptoCache } from '../lib/fieldCrypto';
 import { resizeImageFile } from '../lib/imageUtils';
 import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberSystem } from '../lib/constants';
+import { logGrowthEvent } from '../lib/growthEvents';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -812,10 +813,12 @@ export default function Profile() {
     const { message } = buildShareMessages();
     const result = await shareText('FamilyLedger', message);
     if (result === 'copied') alert(t('profile.linkCopied'));
+    logGrowthEvent('share_link_only', user?.uid);
   };
 
   const handleShareApp = async (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
     const { webShareUrl, message, shortMessage } = buildShareMessages();
+    logGrowthEvent(`share_${target}`, user?.uid);
 
     if (await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message)) return;
 
@@ -1179,6 +1182,19 @@ export default function Profile() {
             </div>
           )}
         </section>
+
+        {/* Admin-only, moved up to sit right under the profile header — previously at the very
+            bottom of the page, past every settings section, which meant a scroll to reach it on
+            every visit. */}
+        {admin.isAdmin && (
+          <button
+            onClick={() => navigate('/admin')}
+            className="w-full flex items-center justify-center gap-2 py-4 bg-primary text-white font-bold rounded-2xl active:scale-[0.98] transition-all shadow-sm"
+          >
+            <span className="material-symbols-outlined">admin_panel_settings</span>
+            Admin Panel
+          </button>
+        )}
 
         {/* Prioritized per explicit request — placed right under the header, ahead of every
             settings section, with a tinted/bordered card (instead of the plain white cards every
@@ -1842,22 +1858,9 @@ export default function Profile() {
         </>
         )}
 
-        {admin.isAdmin && (
-          <button
-            onClick={() => navigate('/admin')}
-            className="w-full flex items-center justify-center gap-2 py-5 bg-primary text-white font-bold rounded-2xl active:scale-[0.98] transition-all mt-8 shadow-sm"
-          >
-            <span className="material-symbols-outlined">admin_panel_settings</span>
-            Admin Panel
-          </button>
-        )}
-
         <button
           onClick={handleLogout}
-          className={clsx(
-            "w-full flex items-center justify-center gap-2 py-5 border-2 border-border-subtle text-primary font-bold rounded-2xl hover:bg-surface-container/20 active:scale-[0.98] transition-all shadow-sm",
-            admin.isAdmin ? "mt-3" : "mt-8"
-          )}
+          className="w-full flex items-center justify-center gap-2 py-5 border-2 border-border-subtle text-primary font-bold rounded-2xl hover:bg-surface-container/20 active:scale-[0.98] transition-all shadow-sm mt-8"
         >
           <span className="material-symbols-outlined">logout</span>
           {t('profile.logout')}

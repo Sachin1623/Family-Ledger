@@ -98,6 +98,7 @@ import AdminDashboard from './screens/admin/AdminDashboard';
 import AdminUsers from './screens/admin/AdminUsers';
 import AdminUserDetail from './screens/admin/AdminUserDetail';
 import AdminAnalytics from './screens/admin/AdminAnalytics';
+import AdminGrowth from './screens/admin/AdminGrowth';
 import AdminManageAdmins from './screens/admin/AdminManageAdmins';
 import AdminFeedback from './screens/admin/AdminFeedback';
 import AdminAppVersion from './screens/admin/AdminAppVersion';
@@ -403,6 +404,7 @@ export default function App() {
               <Route path="/admin/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
               <Route path="/admin/users/:uid" element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
               <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
+              <Route path="/admin/growth" element={<AdminRoute><AdminGrowth /></AdminRoute>} />
               <Route path="/admin/manage-admins" element={<AdminRoute><AdminManageAdmins /></AdminRoute>} />
               <Route path="/admin/feedback" element={<AdminRoute><AdminFeedback /></AdminRoute>} />
               <Route path="/admin/app-version" element={<AdminRoute><AdminAppVersion /></AdminRoute>} />
