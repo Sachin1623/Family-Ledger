@@ -4344,6 +4344,21 @@ async function startServer() {
     }
   });
 
+  // Clears the CURRENTLY-SHOWN broadcast (`app_config/broadcast`) so BroadcastBanner.tsx's live
+  // listener stops showing it — instantly, for anyone with the app open, no push involved. The
+  // permanent `broadcasts/{id}` history record is untouched; this only affects what's live.
+  app.delete('/api/admin/broadcast/active', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    try {
+      await adminDb.collection('app_config').doc('broadcast').delete();
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('admin/broadcast/active delete error:', error);
+      return res.status(500).json({ error: 'Unable to remove the active broadcast.' });
+    }
+  });
+
   // Cancels a not-yet-sent scheduled broadcast — kept as a 'canceled' record rather than deleted,
   // so it still shows in history for context.
   app.delete('/api/admin/broadcast/:id', async (req, res) => {
@@ -4361,6 +4376,47 @@ async function startServer() {
     } catch (error) {
       console.error('admin/broadcast cancel error:', error);
       return res.status(500).json({ error: 'Unable to cancel broadcast.' });
+    }
+  });
+
+  // On-demand "Spread the Word" push, sent to every user right now (distinct from the daily-
+  // reminders cron's own gradual per-user nudge — see /api/cron/send-daily-reminders'
+  // spreadWordReminderEnabled/lastSpreadWordReminderSentAt handling, which this doesn't touch).
+  // Also writes `app_config/spreadWordPrompt` with a fresh id — SpreadWordPrompt.tsx (client) holds
+  // a live listener on that doc, same mechanism as BroadcastBanner.tsx/app_config/broadcast, so
+  // anyone already in the app sees the share popup the instant this is written, no push needed;
+  // the push is for anyone not currently in the app, and its tap opens straight to the Profile
+  // share card as a fallback in case the live listener hasn't mounted yet (cold start).
+  app.post('/api/admin/spread-word-push', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const db = adminDb;
+
+    const SPREAD_WORD_MESSAGES = [
+      "Enjoying FamilyLedger? Share it with family or friends who split expenses too.",
+      "Know someone who'd love an easier way to track shared expenses? Spread the word!",
+      "A quick share goes a long way — tell someone about FamilyLedger today.",
+      "Loving the app? A recommendation from you means more than any ad.",
+    ];
+
+    try {
+      const promptId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await db.collection('app_config').doc('spreadWordPrompt').set({
+        id: promptId,
+        createdAt: new Date().toISOString(),
+        createdBy: decoded.email || decoded.uid,
+      });
+
+      const usersSnap = await db.collection('users').select().get();
+      const allUids = usersSnap.docs.map((d) => d.id);
+      const tokens = await collectPushTokens(db, allUids, 'spreadWordReminderEnabled');
+      const message = SPREAD_WORD_MESSAGES[Math.floor(Math.random() * SPREAD_WORD_MESSAGES.length)];
+      const pushSent = await sendPush(tokens, 'FamilyLedger', message, { type: 'spread_word_broadcast' });
+
+      return res.json({ ok: true, promptId, recipientCount: allUids.length, pushSent });
+    } catch (error) {
+      console.error('admin/spread-word-push error:', error);
+      return res.status(500).json({ error: 'Unable to send the Spread the Word push.' });
     }
   });
 

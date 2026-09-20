@@ -121,6 +121,14 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     // gets there, scrolled to and highlighted, with the actual share button right there for the
     // very next tap, rather than making the user hunt for the section themselves.
     navigateTo('/profile?share=1');
+  } else if (data.type === 'spread_word_broadcast') {
+    // Admin-triggered "send to everyone now" (AdminBroadcast.tsx), distinct from the cron's own
+    // gradual per-user spread_word_reminder above. SpreadWordPrompt.tsx's global live listener is
+    // the primary way this shows — it already pops up on its own the moment app_config/
+    // spreadWordPrompt is written, on whatever screen the app happens to be on. This navigation is
+    // just a safety net for a cold start (app wasn't running at all when the notification arrived),
+    // where the listener hasn't mounted yet by the time the tap is handled.
+    navigateTo('/profile?share=1');
   } else if (data.type === 'birthday_wish') {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {

@@ -91,6 +91,10 @@ export default function AdminBroadcast() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ recipientCount: number; pushSent: number } | null>(null);
+  const [removingActive, setRemovingActive] = useState(false);
+  const [spreadWordSending, setSpreadWordSending] = useState(false);
+  const [spreadWordResult, setSpreadWordResult] = useState<{ recipientCount: number; pushSent: number } | null>(null);
+  const [spreadWordError, setSpreadWordError] = useState<string | null>(null);
 
   const loadAll = () => {
     setLoading(true);
@@ -168,6 +172,34 @@ export default function AdminBroadcast() {
       loadAll();
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const handleRemoveActive = async () => {
+    if (!window.confirm('Remove the currently-showing broadcast? Anyone with the app open right now stops seeing it immediately.')) return;
+    setRemovingActive(true);
+    try {
+      await adminDelete('/api/admin/broadcast/active');
+      setCurrent(null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setRemovingActive(false);
+    }
+  };
+
+  const handleSendSpreadWord = async () => {
+    if (!window.confirm("Send a \"Spread the Word\" push + popup to every user right now?")) return;
+    setSpreadWordSending(true);
+    setSpreadWordError(null);
+    setSpreadWordResult(null);
+    try {
+      const data = await adminPost('/api/admin/spread-word-push');
+      setSpreadWordResult({ recipientCount: data.recipientCount, pushSent: data.pushSent });
+    } catch (err: any) {
+      setSpreadWordError(err.message);
+    } finally {
+      setSpreadWordSending(false);
     }
   };
 
@@ -253,8 +285,41 @@ export default function AdminBroadcast() {
               {current.createdAt && (
                 <p className="text-[11px] text-text-muted">{new Date(current.createdAt).toLocaleString()}</p>
               )}
+              <button
+                type="button"
+                onClick={handleRemoveActive}
+                disabled={removingActive}
+                className="w-full py-2.5 border-2 border-error/30 text-error font-bold rounded-xl text-sm disabled:opacity-50"
+              >
+                {removingActive ? 'Removing…' : 'Remove Active Broadcast'}
+              </button>
             </div>
           )}
+
+          <section className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
+            <div>
+              <h2 className="text-base font-black text-primary">"Spread the Word" Campaign</h2>
+              <p className="text-sm text-text-muted mt-1">
+                Sends a push notification to every user, and pops up the actual share buttons (WhatsApp/
+                Facebook/X/LinkedIn) right away for anyone already using the app — no need to tap the
+                notification first. Tracked on the Growth tab.
+              </p>
+            </div>
+            {spreadWordError && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200">{spreadWordError}</div>}
+            {spreadWordResult && (
+              <div className="p-3 bg-success/10 text-success text-sm rounded-xl border border-success/20">
+                Sent to {spreadWordResult.recipientCount} users ({spreadWordResult.pushSent} push notifications delivered).
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleSendSpreadWord}
+              disabled={spreadWordSending}
+              className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+            >
+              {spreadWordSending ? 'Sending…' : 'Send Now'}
+            </button>
+          </section>
 
           <form onSubmit={handleSend} className="bg-white rounded-2xl border border-border-subtle p-6 space-y-4">
             {editingId && (

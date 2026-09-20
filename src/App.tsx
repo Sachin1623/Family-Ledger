@@ -110,6 +110,7 @@ import ConsentBanner from './components/ConsentBanner';
 import PointsToastBridge from './components/PointsToastBridge';
 import PointsFlyAnimation from './components/PointsFlyAnimation';
 import BroadcastBanner from './components/BroadcastBanner';
+import SpreadWordPrompt from './components/SpreadWordPrompt';
 import AppLockScreen from './components/AppLockScreen';
 import LudoTurnIndicator from './components/LudoTurnIndicator';
 import GameTurnIndicator from './components/GameTurnIndicator';
@@ -292,6 +293,7 @@ export default function App() {
           <UpdateBanner />
           <ConsentBanner />
           <BroadcastBanner />
+          <SpreadWordPrompt />
           <AppLockScreen />
           <LudoTurnIndicator />
           <GameTurnIndicator />

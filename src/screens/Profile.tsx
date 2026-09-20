@@ -23,6 +23,8 @@ import { clearFieldCryptoCache } from '../lib/fieldCrypto';
 import { resizeImageFile } from '../lib/imageUtils';
 import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberSystem } from '../lib/constants';
 import { logGrowthEvent } from '../lib/growthEvents';
+import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
+import { ShareBrandBadge } from '../components/ShareBrandBadge';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -185,29 +187,6 @@ function PublicProfileSettingsSection() {
       ))}
     </div>
   );
-}
-
-// Small brand-colored badges for the "Spread the Word" share buttons, standing in for each
-// platform's logo — Material Symbols (used everywhere else in this app) has no brand icons, and
-// this app has no licensed brand-asset kit to pull exact vector logos from, so these are
-// simplified color+mark badges (brand color + the platform's recognizable letter/glyph) rather
-// than pixel-perfect reproductions.
-function BrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'x' | 'linkedin' }) {
-  const base = 'w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-white leading-none';
-  switch (platform) {
-    case 'whatsapp':
-      return (
-        <span className={clsx(base, 'bg-[#25D366]')}>
-          <span className="material-symbols-outlined text-[11px]" style={{ fontVariationSettings: "'FILL' 1" }}>call</span>
-        </span>
-      );
-    case 'facebook':
-      return <span className={clsx(base, 'bg-[#1877F2] font-black text-[12px] italic')}>f</span>;
-    case 'x':
-      return <span className={clsx(base, 'bg-black font-black text-[10px]')}>X</span>;
-    case 'linkedin':
-      return <span className={clsx(base, 'bg-[#0A66C2] font-black text-[8px]')}>in</span>;
-  }
 }
 
 // The image half of "Spread the Word" — captured off-screen via html2canvas (see
@@ -786,22 +765,6 @@ export default function Profile() {
   // mechanism for a genuine single-click Facebook/LinkedIn share: there's no way to pre-attach an
   // image/caption to their web intent directly, only to make the URL they fetch describe itself.
   //
-  // Pulled out of handleShareApp so handleShareLinkOnly below (the guaranteed-clickable-link
-  // fallback) can build the exact same message text without duplicating it.
-  const buildShareMessages = () => {
-    const shareUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
-    const webShareUrl = `${window.location.origin}/share`;
-    // WhatsApp/native have no length limit and WhatsApp renders *bold*/dividers as real
-    // formatting, so this "banner" version leans into that — a bold title line, a divider, and
-    // one bold-label line per feature (Splitwise-style expense splitting, budgets that work even
-    // without splitting, goals, chat/friends, and games as a closing bonus). Twitter/X gets a
-    // separate, short version below — its 280-char compose box would just force a manual trim of
-    // the long version anyway, and a mistimed trim can cut the link off entirely.
-    const message = `*💰 FamilyLedger*\n_Split bills. Track budgets. Stay sane._\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\nTired of chasing "who owes who"? I've been using this with my family and it's actually fixed it.\n\n✅ *Split expenses* — equally, by %, or exact amounts\n📊 *Real budgets* — set one per category (rent, food, bills...); splitting is optional, so it also works if you just want to track family spending\n🔄 *Recurring bills* — rent, wifi, subscriptions log themselves every month\n🎯 *Goals* — set savings targets, link real accounts, see when you'll hit them\n💬 *Group chat & friends* — no separate thread just for money talk\n🎮 *Bonus* — a few games built in too\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n👉 Try it — free on Android:\n${shareUrl}`;
-    const shortMessage = `💰 Tired of chasing who-owes-who? FamilyLedger splits bills, tracks budgets & recurring expenses — free on Android. Give it a try 👇\n${shareUrl}`;
-    return { shareUrl, webShareUrl, message, shortMessage };
-  };
-
   // The feature-banner image is genuinely useful context, but Android's share intent never
   // guarantees a receiving app renders the accompanying caption text once an image is attached —
   // several chat apps show the picture and silently drop the text alongside it, and that dropped
@@ -816,32 +779,14 @@ export default function Profile() {
     logGrowthEvent('share_link_only', user?.uid);
   };
 
-  const handleShareApp = async (target: 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin') => {
-    const { webShareUrl, message, shortMessage } = buildShareMessages();
-    logGrowthEvent(`share_${target}`, user?.uid);
-
-    if (await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message)) return;
-
+  const handleShareApp = async (target: ShareTarget) => {
+    const { message, shortMessage } = buildShareMessages();
+    if (await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message)) {
+      logGrowthEvent(`share_${target}`, user?.uid);
+      return;
+    }
     // Image sharing unsupported (or no share sheet at all) — same text-only fallbacks as before.
-    if (target === 'whatsapp') {
-      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
-      return;
-    }
-    if (target === 'facebook') {
-      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(webShareUrl)}`, '_blank');
-      return;
-    }
-    if (target === 'twitter') {
-      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shortMessage)}`, '_blank');
-      return;
-    }
-    if (target === 'linkedin') {
-      window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(webShareUrl)}`, '_blank');
-      return;
-    }
-    // "native" with no share API at all (very old browser) — copy to clipboard as a last resort.
-    navigator.clipboard?.writeText(message).catch(() => {});
-    alert('Share message copied! (Sharing is not supported on this device/browser.)');
+    shareAppPlain(target, user?.uid);
   };
 
 
@@ -1227,28 +1172,28 @@ export default function Profile() {
                 onClick={() => handleShareApp('whatsapp')}
                 className="bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
               >
-                <BrandBadge platform="whatsapp" />
+                <ShareBrandBadge platform="whatsapp" />
                 WhatsApp
               </button>
               <button
                 onClick={() => handleShareApp('facebook')}
                 className="bg-[#1877F2]/10 text-[#1877F2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#1877F2]/20 active:scale-[0.98] transition-all border border-[#1877F2]/20"
               >
-                <BrandBadge platform="facebook" />
+                <ShareBrandBadge platform="facebook" />
                 Facebook
               </button>
               <button
                 onClick={() => handleShareApp('twitter')}
                 className="bg-[#0F1419]/10 text-[#0F1419] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0F1419]/20 active:scale-[0.98] transition-all border border-[#0F1419]/20"
               >
-                <BrandBadge platform="x" />
+                <ShareBrandBadge platform="x" />
                 X
               </button>
               <button
                 onClick={() => handleShareApp('linkedin')}
                 className="bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
               >
-                <BrandBadge platform="linkedin" />
+                <ShareBrandBadge platform="linkedin" />
                 LinkedIn
               </button>
             </div>
