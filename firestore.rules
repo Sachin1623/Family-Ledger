@@ -1835,6 +1835,71 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // --- 13-Card Rummy ---
+    // Same server-mediated pattern as 27-Hand Rummy above (genuine hidden info — opponents' hands,
+    // undrawn stock — never client-readable), split into two top-level collections instead of one:
+    // a `rummy13Tables` doc is the persistent MATCH (format, pool totals, current-deal pointer),
+    // while each individual hand of play is its own `rummy13Deals` doc — Single Deal formats only
+    // ever have one; Pool formats auto-create a fresh one after each deal ends, server-side, via
+    // resolveRummy13DealEnd. Clients may only create/join the still-open table lobby directly;
+    // starting, dealing, every turn action, drops, timeouts, and deal-to-deal advancement all
+    // happen exclusively through server.ts's Admin-SDK-backed endpoints.
+    match /rummy13Tables/{tableId} {
+      function isValidRummy13Table(data) {
+        return data.keys().hasAll(['hostUid', 'code', 'status', 'format', 'poolLimit', 'maxPlayers', 'players', 'playerUids', 'currentDealId', 'dealNumber', 'createdAt']) &&
+               data.hostUid is string &&
+               data.code is string &&
+               data.status in ['waiting', 'active', 'finished'] &&
+               data.format in ['single', 'pool101', 'pool201'] &&
+               data.maxPlayers is number && data.maxPlayers >= 2 && data.maxPlayers <= 6 &&
+               data.players is list && data.players.size() >= 1 && data.players.size() <= data.maxPlayers &&
+               data.playerUids is list && data.playerUids.size() == data.players.size() &&
+               data.createdAt is string;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+
+      allow create: if isSignedIn() && incoming().hostUid == request.auth.uid &&
+                       incoming().playerUids == [request.auth.uid] &&
+                       incoming().status == 'waiting' && isValidRummy13Table(incoming());
+
+      // Only ever "join the open lobby by adding yourself" — see the 27-Hand Rummy comment above
+      // for why no further client `update` path exists.
+      allow update: if isSignedIn() && isValidRummy13Table(incoming()) &&
+                       resource.data.status == 'waiting' &&
+                       resource.data.playerUids.size() < resource.data.maxPlayers &&
+                       incoming().playerUids.size() == resource.data.playerUids.size() + 1 &&
+                       request.auth.uid in incoming().playerUids;
+    }
+
+    match /rummy13TableCodes/{code} {
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasOnly(['gameId', 'hostUid']) &&
+                       incoming().hostUid == request.auth.uid && incoming().gameId is string;
+    }
+
+    // A deal doc itself — never directly queried or written by a client; the client always reaches
+    // the CURRENT one via the table's own `currentDealId`. `get` is gated on a `playerUids` array
+    // copied onto the deal at creation time (same shape as the table's own field), so a player can
+    // read the deal they're actually seated at without a `list` query ever being needed.
+    match /rummy13Deals/{dealId} {
+      allow get: if isSignedIn() && request.auth.uid in resource.data.playerUids;
+      allow list, create, update, delete: if false;
+    }
+
+    match /rummy13Deals/{dealId}/hands/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['groups']) &&
+                       incoming().groups is list;
+      allow create, delete: if false;
+    }
+
+    match /rummy13Deals/{dealId}/secret/{document=**} {
+      allow read, write: if false;
+    }
+
     // --- Business (Indian Monopoly-style) ---
     // Deliberately client-trusted, same trust level as Ludo: there's no meaningful hidden state in
     // this game (everyone's cash/properties/position are always public; only the Chance/Community
@@ -2148,6 +2213,20 @@ service cloud.firestore {
       allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
     }
 
+    // Chat is scoped to the TABLE (rummy13Tables), not individual deals — a table can span many
+    // deals in Pool format, and the conversation should persist across all of them.
+    match /rummy13Tables/{gameId}/comments/{commentId} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummy13Tables/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow create: if isPlayer() && isValidGameComment(incoming());
+      allow update: if isSignedIn() && request.auth.uid == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 500;
+      allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isSachin());
+    }
+
     match /sweepGames/{gameId}/comments/{commentId} {
       function isPlayer() {
         return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/sweepGames/$(gameId)).data.playerUids;
@@ -2218,6 +2297,25 @@ service cloud.firestore {
     match /rummyGames/{gameId}/voiceSignals/{pairKey} {
       function isPlayer() {
         return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummyGames/$(gameId)).data.playerUids;
+      }
+      function isParticipant() {
+        return isPlayer() && request.auth.uid in pairKey.split('_');
+      }
+      allow read: if isParticipant();
+      allow write: if isParticipant() && isValidVoiceSignal(incoming());
+    }
+
+    match /rummy13Tables/{gameId}/voicePresence/{uid} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummy13Tables/$(gameId)).data.playerUids;
+      }
+      allow read: if isPlayer();
+      allow write: if isPlayer() && request.auth.uid == uid && isValidVoicePresence(incoming());
+    }
+
+    match /rummy13Tables/{gameId}/voiceSignals/{pairKey} {
+      function isPlayer() {
+        return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/rummy13Tables/$(gameId)).data.playerUids;
       }
       function isParticipant() {
         return isPlayer() && request.auth.uid in pairKey.split('_');

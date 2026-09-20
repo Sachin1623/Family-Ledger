@@ -49,6 +49,8 @@ import LudoLobby from './screens/games/LudoLobby';
 import LudoGame from './screens/games/LudoGame';
 import RummyLobby from './screens/games/RummyLobby';
 import RummyGame from './screens/games/RummyGame';
+import Rummy13Lobby from './screens/games/Rummy13Lobby';
+import Rummy13Game from './screens/games/Rummy13Game';
 import GameRanks from './screens/games/GameRanks';
 import BusinessLobby from './screens/games/BusinessLobby';
 import BusinessGame from './screens/games/BusinessGame';
@@ -363,6 +365,8 @@ export default function App() {
               <Route path="/games/ludo/:gameId" element={<GameRouteKey><AuthenticatedLayout><LudoGame /></AuthenticatedLayout></GameRouteKey>} />
               <Route path="/games/rummy" element={<AuthenticatedLayout><RummyLobby /></AuthenticatedLayout>} />
               <Route path="/games/rummy/:gameId" element={<GameRouteKey><AuthenticatedLayout><RummyGame /></AuthenticatedLayout></GameRouteKey>} />
+              <Route path="/games/rummy13" element={<AuthenticatedLayout><Rummy13Lobby /></AuthenticatedLayout>} />
+              <Route path="/games/rummy13/:tableId" element={<GameRouteKey><AuthenticatedLayout><Rummy13Game /></AuthenticatedLayout></GameRouteKey>} />
               <Route path="/games/ranks/:gameType" element={<AuthenticatedLayout><GameRanks /></AuthenticatedLayout>} />
               <Route path="/games/business" element={<AuthenticatedLayout><BusinessLobby /></AuthenticatedLayout>} />
               <Route path="/games/business/:gameId" element={<GameRouteKey><AuthenticatedLayout><BusinessGame /></AuthenticatedLayout></GameRouteKey>} />

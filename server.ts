@@ -459,6 +459,7 @@ async function sendPush(
 // know each game's player-array shape.
 const GAME_TURN_META: Record<string, { label: string; routeBase: string; pushType: string }> = {
   rummy: { label: '27-Hand Rummy', routeBase: '/games/rummy', pushType: 'rummy_turn' },
+  rummy13: { label: '13-Card Rummy', routeBase: '/games/rummy13', pushType: 'rummy13_turn' },
   sweep: { label: 'Sweep', routeBase: '/games/sweep', pushType: 'sweep_turn' },
   sequence: { label: 'Sequence', routeBase: '/games/sequence', pushType: 'sequence_turn' },
   business: { label: 'Business', routeBase: '/games/business', pushType: 'business_turn' },
@@ -5955,6 +5956,940 @@ async function startServer() {
     }
   });
 
+  // ===================== 13-Card Rummy =====================
+  // Classic Indian Rummy — distinct from the "27-Hand Rummy" custom variant above. Supports 2-6
+  // players, Single Deal and Pool (101/201) formats. Same server-mediated hidden-info pattern as
+  // 27-Hand Rummy, split across two collections: `rummy13Tables` is the persistent MATCH (format,
+  // pool totals, current-deal pointer); `rummy13Deals` is one hand of play — Single Deal formats
+  // only ever have one, Pool formats auto-create a fresh one after each deal via
+  // resolveRummy13DealEnd below. Printed jokers use a reserved rank token 'JK' + placeholder suit
+  // 'X' (e.g. "JKX_0") so they parse correctly through the same rank/suit shape as a real card —
+  // every validator below just treats 'JK' as always-wild.
+
+  const RUMMY13_HAND_SIZE = 13;
+  const RUMMY13_PRINTED_JOKER = 'JK';
+
+  function buildRummy13Deck(deckCount: 1 | 2): string[] {
+    const deck: string[] = [];
+    for (let d = 0; d < deckCount; d++) {
+      for (const suit of RUMMY_SUITS) {
+        for (const rank of RUMMY_RANKS) deck.push(`${rank}${suit}_${d}`);
+      }
+      deck.push(`${RUMMY13_PRINTED_JOKER}X_${d}`);
+    }
+    return deck; // 53 or 106 cards
+  }
+
+  function rummy13Shuffle<T>(arr: T[]): T[] {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function rummy13ParseCard(id: string): { rank: string; suit: string } {
+    const face = id.split('_')[0];
+    return { rank: face.slice(0, -1), suit: face.slice(-1) };
+  }
+
+  function rummy13RankIndex(rank: string, aceHigh: boolean): number {
+    if (rank === 'A') return aceHigh ? 13 : 0;
+    return RUMMY_RANKS.indexOf(rank);
+  }
+
+  function rummy13IsPureSequence(cardIds: string[]): boolean {
+    if (cardIds.length < 3) return false;
+    const parsed = cardIds.map(rummy13ParseCard);
+    if (parsed.some((c) => c.rank === RUMMY13_PRINTED_JOKER)) return false; // a printed joker is never "pure"
+    const suit = parsed[0].suit;
+    if (!parsed.every((c) => c.suit === suit)) return false;
+    for (const aceHigh of [false, true]) {
+      const idxs = parsed.map((c) => rummy13RankIndex(c.rank, aceHigh)).sort((a, b) => a - b);
+      if (new Set(idxs).size !== idxs.length) continue;
+      let ok = true;
+      for (let i = 1; i < idxs.length; i++) if (idxs[i] !== idxs[i - 1] + 1) { ok = false; break; }
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  function rummy13IsValidSequence(cardIds: string[], wildcardRanks: string[]): boolean {
+    if (cardIds.length < 3) return false;
+    const parsed = cardIds.map(rummy13ParseCard);
+    const naturals = parsed.filter((c) => !wildcardRanks.includes(c.rank));
+    const wilds = parsed.filter((c) => wildcardRanks.includes(c.rank));
+    if (naturals.length === 0) return true;
+    const suit = naturals[0].suit;
+    if (!naturals.every((c) => c.suit === suit)) return false;
+    const n = cardIds.length;
+    for (const aceHigh of [false, true]) {
+      const naturalIdxs = naturals.map((c) => rummy13RankIndex(c.rank, aceHigh));
+      if (new Set(naturalIdxs).size !== naturalIdxs.length) continue;
+      const minIdx = Math.min(...naturalIdxs);
+      const maxIdx = Math.max(...naturalIdxs);
+      if (maxIdx - minIdx + 1 > n) continue;
+      const maxStart = Math.min(minIdx, (aceHigh ? 14 : 13) - n);
+      const minStart = Math.max(0, maxIdx - n + 1);
+      for (let start = minStart; start <= maxStart; start++) {
+        const windowIdxs = new Set(Array.from({ length: n }, (_, i) => start + i));
+        if (!naturalIdxs.every((i) => windowIdxs.has(i))) continue;
+        const gaps = n - naturalIdxs.length;
+        if (gaps === wilds.length) return true;
+      }
+    }
+    return false;
+  }
+
+  function rummy13IsValidSet(cardIds: string[], wildcardRanks: string[]): boolean {
+    if (cardIds.length < 3 || cardIds.length > 4) return false;
+    const parsed = cardIds.map(rummy13ParseCard);
+    const naturals = parsed.filter((c) => !wildcardRanks.includes(c.rank));
+    const wilds = parsed.filter((c) => wildcardRanks.includes(c.rank));
+    if (naturals.length === 0) return true;
+    const rank = naturals[0].rank;
+    if (!naturals.every((c) => c.rank === rank)) return false;
+    if (naturals.length + wilds.length !== cardIds.length) return false;
+    const suitCounts = new Set(naturals.map((c) => c.suit));
+    const allSameSuit = suitCounts.size === 1;
+    const allDistinctSuits = suitCounts.size === naturals.length;
+    if (!allSameSuit && !allDistinctSuits) return false;
+    if (wilds.length > 0 && !allDistinctSuits) return false;
+    return true;
+  }
+
+  function rummy13IsValidGroup(cardIds: string[], wildcardRanks: string[]): boolean {
+    return rummy13IsValidSequence(cardIds, wildcardRanks) || rummy13IsValidSet(cardIds, wildcardRanks);
+  }
+
+  function rummy13NextActiveSeat(players: any[], fromSeatIndex: number): number {
+    const n = players.length;
+    for (let step = 1; step <= n; step++) {
+      const idx = (fromSeatIndex + step) % n;
+      if (!players[idx]?.dropped) return idx;
+    }
+    return fromSeatIndex;
+  }
+
+  function rummy13ArraysSameMultiset(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    const counts = new Map<string, number>();
+    for (const x of a) counts.set(x, (counts.get(x) || 0) + 1);
+    for (const x of b) {
+      const c = counts.get(x) || 0;
+      if (c === 0) return false;
+      counts.set(x, c - 1);
+    }
+    return true;
+  }
+
+  function rummy13CardValue(cardId: string, wildcardRanks: string[]): number {
+    const { rank } = rummy13ParseCard(cardId);
+    if (wildcardRanks.includes(rank)) return 0;
+    if (rank === 'A' || rank === 'J' || rank === 'Q' || rank === 'K') return 10;
+    return Number(rank) || 0;
+  }
+
+  // Pop from the end of `deck` until a non-printed-joker card is found (candidates skipped over
+  // are pushed back in, order doesn't matter — same set-aside/restore technique as 27-Hand's
+  // rummyDrawDistinctRankCard).
+  function rummy13DrawWildIndicator(deck: string[]): { card: string; rank: string } {
+    const setAside: string[] = [];
+    let found: string | null = null;
+    while (deck.length > 0) {
+      const candidate = deck.pop()!;
+      if (rummy13ParseCard(candidate).rank !== RUMMY13_PRINTED_JOKER) {
+        found = candidate;
+        break;
+      }
+      setAside.push(candidate);
+    }
+    deck.push(...setAside);
+    if (!found) throw { status: 500, message: 'Unable to draw a wild joker indicator.' };
+    return { card: found, rank: rummy13ParseCard(found).rank };
+  }
+
+  function rummy13DealFreshHands(activePlayers: { uid: string }[]): {
+    hands: Record<string, string[]>;
+    wildJokerRank: string;
+    wildJokerIndicatorCard: string;
+    starterDiscard: string;
+    stock: string[];
+    deckCount: 1 | 2;
+  } {
+    const deckCount: 1 | 2 = activePlayers.length <= 2 ? 1 : 2;
+    let deck = rummy13Shuffle(buildRummy13Deck(deckCount));
+    const hands: Record<string, string[]> = {};
+    for (const p of activePlayers) {
+      hands[p.uid] = deck.slice(0, RUMMY13_HAND_SIZE);
+      deck = deck.slice(RUMMY13_HAND_SIZE);
+    }
+    const { card: wildJokerIndicatorCard, rank: wildJokerRank } = rummy13DrawWildIndicator(deck);
+    const starterDiscard = deck.pop()!;
+    const stock = deck;
+    return { hands, wildJokerRank, wildJokerIndicatorCard, starterDiscard, stock, deckCount };
+  }
+
+  function rummy13Combinations<T>(arr: T[], size: number): T[][] {
+    if (size === 0) return [[]];
+    if (arr.length < size) return [];
+    const [first, ...rest] = arr;
+    const withFirst = rummy13Combinations(rest, size - 1).map((c) => [first, ...c]);
+    const withoutFirst = rummy13Combinations(rest, size);
+    return [...withFirst, ...withoutFirst];
+  }
+
+  // Protect-tier penalty scoring for a LOSING hand (the player never submitted a claimed grouping,
+  // they just hold whatever cards they have) — bounded, exhaustive-over-small-N search, not a
+  // generic NP-hard solve. Pass 1: does any pure sequence exist at all (checked over every 3/4-card
+  // subset — sufficient, since any card in a longer pure run is also covered by some 3-card window
+  // of it, and valid sets are capped at 4 anyway)? If none, every non-joker card counts (Tier 0).
+  // Pass 2 (only if a pure sequence exists): for each distinct pure-sequence candidate, greedily
+  // pack the REMAINING cards into the maximum-value set of non-overlapping valid groups via a small
+  // recursive search, and keep whichever candidate minimizes the resulting penalty. Capped at 80.
+  function computeRummy13HandPenalty(hand: string[], wildcardRanks: string[]): { penalty: number; protectedCardIds: string[] } {
+    const pureCandidates: string[][] = [];
+    for (const size of [3, 4]) {
+      for (const combo of rummy13Combinations(hand, size)) {
+        if (rummy13IsPureSequence(combo)) pureCandidates.push(combo);
+      }
+    }
+
+    if (pureCandidates.length === 0) {
+      const penalty = Math.min(hand.reduce((sum, c) => sum + rummy13CardValue(c, wildcardRanks), 0), 80);
+      return { penalty, protectedCardIds: [] };
+    }
+
+    const seen = new Set<string>();
+    const dedupedCandidates = pureCandidates.filter((c) => {
+      const key = [...c].sort().join(',');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    function bestCoverage(remaining: string[]): { value: number; cards: Set<string> } {
+      if (remaining.length === 0) return { value: 0, cards: new Set() };
+      const [first, ...rest] = remaining;
+      let best = bestCoverage(rest); // leave `first` unprotected
+      for (const size of [3, 4]) {
+        if (rest.length < size - 1) continue;
+        for (const combo of rummy13Combinations(rest, size - 1)) {
+          const groupCards = [first, ...combo];
+          if (!rummy13IsValidGroup(groupCards, wildcardRanks)) continue;
+          const restOfRemaining = remaining.filter((c) => !groupCards.includes(c));
+          const sub = bestCoverage(restOfRemaining);
+          const groupValue = groupCards.reduce((s, c) => s + rummy13CardValue(c, wildcardRanks), 0);
+          if (sub.value + groupValue > best.value) {
+            best = { value: sub.value + groupValue, cards: new Set([...sub.cards, ...groupCards]) };
+          }
+        }
+      }
+      return best;
+    }
+
+    let bestPenalty = Infinity;
+    let bestProtected: string[] = [];
+    for (const anchor of dedupedCandidates) {
+      const remaining = hand.filter((c) => !anchor.includes(c));
+      const coverage = bestCoverage(remaining);
+      const protectedIds = [...anchor, ...coverage.cards];
+      const protectedSet = new Set(protectedIds);
+      const penalty = hand.reduce((sum, c) => (protectedSet.has(c) ? sum : sum + rummy13CardValue(c, wildcardRanks)), 0);
+      if (penalty < bestPenalty) {
+        bestPenalty = penalty;
+        bestProtected = protectedIds;
+      }
+    }
+
+    return { penalty: Math.min(bestPenalty, 80), protectedCardIds: bestProtected };
+  }
+
+  // The shared "a deal just ended — apply scores, then either finish the table or deal the next
+  // hand" transition, called from /declare (both branches), /drop and /timeout (when they bring
+  // the deal's still-active count to 1), and /draw's stock-exhaustion void path.
+  //
+  // PRECONDITION: every read this needs (table, deal, and any hand docs used to build
+  // `revealedHands`) must already have happened via the caller's own `tx.get`s before this is
+  // invoked, and the caller must not have issued any `tx.update`/`tx.set` yet — `awardGamePoints`
+  // (called from here) does its own reads internally and must run before any write in the
+  // transaction, per Firestore's read-before-write rule.
+  async function resolveRummy13DealEnd(
+    tx: FirebaseFirestore.Transaction,
+    db: Firestore,
+    ctx: {
+      tableRef: FirebaseFirestore.DocumentReference;
+      table: any;
+      dealRef: FirebaseFirestore.DocumentReference;
+      endedBy: 'declare' | 'drop' | 'timeout' | 'void';
+      winnerUid: string | null;
+      dealScores: Record<string, number>;
+      invalidDeclareUid?: string | null;
+      revealedHands: Record<string, any>;
+    },
+  ): Promise<{ finished: boolean; newDealId?: string }> {
+    const nowIso = new Date().toISOString();
+    const table = ctx.table;
+
+    let players: any[] = table.players;
+    if (table.format !== 'single') {
+      players = players.map((p: any) => {
+        const cumulativeScore = p.cumulativeScore + (ctx.dealScores[p.uid] || 0);
+        return { ...p, cumulativeScore, eliminated: p.eliminated || cumulativeScore >= table.poolLimit };
+      });
+    }
+
+    tx.update(ctx.dealRef, {
+      status: ctx.endedBy === 'void' ? 'void' : 'finished',
+      finishedAt: nowIso,
+      winnerUid: ctx.winnerUid,
+      dealScores: ctx.dealScores,
+      revealedHands: ctx.revealedHands,
+    });
+
+    const summary = {
+      dealNumber: table.dealNumber,
+      endedBy: ctx.endedBy,
+      winnerUid: ctx.winnerUid,
+      dealScores: ctx.dealScores,
+      invalidDeclareUid: ctx.invalidDeclareUid || null,
+    };
+
+    const stillIn = players.filter((p: any) => !p.eliminated);
+    const shouldFinishTable = table.format === 'single' || stillIn.length <= 1;
+
+    if (shouldFinishTable) {
+      const tableWinnerUid: string | null =
+        table.format === 'single'
+          ? ctx.winnerUid
+          : stillIn.length === 1
+          ? stillIn[0].uid
+          : players.slice().sort((a: any, b: any) => a.cumulativeScore - b.cumulativeScore || a.seatIndex - b.seatIndex)[0]?.uid || null;
+
+      if (tableWinnerUid) {
+        await awardGamePoints(tx, db, { gameType: 'rummy13', gameId: ctx.tableRef.id, playerUids: players.map((p: any) => p.uid), winnerUids: [tableWinnerUid] });
+      }
+      tx.update(ctx.tableRef, { status: 'finished', players, winnerUid: tableWinnerUid, finishedAt: nowIso, lastDealSummary: summary });
+      if (tableWinnerUid) {
+        recordGameOutcome(tx, db, ctx.tableRef.id, {
+          gameType: 'rummy13', playerUids: players.map((p: any) => p.uid),
+          players: players.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL })),
+          winnerUid: tableWinnerUid, finishedAt: nowIso,
+        });
+      }
+      return { finished: true };
+    }
+
+    // Deal the NEXT hand immediately, atomically — no host-confirm step, so the client's "deal
+    // ending / next deal starting" is purely a cosmetic transition, not a real intermediate state.
+    const activePlayers = players.filter((p: any) => !p.eliminated);
+    const { hands, wildJokerRank, wildJokerIndicatorCard, starterDiscard, stock, deckCount } = rummy13DealFreshHands(activePlayers);
+    const newDealRef = db.collection('rummy13Deals').doc();
+    for (const p of activePlayers) tx.set(newDealRef.collection('hands').doc(p.uid), { cards: hands[p.uid] });
+    tx.set(newDealRef.collection('secret').doc('stock'), { cards: stock });
+    tx.set(newDealRef, {
+      tableId: ctx.tableRef.id,
+      playerUids: activePlayers.map((p: any) => p.uid),
+      dealNumber: table.dealNumber + 1,
+      players: activePlayers.map((p: any) => ({ uid: p.uid, seatIndex: p.seatIndex, handCount: RUMMY13_HAND_SIZE, dropped: false, hasActedThisDeal: false })),
+      currentTurnSeatIndex: 0,
+      turnPhase: 'draw',
+      turnStartedAt: nowIso,
+      stockCount: stock.length,
+      discardPile: [starterDiscard],
+      wildJokerRank,
+      wildJokerIndicatorCard,
+      deckCount,
+      turnDrawnCard: null,
+      turnDrawnFromDiscard: false,
+      status: 'active',
+      startedAt: nowIso,
+      finishedAt: null,
+      winnerUid: null,
+      dealScores: null,
+      revealedHands: null,
+    });
+    tx.update(ctx.tableRef, { players, currentDealId: newDealRef.id, dealNumber: table.dealNumber + 1, lastDealSummary: summary });
+    return { finished: false, newDealId: newDealRef.id };
+  }
+
+  app.post('/api/rummy13/invite', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+
+    const tableId = String(req.body?.gameId || '');
+    const inviteeUids: string[] = Array.isArray(req.body?.inviteeUids) ? req.body.inviteeUids.filter((u: unknown) => typeof u === 'string') : [];
+    const poke = req.body?.poke === true;
+    if (!tableId || inviteeUids.length === 0) return res.status(400).json({ error: 'gameId and inviteeUids are required.' });
+
+    try {
+      const tableSnap = await db.collection('rummy13Tables').doc(tableId).get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (!(table.playerUids || []).includes(decoded.uid)) return res.status(403).json({ error: 'Not part of this table.' });
+
+      const targets = inviteeUids.filter((uid) => uid !== decoded.uid && !(table.playerUids || []).includes(uid));
+      const sent = await sendGameInvites(db, { gameId: tableId, game: table, callerUid: decoded.uid, targets, gameLabel: '13-Card Rummy', routeSegment: 'rummy13', poke });
+      return res.json({ sent });
+    } catch (error) {
+      console.error('rummy13/invite error:', error);
+      return res.status(500).json({ error: 'Unable to send invites.' });
+    }
+  });
+
+  app.post('/api/rummy13/start', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('rummy13Tables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can start the table.' });
+      if (table.status !== 'waiting') return res.status(400).json({ error: 'Table already started.' });
+      const players: any[] = table.players || [];
+      if (players.length < 2) return res.status(400).json({ error: 'Need at least 2 players to start.' });
+
+      const { hands, wildJokerRank, wildJokerIndicatorCard, starterDiscard, stock, deckCount } = rummy13DealFreshHands(players);
+      const dealRef = db.collection('rummy13Deals').doc();
+      const nowIso = new Date().toISOString();
+
+      const batch = db.batch();
+      for (const p of players) batch.set(dealRef.collection('hands').doc(p.uid), { cards: hands[p.uid] });
+      batch.set(dealRef.collection('secret').doc('stock'), { cards: stock });
+      batch.set(dealRef, {
+        tableId,
+        playerUids: players.map((p) => p.uid),
+        dealNumber: 1,
+        players: players.map((p) => ({ uid: p.uid, seatIndex: p.seatIndex, handCount: RUMMY13_HAND_SIZE, dropped: false, hasActedThisDeal: false })),
+        currentTurnSeatIndex: 0,
+        turnPhase: 'draw',
+        turnStartedAt: nowIso,
+        stockCount: stock.length,
+        discardPile: [starterDiscard],
+        wildJokerRank,
+        wildJokerIndicatorCard,
+        deckCount,
+        turnDrawnCard: null,
+        turnDrawnFromDiscard: false,
+        status: 'active',
+        startedAt: nowIso,
+        finishedAt: null,
+        winnerUid: null,
+        dealScores: null,
+        revealedHands: null,
+      });
+      batch.update(tableRef, {
+        status: 'active',
+        startedAt: nowIso,
+        currentDealId: dealRef.id,
+        dealNumber: 1,
+        players: players.map((p) => ({ ...p, cumulativeScore: p.cumulativeScore || 0, eliminated: false })),
+      });
+      await batch.commit();
+      return res.json({ ok: true, dealId: dealRef.id });
+    } catch (error) {
+      console.error('rummy13/start error:', error);
+      return res.status(500).json({ error: 'Unable to start table.' });
+    }
+  });
+
+  app.post('/api/rummy13/draw', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    const source = req.body?.source === 'discard' ? 'discard' : 'stock';
+    if (!dealId) return res.status(400).json({ error: 'dealId is required.' });
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+      const handRef = dealRef.collection('hands').doc(decoded.uid);
+      const stockRef = dealRef.collection('secret').doc('stock');
+
+      const result = await db.runTransaction(async (tx) => {
+        const [dealSnap, handSnap, stockSnap] = await Promise.all([tx.get(dealRef), tx.get(handRef), tx.get(stockRef)]);
+        if (!dealSnap.exists || !handSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'Deal is not active.' };
+        const players: any[] = deal.players || [];
+        const mySeat = players[deal.currentTurnSeatIndex];
+        if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'Not your turn.' };
+        if (deal.turnPhase !== 'draw') throw { status: 400, message: 'You have already drawn this turn.' };
+
+        const hand = handSnap.data()!;
+        let stock: string[] = stockSnap.exists ? (stockSnap.data()!.cards || []) : [];
+        let discardPile: string[] = deal.discardPile || [];
+
+        if (source === 'stock' && stock.length === 0) {
+          if (discardPile.length <= 1) {
+            // Void this deal — too few cards to recycle. Need the table + every active player's
+            // hand up front, same as any other deal-ending path, before any write.
+            const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
+            const tableSnap = await tx.get(tableRef);
+            if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+            const table = tableSnap.data()!;
+            const handSnaps = await Promise.all(players.filter((p) => !p.dropped).map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid))));
+            const revealedHands = Object.fromEntries(players.filter((p) => !p.dropped).map((p: any, i: number) => [p.uid, { cards: handSnaps[i].data()?.cards || [] }]));
+            const outcome = await resolveRummy13DealEnd(tx, db, {
+              tableRef, table, dealRef, endedBy: 'void', winnerUid: null, dealScores: {}, revealedHands,
+            });
+            return { voided: true, finished: outcome.finished };
+          }
+          const top = discardPile[discardPile.length - 1];
+          stock = rummy13Shuffle(discardPile.slice(0, -1));
+          discardPile = [top];
+        }
+
+        let drawnCard: string;
+        if (source === 'discard') {
+          if (discardPile.length === 0) throw { status: 400, message: 'Discard pile is empty.' };
+          drawnCard = discardPile[discardPile.length - 1];
+          discardPile = discardPile.slice(0, -1);
+        } else {
+          drawnCard = stock[stock.length - 1];
+          stock = stock.slice(0, -1);
+        }
+
+        const newHandCards = [...hand.cards, drawnCard];
+        tx.set(stockRef, { cards: stock });
+        tx.update(handRef, { cards: newHandCards });
+        const newPlayers = players.map((p: any, i: number) => (i === deal.currentTurnSeatIndex ? { ...p, handCount: newHandCards.length } : p));
+        tx.update(dealRef, {
+          discardPile,
+          stockCount: stock.length,
+          turnPhase: 'discard',
+          turnDrawnCard: drawnCard,
+          turnDrawnFromDiscard: source === 'discard',
+          players: newPlayers,
+          lastAction: { type: 'draw', byUid: decoded.uid, at: new Date().toISOString() },
+        });
+        return { drawnCard, voided: false, finished: false };
+      });
+
+      if (result.voided) return res.json({ ok: true, voided: true, finished: result.finished });
+      return res.json({ ok: true, drawnCard: result.drawnCard });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/draw error:', error);
+      return res.status(500).json({ error: 'Unable to draw.' });
+    }
+  });
+
+  app.post('/api/rummy13/discard', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    const cardId = String(req.body?.cardId || '');
+    if (!dealId || !cardId) return res.status(400).json({ error: 'dealId and cardId are required.' });
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+      const handRef = dealRef.collection('hands').doc(decoded.uid);
+      let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+
+      await db.runTransaction(async (tx) => {
+        const [dealSnap, handSnap] = await Promise.all([tx.get(dealRef), tx.get(handRef)]);
+        if (!dealSnap.exists || !handSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'Deal is not active.' };
+        const players: any[] = deal.players || [];
+        const mySeatIndex = deal.currentTurnSeatIndex;
+        const mySeat = players[mySeatIndex];
+        if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'Not your turn.' };
+        if (deal.turnPhase !== 'discard') throw { status: 400, message: 'Draw a card first.' };
+        if (deal.turnDrawnFromDiscard && cardId === deal.turnDrawnCard) {
+          throw { status: 400, message: 'A card drawn from the discard pile can\'t be discarded the same turn.' };
+        }
+
+        const hand = handSnap.data()!;
+        const cards: string[] = hand.cards || [];
+        if (!cards.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
+
+        const discardedIdx = cards.indexOf(cardId);
+        const newHandCards = [...cards.slice(0, discardedIdx), ...cards.slice(discardedIdx + 1)];
+        const nextSeatIndex = rummy13NextActiveSeat(players, mySeatIndex);
+        const newPlayers = players.map((p: any, i: number) =>
+          i === mySeatIndex ? { ...p, handCount: newHandCards.length, hasActedThisDeal: true } : p,
+        );
+
+        tx.update(handRef, { cards: newHandCards });
+        tx.update(dealRef, {
+          discardPile: [...(deal.discardPile || []), cardId],
+          currentTurnSeatIndex: nextSeatIndex,
+          turnPhase: 'draw',
+          turnStartedAt: new Date().toISOString(),
+          turnDrawnCard: null,
+          turnDrawnFromDiscard: false,
+          players: newPlayers,
+          lastAction: { type: 'discard', byUid: decoded.uid, at: new Date().toISOString() },
+        });
+
+        const nextPlayer = players[nextSeatIndex];
+        if (nextPlayer) {
+          turnNotice = {
+            tableId: deal.tableId,
+            nextPlayerUid: nextPlayer.uid,
+            opponentNames: players.filter((p) => p.uid !== nextPlayer.uid && !p.dropped).map((p) => p.displayName).filter(Boolean).join(', ') || null,
+          };
+        }
+      });
+
+      if (turnNotice) {
+        const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'rummy13', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (rummy13 discard) failed:', err),
+        );
+      }
+
+      return res.json({ ok: true });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/discard error:', error);
+      return res.status(500).json({ error: 'Unable to discard.' });
+    }
+  });
+
+  // The player submits their OWN claimed grouping (like 27-Hand's declare-win) — the server never
+  // tries to auto-discover a valid grouping. Unlike 27-Hand, though, an INVALID declaration here
+  // does NOT drop the player from the game — it just ends the current deal with standard scoring
+  // (the declarer takes 80 points, same as any other loss), and the declarer plays on into the next
+  // deal (Pool format) unless that 80-point penalty itself crosses the pool limit. This is the key
+  // behavioral divergence from 27-Hand's declare-win, which removes a bad-declare player outright.
+  app.post('/api/rummy13/declare', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    const discardCardId = String(req.body?.discardCardId || '');
+    const groups: string[][] = Array.isArray(req.body?.groups)
+      ? req.body.groups.filter((g: unknown) => Array.isArray(g) && g.every((c) => typeof c === 'string'))
+      : [];
+    if (!dealId || !discardCardId) return res.status(400).json({ error: 'dealId and discardCardId are required.' });
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+
+      const outcome = await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'Deal is not active.' };
+        const players: any[] = deal.players || [];
+        const mySeatIndex = deal.currentTurnSeatIndex;
+        const mySeat = players[mySeatIndex];
+        if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'You can only declare on your own turn.' };
+        if (deal.turnPhase !== 'discard') throw { status: 400, message: 'Draw a card first.' };
+
+        const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
+        const activePlayers = players.filter((p: any) => !p.dropped);
+        const [tableSnap, ...handSnaps] = await Promise.all([tx.get(tableRef), ...activePlayers.map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid)))]);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+        const handDataByUid = new Map(activePlayers.map((p: any, i: number) => [p.uid, handSnaps[i].data() || {}]));
+        const myHand: string[] = handDataByUid.get(decoded.uid)?.cards || [];
+
+        const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+        const flatGroups = groups.flat();
+        const claimedTotal = [...flatGroups, discardCardId];
+        const isValidShow =
+          new Set(claimedTotal).size === claimedTotal.length &&
+          rummy13ArraysSameMultiset(claimedTotal, myHand) &&
+          groups.every((g) => g.length >= 3 && rummy13IsValidGroup(g, wildcardRanks)) &&
+          groups.filter((g) => rummy13IsValidSequence(g, wildcardRanks)).length >= 2 &&
+          groups.some((g) => rummy13IsValidSequence(g, wildcardRanks) && rummy13IsPureSequence(g));
+
+        const dealScores: Record<string, number> = {};
+        const revealedHands: Record<string, any> = {};
+        for (const p of activePlayers) {
+          const theirCards: string[] = handDataByUid.get(p.uid)?.cards || [];
+          if (p.uid === decoded.uid) {
+            dealScores[p.uid] = isValidShow ? 0 : 80;
+            revealedHands[p.uid] = isValidShow
+              ? { cards: theirCards, declaredGroups: groups.map((g) => ({ cards: g })), discardCardId }
+              : { cards: theirCards, groups: handDataByUid.get(p.uid)?.groups || [] };
+          } else {
+            dealScores[p.uid] = computeRummy13HandPenalty(theirCards, wildcardRanks).penalty;
+            revealedHands[p.uid] = { cards: theirCards, groups: handDataByUid.get(p.uid)?.groups || [] };
+          }
+        }
+
+        const result = await resolveRummy13DealEnd(tx, db, {
+          tableRef, table, dealRef,
+          endedBy: 'declare',
+          winnerUid: isValidShow ? decoded.uid : null,
+          dealScores,
+          invalidDeclareUid: isValidShow ? null : decoded.uid,
+          revealedHands,
+        });
+        return { won: isValidShow, ...result };
+      });
+
+      return res.json({ ok: true, won: outcome.won, finished: outcome.finished });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/declare error:', error);
+      return res.status(500).json({ error: 'Unable to process declaration.' });
+    }
+  });
+
+  app.post('/api/rummy13/drop', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    if (!dealId) return res.status(400).json({ error: 'dealId is required.' });
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+      let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+
+      await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'Deal is not active.' };
+        const players: any[] = deal.players || [];
+        const myIndex = players.findIndex((p: any) => p.uid === decoded.uid);
+        if (myIndex === -1) throw { status: 403, message: 'Not part of this deal.' };
+        if (players[myIndex].dropped) throw { status: 400, message: 'Already dropped.' };
+
+        const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+
+        const penalty = players[myIndex].hasActedThisDeal ? 40 : 20;
+        const newPlayers = players.map((p: any, i: number) => (i === myIndex ? { ...p, dropped: true } : p));
+        const stillActive = newPlayers.filter((p: any) => !p.dropped);
+
+        if (stillActive.length === 1) {
+          const handSnaps = await Promise.all(newPlayers.filter((p: any) => !p.dropped || p.uid === decoded.uid).map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid))));
+          const revealSubjects = newPlayers.filter((p: any) => !p.dropped || p.uid === decoded.uid);
+          const revealedHands = Object.fromEntries(revealSubjects.map((p: any, i: number) => [p.uid, { cards: handSnaps[i].data()?.cards || [], groups: handSnaps[i].data()?.groups || [] }]));
+          await resolveRummy13DealEnd(tx, db, {
+            tableRef, table, dealRef,
+            endedBy: 'drop', winnerUid: stillActive[0].uid,
+            dealScores: { [decoded.uid]: penalty },
+            revealedHands,
+          });
+        } else {
+          const wasMyTurn = deal.currentTurnSeatIndex === myIndex;
+          tx.update(dealRef, {
+            players: newPlayers,
+            ...(wasMyTurn ? { currentTurnSeatIndex: rummy13NextActiveSeat(newPlayers, myIndex), turnPhase: 'draw', turnStartedAt: new Date().toISOString() } : {}),
+          });
+          const updatedTablePlayers = table.format === 'single' ? table.players : table.players.map((p: any) =>
+            p.uid === decoded.uid
+              ? { ...p, cumulativeScore: p.cumulativeScore + penalty, eliminated: p.eliminated || p.cumulativeScore + penalty >= table.poolLimit }
+              : p,
+          );
+          tx.update(tableRef, { players: updatedTablePlayers });
+          if (wasMyTurn) {
+            const nextIdx = rummy13NextActiveSeat(newPlayers, myIndex);
+            const nextPlayer = newPlayers[nextIdx];
+            if (nextPlayer) {
+              turnNotice = {
+                tableId: deal.tableId,
+                nextPlayerUid: nextPlayer.uid,
+                opponentNames: newPlayers.filter((p: any) => p.uid !== nextPlayer.uid && !p.dropped).map((p: any) => p.displayName).filter(Boolean).join(', ') || null,
+              };
+            }
+          }
+        }
+      });
+
+      if (turnNotice) {
+        const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'rummy13', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (rummy13 drop) failed:', err),
+        );
+      }
+      return res.json({ ok: true });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/drop error:', error);
+      return res.status(500).json({ error: 'Unable to drop.' });
+    }
+  });
+
+  // Callable by ANY seated player's client, not just whoever's turn timed out — a disconnected
+  // client won't call anything itself. Fully server-validated: `turnStartedAt` is the deal's own
+  // authoritative clock, never anything the client supplies. Naturally idempotent under races —
+  // whichever call's transaction is accepted first resets `turnStartedAt`/advances the turn, so a
+  // losing racer re-reads the already-updated deal and gets the harmless 400 below.
+  app.post('/api/rummy13/timeout', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    if (!dealId) return res.status(400).json({ error: 'dealId is required.' });
+
+    const TURN_TIMEOUT_MS = 45_000;
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+      let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+
+      const result = await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') return { resolved: true };
+        if (!(deal.playerUids || []).includes(decoded.uid)) throw { status: 403, message: 'Not part of this deal.' };
+
+        const elapsedMs = Date.now() - new Date(deal.turnStartedAt).getTime();
+        if (elapsedMs < TURN_TIMEOUT_MS) throw { status: 400, message: 'Turn has not timed out yet.' };
+
+        const players: any[] = deal.players || [];
+        const myIndex = deal.currentTurnSeatIndex;
+        const timedOutPlayer = players[myIndex];
+        if (!timedOutPlayer || timedOutPlayer.dropped) return { resolved: true };
+
+        const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+
+        const penalty = timedOutPlayer.hasActedThisDeal ? 40 : 20;
+        const newPlayers = players.map((p: any, i: number) => (i === myIndex ? { ...p, dropped: true } : p));
+        const stillActive = newPlayers.filter((p: any) => !p.dropped);
+
+        if (stillActive.length === 1) {
+          const revealSubjects = newPlayers.filter((p: any) => !p.dropped || p.uid === timedOutPlayer.uid);
+          const handSnaps = await Promise.all(revealSubjects.map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid))));
+          const revealedHands = Object.fromEntries(revealSubjects.map((p: any, i: number) => [p.uid, { cards: handSnaps[i].data()?.cards || [], groups: handSnaps[i].data()?.groups || [] }]));
+          await resolveRummy13DealEnd(tx, db, {
+            tableRef, table, dealRef,
+            endedBy: 'timeout', winnerUid: stillActive[0].uid,
+            dealScores: { [timedOutPlayer.uid]: penalty },
+            revealedHands,
+          });
+        } else {
+          const nextIdx = rummy13NextActiveSeat(newPlayers, myIndex);
+          tx.update(dealRef, { players: newPlayers, currentTurnSeatIndex: nextIdx, turnPhase: 'draw', turnStartedAt: new Date().toISOString() });
+          const updatedTablePlayers = table.format === 'single' ? table.players : table.players.map((p: any) =>
+            p.uid === timedOutPlayer.uid
+              ? { ...p, cumulativeScore: p.cumulativeScore + penalty, eliminated: p.eliminated || p.cumulativeScore + penalty >= table.poolLimit }
+              : p,
+          );
+          tx.update(tableRef, { players: updatedTablePlayers });
+          const nextPlayer = newPlayers[nextIdx];
+          if (nextPlayer) {
+            turnNotice = {
+              tableId: deal.tableId,
+              nextPlayerUid: nextPlayer.uid,
+              opponentNames: newPlayers.filter((p: any) => p.uid !== nextPlayer.uid && !p.dropped).map((p: any) => p.displayName).filter(Boolean).join(', ') || null,
+            };
+          }
+        }
+        return { resolved: true };
+      });
+
+      if (turnNotice) {
+        const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'rummy13', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (rummy13 timeout) failed:', err),
+        );
+      }
+      return res.json({ ok: true, resolved: (result as any).resolved });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/timeout error:', error);
+      return res.status(500).json({ error: 'Unable to process timeout.' });
+    }
+  });
+
+  // Deletes a table the caller hosts — only while 'waiting' or already 'finished'. Unlike 27-Hand's
+  // single game doc, a table can have accumulated SEVERAL deal docs by the time it's deletable
+  // (Pool format plays through many), so every rummy13Deals doc for this table (and their
+  // hands/secret subcollections) must be found and cascaded too, not just the current one.
+  app.post('/api/rummy13/delete', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('rummy13Tables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can delete this table.' });
+      if (table.status === 'active') {
+        return res.status(400).json({ error: 'Cannot delete a table in progress — drop out instead, or wait for it to finish.' });
+      }
+
+      const dealsSnap = await db.collection('rummy13Deals').where('tableId', '==', tableId).get();
+      const batch = db.batch();
+      for (const dealDoc of dealsSnap.docs) {
+        const [handsSnap, secretSnap] = await Promise.all([dealDoc.ref.collection('hands').get(), dealDoc.ref.collection('secret').get()]);
+        handsSnap.docs.forEach((d) => batch.delete(d.ref));
+        secretSnap.docs.forEach((d) => batch.delete(d.ref));
+        batch.delete(dealDoc.ref);
+      }
+      if (table.code) batch.delete(db.collection('rummy13TableCodes').doc(table.code));
+      batch.delete(tableRef);
+      await batch.commit();
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('rummy13/delete error:', error);
+      return res.status(500).json({ error: 'Unable to delete table.' });
+    }
+  });
+
+  app.post('/api/rummy13/rematch', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('rummy13Tables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (!(table.playerUids || []).includes(decoded.uid)) return res.status(403).json({ error: 'Not part of this table.' });
+      if (table.status !== 'finished') return res.status(400).json({ error: 'Table is not finished yet.' });
+
+      if (table.rematchGameId) return res.json({ gameId: table.rematchGameId });
+
+      const newTableRef = db.collection('rummy13Tables').doc();
+      const code = table.code;
+      const players = (table.players || []).map((p: any) => ({
+        uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, seatIndex: p.seatIndex,
+        cumulativeScore: 0, eliminated: false,
+      }));
+
+      const batch = db.batch();
+      batch.set(newTableRef, {
+        hostUid: decoded.uid, code, status: 'waiting', format: table.format, poolLimit: table.poolLimit, maxPlayers: table.maxPlayers,
+        players, playerUids: table.playerUids,
+        currentDealId: null, dealNumber: 0,
+        createdAt: new Date().toISOString(), startedAt: null, finishedAt: null, winnerUid: null,
+        lastDealSummary: null, rematchGameId: null,
+      });
+      batch.set(db.collection('rummy13TableCodes').doc(code), { gameId: newTableRef.id, hostUid: decoded.uid });
+      batch.update(tableRef, { rematchGameId: newTableRef.id });
+      await batch.commit();
+
+      return res.json({ gameId: newTableRef.id });
+    } catch (error) {
+      console.error('rummy13/rematch error:', error);
+      return res.status(500).json({ error: 'Unable to start rematch.' });
+    }
+  });
+
   // ===================== Business (Indian Monopoly-style) =====================
   // Unlike Rummy, this game is fully client-trusted (same as Ludo) — there's no meaningful hidden
   // state (cash/properties/position are always public; only the Chance/Community Chest draw order
@@ -9052,6 +9987,7 @@ async function startServer() {
     groups: { kind: 'group', label: 'Group chat' },
     directChats: { kind: 'dm', label: 'Direct message' },
     rummyGames: { kind: 'game', label: '27-Hand Rummy', routeSegment: 'rummy' },
+    rummy13Tables: { kind: 'game', label: '13-Card Rummy', routeSegment: 'rummy13' },
     sequenceGames: { kind: 'game', label: 'Sequence', routeSegment: 'sequence' },
     ludoGames: { kind: 'game', label: 'Ludo', routeSegment: 'ludo' },
     sweepGames: { kind: 'game', label: 'Sweep', routeSegment: 'sweep' },
@@ -9308,6 +10244,80 @@ async function startServer() {
       return res.json({ users: results });
     } catch (error) {
       console.error('search-users error:', error);
+      return res.status(500).json({ error: 'Search failed.' });
+    }
+  });
+
+  // Backs the Friends tab's "Add Friend" search (Friends.tsx) — deliberately a DIFFERENT, more
+  // permissive lookup than /api/search-users above: matches ANY part of a display name, short ID,
+  // or email (not just an exact ID/email), and returns the email in the results. That's an explicit
+  // product decision for this specific context (finding a friend you already know, by any detail
+  // you remember about them) — it does NOT extend to the group-invite picker above, which stays
+  // exact-ID/exact-email-only with no email in the response, on purpose (inviting someone into a
+  // shared expense group is a different trust context than a personal friends list).
+  //
+  // A full-corpus substring search isn't something Firestore can do natively (no LIKE/CONTAINS
+  // query), so this fetches the whole directory and filters in Node — genuinely fine at this app's
+  // current scale (low hundreds of users: see /api/admin/overview's totalUsers) and cached
+  // in-memory for FRIEND_DIRECTORY_CACHE_TTL_MS so a user typing a multi-character query doesn't
+  // re-trigger a full users-collection-plus-Auth-listUsers fetch on every keystroke. Revisit with a
+  // real search index (Algolia/Typesense) if the user base grows enough for this to matter.
+  const FRIEND_DIRECTORY_CACHE_TTL_MS = 60_000;
+  let friendDirectoryCache: { fetchedAt: number; entries: { uid: string; displayName: string; photoURL: string; shortId: string | null; email: string }[] } | null = null;
+
+  async function getFriendDirectory(db: Firestore) {
+    if (friendDirectoryCache && Date.now() - friendDirectoryCache.fetchedAt < FRIEND_DIRECTORY_CACHE_TTL_MS) {
+      return friendDirectoryCache.entries;
+    }
+
+    const emailByUid = new Map<string, string>();
+    if (adminAuth) {
+      let pageToken: string | undefined;
+      do {
+        const result = await adminAuth.listUsers(1000, pageToken);
+        result.users.forEach((u) => { if (u.email) emailByUid.set(u.uid, u.email); });
+        pageToken = result.pageToken;
+      } while (pageToken);
+    }
+
+    const usersSnap = await db.collection('users').get();
+    const entries = usersSnap.docs.map((d) => {
+      const data = d.data();
+      return {
+        uid: d.id,
+        displayName: data.displayName || 'User',
+        photoURL: data.photoURL || '',
+        shortId: data.shortId || null,
+        email: emailByUid.get(d.id) || '',
+      };
+    });
+
+    friendDirectoryCache = { fetchedAt: Date.now(), entries };
+    return entries;
+  }
+
+  app.post('/api/friends/search', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const query = String(req.body?.query || '').trim().toLowerCase();
+    if (query.length < 2) return res.json({ users: [] });
+
+    try {
+      const directory = await getFriendDirectory(adminDb);
+      const results = directory
+        .filter((u) =>
+          u.uid !== decoded.uid &&
+          (u.displayName.toLowerCase().includes(query) ||
+            (u.shortId && u.shortId.toLowerCase().includes(query)) ||
+            (u.email && u.email.toLowerCase().includes(query))),
+        )
+        .slice(0, 20)
+        .map((u) => ({ uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, shortId: u.shortId, email: u.email || null }));
+
+      return res.json({ users: results });
+    } catch (error) {
+      console.error('friends/search error:', error);
       return res.status(500).json({ error: 'Search failed.' });
     }
   });

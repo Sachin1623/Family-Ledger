@@ -155,6 +155,10 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo(`/games/rummy/${data.gameId}`);
   } else if (data.type === 'rummy_chat' && data.gameId) {
     navigateTo(`/games/rummy/${data.gameId}?chat=1`);
+  } else if ((data.type === 'rummy13_invite' || data.type === 'rummy13_poke' || data.type === 'rummy13_turn') && data.gameId) {
+    navigateTo(`/games/rummy13/${data.gameId}`);
+  } else if (data.type === 'rummy13_chat' && data.gameId) {
+    navigateTo(`/games/rummy13/${data.gameId}?chat=1`);
   } else if ((data.type === 'business_invite' || data.type === 'business_poke' || data.type === 'business_turn') && data.gameId) {
     navigateTo(`/games/business/${data.gameId}`);
   } else if (data.type === 'business_chat' && data.gameId) {

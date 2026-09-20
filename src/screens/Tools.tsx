@@ -63,6 +63,7 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
       { to: '/games/chess', favKey: 'game-chess', icon: '♟️', titleKey: 'games.chess', descKey: 'games.chessDesc' },
       { to: '/games/ludo', favKey: 'game-ludo', icon: '🎲', titleKey: 'games.ludo', descKey: 'games.ludoDesc' },
       { to: '/games/rummy', favKey: 'game-rummy', icon: '🃏', titleKey: 'games.rummy', descKey: 'games.rummyDesc' },
+      { to: '/games/rummy13', favKey: 'game-rummy13', icon: '🎴', titleKey: 'games.rummy13', descKey: 'games.rummy13Desc' },
       { to: '/games/business', favKey: 'game-business', icon: '🏙️', titleKey: 'games.business', descKey: 'games.businessDesc' },
       { to: '/games/sweep', favKey: 'game-sweep', icon: '🧹', titleKey: 'games.sweep', descKey: 'games.sweepDesc' },
       { to: '/games/sequence', favKey: 'game-sequence', icon: '🔴', titleKey: 'games.sequence', descKey: 'games.sequenceDesc' },

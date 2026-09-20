@@ -45,6 +45,14 @@ const GAMES = [
     available: true,
   },
   {
+    to: '/games/rummy13',
+    favKey: 'game-rummy13',
+    icon: '🎴',
+    titleKey: 'games.rummy13',
+    descKey: 'games.rummy13Desc',
+    available: true,
+  },
+  {
     to: '/games/business',
     favKey: 'game-business',
     icon: '🏙️',

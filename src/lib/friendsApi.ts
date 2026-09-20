@@ -78,6 +78,32 @@ export async function acceptFriendRequest(friendUid: string): Promise<void> {
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
 }
 
+export interface FriendSearchResult {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+  shortId: string | null;
+  email: string | null;
+}
+
+// Add-friend search (Friends.tsx) — matches ANY part of a name, short ID, or email, and returns
+// the email too. Deliberately separate from inviteApi.ts's searchUsers (the group-invite picker),
+// which stays exact-ID/exact-email-only with no email in the response — a different trust context
+// (adding a personal friend you already know vs. inviting someone into a shared expense group).
+export async function searchUsersForFriends(query: string): Promise<FriendSearchResult[]> {
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error('Not signed in.');
+
+  const res = await fetch('/api/friends/search', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
+  return data.users || [];
+}
+
 export interface FriendSuggestion {
   uid: string;
   displayName: string;

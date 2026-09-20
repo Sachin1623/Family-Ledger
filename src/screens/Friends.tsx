@@ -12,9 +12,8 @@ import { useFamilies } from '../lib/useFamilies';
 import { useAllGroupMembers } from '../lib/useAllGroupMembers';
 import {
   requestFriend, acceptFriendRequest, friendshipId, getFriendSuggestions, FriendSuggestion,
-  resendFriendRequest, resendAllFriendRequests,
+  resendFriendRequest, resendAllFriendRequests, searchUsersForFriends, FriendSearchResult,
 } from '../lib/friendsApi';
-import { searchUsers, FoundUser } from '../lib/inviteApi';
 import { fireWrite } from '../lib/offlineWrite';
 import { formatRelativeTimeAgo } from '../lib/dateUtils';
 import { getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
@@ -61,7 +60,7 @@ export default function Friends() {
   // --- Add friend ---
   const [showAdd, setShowAdd] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<FoundUser[]>([]);
+  const [searchResults, setSearchResults] = useState<FriendSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [addFeedback, setAddFeedback] = useState<Feedback>(null);
   const [actingUid, setActingUid] = useState<string | null>(null);
@@ -71,7 +70,7 @@ export default function Friends() {
     if (q.length < 2) { setSearchResults([]); return; }
     setSearching(true);
     const timer = setTimeout(() => {
-      searchUsers(q)
+      searchUsersForFriends(q)
         .then((users) => setSearchResults(users.filter((u) => !acceptedUids.has(u.uid) && !pendingUids.has(u.uid))))
         .catch(() => setSearchResults([]))
         .finally(() => setSearching(false));
@@ -349,11 +348,15 @@ export default function Friends() {
                       {searchResults.map((u) => (
                         <div key={u.uid} className="flex items-center gap-2.5 p-2 rounded-xl bg-surface/40">
                           <Avatar photoURL={u.photoURL} name={u.displayName} />
-                          <p className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{u.displayName}</p>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-on-surface truncate">{u.displayName}</p>
+                            {u.email && <p className="text-[10px] text-text-muted truncate">{u.email}</p>}
+                            {u.shortId && <p className="text-[10px] text-text-muted truncate">ID: {u.shortId}</p>}
+                          </div>
                           <button
                             onClick={() => handleSendRequest(u.uid)}
                             disabled={actingUid === u.uid}
-                            className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold disabled:opacity-50"
+                            className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold disabled:opacity-50 shrink-0"
                           >
                             {actingUid === u.uid ? '…' : t('friends.add')}
                           </button>

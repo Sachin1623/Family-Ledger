@@ -114,6 +114,42 @@ export const RUMMY_HELP: GameHelpContent = {
   ],
 };
 
+export const RUMMY13_HELP: GameHelpContent = {
+  title: '13-Card Rummy — How to Play',
+  sections: [
+    {
+      heading: 'Setup',
+      body: [
+        '2-6 players, 13 cards each. 2 players use one 52-card deck plus a printed joker; 3-6 players use two decks plus a printed joker each.',
+        'One "wild joker" rank is revealed at the start of every deal — every card of that rank (any suit) is wild, on top of the printed jokers.',
+      ],
+    },
+    {
+      heading: 'Your turn',
+      body: ['Draw one card (from the stock, or the top of the discard pile), then discard one. A card you drew from the discard pile can\'t be discarded again the same turn.'],
+    },
+    {
+      heading: 'Declaring',
+      body: [
+        'Organize your hand into groups. You need at least two sequences, and at least one of them must be a PURE sequence (no jokers) — everything else must form valid sequences or sets. Discard your 14th card and declare when ready.',
+        'An incorrect declaration doesn\'t remove you from the table — it just costs you 80 points for that deal, same as any other loss.',
+      ],
+    },
+    {
+      heading: 'Drops & timeouts',
+      body: [
+        'Dropping before your first turn costs 20 points; dropping after that costs 40. Each turn has a 45-second timer — running out of time counts as a drop.',
+      ],
+    },
+    {
+      heading: 'Pool Rummy',
+      body: [
+        'In Pool 101/201, deals continue automatically — your points carry over between deals, and you\'re eliminated once your total reaches the pool limit. Last player standing wins the table.',
+      ],
+    },
+  ],
+};
+
 export const BUSINESS_HELP: GameHelpContent = {
   title: 'Business — How to Play',
   sections: [
