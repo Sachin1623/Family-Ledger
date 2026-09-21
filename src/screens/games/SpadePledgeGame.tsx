@@ -224,8 +224,10 @@ export default function SpadePledgeGame() {
 
   const myDealIndex = deal?.players.findIndex((p) => p.uid === user.uid) ?? -1;
   const meInDeal = deal && myDealIndex >= 0 ? deal.players[myDealIndex] : null;
-  const isMyBidTurn = deal?.status === 'active' && deal.phase === 'bidding' && deal.players[deal.currentTurnSeatIndex]?.uid === user.uid;
-  const isMyPlayTurn = deal?.status === 'active' && deal.phase === 'playing' && deal.players[deal.currentTurnSeatIndex]?.uid === user.uid;
+  // Gated on !me?.isBot too — once a seat is bot-controlled, the server resolves its turns itself
+  // (see drainSpadePledgeBotTurns), so this client should never offer manual controls for it.
+  const isMyBidTurn = deal?.status === 'active' && deal.phase === 'bidding' && !me?.isBot && deal.players[deal.currentTurnSeatIndex]?.uid === user.uid;
+  const isMyPlayTurn = deal?.status === 'active' && deal.phase === 'playing' && !me?.isBot && deal.players[deal.currentTurnSeatIndex]?.uid === user.uid;
   const myLegalCards = deal && meInDeal && isMyPlayTurn ? legalCards(handSorted, deal.currentTrick, deal.spadesBroken) : [];
 
   const nameFor = (uid: string) => (uid === user.uid ? 'You' : table.players.find((p) => p.uid === uid)?.displayName || '…');
@@ -290,6 +292,10 @@ export default function SpadePledgeGame() {
 
   const handlePlay = async (cardId: string) => {
     await call('/api/spadePledge/play', { cardId }).catch(() => {});
+  };
+
+  const handleReclaimSeat = async () => {
+    await call('/api/spadePledge/reclaim-seat', {}).catch(() => {});
   };
 
   const handleDeleteTable = async () => {
@@ -518,9 +524,12 @@ export default function SpadePledgeGame() {
   // ---- Active ----
   if (!deal) return <div className="p-8 text-center text-text-muted">Loading hand…</div>;
 
+  const currentTurnUid = deal.players[deal.currentTurnSeatIndex]?.uid;
+  const currentTurnIsMyBot = me?.isBot && currentTurnUid === user.uid;
+  const currentTurnLabel = currentTurnIsMyBot ? 'Your bot' : nameFor(currentTurnUid);
   const turnStatusText = deal.phase === 'bidding'
-    ? isMyBidTurn ? 'Your turn — place your bid' : `${nameFor(deal.players[deal.currentTurnSeatIndex]?.uid)}'s turn to bid`
-    : isMyPlayTurn ? 'Your turn — play a card' : `${nameFor(deal.players[deal.currentTurnSeatIndex]?.uid)}'s turn`;
+    ? isMyBidTurn ? 'Your turn — place your bid' : `${currentTurnLabel}'s turn to bid`
+    : isMyPlayTurn ? 'Your turn — play a card' : `${currentTurnLabel}'s turn`;
   const timerWarning = remainingSec !== null && remainingSec <= TURN_WARNING_MS / 1000;
 
   const relSeatOf = (seatIndex: number) => (me ? (seatIndex - me.seatIndex + 4) % 4 : seatIndex);
@@ -640,6 +649,21 @@ export default function SpadePledgeGame() {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="p-2 max-w-xl mx-auto w-full pb-6 space-y-3">
             {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
+
+            {me?.isBot && (
+              <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-bold text-warning">
+                  A bot is playing your seat — you missed 2 turns in a row.
+                </p>
+                <button
+                  onClick={handleReclaimSeat}
+                  disabled={busy}
+                  className="px-3 py-1.5 bg-warning text-white rounded-lg text-[11px] font-bold shrink-0 disabled:opacity-50"
+                >
+                  I'm back — take control
+                </button>
+              </div>
+            )}
 
             {/* Trick area */}
             <div className="grid grid-cols-3 grid-rows-3 gap-1.5 bg-white rounded-2xl border border-border-subtle p-3 aspect-square max-w-[280px] mx-auto place-items-center">

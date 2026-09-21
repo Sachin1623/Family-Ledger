@@ -183,7 +183,7 @@ export const SPADE_PLEDGE_HELP: GameHelpContent = {
     {
       heading: 'Timeouts',
       body: [
-        "Each turn has a 30-second timer — running out auto-bids or auto-plays your lowest legal card. Two timeouts in a row hands your seat to a bot for the rest of the match.",
+        "Each turn has a 30-second timer — running out auto-bids or auto-plays your lowest legal card. Two timeouts in a row hands your seat to a bot for the rest of the match — tap \"Take control\" when you're back to resume playing yourself.",
       ],
     },
   ],

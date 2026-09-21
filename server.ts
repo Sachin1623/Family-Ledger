@@ -7693,6 +7693,38 @@ async function startServer() {
     }
   });
 
+  // Lets a human whose seat was auto-converted to a bot (2 consecutive timeouts, see /timeout)
+  // take back manual control once they're back — the seat's uid never changed, only `isBot`, so
+  // this is just flipping that flag off and forgiving past timeouts. Restricted to the player who
+  // actually owns that seat; a no-op 400 if it was never converted (or is a genuine host-added bot
+  // with no real owner to reclaim it).
+  app.post('/api/spadePledge/reclaim-seat', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('spadePledgeTables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.status === 'finished') return res.status(400).json({ error: 'This match has already finished.' });
+
+      const myIndex = (table.players || []).findIndex((p: any) => p.uid === decoded.uid);
+      if (myIndex === -1) return res.status(403).json({ error: 'Not part of this table.' });
+      if (!table.players[myIndex].isBot) return res.status(400).json({ error: 'Your seat is already under manual control.' });
+
+      const newPlayers = table.players.map((p: any, i: number) => (i === myIndex ? { ...p, isBot: false, consecutiveTimeouts: 0 } : p));
+      await tableRef.update({ players: newPlayers });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('spadePledge/reclaim-seat error:', error);
+      return res.status(500).json({ error: 'Unable to take back control.' });
+    }
+  });
+
   // Cascades every spadePledgeDeals doc for this table (and their hands subcollections) — a table
   // can accumulate several finished hand docs by the time it's deletable.
   app.post('/api/spadePledge/delete', async (req, res) => {
