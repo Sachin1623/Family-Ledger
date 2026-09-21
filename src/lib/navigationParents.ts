@@ -75,9 +75,11 @@ const PARENT_OVERRIDES: Record<string, string> = {
 
 const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/games\/ranks\/[^/]+$/, '/games'],
+  // Sudoku is the one exception to the direct-to-Tools shortcut below: mid-puzzle back returns to
+  // Sudoku's own home (difficulty/streak/leaderboard) rather than skipping past it.
+  [/^\/games\/sudoku\/play\/[^/]+$/, '/games/sudoku'],
   // Same direct-to-Tools shortcut as the lobby overrides above — an active game's back goes
   // straight to Tools' Games tab, not through its own lobby.
-  [/^\/games\/sudoku\/play\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/ludo\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/rummy\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/business\/[^/]+$/, '/tools?category=games'],

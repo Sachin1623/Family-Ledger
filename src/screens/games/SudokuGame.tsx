@@ -286,10 +286,7 @@ export default function SudokuGame() {
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
         <div className="flex items-center justify-between">
-          <button onClick={() => navigate('/tools?category=games')} className="text-xs font-bold text-primary flex items-center gap-1">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-            Sudoku
-          </button>
+          <span className="text-xs font-bold text-primary capitalize">Sudoku · {game.difficulty}</span>
           <div className="flex items-center gap-3 text-xs font-bold text-text-muted">
             <span className="flex items-center gap-1">
               <span className="material-symbols-outlined text-[16px]">schedule</span>
