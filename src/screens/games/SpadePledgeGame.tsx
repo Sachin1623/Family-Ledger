@@ -15,6 +15,8 @@ import {
   sortHandForDisplay,
   legalCards,
   teamForSeat,
+  MIN_BID,
+  MAX_BID,
   TURN_TIMEOUT_MS,
   TURN_WARNING_MS,
   type SpadePledgeTable,
@@ -524,6 +526,10 @@ export default function SpadePledgeGame() {
   const relSeatOf = (seatIndex: number) => (me ? (seatIndex - me.seatIndex + 4) % 4 : seatIndex);
   const trickPlayBySeat = new Map<number, string>();
   for (const play of deal.currentTrick.cards) trickPlayBySeat.set(play.seatIndex, play.cardId);
+  // The most recently completed trick — kept visible (face-up) to everyone at the winner's seat
+  // until the next trick resolves. Cards share a layoutId with their in-progress render above, so
+  // Framer Motion animates them sliding from wherever they were played into the winner's pile.
+  const lastTrick = deal.completedTricks.length > 0 ? deal.completedTricks[deal.completedTricks.length - 1] : null;
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
@@ -639,10 +645,38 @@ export default function SpadePledgeGame() {
             <div className="grid grid-cols-3 grid-rows-3 gap-1.5 bg-white rounded-2xl border border-border-subtle p-3 aspect-square max-w-[280px] mx-auto place-items-center">
               {deal.players.map((p) => {
                 const played = trickPlayBySeat.get(p.seatIndex);
+                const isLastTrickWinner = lastTrick && lastTrick.winnerSeatIndex === p.seatIndex;
                 return (
                   <div key={p.uid} className={`flex flex-col items-center gap-1 ${RELATIVE_POSITION_CLASS[relSeatOf(p.seatIndex)]}`}>
                     <span className="text-[9px] font-bold text-text-muted whitespace-nowrap">{p.seatIndex === me?.seatIndex ? 'You' : nameFor(p.uid)}</span>
-                    {played ? <CardChip cardId={played} size="played" /> : <div className="w-9 h-12 rounded-lg border-2 border-dashed border-border-subtle/60" />}
+                    <div className="relative w-9 h-12">
+                      {played ? (
+                        <motion.div layoutId={`sp-card-${dealId}-${played}`} className="absolute inset-0">
+                          <CardChip cardId={played} size="played" />
+                        </motion.div>
+                      ) : (
+                        <div className="w-9 h-12 rounded-lg border-2 border-dashed border-border-subtle/60" />
+                      )}
+                    </div>
+                    {/* Tricks-won pile — the trick this seat most recently won shows its real cards
+                        (visible to everyone, sliding in from wherever each card was played); older
+                        tricks just contribute to the plain count. */}
+                    {p.tricksWon > 0 && (
+                      isLastTrickWinner ? (
+                        <div className="flex -space-x-5">
+                          {lastTrick!.cards.map((play) => (
+                            <motion.div key={play.cardId} layoutId={`sp-card-${dealId}-${play.cardId}`} className="scale-[0.55] origin-top">
+                              <CardChip cardId={play.cardId} size="played" />
+                            </motion.div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-0.5">
+                          <span className="material-symbols-outlined text-[13px] text-text-muted">style</span>
+                          <span className="text-[9px] font-bold text-text-muted">{p.tricksWon}</span>
+                        </div>
+                      )
+                    )}
                   </div>
                 );
               })}
@@ -653,16 +687,19 @@ export default function SpadePledgeGame() {
               <div className="bg-white rounded-2xl border border-border-subtle p-3 space-y-2">
                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">How many tricks will you win?</p>
                 <div className="grid grid-cols-7 gap-1.5">
-                  {Array.from({ length: 14 }).map((_, n) => (
-                    <button
-                      key={n}
-                      onClick={() => handleBid(n)}
-                      disabled={busy}
-                      className={`py-2 rounded-lg text-xs font-black disabled:opacity-40 ${n === 0 ? 'bg-warning/15 text-warning' : 'bg-primary/10 text-primary'}`}
-                    >
-                      {n === 0 ? 'Nil' : n}
-                    </button>
-                  ))}
+                  {Array.from({ length: MAX_BID - MIN_BID + 1 }).map((_, i) => {
+                    const n = MIN_BID + i;
+                    return (
+                      <button
+                        key={n}
+                        onClick={() => handleBid(n)}
+                        disabled={busy}
+                        className="py-2 rounded-lg text-xs font-black bg-primary/10 text-primary disabled:opacity-40"
+                      >
+                        {n}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

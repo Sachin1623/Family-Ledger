@@ -6925,6 +6925,8 @@ async function startServer() {
   const SPADE_PLEDGE_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
   const SPADE_PLEDGE_SUITS = ['C', 'D', 'H', 'S'];
   const SPADE_PLEDGE_HAND_SIZE = 13;
+  const SPADE_PLEDGE_MIN_BID = 2;
+  const SPADE_PLEDGE_MAX_BID = 8;
   const SPADE_PLEDGE_TURN_TIMEOUT_MS = 30_000;
   const SPADE_PLEDGE_TARGET_SCORE = 300;
   const SPADE_PLEDGE_BID_TRICK_POINTS = 10;
@@ -7020,7 +7022,7 @@ async function startServer() {
     }
     const spadeCount = hand.filter((c) => spadePledgeSuitOf(c) === 'S').length;
     bid += Math.max(0, spadeCount - 3);
-    return Math.min(13, bid);
+    return Math.max(SPADE_PLEDGE_MIN_BID, Math.min(SPADE_PLEDGE_MAX_BID, bid));
   }
 
   function spadePledgeBotPlayCard(hand: string[], trick: any, spadesBroken: boolean): string {
@@ -7463,8 +7465,8 @@ async function startServer() {
     const db = adminDb;
     const dealId = String(req.body?.dealId || '');
     const bid = Number(req.body?.bid);
-    if (!dealId || !Number.isInteger(bid) || bid < 0 || bid > 13) {
-      return res.status(400).json({ error: 'dealId and a bid from 0-13 are required.' });
+    if (!dealId || !Number.isInteger(bid) || bid < SPADE_PLEDGE_MIN_BID || bid > SPADE_PLEDGE_MAX_BID) {
+      return res.status(400).json({ error: `dealId and a bid from ${SPADE_PLEDGE_MIN_BID}-${SPADE_PLEDGE_MAX_BID} are required.` });
     }
 
     try {

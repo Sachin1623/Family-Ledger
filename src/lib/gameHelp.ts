@@ -163,7 +163,7 @@ export const SPADE_PLEDGE_HELP: GameHelpContent = {
     {
       heading: 'Bidding',
       body: [
-        'Before each hand, every player bids how many tricks they expect to win (0-13). A bid of 0 is a "Nil" — a high-risk, high-reward bid to win zero tricks.',
+        'Before each hand, every player bids how many tricks they expect to win — a number from 2 to 8.',
       ],
     },
     {
@@ -176,7 +176,7 @@ export const SPADE_PLEDGE_HELP: GameHelpContent = {
     {
       heading: 'Scoring',
       body: [
-        'Meeting your bid scores 10 points per bid trick, plus 1 for each extra trick ("bag"). Falling short costs 10 points per bid trick. A made Nil scores +100; a broken Nil costs -100.',
+        'Meeting your bid scores 10 points per bid trick, plus 1 for each extra trick ("bag"). Falling short costs 10 points per bid trick.',
         'Every 10 bags accumulated costs a 100-point penalty. First side (or player, in Free-for-all) to reach 300 points wins the match.',
       ],
     },

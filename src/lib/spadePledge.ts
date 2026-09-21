@@ -67,6 +67,8 @@ export type SpadePledgeStatus = 'waiting' | 'active' | 'finished';
 export type SpadePledgePhase = 'bidding' | 'playing';
 export type SpadePledgeDealStatus = 'active' | 'finished';
 
+export const MIN_BID = 2;
+export const MAX_BID = 8;
 export const BOT_CONVERSION_THRESHOLD = 2;
 export const TURN_TIMEOUT_MS = 30_000;
 export const TURN_WARNING_MS = 10_000;
