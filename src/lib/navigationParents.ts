@@ -77,21 +77,19 @@ const PARENT_OVERRIDES: Record<string, string> = {
 
 const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/games\/ranks\/[^/]+$/, '/games'],
-  // Sudoku, Chess, Ludo, 27-Hand Rummy, Business, and 13-Card Rummy are exceptions to the
-  // direct-to-Tools shortcut below: mid-game back returns to the game's own home/lobby rather than
-  // skipping past it (Scramble's equivalent exception is in PARENT_OVERRIDES above, since
-  // /games/scramble/play is a fixed path, not a dynamic :id).
+  // Every game below is an exception to the direct-to-Tools shortcut used by their own lobby
+  // overrides above: mid-game back returns to the game's own home/lobby rather than skipping past
+  // it (Scramble's equivalent exception is in PARENT_OVERRIDES above, since /games/scramble/play is
+  // a fixed path, not a dynamic :id).
   [/^\/games\/sudoku\/play\/[^/]+$/, '/games/sudoku'],
   [/^\/games\/chess\/[^/]+$/, '/games/chess'],
   [/^\/games\/ludo\/[^/]+$/, '/games/ludo'],
   [/^\/games\/rummy\/[^/]+$/, '/games/rummy'],
   [/^\/games\/business\/[^/]+$/, '/games/business'],
   [/^\/games\/rummy13\/[^/]+$/, '/games/rummy13'],
-  // Same direct-to-Tools shortcut as the lobby overrides above — an active game's back goes
-  // straight to Tools' Games tab, not through its own lobby.
-  [/^\/games\/sweep\/[^/]+$/, '/tools?category=games'],
-  [/^\/games\/sequence\/[^/]+$/, '/tools?category=games'],
-  [/^\/games\/spadePledge\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/sweep\/[^/]+$/, '/games/sweep'],
+  [/^\/games\/sequence\/[^/]+$/, '/games/sequence'],
+  [/^\/games\/spadePledge\/[^/]+$/, '/games/spadePledge'],
   [/^\/games\/scramble-multiplayer\/[^/]+$/, '/games/scramble-multiplayer'],
   [/^\/groups\/[^/]+\/expenses$/, (p) => p.replace(/\/expenses$/, '')],
   [/^\/groups\/[^/]+\/manage$/, (p) => p.replace(/\/manage$/, '')],

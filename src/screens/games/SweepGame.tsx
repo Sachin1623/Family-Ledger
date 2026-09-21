@@ -428,9 +428,6 @@ export default function SweepGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          </button>
           <h1 className="font-black text-primary">Sweep</h1>
           <ReactionButton onSend={handleSendQuickReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
@@ -726,9 +723,6 @@ export default function SweepGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          </button>
           <h1 className="font-black text-primary text-xs">Sweep — Deal {game.dealNumber}</h1>
           <ReactionButton onSend={handleSendQuickReaction} />
           <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider bg-surface px-1.5 py-0.5 rounded-full">{game.code}</span>
@@ -1017,9 +1011,6 @@ export default function SweepGame() {
       <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
       <div className="shrink-0">
       <header className="p-2 flex items-center gap-2 flex-wrap bg-white border-b border-border-subtle shrink-0">
-        <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-        </button>
         <h1 className="font-black text-primary text-xs shrink-0">Sweep — Deal {game.dealNumber}</h1>
         <ReactionButton onSend={handleSendQuickReaction} />
         <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider bg-surface px-1.5 py-0.5 rounded-full shrink-0">{game.code}</span>

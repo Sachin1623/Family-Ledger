@@ -388,9 +388,6 @@ export default function SequenceGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          </button>
           <h1 className="font-black text-primary">Sequence</h1>
           <ReactionButton onSend={handleSendQuickReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
@@ -552,9 +549,6 @@ export default function SequenceGame() {
         </div>
       )}
       <header className="p-3 flex items-center gap-2 bg-white border-b border-border-subtle">
-        <button onClick={() => navigate('/tools?category=games')} className="text-text-muted shrink-0">
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-        </button>
         <h1 className="font-black text-primary text-sm shrink-0">Sequence</h1>
         <ReactionButton onSend={handleSendQuickReaction} />
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
