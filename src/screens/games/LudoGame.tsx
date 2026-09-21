@@ -695,10 +695,7 @@ export default function LudoGame() {
       <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
-            <button onClick={() => navigate('/tools?category=games')} className="text-xs font-bold text-primary flex items-center gap-1">
-              <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-              Ludo
-            </button>
+            <span className="text-xs font-bold text-primary">Ludo</span>
             <ReactionButton onSend={handleSendReaction} />
           </div>
           <div className="flex items-center gap-2">
