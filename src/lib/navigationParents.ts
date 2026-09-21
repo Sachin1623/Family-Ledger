@@ -50,6 +50,11 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/games/business': '/games',
   '/games/sweep': '/games',
   '/games/chess': '/games',
+  // Rummy13 and Spade Pledge skip the /games hub entirely — Tools.tsx links every game directly
+  // (see its own header comment), so that's the real entry point players use, and back should
+  // return there with the Games tab already selected rather than bouncing through the hub.
+  '/games/rummy13': '/tools?category=games',
+  '/games/spadePledge': '/tools?category=games',
   '/shop/profile': '/shop/sales',
   '/shop/customers': '/shop/sales',
   '/shop/sales': '/',
@@ -72,6 +77,10 @@ const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/games\/business\/[^/]+$/, '/games/business'],
   [/^\/games\/sweep\/[^/]+$/, '/games/sweep'],
   [/^\/games\/chess\/[^/]+$/, '/games/chess'],
+  // Same direct-to-Tools shortcut as the lobby overrides above — an active table's back goes
+  // straight to Tools' Games tab, not through its own lobby.
+  [/^\/games\/rummy13\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/spadePledge\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/scramble-multiplayer\/[^/]+$/, '/games/scramble-multiplayer'],
   [/^\/groups\/[^/]+\/expenses$/, (p) => p.replace(/\/expenses$/, '')],
   [/^\/groups\/[^/]+\/manage$/, (p) => p.replace(/\/manage$/, '')],
