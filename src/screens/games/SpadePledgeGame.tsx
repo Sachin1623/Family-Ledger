@@ -59,9 +59,12 @@ const CardChip: React.FC<{ cardId: string; dim?: boolean; highlight?: boolean; o
 };
 
 // "Swallow the value already present on mount, only fire on a genuinely NEW change" — same pattern
-// as Rummy13Game.tsx's useDealEndedToast, keyed by handNumber.
-function useHandEndedToast(summary: SpadePledgeHandHistoryEntry | null | undefined, tableStatus: string | undefined) {
-  const [toast, setToast] = useState<SpadePledgeHandHistoryEntry | null>(null);
+// as Rummy13Game.tsx's useDealEndedToast, keyed by handNumber. Unlike that toast, this one doesn't
+// auto-dismiss — the player reviews the hand's scores and taps Continue (or Exit) themselves; the
+// next hand has already been dealt server-side underneath (resolveSpadePledgeHandEnd is atomic, no
+// host-confirm step), so dismissing is purely a client-side "I've seen this" action.
+function useHandEndedModal(summary: SpadePledgeHandHistoryEntry | null | undefined, tableStatus: string | undefined) {
+  const [shown, setShown] = useState<SpadePledgeHandHistoryEntry | null>(null);
   const seenRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -72,13 +75,11 @@ function useHandEndedToast(summary: SpadePledgeHandHistoryEntry | null | undefin
     if (!summary || summary.handNumber === seenRef.current) return;
     seenRef.current = summary.handNumber;
     if (tableStatus !== 'active') return;
-    setToast(summary);
-    const id = summary.handNumber;
-    setTimeout(() => setToast((cur) => (cur?.handNumber === id ? null : cur)), 5000);
+    setShown(summary);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary?.handNumber, tableStatus]);
 
-  return toast;
+  return { summary: shown, dismiss: () => setShown(null) };
 }
 
 const FORMAT_LABEL: Record<string, string> = { partnership: 'Partnership', ffa: 'Free-for-all' };
@@ -115,7 +116,7 @@ export default function SpadePledgeGame() {
   useGameTurnPresence('spadePledge', tableId);
 
   const floatingReactions = useReactionOverlay(table?.lastReaction);
-  const handEndedToast = useHandEndedToast(table?.lastHandSummary, table?.status);
+  const { summary: handEndedSummary, dismiss: dismissHandEndedModal } = useHandEndedModal(table?.lastHandSummary, table?.status);
   const handleSendReaction = async (emoji: string) => {
     if (!user || !tableId) return;
     try {
@@ -544,25 +545,68 @@ export default function SpadePledgeGame() {
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
 
-      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[260] max-w-[92vw] pointer-events-none">
-        <AnimatePresence>
-          {handEndedToast && (
+      <AnimatePresence>
+        {handEndedSummary && (
+          <motion.div
+            key="hand-summary-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[280] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          >
             <motion.div
-              key={handEndedToast.handNumber}
-              initial={{ y: -50, opacity: 0, scale: 0.85 }}
-              animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: -40, opacity: 0, scale: 0.9 }}
-              transition={{ type: 'spring', damping: 16, stiffness: 260 }}
-              className="bg-primary text-white text-xs font-bold pl-2.5 pr-4 py-2.5 rounded-2xl shadow-xl flex flex-col gap-1 max-w-xs"
+              initial={{ scale: 0.9, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+              className="relative w-full max-w-xs bg-white rounded-3xl shadow-2xl p-5 space-y-4 text-center max-h-[85vh] overflow-y-auto"
             >
-              <span>Hand {handEndedToast.handNumber} over!</span>
-              <span className="text-[10px] font-medium text-white/80">
-                {handEndedToast.groupScoreDelta.map((delta, i) => `Group ${i + 1} ${delta >= 0 ? '+' : ''}${delta}`).join(' · ')}
-              </span>
+              <div>
+                <span className="material-symbols-outlined text-4xl text-primary">scoreboard</span>
+                <h2 className="text-lg font-black text-primary mt-1">Hand {handEndedSummary.handNumber} Complete</h2>
+              </div>
+
+              <div className="space-y-2">
+                {table.groups.map((g) => {
+                  const delta = handEndedSummary.groupScoreDelta[g.groupIndex] ?? 0;
+                  return (
+                    <div key={g.groupIndex} className="bg-surface rounded-xl p-2.5 text-left">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-on-surface">{g.memberUids.map((uid) => nameFor(uid)).join(' & ')}</span>
+                        <span className={`text-xs font-black shrink-0 ${delta >= 0 ? 'text-success' : 'text-error'}`}>{delta >= 0 ? '+' : ''}{delta}</span>
+                      </div>
+                      <p className="text-[10px] text-text-muted mt-0.5">
+                        {g.memberUids.map((uid) => `${nameFor(uid)} bid ${handEndedSummary.bids[uid]}, won ${handEndedSummary.tricksWon[uid]}`).join(' · ')}
+                      </p>
+                      <div className="flex items-center justify-between mt-1 pt-1 border-t border-border-subtle">
+                        <span className="text-[9px] font-bold text-text-muted uppercase">Total</span>
+                        <span className="text-[11px] font-black text-primary">
+                          {handEndedSummary.netScoreAfter[g.groupIndex]} pts · {handEndedSummary.groupBagsAfter[g.groupIndex]} bags
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigate('/games/spadePledge')}
+                  className="flex-1 py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm"
+                >
+                  Exit
+                </button>
+                <button
+                  onClick={dismissHandEndedModal}
+                  className="flex-1 py-2.5 bg-primary text-white font-bold rounded-xl text-sm"
+                >
+                  Continue
+                </button>
+              </div>
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {showHelp && <GameHelpModal content={SPADE_PLEDGE_HELP} onClose={() => setShowHelp(false)} />}
       {showChat && user && (

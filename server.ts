@@ -6994,8 +6994,13 @@ async function startServer() {
     const ledSuit = spadePledgeSuitOf(trick.cards[0].cardId);
     const followCards = hand.filter((c) => spadePledgeSuitOf(c) === ledSuit);
     if (followCards.length === 0) return hand; // void — free choice
+    // When spades are the LED suit, "following suit" IS playing a trump, and the must-beat rule
+    // applies among those trump cards same as any other suit — a trick led with a spade is still
+    // just a trick. The exemption below only fires for a genuine CROSS-suit trump: some void player
+    // discarded a spade into a trick led in a different suit, which a follow-suit (non-trump) card
+    // can never beat regardless of rank.
     const best = spadePledgeTrickBestPlay(trick);
-    if (spadePledgeSuitOf(best.cardId) === 'S') return followCards; // best is already trumped — can't beat it by following suit
+    if (ledSuit !== 'S' && spadePledgeSuitOf(best.cardId) === 'S') return followCards;
     const beatingFollowCards = followCards.filter((c) => spadePledgeRankValue(c) > spadePledgeRankValue(best.cardId));
     return beatingFollowCards.length > 0 ? beatingFollowCards : followCards;
   }

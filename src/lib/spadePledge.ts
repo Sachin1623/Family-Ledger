@@ -230,9 +230,14 @@ export function legalCards(hand: string[], trick: SpadePledgeTrick, spadesBroken
 
   if (followCards.length === 0) return hand; // void — free choice
 
-  // Can follow suit — the stricter "must beat if possible" rule applies here and only here.
+  // Can follow suit — the stricter "must beat if possible" rule applies here and only here. When
+  // spades are the LED suit, "following suit" IS playing a trump, and the same must-beat rule
+  // applies among those trump cards (a trick led with a spade is still just a trick). The exemption
+  // below only fires for a genuine CROSS-suit trump — some void player discarded a spade into a
+  // trick led in a different suit, which a follow-suit (non-trump) card can never beat regardless
+  // of rank.
   const best = trickBestPlay(trick);
-  if (suitOf(best.cardId) === 'S') return followCards; // best-in-trick already trumped — can't beat it by following suit
+  if (ledSuit !== 'S' && suitOf(best.cardId) === 'S') return followCards;
   const beatingFollowCards = followCards.filter((c) => rankValue(c) > rankValue(best.cardId));
   return beatingFollowCards.length > 0 ? beatingFollowCards : followCards;
 }
