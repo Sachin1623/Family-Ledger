@@ -99,6 +99,7 @@ export interface SweepPlayer {
   seatIndex: number;
   team: 0 | 1;
   handCount: number;
+  isBot?: boolean;
 }
 
 export type SweepStatus = 'waiting' | 'bidding' | 'active' | 'deal_end' | 'finished';

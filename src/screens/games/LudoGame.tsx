@@ -389,6 +389,110 @@ export default function LudoGame() {
   };
   useEffect(() => cancelPendingPass, []); // clear on unmount too
 
+  // Bot auto-play. Ludo is fully client-trusted — no Admin-SDK-mediated endpoint drives moves, so
+  // there's no server-side bot turn loop like the hidden-info games have. Instead, whichever human
+  // client currently has this game open acts on the bot's behalf after a short "thinking" delay —
+  // the same "any seated player can write" model firestore.rules already allows for every move (see
+  // the ludoGames update rule: it's never scoped to the current turn's own uid). Re-validates
+  // against the LATEST live state right before writing, mirroring the no-legal-moves auto-pass
+  // above, so a stale timer never clobbers whatever actually happened since it was scheduled.
+  useEffect(() => {
+    if (!game || game.status !== 'active' || !gameId) return;
+    const seat = players[game.currentTurnSeatIndex];
+    if (!seat?.isBot) return;
+
+    const timer = setTimeout(async () => {
+      const g = latestGameRef.current;
+      const ps = latestPlayersRef.current;
+      if (!g || g.status !== 'active' || !gameId) return;
+      const currentSeat = ps[g.currentTurnSeatIndex];
+      if (!currentSeat?.isBot || currentSeat.uid !== seat.uid) return; // stale — turn moved on already
+
+      const gameRef = doc(db, 'ludoGames', gameId);
+      const notify = (nextUid: string) => {
+        user?.getIdToken().then((idToken) =>
+          fetch('/api/notify-ludo-turn', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gameId, nextPlayerUid: nextUid }),
+          }),
+        ).catch((err) => console.error('notify-ludo-turn failed:', err));
+      };
+      const advance = async (currentPlayers: LudoPlayer[], extraFields: Record<string, any> = {}, fromSeatIndex: number = g.currentTurnSeatIndex) => {
+        const nextSeat = nextClockwiseSeat(currentPlayers, fromSeatIndex);
+        await updateDoc(gameRef, { ...extraFields, currentTurnSeatIndex: nextSeat, awaitingRoll: true, consecutiveSixes: 0, turnStartPlayers: currentPlayers });
+        notify(currentPlayers[nextSeat].uid);
+      };
+
+      if (g.awaitingRoll ?? true) {
+        const value = Math.floor(Math.random() * 6) + 1;
+        const nextSixStreak = value === 6 ? (g.consecutiveSixes || 0) + 1 : 0;
+        if (nextSixStreak >= 3) {
+          await updateDoc(gameRef, {
+            players: g.turnStartPlayers || ps,
+            diceValue: value,
+            consecutiveSixes: 0,
+            awaitingRoll: true,
+            lastVoidNotice: { at: new Date().toISOString(), playerName: currentSeat.displayName || 'A player' },
+          });
+          return;
+        }
+        await updateDoc(gameRef, { diceValue: value, consecutiveSixes: nextSixStreak, awaitingRoll: false });
+        const legal = movableTokens(currentSeat.tokens, value);
+        if (legal.length === 0) {
+          setTimeout(async () => {
+            const g2 = latestGameRef.current;
+            const p2 = latestPlayersRef.current;
+            if (!g2 || g2.status !== 'active' || g2.awaitingRoll !== false || g2.diceValue == null) return;
+            await advance(p2, {}, g2.currentTurnSeatIndex);
+          }, 900);
+        }
+        return; // the move itself happens on the NEXT effect run, once diceValue/awaitingRoll update
+      }
+
+      // Dice already rolled — pick and play the best legal move: prefer a capture, then finishing a
+      // token, then getting a token out of the yard, then whichever move makes the most progress.
+      const diceValue = g.diceValue;
+      if (diceValue == null) return;
+      const legal = movableTokens(currentSeat.tokens, diceValue);
+      if (legal.length === 0) return; // the no-legal-moves pass above already handles this case
+
+      let bestTokenIndex = legal[0];
+      let bestScore = -Infinity;
+      for (const tokenIndex of legal) {
+        const result = applyMove(ps, g.currentTurnSeatIndex, tokenIndex, diceValue);
+        const fromYard = currentSeat.tokens[tokenIndex] === YARD;
+        const score = result.captured.length * 100 + (result.finished ? 60 : 0) + (fromYard ? 15 : 0) + result.players[g.currentTurnSeatIndex].tokens[tokenIndex];
+        if (score > bestScore) { bestScore = score; bestTokenIndex = tokenIndex; }
+      }
+
+      const result = applyMove(ps, g.currentTurnSeatIndex, bestTokenIndex, diceValue);
+      const mover = result.players[g.currentTurnSeatIndex];
+      const moverDone = mover.tokens.every((t) => t === HOME);
+      const teammate = moverDone && mover.team != null ? result.players.find((p) => p.uid !== mover.uid && p.team === mover.team) : undefined;
+      const won = moverDone && (!teammate || teammate.tokens.every((t) => t === HOME));
+
+      if (won) {
+        await updateDoc(gameRef, {
+          players: result.players,
+          status: 'finished',
+          winnerUid: mover.uid,
+          winningTeam: teammate ? [mover.uid, teammate.uid] : null,
+          finishedAt: new Date().toISOString(),
+        });
+        return;
+      }
+      if (result.bonusRoll) {
+        await updateDoc(gameRef, { players: result.players, awaitingRoll: true });
+      } else {
+        await advance(result.players, { players: result.players });
+      }
+    }, 1100 + Math.random() * 500);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.status, game?.currentTurnSeatIndex, game?.awaitingRoll, game?.diceValue, gameId]);
+
 // Tokens slide smoothly instead of teleporting between cells — a client-only visual overlay on
   // top of the authoritative Firestore `tokens` positions (which still update instantly; game
   // logic never waits on this), same pattern as Business's `displayPositions`. This used to walk
@@ -491,6 +595,28 @@ export default function LudoGame() {
     await updateDoc(doc(db, 'ludoGames', gameId!), { players: updatedPlayers }).catch((err) => {
       console.error('Failed to change team:', err);
       setError('Failed to change team.');
+    });
+  };
+
+  const handleFillBot = async () => {
+    if (!user || game.hostUid !== user.uid || players.length >= 4) return;
+    const color = nextJoinColor(players.map((p) => p.color));
+    const botPlayer: LudoPlayer = {
+      uid: `bot_${gameId}_${players.length}`,
+      displayName: `Bot ${players.length + 1}`,
+      photoURL: '',
+      color,
+      seatIndex: players.length,
+      tokens: emptyTokens(),
+      finishedCount: 0,
+      isBot: true,
+    };
+    await updateDoc(doc(db, 'ludoGames', gameId!), {
+      players: [...players, botPlayer],
+      playerUids: [...players.map((p) => p.uid), botPlayer.uid],
+    }).catch((err) => {
+      console.error('Failed to add bot:', err);
+      setError('Failed to add a bot.');
     });
   };
 
@@ -749,7 +875,7 @@ export default function LudoGame() {
             <div className="flex flex-wrap gap-2">
               {players.map((p) => (
                 <div key={p.uid} className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-bold" style={{ backgroundColor: COLOR_HEX[p.color] }}>
-                  {p.displayName}
+                  {p.isBot && '🤖 '}{p.displayName}
                 </div>
               ))}
             </div>
@@ -851,6 +977,13 @@ export default function LudoGame() {
               <InvitePicker groupIds={groupIds} alreadyIn={players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />
             )}
 
+            {game.hostUid === user?.uid && players.length < 4 && (
+              <button onClick={handleFillBot} className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                Fill Empty Seat with Bot
+              </button>
+            )}
+
             {game.hostUid === user?.uid && (
               <button onClick={handleStart} disabled={players.length < 2} className="w-full py-3 bg-primary text-white font-bold rounded-2xl disabled:opacity-40">
                 Start Game {players.length < 2 && '(need 2+ players)'}
@@ -903,7 +1036,7 @@ export default function LudoGame() {
                   style={{ backgroundColor: COLOR_HEX[p.color], borderColor: seat === game.currentTurnSeatIndex ? '#fff' : COLOR_HEX[p.color] }}
                 >
                   <PresenceDot uid={p.uid} className="w-2 h-2" />
-                  {p.displayName} {seat === game.currentTurnSeatIndex && '•'}
+                  {p.isBot && '🤖 '}{p.displayName} {seat === game.currentTurnSeatIndex && '•'}
                 </div>
               ))}
             </div>

@@ -5316,6 +5316,209 @@ async function startServer() {
     return true;
   }
 
+  function rummyCombinations<T>(arr: T[], size: number): T[][] {
+    if (size === 0) return [[]];
+    if (arr.length < size) return [];
+    const [first, ...rest] = arr;
+    const withFirst = rummyCombinations(rest, size - 1).map((c) => [first, ...c]);
+    const withoutFirst = rummyCombinations(rest, size);
+    return [...withFirst, ...withoutFirst];
+  }
+
+  // Finds every pure-sequence candidate window of the given sizes actually present in `hand`,
+  // driven by real consecutive runs and same-rank/same-suit triples (three decks in play) rather
+  // than blind combinatorics — this is what keeps the bot's meld search bounded even at a 27-28
+  // card hand. Two pure-sequence shapes exist: a genuine consecutive same-suit run (any window of
+  // it is also pure), and 3 copies of the same rank+suit card (from the 3 separate decks).
+  function rummyBotFindPureCandidates(hand: string[], sizes: number[]): string[][] {
+    const candidates: string[][] = [];
+    const bySuit: Record<string, { rank: string; id: string }[]> = {};
+    for (const id of hand) {
+      const { rank, suit } = rummyParseCard(id);
+      (bySuit[suit] ||= []).push({ rank, id });
+    }
+
+    for (const suit of RUMMY_SUITS) {
+      const cards = bySuit[suit] || [];
+      if (cards.length === 0) continue;
+
+      if (sizes.includes(3)) {
+        const byRank: Record<string, string[]> = {};
+        for (const c of cards) (byRank[c.rank] ||= []).push(c.id);
+        for (const rank of Object.keys(byRank)) {
+          if (byRank[rank].length >= 3) candidates.push(byRank[rank].slice(0, 3));
+        }
+      }
+
+      for (const aceHigh of [false, true]) {
+        const idxToId = new Map<number, string>();
+        for (const c of cards) {
+          const idx = rummyRankIndex(c.rank, aceHigh);
+          if (!idxToId.has(idx)) idxToId.set(idx, c.id); // one representative card per distinct rank
+        }
+        const sortedIdxs = Array.from(idxToId.keys()).sort((a, b) => a - b);
+        let runStart = 0;
+        for (let i = 1; i <= sortedIdxs.length; i++) {
+          if (i === sortedIdxs.length || sortedIdxs[i] !== sortedIdxs[i - 1] + 1) {
+            const run = sortedIdxs.slice(runStart, i);
+            for (const size of sizes) {
+              if (run.length < size) continue;
+              for (let start = 0; start + size <= run.length; start++) {
+                candidates.push(run.slice(start, start + size).map((idx) => idxToId.get(idx)!));
+              }
+            }
+            runStart = i;
+          }
+        }
+      }
+    }
+
+    const seen = new Set<string>();
+    return candidates.filter((c) => {
+      const key = [...c].sort().join(',');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  // Bounded recursive packing search for the leftover cards once a 5+4+3 meld (if any) is set
+  // aside — same "take the first card, either leave it uncovered or try it as the anchor of a
+  // valid group with others" approach as 13-Card Rummy's computeRummy13HandPenalty packing search,
+  // generalized to allow both sequences and sets (rummyIsValidGroup covers both). Memoized by the
+  // exact remaining card set, with a hard call-count cap as a safety net against a pathological
+  // hand blowing up compute time inside a live transaction — a bail-out just returns everything as
+  // uncovered rather than hanging, which is always a safe (if suboptimal) fallback.
+  function rummyBotPackGroups(remaining: string[], wildcardRanks: string[]): { groups: string[][]; uncovered: string[] } {
+    const memo = new Map<string, { groups: string[][]; uncovered: string[] }>();
+    let calls = 0;
+    // Was 20000 — measured against real gameplay at that bound, a single call was taking multiple
+    // seconds (and rummyBotEvaluateHand makes several of these per bot turn), compounding into a
+    // multi-turn drain-loop hang. 2500 keeps each call well under 100ms in practice while still
+    // covering the ~15-16 card remainders this is actually called with.
+    const MAX_CALLS = 2500;
+
+    function recurse(cards: string[]): { groups: string[][]; uncovered: string[] } {
+      if (cards.length === 0) return { groups: [], uncovered: [] };
+      calls++;
+      if (calls > MAX_CALLS) return { groups: [], uncovered: cards };
+      const key = [...cards].sort().join(',');
+      const cached = memo.get(key);
+      if (cached) return cached;
+
+      const [first, ...rest] = cards;
+      let best = recurse(rest);
+      best = { groups: best.groups, uncovered: [first, ...best.uncovered] };
+
+      for (const size of [3, 4]) {
+        if (rest.length < size - 1) continue;
+        for (const combo of rummyCombinations(rest, size - 1)) {
+          const groupCards = [first, ...combo];
+          if (!rummyIsValidGroup(groupCards, wildcardRanks)) continue;
+          const restOfRemaining = cards.filter((c) => !groupCards.includes(c));
+          const sub = recurse(restOfRemaining);
+          const candidate = { groups: [groupCards, ...sub.groups], uncovered: sub.uncovered };
+          if (candidate.groups.flat().length > best.groups.flat().length) best = candidate;
+        }
+      }
+      memo.set(key, best);
+      return best;
+    }
+
+    return recurse(remaining);
+  }
+
+  // The bot's core hand-evaluation: a greedy meld search, NOT a full exhaustive combinatorial
+  // search (infeasible over a 27-28 card hand) — tries real pure-sequence candidates for the
+  // mandatory 5/4/3 slots (bounded, since rummyBotFindPureCandidates only returns windows that
+  // actually exist in-hand) in combination, then packs whatever's left via rummyBotPackGroups.
+  // "Smart, not provably optimal" — reliably finds a real winning declare when one exists in the
+  // hand, and otherwise gives a solid signal for which cards are genuinely organized vs. dead
+  // weight, which is what the draw/discard decisions below are built on.
+  function rummyBotEvaluateHand(hand: string[], wildcardRanks: string[]): {
+    meld: { five: string[]; four: string[]; three: string[] } | null;
+    groups: string[][];
+    uncovered: string[];
+  } {
+    const fives = rummyBotFindPureCandidates(hand, [5]);
+    const fours = rummyBotFindPureCandidates(hand, [4]);
+    const threes = rummyBotFindPureCandidates(hand, [3]);
+
+    type Best = { meld: { five: string[]; four: string[]; three: string[] } | null; groups: string[][]; uncovered: string[]; coveredCount: number };
+    let best: Best | null = null;
+    const consider = (meld: { five: string[]; four: string[]; three: string[] } | null, usedCards: Set<string>) => {
+      const remaining = hand.filter((c) => !usedCards.has(c));
+      const packed = rummyBotPackGroups(remaining, wildcardRanks);
+      const meldCount = meld ? meld.five.length + meld.four.length + meld.three.length : 0;
+      const coveredCount = meldCount + packed.groups.flat().length;
+      if (!best || coveredCount > best.coveredCount) {
+        best = { meld, groups: packed.groups, uncovered: packed.uncovered, coveredCount };
+      }
+    };
+
+    // Baseline: no meld at all, just pack the raw hand — always a valid fallback so `best` is
+    // never null once the loop below runs (even zero attempts below still leaves this baseline).
+    consider(null, new Set());
+
+    // Two separate counters: `iterations` bounds the raw triple-loop walk (fives × fours × threes
+    // can be large on a well-connected 27-card hand purely from overlap-skips, well before any
+    // candidate is actually evaluated), while `attempts` bounds how many candidates are actually
+    // scored via consider() — that's the expensive part (a fresh rummyBotPackGroups call each
+    // time), so it's capped much lower. Measured against real gameplay: evaluate calls were taking
+    // several seconds each with the original (40 attempts / no iteration cap) bounds, compounding
+    // to a multi-turn drain loop hang — these tighter bounds keep it fast while still reliably
+    // finding a real 5+4+3 meld when one exists (the search order already tries real, in-hand runs
+    // first, so a true meld is normally found well within the first few attempts).
+    let attempts = 0;
+    let iterations = 0;
+    const MAX_ATTEMPTS = 10;
+    const MAX_ITERATIONS = 400;
+    outer:
+    for (const five of fives) {
+      const usedAfterFive = new Set(five);
+      for (const four of fours) {
+        if (four.some((c) => usedAfterFive.has(c))) continue;
+        const usedAfterFour = new Set([...usedAfterFive, ...four]);
+        for (const three of threes) {
+          iterations++;
+          if (iterations > MAX_ITERATIONS) break outer;
+          if (three.some((c) => usedAfterFour.has(c))) continue;
+          attempts++;
+          if (attempts > MAX_ATTEMPTS) break outer;
+          const used = new Set([...usedAfterFour, ...three]);
+          consider({ five, four, three }, used);
+          const b: Best = best!;
+          if (b.meld && b.uncovered.length <= 1) break outer; // near-perfect — good enough, stop searching
+        }
+      }
+    }
+
+    return best!;
+  }
+
+  // Bid decision for whether to draw from the discard pile's visible top card, vs. an unknown
+  // stock card — only worth taking the discard if it would actually get absorbed into an organized
+  // meld/group (scoreOf only counts meld+grouped cards, never uncovered ones, so a discard that
+  // doesn't help organize anything scores identically to not drawing it at all).
+  function rummyBotDecideDraw(hand: string[], topDiscard: { card: string; locked: boolean } | null, wildcardRanks: string[]): 'stock' | 'discard' {
+    if (!topDiscard || topDiscard.locked) return 'stock';
+    const scoreOf = (r: ReturnType<typeof rummyBotEvaluateHand>) => (r.meld ? r.meld.five.length + r.meld.four.length + r.meld.three.length : 0) + r.groups.flat().length;
+    const withoutDraw = rummyBotEvaluateHand(hand, wildcardRanks);
+    const withDiscard = rummyBotEvaluateHand([...hand, topDiscard.card], wildcardRanks);
+    return scoreOf(withDiscard) > scoreOf(withoutDraw) ? 'discard' : 'stock';
+  }
+
+  // Discard the least useful card in the 28-card hand — an uncovered card by construction (not
+  // part of any meld or group in the best evaluation found), preferring to keep every organized
+  // card intact. The degenerate fallback (discard hand[0]) is only reachable if evaluateHand
+  // somehow covers all 28 cards without that being a genuine win — practically unreachable since
+  // the caller always checks for a real win first, but kept as a safe no-op rather than throwing.
+  function rummyBotDecideDiscard(hand28: string[], wildcardRanks: string[]): { cardId: string; evaluation: ReturnType<typeof rummyBotEvaluateHand> } {
+    const evaluation = rummyBotEvaluateHand(hand28, wildcardRanks);
+    if (evaluation.uncovered.length > 0) return { cardId: evaluation.uncovered[0], evaluation };
+    return { cardId: hand28[0], evaluation };
+  }
+
   // Same alphabet/shape as the client's generateGameCode() in src/lib/rummy.ts and
   // src/lib/business.ts (no 0/O/1/I) — duplicated here since server.ts and the client bundle
   // share no module graph. Shared by both Rummy's and Business's rematch endpoints.
@@ -5324,6 +5527,289 @@ async function startServer() {
     let code = '';
     for (let i = 0; i < 6; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
     return code;
+  }
+
+  // ---- Shared apply-functions: identical logic used by the human-facing endpoints below AND by
+  // drainRummyBotTurns further down, so there's exactly one implementation of each action, not a
+  // duplicated bot path. Each one assumes the caller already validated turn/phase/ownership and
+  // read the relevant docs inside the SAME transaction (Firestore's read-before-write rule), and
+  // does only the write side.
+
+  async function rummyApplyDraw(tx: FirebaseFirestore.Transaction, ctx: {
+    gameRef: FirebaseFirestore.DocumentReference; game: any; handRef: FirebaseFirestore.DocumentReference;
+    hand: any; stockRef: FirebaseFirestore.DocumentReference; stock: string[]; source: 'stock' | 'discard';
+    seatIndex: number; uid: string;
+  }): Promise<{ drawnCard: string }> {
+    const { gameRef, game, handRef, hand, stockRef, seatIndex, uid, source } = ctx;
+    const players: any[] = game.players || [];
+    let stock = ctx.stock;
+    let discardPile: { card: string; locked: boolean }[] = game.discardPile || [];
+    let drawnCard: string;
+
+    if (source === 'discard') {
+      if (discardPile.length === 0) throw { status: 400, message: 'Discard pile is empty.' };
+      const top = discardPile[discardPile.length - 1];
+      if (top.locked) {
+        throw { status: 400, message: 'That\'s a joker — it can\'t be picked up from the discard pile. Draw from stock instead.' };
+      }
+      drawnCard = top.card;
+      discardPile = discardPile.slice(0, -1);
+    } else {
+      if (stock.length === 0) {
+        if (discardPile.length <= 1) throw { status: 400, message: 'No cards left to draw.' };
+        const top = discardPile[discardPile.length - 1];
+        stock = rummyShuffle(discardPile.slice(0, -1).map((d) => d.card));
+        discardPile = [top];
+      }
+      drawnCard = stock[stock.length - 1];
+      stock = stock.slice(0, -1);
+    }
+
+    const newHandCards = [...hand.cards, drawnCard];
+    tx.set(stockRef, { cards: stock });
+    tx.update(handRef, { cards: newHandCards });
+    const newPlayers = players.map((p: any, i: number) => (i === seatIndex ? { ...p, handCount: newHandCards.length } : p));
+    tx.update(gameRef, {
+      discardPile,
+      stockCount: stock.length,
+      turnPhase: 'discard',
+      players: newPlayers,
+      lastAction: { type: 'draw', byUid: uid, at: new Date().toISOString() },
+    });
+    return { drawnCard };
+  }
+
+  function rummyApplyDiscard(tx: FirebaseFirestore.Transaction, ctx: {
+    gameRef: FirebaseFirestore.DocumentReference; game: any; handRef: FirebaseFirestore.DocumentReference;
+    cards: string[]; cardId: string; seatIndex: number; uid: string;
+  }): { nextPlayerUid: string; opponentNames: string | null } | null {
+    const { gameRef, game, handRef, cards, cardId, seatIndex, uid } = ctx;
+    const players: any[] = game.players || [];
+    if (!cards.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
+
+    const discardedIdxInHand = cards.indexOf(cardId);
+    const newHandCards = [...cards.slice(0, discardedIdxInHand), ...cards.slice(discardedIdxInHand + 1)];
+    const nextSeatIndex = rummyNextActiveSeat(players, seatIndex);
+    const newPlayers = players.map((p: any, i: number) => (i === seatIndex ? { ...p, handCount: newHandCards.length } : p));
+    const mySeat = players[seatIndex];
+    const discardedRank = rummyParseCard(cardId).rank;
+    const locked = discardedRank === game.wildcardRank1 || (discardedRank === game.wildcardRank2 && !!mySeat.hasSecondJoker);
+
+    tx.update(handRef, { cards: newHandCards });
+    tx.update(gameRef, {
+      discardPile: [...(game.discardPile || []), { card: cardId, locked }],
+      currentTurnSeatIndex: nextSeatIndex,
+      turnPhase: 'draw',
+      players: newPlayers,
+      lastAction: { type: 'discard', byUid: uid, at: new Date().toISOString() },
+    });
+
+    const nextPlayer = players[nextSeatIndex];
+    return nextPlayer
+      ? {
+          nextPlayerUid: nextPlayer.uid,
+          opponentNames: players.filter((p) => p.uid !== nextPlayer.uid && !p.dropped).map((p) => p.displayName).filter(Boolean).join(', ') || null,
+        }
+      : null;
+  }
+
+  function rummyApplyDeclare543(tx: FirebaseFirestore.Transaction, ctx: {
+    gameRef: FirebaseFirestore.DocumentReference; players: any[]; mySeatIndex: number;
+    five: string[]; four: string[]; three: string[]; uid: string; displayName: string;
+  }): void {
+    const { gameRef, players, mySeatIndex, uid, displayName } = ctx;
+    const newPlayers = players.map((p: any, i: number) =>
+      i === mySeatIndex ? { ...p, hasSecondJoker: true, pureRun543At: new Date().toISOString() } : p,
+    );
+    tx.update(gameRef, {
+      players: newPlayers,
+      lastJokerSpot: { uid, displayName, at: new Date().toISOString() },
+    });
+  }
+
+  // The valid-win write path shared by the human endpoint and a bot's own winning declare. Bot
+  // uids never correspond to a real authenticated user, so `humanPlayerUids`/`winnerUids` must
+  // already have bot uids filtered out by the caller (same fix as Sequence's bot points-ledger
+  // bug) — this function trusts them as given rather than re-deriving from `players`, since a bot
+  // winner still needs the OTHER humans credited with game_played even though the winner itself
+  // gets nothing.
+  async function rummyApplyDeclareWinValid(tx: FirebaseFirestore.Transaction, db: FirebaseFirestore.Firestore, ctx: {
+    gameRef: FirebaseFirestore.DocumentReference; gameId: string; players: any[]; handDataByUid: Map<string, any>;
+    uid: string; five: string[]; four: string[]; three: string[]; groups: string[][]; discardCardId: string;
+    allCards: string[]; humanPlayerUids: string[]; winnerUids: string[];
+  }): Promise<void> {
+    const { gameRef, gameId, players, handDataByUid, uid, five, four, three, groups, discardCardId, allCards, humanPlayerUids, winnerUids } = ctx;
+    if (humanPlayerUids.length > 0) {
+      await awardGamePoints(tx, db, { gameType: 'rummy', gameId, playerUids: humanPlayerUids, winnerUids });
+    }
+    const finishedAt = new Date().toISOString();
+    const revealedHands = Object.fromEntries(players.map((p: any) => [
+      p.uid,
+      p.uid === uid
+        ? { cards: allCards, melds: { five, four, three, groups: groups.map((g) => ({ cards: g })), discardCardId } }
+        : { cards: handDataByUid.get(p.uid)?.cards || [], groups: handDataByUid.get(p.uid)?.groups || [] },
+    ]));
+    tx.update(gameRef, { status: 'finished', winnerUid: uid, finishedAt, revealedHands });
+    recordGameOutcome(tx, db, gameId, {
+      gameType: 'rummy', playerUids: players.map((p: any) => p.uid),
+      players: players.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL })),
+      winnerUid: uid, finishedAt,
+    });
+  }
+
+  // No cron/background worker exists on Cloud Run, so a bot's turn can't "just happen" on its own
+  // clock — every endpoint that can leave the turn on a bot seat calls this synchronously after
+  // its own transaction commits. Each bot action (draw, an optional free declare-543, then either
+  // a win declare or a discard) is its OWN small transaction that re-reads fresh state and
+  // re-validates against it, exactly like a human client's request would — the "decide" step below
+  // just plans against a quick outside-transaction read; if that plan turns out stale by the time
+  // the transaction runs, it throws and this loop simply tries again next iteration (or bails if
+  // truly stuck) rather than corrupting state.
+  async function drainRummyBotTurns(db: FirebaseFirestore.Firestore, gameId: string): Promise<void> {
+    const gameRef = db.collection('rummyGames').doc(gameId);
+    for (let i = 0; i < 150; i++) { // hard cap — safety net, not a real limit
+      const gameSnap = await gameRef.get();
+      if (!gameSnap.exists) break;
+      const game = gameSnap.data()!;
+      if (game.status !== 'active') break;
+      const players: any[] = game.players || [];
+      const seatIndex = game.currentTurnSeatIndex;
+      const seat = players[seatIndex];
+      if (!seat?.isBot || seat.dropped) break;
+
+      if (game.turnPhase === 'draw') {
+        const handRef = gameRef.collection('hands').doc(seat.uid);
+        const stockRef = gameRef.collection('secret').doc('stock');
+        try {
+          const [handSnap, stockSnap] = await Promise.all([handRef.get(), stockRef.get()]);
+          if (!handSnap.exists) break;
+          const hand: string[] = handSnap.data()!.cards || [];
+          const wildcardRanks = seat.hasSecondJoker ? [game.wildcardRank1, game.wildcardRank2].filter(Boolean) : [game.wildcardRank1].filter(Boolean);
+          const discardPile: { card: string; locked: boolean }[] = game.discardPile || [];
+          const topDiscard = discardPile.length > 0 ? discardPile[discardPile.length - 1] : null;
+          const source = rummyBotDecideDraw(hand, topDiscard, wildcardRanks);
+
+          await db.runTransaction(async (tx) => {
+            const [gs, hs, ss] = await Promise.all([tx.get(gameRef), tx.get(handRef), tx.get(stockRef)]);
+            if (!gs.exists || !hs.exists) throw { status: 404, message: 'Game not found.' };
+            const g = gs.data()!;
+            if (g.status !== 'active' || g.turnPhase !== 'draw') throw { status: 409, message: 'Stale.' };
+            const ps: any[] = g.players || [];
+            const s = ps[g.currentTurnSeatIndex];
+            if (!s || s.uid !== seat.uid) throw { status: 409, message: 'Stale.' };
+            const h = hs.data()!;
+            const st: string[] = ss.exists ? (ss.data()!.cards || []) : [];
+            return rummyApplyDraw(tx, { gameRef, game: g, handRef, hand: h, stockRef, stock: st, source, seatIndex: g.currentTurnSeatIndex, uid: seat.uid });
+          });
+        } catch (err) {
+          console.error('drainRummyBotTurns (draw) failed:', err);
+          break;
+        }
+        continue;
+      }
+
+      // turnPhase === 'discard': possibly a free declare-543, then either a win declare or a discard.
+      const handRef = gameRef.collection('hands').doc(seat.uid);
+      const handSnap = await handRef.get();
+      if (!handSnap.exists) break;
+      const hand: string[] = handSnap.data()!.cards || [];
+      let hasSecondJoker = !!seat.hasSecondJoker;
+      let wildcardRanks = hasSecondJoker ? [game.wildcardRank1, game.wildcardRank2].filter(Boolean) : [game.wildcardRank1].filter(Boolean);
+
+      if (!hasSecondJoker && !seat.pureRun543At) {
+        const meldCheck = rummyBotEvaluateHand(hand, wildcardRanks);
+        if (meldCheck.meld) {
+          try {
+            await db.runTransaction(async (tx) => {
+              const [gs, hs] = await Promise.all([tx.get(gameRef), tx.get(handRef)]);
+              if (!gs.exists || !hs.exists) throw { status: 404, message: 'Game not found.' };
+              const g = gs.data()!;
+              const ps: any[] = g.players || [];
+              const mySeatIndex = ps.findIndex((p: any) => p.uid === seat.uid);
+              const s = ps[mySeatIndex];
+              if (g.status !== 'active' || !s || s.pureRun543At) throw { status: 409, message: 'Stale.' };
+              const cards: string[] = hs.data()!.cards || [];
+              const all = [...meldCheck.meld!.five, ...meldCheck.meld!.four, ...meldCheck.meld!.three];
+              if (!all.every((c) => cards.includes(c))) throw { status: 409, message: 'Stale.' };
+              rummyApplyDeclare543(tx, { gameRef, players: ps, mySeatIndex, five: meldCheck.meld!.five, four: meldCheck.meld!.four, three: meldCheck.meld!.three, uid: seat.uid, displayName: s.displayName });
+            });
+            hasSecondJoker = true;
+            wildcardRanks = [game.wildcardRank1, game.wildcardRank2].filter(Boolean);
+          } catch (err) {
+            console.error('drainRummyBotTurns (declare-543) failed:', err);
+          }
+        }
+      }
+
+      const evaluation = rummyBotEvaluateHand(hand, wildcardRanks);
+      let won = false;
+      if (evaluation.meld && evaluation.uncovered.length === 1) {
+        try {
+          const result: any = await db.runTransaction(async (tx) => {
+            const gameSnap2 = await tx.get(gameRef);
+            if (!gameSnap2.exists) throw { status: 404, message: 'Game not found.' };
+            const g = gameSnap2.data()!;
+            if (g.status !== 'active' || g.turnPhase !== 'discard') throw { status: 409, message: 'Stale.' };
+            const ps: any[] = g.players || [];
+            const mySeatIndex = ps.findIndex((p: any) => p.uid === seat.uid);
+            const s = ps[mySeatIndex];
+            if (!s || mySeatIndex !== g.currentTurnSeatIndex) throw { status: 409, message: 'Stale.' };
+            const handSnaps = await Promise.all(ps.map((p: any) => tx.get(gameRef.collection('hands').doc(p.uid))));
+            const handDataByUid = new Map(ps.map((p: any, i: number) => [p.uid, handSnaps[i].data() || {}]));
+            const myHandSnap = handSnaps[mySeatIndex];
+            const allCards: string[] = myHandSnap.data()?.cards || [];
+            const wr = s.hasSecondJoker ? [g.wildcardRank1, g.wildcardRank2].filter(Boolean) : [g.wildcardRank1].filter(Boolean);
+            const meldTriple = [...evaluation.meld!.five, ...evaluation.meld!.four, ...evaluation.meld!.three];
+            const claimedTotal = [...meldTriple, evaluation.uncovered[0], ...evaluation.groups.flat()];
+            const isValidShow =
+              new Set(claimedTotal).size === claimedTotal.length &&
+              rummyArraysSameMultiset(claimedTotal, allCards) &&
+              rummyIsPureSequence(evaluation.meld!.five) && rummyIsPureSequence(evaluation.meld!.four) && rummyIsPureSequence(evaluation.meld!.three) &&
+              evaluation.groups.every((gr) => gr.length >= 3 && rummyIsValidGroup(gr, wr));
+            if (!isValidShow) throw { status: 409, message: 'Stale.' };
+            const humanPlayerUids = ps.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+            const winnerUids = humanPlayerUids.includes(s.uid) ? [s.uid] : [];
+            await rummyApplyDeclareWinValid(tx, db, {
+              gameRef, gameId, players: ps, handDataByUid, uid: s.uid,
+              five: evaluation.meld!.five, four: evaluation.meld!.four, three: evaluation.meld!.three,
+              groups: evaluation.groups, discardCardId: evaluation.uncovered[0], allCards, humanPlayerUids, winnerUids,
+            });
+            return { won: true };
+          });
+          won = !!result?.won;
+        } catch (err) {
+          console.error('drainRummyBotTurns (declare-win) failed — falling back to a normal discard:', err);
+        }
+      }
+      if (won) break;
+
+      try {
+        let turnNotice: { nextPlayerUid: string; opponentNames: string | null } | null = null;
+        await db.runTransaction(async (tx) => {
+          const [gs, hs] = await Promise.all([tx.get(gameRef), tx.get(handRef)]);
+          if (!gs.exists || !hs.exists) throw { status: 404, message: 'Game not found.' };
+          const g = gs.data()!;
+          if (g.status !== 'active' || g.turnPhase !== 'discard') throw { status: 409, message: 'Stale.' };
+          const ps: any[] = g.players || [];
+          const mySeatIndex = ps.findIndex((p: any) => p.uid === seat.uid);
+          if (mySeatIndex !== g.currentTurnSeatIndex) throw { status: 409, message: 'Stale.' };
+          const cards: string[] = hs.data()!.cards || [];
+          const s = ps[mySeatIndex];
+          const wr = s.hasSecondJoker ? [g.wildcardRank1, g.wildcardRank2].filter(Boolean) : [g.wildcardRank1].filter(Boolean);
+          const { cardId } = rummyBotDecideDiscard(cards, wr);
+          turnNotice = rummyApplyDiscard(tx, { gameRef, game: g, handRef, cards, cardId, seatIndex: mySeatIndex, uid: s.uid });
+        });
+        if (turnNotice) {
+          const notice: { nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+          await notifyGameTurn(db, { gameType: 'rummy', gameId, nextPlayerUid: notice.nextPlayerUid, movedByUid: 'bot', opponentNames: notice.opponentNames }).catch(
+            (err) => console.error('notifyGameTurn (rummy bot) failed:', err),
+          );
+        }
+      } catch (err) {
+        console.error('drainRummyBotTurns (discard) failed:', err);
+        break;
+      }
+    }
   }
 
   // Invites specific users (picked from one of the caller's groups) to a Rummy game they've
@@ -5413,10 +5899,44 @@ async function startServer() {
         })),
       });
       await batch.commit();
+      // The host might be alone at a table with bot-filled seats — drain immediately so the match
+      // doesn't sit waiting on a bot's turn that will never come on its own.
+      await drainRummyBotTurns(db, gameId).catch((err) => console.error('drainRummyBotTurns (start) failed:', err));
       return res.json({ ok: true });
     } catch (error) {
       console.error('rummy/start error:', error);
       return res.status(500).json({ error: 'Unable to start game.' });
+    }
+  });
+
+  // Host-only, lobby ('waiting') only. Fills the next open seat with a deterministic bot player, so
+  // the table can start without needing every other seat filled by a real person immediately — same
+  // pattern as /api/sequence/fill-bot and /api/spadePledge/fill-bot.
+  app.post('/api/rummy/fill-bot', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const gameId = String(req.body?.gameId || '');
+    if (!gameId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const gameRef = db.collection('rummyGames').doc(gameId);
+      const gameSnap = await gameRef.get();
+      if (!gameSnap.exists) return res.status(404).json({ error: 'Game not found.' });
+      const game = gameSnap.data()!;
+      if (game.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can add a bot.' });
+      if (game.status !== 'waiting') return res.status(400).json({ error: 'Game already started.' });
+      const players: any[] = game.players || [];
+      if (players.length >= 4) return res.status(400).json({ error: 'Table is already full.' });
+
+      const seatIndex = players.length;
+      const botUid = `bot_${gameId}_${seatIndex}`;
+      const botPlayer = { uid: botUid, displayName: `Bot ${seatIndex + 1}`, photoURL: '', seatIndex, handCount: 0, isBot: true };
+      await gameRef.update({ players: [...players, botPlayer], playerUids: [...(game.playerUids || []), botUid] });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('rummy/fill-bot error:', error);
+      return res.status(500).json({ error: 'Unable to add a bot.' });
     }
   });
 
@@ -5444,50 +5964,8 @@ async function startServer() {
         if (game.turnPhase !== 'draw') throw { status: 400, message: 'You have already drawn this turn.' };
 
         const hand = handSnap.data()!;
-        let stock: string[] = stockSnap.exists ? (stockSnap.data()!.cards || []) : [];
-        let discardPile: { card: string; locked: boolean }[] = game.discardPile || [];
-        let drawnCard: string;
-
-        if (source === 'discard') {
-          if (discardPile.length === 0) throw { status: 400, message: 'Discard pile is empty.' };
-          const top = discardPile[discardPile.length - 1];
-          // A joker-rank card is only dead in the discard pile if the player who discarded it had
-          // actually SEEN it as a joker at that moment — the common joker (rank1) is public
-          // knowledge from the start, but the second joker (rank2) only counts once that specific
-          // discarder had personally unlocked it. `locked` was decided once, at discard time, in
-          // /api/rummy/discard — this is just reading that decision back.
-          if (top.locked) {
-            throw { status: 400, message: 'That\'s a joker — it can\'t be picked up from the discard pile. Draw from stock instead.' };
-          }
-          drawnCard = top.card;
-          discardPile = discardPile.slice(0, -1);
-        } else {
-          if (stock.length === 0) {
-            // Reshuffle the discard pile (except its top card) back into the stock — standard
-            // rummy behavior when the stock runs dry mid-game.
-            if (discardPile.length <= 1) throw { status: 400, message: 'No cards left to draw.' };
-            const top = discardPile[discardPile.length - 1];
-            stock = rummyShuffle(discardPile.slice(0, -1).map((d) => d.card));
-            discardPile = [top];
-          }
-          drawnCard = stock[stock.length - 1];
-          stock = stock.slice(0, -1);
-        }
-
-        const newHandCards = [...hand.cards, drawnCard];
-        tx.set(stockRef, { cards: stock });
-        tx.update(handRef, { cards: newHandCards });
-        const newPlayers = players.map((p: any, i: number) =>
-          i === game.currentTurnSeatIndex ? { ...p, handCount: newHandCards.length } : p,
-        );
-        tx.update(gameRef, {
-          discardPile,
-          stockCount: stock.length,
-          turnPhase: 'discard',
-          players: newPlayers,
-          lastAction: { type: 'draw', byUid: decoded.uid, at: new Date().toISOString() },
-        });
-        return { drawnCard };
+        const stock: string[] = stockSnap.exists ? (stockSnap.data()!.cards || []) : [];
+        return rummyApplyDraw(tx, { gameRef, game, handRef, hand, stockRef, stock, source, seatIndex: game.currentTurnSeatIndex, uid: decoded.uid });
       });
 
       return res.json({ ok: true, drawnCard: result.drawnCard });
@@ -5524,49 +6002,17 @@ async function startServer() {
 
         const hand = handSnap.data()!;
         const cards: string[] = hand.cards || [];
-        if (!cards.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
-
-        // Remove only the ONE discarded card, not every card matching that value — three combined
-        // decks routinely put duplicate rank+suit cards in the same hand, and
-        // `.filter(c => c !== cardId)` would silently discard all of them instead of just the one
-        // actually played.
-        const discardedIdxInHand = cards.indexOf(cardId);
-        const newHandCards = [...cards.slice(0, discardedIdxInHand), ...cards.slice(discardedIdxInHand + 1)];
-        const nextSeatIndex = rummyNextActiveSeat(players, mySeatIndex);
-        const newPlayers = players.map((p: any, i: number) =>
-          i === mySeatIndex ? { ...p, handCount: newHandCards.length } : p,
-        );
-
-        // Locked from pickup only if THIS discarder had actually seen it as a joker: the common
-        // joker (rank1) is public from the start, but the second joker (rank2) only counts if this
-        // specific player has personally unlocked it — someone who hasn't yet has no way of
-        // knowing that card is special, so the next player is free to pick it up.
-        const discardedRank = rummyParseCard(cardId).rank;
-        const locked = discardedRank === game.wildcardRank1 || (discardedRank === game.wildcardRank2 && !!mySeat.hasSecondJoker);
-
-        tx.update(handRef, { cards: newHandCards });
-        tx.update(gameRef, {
-          discardPile: [...(game.discardPile || []), { card: cardId, locked }],
-          currentTurnSeatIndex: nextSeatIndex,
-          turnPhase: 'draw',
-          players: newPlayers,
-          lastAction: { type: 'discard', byUid: decoded.uid, at: new Date().toISOString() },
-        });
-
-        const nextPlayer = players[nextSeatIndex];
-        if (nextPlayer) {
-          turnNotice = {
-            nextPlayerUid: nextPlayer.uid,
-            opponentNames: players.filter((p) => p.uid !== nextPlayer.uid && !p.dropped).map((p) => p.displayName).filter(Boolean).join(', ') || null,
-          };
-        }
+        turnNotice = rummyApplyDiscard(tx, { gameRef, game, handRef, cards, cardId, seatIndex: mySeatIndex, uid: decoded.uid });
       });
 
       if (turnNotice) {
-        await notifyGameTurn(db, { gameType: 'rummy', gameId, nextPlayerUid: turnNotice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: turnNotice.opponentNames }).catch(
+        const notice: { nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'rummy', gameId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
           (err) => console.error('notifyGameTurn (rummy discard) failed:', err),
         );
       }
+      // The next seat might be bot-controlled — drain synchronously so the match keeps moving.
+      await drainRummyBotTurns(db, gameId).catch((err) => console.error('drainRummyBotTurns (discard) failed:', err));
 
       return res.json({ ok: true });
     } catch (error: any) {
@@ -5619,17 +6065,7 @@ async function startServer() {
           throw { status: 400, message: 'Each group must be a valid pure sequence (no jokers).' };
         }
 
-        const newPlayers = players.map((p: any, i: number) =>
-          i === mySeatIndex ? { ...p, hasSecondJoker: true, pureRun543At: new Date().toISOString() } : p,
-        );
-        // `lastJokerSpot` drives a one-off "XXXX has spotted the Joker!" toast client-side (see
-        // RummyGame.tsx's useJokerSpotted) — same "stamp a timestamped field, client diffs it"
-        // pattern as `lastReaction` for quick reactions, just its own field since this is a
-        // distinct game event, not a reaction.
-        tx.update(gameRef, {
-          players: newPlayers,
-          lastJokerSpot: { uid: decoded.uid, displayName: mySeat.displayName, at: new Date().toISOString() },
-        });
+        rummyApplyDeclare543(tx, { gameRef, players, mySeatIndex, five, four, three, uid: decoded.uid, displayName: mySeat.displayName });
       });
 
       return res.json({ ok: true });
@@ -5708,29 +6144,13 @@ async function startServer() {
           groups.every((g) => g.length >= 3 && rummyIsValidGroup(g, wildcardRanks));
 
         if (isValidShow) {
-          // awardGamePoints does READS internally — must run before any tx.update/tx.set write in
-          // this transaction, per Firestore's read-before-write rule, so it comes before the
-          // game's own finish write below, not after.
-          await awardGamePoints(tx, db, { gameType: 'rummy', gameId, playerUids: players.map((p: any) => p.uid), winnerUids: [decoded.uid] });
-          const finishedAt1 = new Date().toISOString();
-          // Everyone's final hand, revealed once the game is over — the winner's is shown as the
-          // exact pure-sequence/set grouping they declared (never re-derived or guessed at), since
-          // that's the only grouping this endpoint actually validated; everyone else's is just
-          // their held cards as-is, since a losing hand was never grouped into anything.
-          // Firestore rejects arrays nested directly inside arrays ("invalid nested entity") —
-          // `groups`/`melds.groups` are conceptually string[][], so every group gets wrapped in a
-          // single-key object ({cards: [...]}) to store as an array of maps instead.
-          const revealedHands = Object.fromEntries(players.map((p: any) => [
-            p.uid,
-            p.uid === decoded.uid
-              ? { cards: allCards, melds: { five, four, three, groups: groups.map((g) => ({ cards: g })), discardCardId } }
-              : { cards: handDataByUid.get(p.uid)?.cards || [], groups: handDataByUid.get(p.uid)?.groups || [] },
-          ]));
-          tx.update(gameRef, { status: 'finished', winnerUid: decoded.uid, finishedAt: finishedAt1, revealedHands });
-          recordGameOutcome(tx, db, gameId, {
-            gameType: 'rummy', playerUids: players.map((p: any) => p.uid),
-            players: players.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL })),
-            winnerUid: decoded.uid, finishedAt: finishedAt1,
+          // Bot uids don't correspond to real authenticated users — never award them points (not
+          // even the participation game_played bonus every human gets), so they're excluded from
+          // BOTH the read (playerUids) and the winner list, same fix as Sequence's bot points bug.
+          const humanPlayerUids = players.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+          const winnerUids = humanPlayerUids.includes(decoded.uid) ? [decoded.uid] : [];
+          await rummyApplyDeclareWinValid(tx, db, {
+            gameRef, gameId, players, handDataByUid, uid: decoded.uid, five, four, three, groups, discardCardId, allCards, humanPlayerUids, winnerUids,
           });
           return { won: true };
         }
@@ -5739,7 +6159,11 @@ async function startServer() {
         const newPlayers = players.map((p: any, i: number) => (i === mySeatIndex ? { ...p, dropped: true } : p));
         const stillIn = newPlayers.filter((p: any) => !p.dropped);
         if (stillIn.length === 1) {
-          await awardGamePoints(tx, db, { gameType: 'rummy', gameId, playerUids: newPlayers.map((p: any) => p.uid), winnerUids: [stillIn[0].uid] });
+          const humanPlayerUids2 = newPlayers.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+          const winnerUids2 = humanPlayerUids2.includes(stillIn[0].uid) ? [stillIn[0].uid] : [];
+          if (humanPlayerUids2.length > 0) {
+            await awardGamePoints(tx, db, { gameType: 'rummy', gameId, playerUids: humanPlayerUids2, winnerUids: winnerUids2 });
+          }
           const finishedAt2 = new Date().toISOString();
           // No meld to show — nobody validated a grouping here (the win is by elimination, not a
           // declare), so every hand is revealed as-is.
@@ -5764,7 +6188,11 @@ async function startServer() {
         return { won: false };
       });
 
-      if (!outcome.won) return res.status(400).json({ error: 'Invalid declaration — you have been dropped from the game.' });
+      if (!outcome.won) {
+        // The turn (and possibly the whole game, if only one player is left) may now be on a bot.
+        await drainRummyBotTurns(db, gameId).catch((err) => console.error('drainRummyBotTurns (declare-win) failed:', err));
+        return res.status(400).json({ error: 'Invalid declaration — you have been dropped from the game.' });
+      }
       return res.json({ ok: true, won: true });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
@@ -5804,7 +6232,11 @@ async function startServer() {
             p.uid,
             { cards: handSnaps[i].data()?.cards || [], groups: handSnaps[i].data()?.groups || [] },
           ]));
-          await awardGamePoints(tx, db, { gameType: 'rummy', gameId, playerUids: newPlayers.map((p: any) => p.uid), winnerUids: [stillIn[0].uid] });
+          const humanPlayerUids = newPlayers.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+          const winnerUids = humanPlayerUids.includes(stillIn[0].uid) ? [stillIn[0].uid] : [];
+          if (humanPlayerUids.length > 0) {
+            await awardGamePoints(tx, db, { gameType: 'rummy', gameId, playerUids: humanPlayerUids, winnerUids });
+          }
           const finishedAt = new Date().toISOString();
           tx.update(gameRef, { status: 'finished', winnerUid: stillIn[0].uid, finishedAt, players: newPlayers, revealedHands });
           recordGameOutcome(tx, db, gameId, {
@@ -5834,6 +6266,7 @@ async function startServer() {
           (err) => console.error('notifyGameTurn (rummy drop) failed:', err),
         );
       }
+      await drainRummyBotTurns(db, gameId).catch((err) => console.error('drainRummyBotTurns (drop) failed:', err));
       return res.json({ ok: true });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
@@ -5923,6 +6356,7 @@ async function startServer() {
         hasSecondJoker: false,
         pureRun543At: null,
         dropped: false,
+        isBot: !!p.isBot,
       }));
 
       const batch = db.batch();
@@ -6207,6 +6641,73 @@ async function startServer() {
     return { penalty: Math.min(bestPenalty, 80), protectedCardIds: bestProtected };
   }
 
+  // Only worth taking the discard pile's visible top card if it actually gets absorbed into an
+  // organized group — reuses computeRummy13HandPenalty as the yardstick: adding a card that isn't
+  // usable can only ever raise or hold the penalty, never lower it, so a non-increasing penalty
+  // means the card genuinely helped.
+  function rummy13BotDecideDraw(hand: string[], topDiscard: string | null, wildcardRanks: string[]): 'stock' | 'discard' {
+    if (!topDiscard) return 'stock';
+    const withoutDraw = computeRummy13HandPenalty(hand, wildcardRanks).penalty;
+    const withDiscard = computeRummy13HandPenalty([...hand, topDiscard], wildcardRanks).penalty;
+    return withDiscard <= withoutDraw ? 'discard' : 'stock';
+  }
+
+  // Discard the highest-value card NOT already protected by the best grouping found —
+  // computeRummy13HandPenalty's protectedCardIds is exactly "the cards worth keeping," so anything
+  // outside that set is deadwood; among deadwood, shed the most expensive card first since it's the
+  // costliest to be caught holding if an opponent declares.
+  function rummy13BotDecideDiscard(hand14: string[], wildcardRanks: string[]): string {
+    const { protectedCardIds } = computeRummy13HandPenalty(hand14, wildcardRanks);
+    const protectedSet = new Set(protectedCardIds);
+    const unprotected = hand14.filter((c) => !protectedSet.has(c));
+    const pool = unprotected.length > 0 ? unprotected : hand14;
+    return pool.slice().sort((a, b) => rummy13CardValue(b, wildcardRanks) - rummy13CardValue(a, wildcardRanks))[0];
+  }
+
+  // Looks for a genuine winning declare in a 14-card hand: at least 2 valid sequences (one of them
+  // pure) fully covering 13 of the 14 cards, with the 14th set aside as the discard — the exact
+  // shape /api/rummy13/declare's isValidShow checks. Tries every card as the potential discard, and
+  // for each, a bounded recursive full-coverage search (same "take the first card, try it as the
+  // anchor of a valid 3/4-card group with others" shape as computeRummy13HandPenalty's bestCoverage,
+  // just requiring EVERY card to end up in a group, not just maximizing value) that only accepts a
+  // complete partition once it also satisfies the 2-sequences/1-pure rule. A shared call budget
+  // across the whole search keeps this bounded even when no declare is possible and the search has
+  // to rule out every branch.
+  function rummy13BotFindDeclare(hand14: string[], wildcardRanks: string[]): { groups: string[][]; discardCardId: string } | null {
+    const budget = { calls: 0 };
+    const MAX_CALLS = 8000;
+
+    function search(cards: string[], seqCount: number, pureCount: number): string[][] | null {
+      budget.calls++;
+      if (budget.calls > MAX_CALLS) return null;
+      if (cards.length === 0) return seqCount >= 2 && pureCount >= 1 ? [] : null;
+      const [first, ...rest] = cards;
+      for (const size of [3, 4]) {
+        if (rest.length < size - 1) continue;
+        for (const combo of rummy13Combinations(rest, size - 1)) {
+          const group = [first, ...combo];
+          const isSeq = rummy13IsValidSequence(group, wildcardRanks);
+          const isSet = !isSeq && rummy13IsValidSet(group, wildcardRanks);
+          if (!isSeq && !isSet) continue;
+          const isPure = isSeq && rummy13IsPureSequence(group);
+          const remaining = cards.filter((c) => !group.includes(c));
+          const sub = search(remaining, seqCount + (isSeq ? 1 : 0), pureCount + (isPure ? 1 : 0));
+          if (sub !== null) return [group, ...sub];
+        }
+      }
+      return null;
+    }
+
+    for (let i = 0; i < hand14.length; i++) {
+      const discardCardId = hand14[i];
+      const rest = [...hand14.slice(0, i), ...hand14.slice(i + 1)];
+      const partition = search(rest, 0, 0);
+      if (partition) return { groups: partition, discardCardId };
+      if (budget.calls > MAX_CALLS) break;
+    }
+    return null;
+  }
+
   // The shared "a deal just ended — apply scores, then either finish the table or deal the next
   // hand" transition, called from /declare (both branches), /drop and /timeout (when they bring
   // the deal's still-active count to 1), and /draw's stock-exhaustion void path.
@@ -6259,7 +6760,14 @@ async function startServer() {
           : players.slice().sort((a: any, b: any) => a.cumulativeScore - b.cumulativeScore || a.seatIndex - b.seatIndex)[0]?.uid || null;
 
       if (tableWinnerUid) {
-        await awardGamePoints(tx, db, { gameType: 'rummy13', gameId: ctx.tableRef.id, playerUids: players.map((p: any) => p.uid), winnerUids: [tableWinnerUid] });
+        // Bot uids don't correspond to real authenticated users — never award them points, so
+        // they're excluded from both the participation read and the winner list, same fix as
+        // Sequence's and 27-Hand Rummy's bot points-ledger bug.
+        const humanPlayerUids = players.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+        const winnerUids = humanPlayerUids.includes(tableWinnerUid) ? [tableWinnerUid] : [];
+        if (humanPlayerUids.length > 0) {
+          await awardGamePoints(tx, db, { gameType: 'rummy13', gameId: ctx.tableRef.id, playerUids: humanPlayerUids, winnerUids });
+        }
       }
     }
 
@@ -6323,6 +6831,267 @@ async function startServer() {
     });
     tx.update(ctx.tableRef, { players, currentDealId: newDealRef.id, dealNumber: table.dealNumber + 1, lastDealSummary: summary });
     return { finished: false, newDealId: newDealRef.id };
+  }
+
+  // ---- Shared apply-functions: identical logic used by the human-facing endpoints below AND by
+  // drainRummy13BotTurns further down — one implementation per action, not a duplicated bot path.
+
+  async function rummy13ApplyDraw(tx: FirebaseFirestore.Transaction, db: Firestore, ctx: {
+    dealRef: FirebaseFirestore.DocumentReference; deal: any; handRef: FirebaseFirestore.DocumentReference;
+    hand: any; stockRef: FirebaseFirestore.DocumentReference; stock: string[]; source: 'stock' | 'discard';
+    seatIndex: number; uid: string;
+  }): Promise<{ drawnCard?: string; voided: boolean; finished: boolean }> {
+    const { dealRef, deal, handRef, hand, stockRef, seatIndex, uid, source } = ctx;
+    const players: any[] = deal.players || [];
+    let stock = ctx.stock;
+    let discardPile: string[] = deal.discardPile || [];
+
+    if (source === 'stock' && stock.length === 0) {
+      if (discardPile.length <= 1) {
+        const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+        const handSnaps = await Promise.all(players.filter((p: any) => !p.dropped).map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid))));
+        const revealedHands = Object.fromEntries(players.filter((p: any) => !p.dropped).map((p: any, i: number) => [p.uid, { cards: handSnaps[i].data()?.cards || [] }]));
+        const outcome = await resolveRummy13DealEnd(tx, db, {
+          tableRef, table, dealRef, endedBy: 'void', winnerUid: null, dealScores: {}, revealedHands,
+        });
+        return { voided: true, finished: outcome.finished };
+      }
+      const top = discardPile[discardPile.length - 1];
+      stock = rummy13Shuffle(discardPile.slice(0, -1));
+      discardPile = [top];
+    }
+
+    let drawnCard: string;
+    if (source === 'discard') {
+      if (discardPile.length === 0) throw { status: 400, message: 'Discard pile is empty.' };
+      drawnCard = discardPile[discardPile.length - 1];
+      discardPile = discardPile.slice(0, -1);
+    } else {
+      drawnCard = stock[stock.length - 1];
+      stock = stock.slice(0, -1);
+    }
+
+    const newHandCards = [...hand.cards, drawnCard];
+    tx.set(stockRef, { cards: stock });
+    tx.update(handRef, { cards: newHandCards });
+    const newPlayers = players.map((p: any, i: number) => (i === seatIndex ? { ...p, handCount: newHandCards.length } : p));
+    tx.update(dealRef, {
+      discardPile,
+      stockCount: stock.length,
+      turnPhase: 'discard',
+      turnDrawnCard: drawnCard,
+      turnDrawnFromDiscard: source === 'discard',
+      players: newPlayers,
+      lastAction: { type: 'draw', byUid: uid, at: new Date().toISOString() },
+    });
+    return { drawnCard, voided: false, finished: false };
+  }
+
+  function rummy13ApplyDiscard(tx: FirebaseFirestore.Transaction, ctx: {
+    dealRef: FirebaseFirestore.DocumentReference; deal: any; handRef: FirebaseFirestore.DocumentReference;
+    cards: string[]; cardId: string; seatIndex: number; uid: string;
+  }): { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null {
+    const { dealRef, deal, handRef, cards, cardId, seatIndex, uid } = ctx;
+    const players: any[] = deal.players || [];
+    if (deal.turnDrawnFromDiscard && cardId === deal.turnDrawnCard) {
+      throw { status: 400, message: 'A card drawn from the discard pile can\'t be discarded the same turn.' };
+    }
+    if (!cards.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
+
+    const discardedIdx = cards.indexOf(cardId);
+    const newHandCards = [...cards.slice(0, discardedIdx), ...cards.slice(discardedIdx + 1)];
+    const nextSeatIndex = rummy13NextActiveSeat(players, seatIndex);
+    const newPlayers = players.map((p: any, i: number) =>
+      i === seatIndex ? { ...p, handCount: newHandCards.length, hasActedThisDeal: true } : p,
+    );
+
+    tx.update(handRef, { cards: newHandCards });
+    tx.update(dealRef, {
+      discardPile: [...(deal.discardPile || []), cardId],
+      currentTurnSeatIndex: nextSeatIndex,
+      turnPhase: 'draw',
+      turnStartedAt: new Date().toISOString(),
+      turnDrawnCard: null,
+      turnDrawnFromDiscard: false,
+      players: newPlayers,
+      lastAction: { type: 'discard', byUid: uid, at: new Date().toISOString() },
+    });
+
+    const nextPlayer = players[nextSeatIndex];
+    return nextPlayer
+      ? {
+          tableId: deal.tableId,
+          nextPlayerUid: nextPlayer.uid,
+          opponentNames: players.filter((p) => p.uid !== nextPlayer.uid && !p.dropped).map((p) => p.displayName).filter(Boolean).join(', ') || null,
+        }
+      : null;
+  }
+
+  async function rummy13ApplyDeclare(tx: FirebaseFirestore.Transaction, db: Firestore, ctx: {
+    dealRef: FirebaseFirestore.DocumentReference; deal: any; tableRef: FirebaseFirestore.DocumentReference; table: any;
+    activePlayers: any[]; handDataByUid: Map<string, any>; uid: string; groups: string[][]; discardCardId: string;
+  }): Promise<{ won: boolean; finished: boolean; newDealId?: string }> {
+    const { dealRef, deal, tableRef, table, activePlayers, handDataByUid, uid, groups, discardCardId } = ctx;
+    const myHand: string[] = handDataByUid.get(uid)?.cards || [];
+    const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+    const flatGroups = groups.flat();
+    const claimedTotal = [...flatGroups, discardCardId];
+    const isValidShow =
+      new Set(claimedTotal).size === claimedTotal.length &&
+      rummy13ArraysSameMultiset(claimedTotal, myHand) &&
+      groups.every((g) => g.length >= 3 && rummy13IsValidGroup(g, wildcardRanks)) &&
+      groups.filter((g) => rummy13IsValidSequence(g, wildcardRanks)).length >= 2 &&
+      groups.some((g) => rummy13IsValidSequence(g, wildcardRanks) && rummy13IsPureSequence(g));
+
+    const dealScores: Record<string, number> = {};
+    const revealedHands: Record<string, any> = {};
+    for (const p of activePlayers) {
+      const theirCards: string[] = handDataByUid.get(p.uid)?.cards || [];
+      if (p.uid === uid) {
+        dealScores[p.uid] = isValidShow ? 0 : 80;
+        revealedHands[p.uid] = isValidShow
+          ? { cards: theirCards, declaredGroups: groups.map((g) => ({ cards: g })), discardCardId }
+          : { cards: theirCards, groups: handDataByUid.get(p.uid)?.groups || [] };
+      } else {
+        dealScores[p.uid] = computeRummy13HandPenalty(theirCards, wildcardRanks).penalty;
+        revealedHands[p.uid] = { cards: theirCards, groups: handDataByUid.get(p.uid)?.groups || [] };
+      }
+    }
+
+    const result = await resolveRummy13DealEnd(tx, db, {
+      tableRef, table, dealRef,
+      endedBy: 'declare',
+      winnerUid: isValidShow ? uid : null,
+      dealScores,
+      invalidDeclareUid: isValidShow ? null : uid,
+      revealedHands,
+    });
+    return { won: isValidShow, ...result };
+  }
+
+  // No cron/background worker exists on Cloud Run — every endpoint that can leave the turn on a bot
+  // seat calls this synchronously after its own transaction commits. Same read-a-plan-outside/
+  // re-validate-inside discipline as drainRummyBotTurns (27-Hand Rummy) and drainSequenceBotTurns.
+  async function drainRummy13BotTurns(db: Firestore, tableId: string): Promise<void> {
+    const tableRef = db.collection('rummy13Tables').doc(tableId);
+    for (let i = 0; i < 150; i++) { // hard cap — safety net, not a real limit
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) break;
+      const table = tableSnap.data()!;
+      if (table.status !== 'active' || !table.currentDealId) break;
+      const dealRef = db.collection('rummy13Deals').doc(table.currentDealId);
+      const dealSnap = await dealRef.get();
+      if (!dealSnap.exists) break;
+      const deal = dealSnap.data()!;
+      if (deal.status !== 'active') break;
+
+      const players: any[] = deal.players || [];
+      const seatIndex = deal.currentTurnSeatIndex;
+      const seat = players[seatIndex];
+      const tablePlayer = (table.players || []).find((p: any) => p.uid === seat?.uid);
+      if (!seat || seat.dropped || !tablePlayer?.isBot) break;
+
+      if (deal.turnPhase === 'draw') {
+        const handRef = dealRef.collection('hands').doc(seat.uid);
+        const stockRef = dealRef.collection('secret').doc('stock');
+        try {
+          const [handSnap, stockSnap] = await Promise.all([handRef.get(), stockRef.get()]);
+          if (!handSnap.exists) break;
+          const hand: string[] = handSnap.data()!.cards || [];
+          const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+          const discardPile: string[] = deal.discardPile || [];
+          const topDiscard = discardPile.length > 0 ? discardPile[discardPile.length - 1] : null;
+          const source = rummy13BotDecideDraw(hand, topDiscard, wildcardRanks);
+
+          await db.runTransaction(async (tx) => {
+            const [ds, hs, ss] = await Promise.all([tx.get(dealRef), tx.get(handRef), tx.get(stockRef)]);
+            if (!ds.exists || !hs.exists) throw { status: 404, message: 'Deal not found.' };
+            const d = ds.data()!;
+            if (d.status !== 'active' || d.turnPhase !== 'draw') throw { status: 409, message: 'Stale.' };
+            const ps: any[] = d.players || [];
+            const s = ps[d.currentTurnSeatIndex];
+            if (!s || s.uid !== seat.uid) throw { status: 409, message: 'Stale.' };
+            const h = hs.data()!;
+            const st: string[] = ss.exists ? (ss.data()!.cards || []) : [];
+            return rummy13ApplyDraw(tx, db, { dealRef, deal: d, handRef, hand: h, stockRef, stock: st, source, seatIndex: d.currentTurnSeatIndex, uid: seat.uid });
+          });
+        } catch (err) {
+          console.error('drainRummy13BotTurns (draw) failed:', err);
+          break;
+        }
+        continue;
+      }
+
+      // turnPhase === 'discard': try a real declare first, else a normal discard.
+      const handRef = dealRef.collection('hands').doc(seat.uid);
+      const handSnap = await handRef.get();
+      if (!handSnap.exists) break;
+      const hand14: string[] = handSnap.data()!.cards || [];
+      const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+      const declareAttempt = rummy13BotFindDeclare(hand14, wildcardRanks);
+      let dealEnded = false;
+
+      if (declareAttempt) {
+        try {
+          await db.runTransaction(async (tx) => {
+            const dealSnap2 = await tx.get(dealRef);
+            if (!dealSnap2.exists) throw { status: 404, message: 'Deal not found.' };
+            const d = dealSnap2.data()!;
+            if (d.status !== 'active' || d.turnPhase !== 'discard') throw { status: 409, message: 'Stale.' };
+            const ps: any[] = d.players || [];
+            const mySeatIndex = ps.findIndex((p: any) => p.uid === seat.uid);
+            if (mySeatIndex !== d.currentTurnSeatIndex) throw { status: 409, message: 'Stale.' };
+            const tableRef2 = db.collection('rummy13Tables').doc(d.tableId);
+            const activePlayers = ps.filter((p: any) => !p.dropped);
+            const [tableSnap2, ...handSnaps] = await Promise.all([tx.get(tableRef2), ...activePlayers.map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid)))]);
+            if (!tableSnap2.exists) throw { status: 404, message: 'Table not found.' };
+            const t = tableSnap2.data()!;
+            const handDataByUid = new Map(activePlayers.map((p: any, i: number) => [p.uid, handSnaps[i].data() || {}]));
+            const currentHand: string[] = handDataByUid.get(seat.uid)?.cards || [];
+            // Re-verify the bot's plan still matches fresh state — a race could have changed the
+            // hand between the outside-transaction read used to plan and this re-read.
+            if (!rummy13ArraysSameMultiset(currentHand, hand14)) throw { status: 409, message: 'Stale.' };
+            await rummy13ApplyDeclare(tx, db, {
+              dealRef, deal: d, tableRef: tableRef2, table: t, activePlayers, handDataByUid,
+              uid: seat.uid, groups: declareAttempt.groups, discardCardId: declareAttempt.discardCardId,
+            });
+          });
+          dealEnded = true; // declare always ends the deal, win or not
+        } catch (err) {
+          console.error('drainRummy13BotTurns (declare) failed — falling back to a normal discard:', err);
+        }
+      }
+      if (dealEnded) continue;
+
+      try {
+        let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+        await db.runTransaction(async (tx) => {
+          const [ds, hs] = await Promise.all([tx.get(dealRef), tx.get(handRef)]);
+          if (!ds.exists || !hs.exists) throw { status: 404, message: 'Deal not found.' };
+          const d = ds.data()!;
+          if (d.status !== 'active' || d.turnPhase !== 'discard') throw { status: 409, message: 'Stale.' };
+          const ps: any[] = d.players || [];
+          const mySeatIndex = ps.findIndex((p: any) => p.uid === seat.uid);
+          if (mySeatIndex !== d.currentTurnSeatIndex) throw { status: 409, message: 'Stale.' };
+          const cards: string[] = hs.data()!.cards || [];
+          const wr = [d.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+          const cardId = rummy13BotDecideDiscard(cards, wr);
+          turnNotice = rummy13ApplyDiscard(tx, { dealRef, deal: d, handRef, cards, cardId, seatIndex: mySeatIndex, uid: seat.uid });
+        });
+        if (turnNotice) {
+          const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+          await notifyGameTurn(db, { gameType: 'rummy13', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: 'bot', opponentNames: notice.opponentNames }).catch(
+            (err) => console.error('notifyGameTurn (rummy13 bot) failed:', err),
+          );
+        }
+      } catch (err) {
+        console.error('drainRummy13BotTurns (discard) failed:', err);
+        break;
+      }
+    }
   }
 
   app.post('/api/rummy13/invite', async (req, res) => {
@@ -6404,10 +7173,40 @@ async function startServer() {
         players: players.map((p) => ({ ...p, cumulativeScore: p.cumulativeScore || 0, eliminated: false })),
       });
       await batch.commit();
+      await drainRummy13BotTurns(db, tableId).catch((err) => console.error('drainRummy13BotTurns (start) failed:', err));
       return res.json({ ok: true, dealId: dealRef.id });
     } catch (error) {
       console.error('rummy13/start error:', error);
       return res.status(500).json({ error: 'Unable to start table.' });
+    }
+  });
+
+  // Host-only, lobby ('waiting') only — same pattern as /api/rummy/fill-bot, /api/sequence/fill-bot.
+  app.post('/api/rummy13/fill-bot', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('rummy13Tables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can add a bot.' });
+      if (table.status !== 'waiting') return res.status(400).json({ error: 'Table already started.' });
+      const players: any[] = table.players || [];
+      if (players.length >= (table.maxPlayers || 6)) return res.status(400).json({ error: 'Table is already full.' });
+
+      const seatIndex = players.length;
+      const botUid = `bot_${tableId}_${seatIndex}`;
+      const botPlayer = { uid: botUid, displayName: `Bot ${seatIndex + 1}`, photoURL: '', seatIndex, cumulativeScore: 0, eliminated: false, isBot: true };
+      await tableRef.update({ players: [...players, botPlayer], playerUids: [...(table.playerUids || []), botUid] });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('rummy13/fill-bot error:', error);
+      return res.status(500).json({ error: 'Unable to add a bot.' });
     }
   });
 
@@ -6435,53 +7234,8 @@ async function startServer() {
         if (deal.turnPhase !== 'draw') throw { status: 400, message: 'You have already drawn this turn.' };
 
         const hand = handSnap.data()!;
-        let stock: string[] = stockSnap.exists ? (stockSnap.data()!.cards || []) : [];
-        let discardPile: string[] = deal.discardPile || [];
-
-        if (source === 'stock' && stock.length === 0) {
-          if (discardPile.length <= 1) {
-            // Void this deal — too few cards to recycle. Need the table + every active player's
-            // hand up front, same as any other deal-ending path, before any write.
-            const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
-            const tableSnap = await tx.get(tableRef);
-            if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
-            const table = tableSnap.data()!;
-            const handSnaps = await Promise.all(players.filter((p) => !p.dropped).map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid))));
-            const revealedHands = Object.fromEntries(players.filter((p) => !p.dropped).map((p: any, i: number) => [p.uid, { cards: handSnaps[i].data()?.cards || [] }]));
-            const outcome = await resolveRummy13DealEnd(tx, db, {
-              tableRef, table, dealRef, endedBy: 'void', winnerUid: null, dealScores: {}, revealedHands,
-            });
-            return { voided: true, finished: outcome.finished };
-          }
-          const top = discardPile[discardPile.length - 1];
-          stock = rummy13Shuffle(discardPile.slice(0, -1));
-          discardPile = [top];
-        }
-
-        let drawnCard: string;
-        if (source === 'discard') {
-          if (discardPile.length === 0) throw { status: 400, message: 'Discard pile is empty.' };
-          drawnCard = discardPile[discardPile.length - 1];
-          discardPile = discardPile.slice(0, -1);
-        } else {
-          drawnCard = stock[stock.length - 1];
-          stock = stock.slice(0, -1);
-        }
-
-        const newHandCards = [...hand.cards, drawnCard];
-        tx.set(stockRef, { cards: stock });
-        tx.update(handRef, { cards: newHandCards });
-        const newPlayers = players.map((p: any, i: number) => (i === deal.currentTurnSeatIndex ? { ...p, handCount: newHandCards.length } : p));
-        tx.update(dealRef, {
-          discardPile,
-          stockCount: stock.length,
-          turnPhase: 'discard',
-          turnDrawnCard: drawnCard,
-          turnDrawnFromDiscard: source === 'discard',
-          players: newPlayers,
-          lastAction: { type: 'draw', byUid: decoded.uid, at: new Date().toISOString() },
-        });
-        return { drawnCard, voided: false, finished: false };
+        const stock: string[] = stockSnap.exists ? (stockSnap.data()!.cards || []) : [];
+        return rummy13ApplyDraw(tx, db, { dealRef, deal, handRef, hand, stockRef, stock, source, seatIndex: deal.currentTurnSeatIndex, uid: decoded.uid });
       });
 
       if (result.voided) return res.json({ ok: true, voided: true, finished: result.finished });
@@ -6505,6 +7259,7 @@ async function startServer() {
       const dealRef = db.collection('rummy13Deals').doc(dealId);
       const handRef = dealRef.collection('hands').doc(decoded.uid);
       let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+      let dealTableId = '';
 
       await db.runTransaction(async (tx) => {
         const [dealSnap, handSnap] = await Promise.all([tx.get(dealRef), tx.get(handRef)]);
@@ -6516,41 +7271,11 @@ async function startServer() {
         const mySeat = players[mySeatIndex];
         if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'Not your turn.' };
         if (deal.turnPhase !== 'discard') throw { status: 400, message: 'Draw a card first.' };
-        if (deal.turnDrawnFromDiscard && cardId === deal.turnDrawnCard) {
-          throw { status: 400, message: 'A card drawn from the discard pile can\'t be discarded the same turn.' };
-        }
 
+        dealTableId = deal.tableId;
         const hand = handSnap.data()!;
         const cards: string[] = hand.cards || [];
-        if (!cards.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
-
-        const discardedIdx = cards.indexOf(cardId);
-        const newHandCards = [...cards.slice(0, discardedIdx), ...cards.slice(discardedIdx + 1)];
-        const nextSeatIndex = rummy13NextActiveSeat(players, mySeatIndex);
-        const newPlayers = players.map((p: any, i: number) =>
-          i === mySeatIndex ? { ...p, handCount: newHandCards.length, hasActedThisDeal: true } : p,
-        );
-
-        tx.update(handRef, { cards: newHandCards });
-        tx.update(dealRef, {
-          discardPile: [...(deal.discardPile || []), cardId],
-          currentTurnSeatIndex: nextSeatIndex,
-          turnPhase: 'draw',
-          turnStartedAt: new Date().toISOString(),
-          turnDrawnCard: null,
-          turnDrawnFromDiscard: false,
-          players: newPlayers,
-          lastAction: { type: 'discard', byUid: decoded.uid, at: new Date().toISOString() },
-        });
-
-        const nextPlayer = players[nextSeatIndex];
-        if (nextPlayer) {
-          turnNotice = {
-            tableId: deal.tableId,
-            nextPlayerUid: nextPlayer.uid,
-            opponentNames: players.filter((p) => p.uid !== nextPlayer.uid && !p.dropped).map((p) => p.displayName).filter(Boolean).join(', ') || null,
-          };
-        }
+        turnNotice = rummy13ApplyDiscard(tx, { dealRef, deal, handRef, cards, cardId, seatIndex: mySeatIndex, uid: decoded.uid });
       });
 
       if (turnNotice) {
@@ -6559,6 +7284,7 @@ async function startServer() {
           (err) => console.error('notifyGameTurn (rummy13 discard) failed:', err),
         );
       }
+      if (dealTableId) await drainRummy13BotTurns(db, dealTableId).catch((err) => console.error('drainRummy13BotTurns (discard) failed:', err));
 
       return res.json({ ok: true });
     } catch (error: any) {
@@ -6587,6 +7313,7 @@ async function startServer() {
 
     try {
       const dealRef = db.collection('rummy13Deals').doc(dealId);
+      let dealTableId = '';
 
       const outcome = await db.runTransaction(async (tx) => {
         const dealSnap = await tx.get(dealRef);
@@ -6599,50 +7326,18 @@ async function startServer() {
         if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'You can only declare on your own turn.' };
         if (deal.turnPhase !== 'discard') throw { status: 400, message: 'Draw a card first.' };
 
+        dealTableId = deal.tableId;
         const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
         const activePlayers = players.filter((p: any) => !p.dropped);
         const [tableSnap, ...handSnaps] = await Promise.all([tx.get(tableRef), ...activePlayers.map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid)))]);
         if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
         const table = tableSnap.data()!;
         const handDataByUid = new Map(activePlayers.map((p: any, i: number) => [p.uid, handSnaps[i].data() || {}]));
-        const myHand: string[] = handDataByUid.get(decoded.uid)?.cards || [];
 
-        const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
-        const flatGroups = groups.flat();
-        const claimedTotal = [...flatGroups, discardCardId];
-        const isValidShow =
-          new Set(claimedTotal).size === claimedTotal.length &&
-          rummy13ArraysSameMultiset(claimedTotal, myHand) &&
-          groups.every((g) => g.length >= 3 && rummy13IsValidGroup(g, wildcardRanks)) &&
-          groups.filter((g) => rummy13IsValidSequence(g, wildcardRanks)).length >= 2 &&
-          groups.some((g) => rummy13IsValidSequence(g, wildcardRanks) && rummy13IsPureSequence(g));
-
-        const dealScores: Record<string, number> = {};
-        const revealedHands: Record<string, any> = {};
-        for (const p of activePlayers) {
-          const theirCards: string[] = handDataByUid.get(p.uid)?.cards || [];
-          if (p.uid === decoded.uid) {
-            dealScores[p.uid] = isValidShow ? 0 : 80;
-            revealedHands[p.uid] = isValidShow
-              ? { cards: theirCards, declaredGroups: groups.map((g) => ({ cards: g })), discardCardId }
-              : { cards: theirCards, groups: handDataByUid.get(p.uid)?.groups || [] };
-          } else {
-            dealScores[p.uid] = computeRummy13HandPenalty(theirCards, wildcardRanks).penalty;
-            revealedHands[p.uid] = { cards: theirCards, groups: handDataByUid.get(p.uid)?.groups || [] };
-          }
-        }
-
-        const result = await resolveRummy13DealEnd(tx, db, {
-          tableRef, table, dealRef,
-          endedBy: 'declare',
-          winnerUid: isValidShow ? decoded.uid : null,
-          dealScores,
-          invalidDeclareUid: isValidShow ? null : decoded.uid,
-          revealedHands,
-        });
-        return { won: isValidShow, ...result };
+        return rummy13ApplyDeclare(tx, db, { dealRef, deal, tableRef, table, activePlayers, handDataByUid, uid: decoded.uid, groups, discardCardId });
       });
 
+      if (dealTableId) await drainRummy13BotTurns(db, dealTableId).catch((err) => console.error('drainRummy13BotTurns (declare) failed:', err));
       return res.json({ ok: true, won: outcome.won, finished: outcome.finished });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
@@ -6661,6 +7356,7 @@ async function startServer() {
     try {
       const dealRef = db.collection('rummy13Deals').doc(dealId);
       let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+      let dealTableId = '';
 
       await db.runTransaction(async (tx) => {
         const dealSnap = await tx.get(dealRef);
@@ -6672,6 +7368,7 @@ async function startServer() {
         if (myIndex === -1) throw { status: 403, message: 'Not part of this deal.' };
         if (players[myIndex].dropped) throw { status: 400, message: 'Already dropped.' };
 
+        dealTableId = deal.tableId;
         const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
         const tableSnap = await tx.get(tableRef);
         if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
@@ -6723,6 +7420,7 @@ async function startServer() {
           (err) => console.error('notifyGameTurn (rummy13 drop) failed:', err),
         );
       }
+      if (dealTableId) await drainRummy13BotTurns(db, dealTableId).catch((err) => console.error('drainRummy13BotTurns (drop) failed:', err));
       return res.json({ ok: true });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
@@ -6748,6 +7446,7 @@ async function startServer() {
     try {
       const dealRef = db.collection('rummy13Deals').doc(dealId);
       let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+      let dealTableId = '';
 
       const result = await db.runTransaction(async (tx) => {
         const dealSnap = await tx.get(dealRef);
@@ -6764,6 +7463,7 @@ async function startServer() {
         const timedOutPlayer = players[myIndex];
         if (!timedOutPlayer || timedOutPlayer.dropped) return { resolved: true };
 
+        dealTableId = deal.tableId;
         const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
         const tableSnap = await tx.get(tableRef);
         if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
@@ -6810,6 +7510,7 @@ async function startServer() {
           (err) => console.error('notifyGameTurn (rummy13 timeout) failed:', err),
         );
       }
+      if (dealTableId) await drainRummy13BotTurns(db, dealTableId).catch((err) => console.error('drainRummy13BotTurns (timeout) failed:', err));
       return res.json({ ok: true, resolved: (result as any).resolved });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
@@ -6879,7 +7580,7 @@ async function startServer() {
       const code = table.code;
       const players = (table.players || []).map((p: any) => ({
         uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, seatIndex: p.seatIndex,
-        cumulativeScore: 0, eliminated: false,
+        cumulativeScore: 0, eliminated: false, isBot: !!p.isBot,
       }));
 
       const batch = db.batch();
@@ -8213,6 +8914,429 @@ async function startServer() {
     }
   }
 
+  // ---- Bot engine. The bot deliberately never builds or contributes to a house — that branch of
+  // /resolve-bid and /play is the deepest, most stateful part of Sweep's rule engine (ownership
+  // transfer, weak-vs-strong re-valuing, etc.), and skipping it keeps the bot's own logic small and
+  // easy to get right. It still plays competently: bids low from its qualifying cards (keeping
+  // stronger cards in hand), and on every turn always captures when a capture is available —
+  // checked the same way sweepCanCapture already does (a direct match, or a single floor/weak-house
+  // combo summing to the card's value) — otherwise throws a card that provably can't capture
+  // anything, which is always legal.
+  function sweepBotChooseBid(hand: string[]): number {
+    const candidates = hand.map(sweepCaptureValue).filter((v) => v >= 9);
+    return Math.min(...candidates);
+  }
+
+  function sweepBotFindSingleGroupCombo(floor: SweepFloorSrv, value: number): { looseCardIds: string[]; houseIds: string[] } | null {
+    const looseItems = floor.looseCards.map((c) => ({ type: 'loose' as const, id: c, value: sweepCaptureValue(c) }));
+    const weakHouseItems = floor.houses.filter((h) => h.sets.length === 1).map((h) => ({ type: 'house' as const, id: h.id, value: h.value }));
+    const items = [...looseItems, ...weakHouseItems];
+    const n = items.length;
+    if (n === 0 || n > 18) return null; // bounded — the floor never realistically grows this large
+    for (let mask = 1; mask < (1 << n); mask++) {
+      let sum = 0;
+      for (let i = 0; i < n; i++) if (mask & (1 << i)) sum += items[i].value;
+      if (sum === value) {
+        const looseCardIds: string[] = [];
+        const houseIds: string[] = [];
+        for (let i = 0; i < n; i++) {
+          if (mask & (1 << i)) {
+            if (items[i].type === 'loose') looseCardIds.push(items[i].id);
+            else houseIds.push(items[i].id);
+          }
+        }
+        return { looseCardIds, houseIds };
+      }
+    }
+    return null;
+  }
+
+  function sweepBotChoosePlay(hand: string[], floor: SweepFloorSrv): { cardId: string; action: 'capture' | 'throw'; extraLooseCardIds: string[]; houseIds: string[] } {
+    for (const cardId of hand) {
+      const value = sweepCaptureValue(cardId);
+      const directLoose = floor.looseCards.some((c) => sweepCaptureValue(c) === value);
+      const directHouse = floor.houses.some((h) => h.value === value);
+      if (directLoose || directHouse) return { cardId, action: 'capture', extraLooseCardIds: [], houseIds: [] };
+    }
+    for (const cardId of hand) {
+      const combo = sweepBotFindSingleGroupCombo(floor, sweepCaptureValue(cardId));
+      if (combo) return { cardId, action: 'capture', extraLooseCardIds: combo.looseCardIds, houseIds: combo.houseIds };
+    }
+    // sweepBotFindSingleGroupCombo runs the exact same subset-sum search sweepCanCapture uses
+    // internally, so any card reaching this point has already failed sweepCanCapture too — a throw
+    // is guaranteed legal for at least one card in hand.
+    const safeCard = hand.find((c) => !sweepCanCapture(floor, sweepCaptureValue(c)));
+    return { cardId: safeCard || hand[0], action: 'throw', extraLooseCardIds: [], houseIds: [] };
+  }
+
+  async function sweepBotApplyResolveBid(tx: FirebaseFirestore.Transaction, db: Firestore, ctx: {
+    gameRef: FirebaseFirestore.DocumentReference; game: any; handRef: FirebaseFirestore.DocumentReference;
+    restDeckRef: FirebaseFirestore.DocumentReference; reserveDeckRef: FirebaseFirestore.DocumentReference;
+    bidderSeatIndex: number; bidder: any; bidderCards: string[]; cardId: string; bidValue: number;
+    action: 'capture' | 'throw'; floorCardIds: string[]; restDeck: string[]; playerCount: number;
+  }): Promise<{ nextPlayerUid: string; opponentNames: string | null } | null> {
+    const { gameRef, game, handRef, restDeckRef, reserveDeckRef, bidderSeatIndex, bidder, bidderCards, cardId, bidValue, action, floorCardIds, restDeck, playerCount } = ctx;
+    const floor: SweepFloorSrv = sweepCloneFloor(game.floor);
+    const capturedCards: string[] = [];
+    const playedCardIds: string[] = [cardId];
+    let sweep = false;
+
+    const canCapture = floorCardIds.length > 0 && floorCardIds.every((c) => floor.looseCards.includes(c)) && sweepSumValues(floorCardIds) === bidValue;
+    if (action === 'capture') {
+      if (!canCapture) throw { status: 409, message: 'Stale.' };
+      floor.looseCards = floor.looseCards.filter((c) => !floorCardIds.includes(c));
+      capturedCards.push(...floorCardIds, cardId);
+      sweep = floor.looseCards.length === 0 && floor.houses.length === 0;
+    } else {
+      if (canCapture) throw { status: 409, message: 'Stale.' };
+      floor.looseCards.push(cardId);
+    }
+
+    const bidderTeam = sweepTeamForSeat(bidderSeatIndex);
+    const capturedByTeam = { team0: [...(game.capturedByTeam?.team0 || [])], team1: [...(game.capturedByTeam?.team1 || [])] };
+    let lastCaptureTeam: number | null = game.lastCaptureTeam ?? null;
+    const sweepsThisDeal: any[] = [...(game.sweepsThisDeal || [])];
+    if (capturedCards.length > 0) {
+      (bidderTeam === 0 ? capturedByTeam.team0 : capturedByTeam.team1).push(...capturedCards);
+      lastCaptureTeam = bidderTeam;
+      if (sweep) sweepsThisDeal.push({ team: bidderTeam, at: new Date().toISOString() });
+    }
+
+    const players: any[] = game.players;
+    const isTwoPlayerBatched = playerCount === 2;
+    const handSize = isTwoPlayerBatched ? 12 : 48 / playerCount;
+    let cursor = 0;
+    const bidderRemaining = bidderCards.filter((c) => !playedCardIds.includes(c));
+    const bidderExtra = restDeck.slice(cursor, cursor + (handSize - 4));
+    cursor += handSize - 4;
+    tx.update(handRef, { cards: [...bidderRemaining, ...bidderExtra] });
+
+    const newPlayers = players.map((p: any, i: number) => {
+      if (i === bidderSeatIndex) return { ...p, handCount: handSize - playedCardIds.length };
+      const dealt = restDeck.slice(cursor, cursor + handSize);
+      cursor += handSize;
+      tx.set(gameRef.collection('hands').doc(p.uid), { cards: dealt });
+      return { ...p, handCount: handSize };
+    });
+
+    if (isTwoPlayerBatched) {
+      const leftover = restDeck.slice(cursor);
+      if (leftover.length > 0) tx.set(reserveDeckRef, { cards: leftover });
+    }
+    tx.delete(restDeckRef);
+    tx.update(gameRef, {
+      status: 'active',
+      floor,
+      players: newPlayers,
+      currentTurnSeatIndex: sweepNextSeat(bidderSeatIndex, playerCount),
+      cardsPlayedThisDeal: 1,
+      capturedByTeam,
+      lastCaptureTeam,
+      sweepsThisDeal,
+      lastAction: {
+        text: action === 'capture'
+          ? `${bidder.displayName} played ${sweepCardLabel(cardId)} — captured the floor.`
+          : `${bidder.displayName} played ${sweepCardLabel(cardId)} — threw it loose.`,
+        at: new Date().toISOString(),
+      },
+    });
+
+    const nextSeatIdx = sweepNextSeat(bidderSeatIndex, playerCount);
+    const nextPlayer = newPlayers[nextSeatIdx];
+    return nextPlayer
+      ? { nextPlayerUid: nextPlayer.uid, opponentNames: newPlayers.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null }
+      : null;
+  }
+
+  async function sweepBotApplyPlay(tx: FirebaseFirestore.Transaction, db: Firestore, ctx: {
+    gameRef: FirebaseFirestore.DocumentReference; game: any; handRef: FirebaseFirestore.DocumentReference;
+    reserveDeckRef: FirebaseFirestore.DocumentReference; mySeatIndex: number; mySeat: any; cards: string[];
+    cardId: string; action: 'capture' | 'throw'; extraLooseCardIds: string[]; houseIds: string[];
+    playerCount: number; reserveSnapExists: boolean; reserveCards: string[]; gameId: string;
+  }): Promise<{ nextPlayerUid: string; opponentNames: string | null } | null> {
+    const { gameRef, game, handRef, reserveDeckRef, mySeatIndex, mySeat, cards, cardId, action, extraLooseCardIds, houseIds, playerCount, reserveSnapExists, reserveCards, gameId } = ctx;
+    const players: any[] = game.players;
+    const remainingHand = cards.filter((c) => c !== cardId);
+    const value = sweepCaptureValue(cardId);
+    const myTeam = sweepTeamForSeat(mySeatIndex);
+    let floor = sweepCloneFloor(game.floor);
+
+    if (action === 'throw' && sweepCanCapture(floor, value)) throw { status: 409, message: 'Stale.' };
+
+    const capturedCards: string[] = [];
+    let sweep = false;
+
+    if (action === 'capture') {
+      const directLoose = floor.looseCards.filter((c) => sweepCaptureValue(c) === value);
+      const directHouses = floor.houses.filter((h) => h.value === value);
+      const requestedExtra = extraLooseCardIds.filter((c) => !directLoose.includes(c));
+      if (!requestedExtra.every((c) => floor.looseCards.includes(c))) throw { status: 409, message: 'Stale.' };
+      const requestedHouseIds = houseIds.filter((id) => !directHouses.some((h) => h.id === id));
+      const chosenHouses = requestedHouseIds.map((id) => {
+        const h = floor.houses.find((x) => x.id === id);
+        if (!h) throw { status: 409, message: 'Stale.' };
+        return h;
+      });
+      const chosenStrongHouses = chosenHouses.filter((h) => h.sets.length > 1);
+      if (chosenStrongHouses.some((h) => h.value !== value)) throw { status: 409, message: 'Stale.' };
+      const chosenWeakHouses = chosenHouses.filter((h) => h.sets.length === 1);
+      const comboValues = [...requestedExtra.map(sweepCaptureValue), ...chosenWeakHouses.map((h) => h.value)];
+      if (comboValues.length > 0 && !sweepCanPartitionIntoGroups(comboValues, value)) throw { status: 409, message: 'Stale.' };
+      if (directLoose.length === 0 && directHouses.length === 0 && requestedExtra.length === 0 && chosenHouses.length === 0) {
+        throw { status: 409, message: 'Stale.' };
+      }
+      capturedCards.push(cardId, ...directLoose, ...requestedExtra, ...directHouses.flatMap((h) => sweepAllCardsOf(h)), ...chosenHouses.flatMap((h) => sweepAllCardsOf(h)));
+      const removedLoose = new Set([...directLoose, ...requestedExtra]);
+      floor.looseCards = floor.looseCards.filter((c) => !removedLoose.has(c));
+      const removedHouseIds = new Set([...directHouses.map((h) => h.id), ...chosenHouses.map((h) => h.id)]);
+      floor.houses = floor.houses.filter((h) => !removedHouseIds.has(h.id));
+      sweep = floor.looseCards.length === 0 && floor.houses.length === 0;
+    } else {
+      floor.looseCards.push(cardId);
+    }
+
+    const capturedByTeam = { team0: [...(game.capturedByTeam?.team0 || [])], team1: [...(game.capturedByTeam?.team1 || [])] };
+    let lastCaptureTeam: number | null = game.lastCaptureTeam ?? null;
+    const cardsPlayedThisDeal: number = (game.cardsPlayedThisDeal || 0) + 1;
+    const sweepsThisDeal: any[] = [...(game.sweepsThisDeal || [])];
+    const newPlayers = players.map((p: any, i: number) => (i === mySeatIndex ? { ...p, handCount: remainingHand.length } : p));
+    const dealOver = newPlayers.every((p: any) => p.handCount === 0);
+
+    const humanPlayerUids = players.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+    const gamePointsStates = dealOver && humanPlayerUids.length > 0
+      ? await readGamePointsPlan(tx, db, { gameType: 'sweep', gameId, playerUids: humanPlayerUids })
+      : null;
+
+    if (capturedCards.length > 0) {
+      (myTeam === 0 ? capturedByTeam.team0 : capturedByTeam.team1).push(...capturedCards);
+      lastCaptureTeam = myTeam;
+      if (sweep && !dealOver) sweepsThisDeal.push({ team: myTeam, at: new Date().toISOString() });
+    }
+
+    tx.update(handRef, { cards: remainingHand });
+
+    const playedLabel = sweepCardLabel(cardId);
+    const actionText = action === 'capture'
+      ? `${mySeat.displayName} played ${playedLabel} — captured.`
+      : `${mySeat.displayName} played ${playedLabel} — threw it loose.`;
+
+    if (dealOver && playerCount === 2 && reserveSnapExists) {
+      const reserve = reserveCards;
+      if (reserve.length > 0) {
+        const batchSize = reserve.length / playerCount;
+        const redealtPlayers = newPlayers.map((p: any, i: number) => {
+          const dealt = reserve.slice(i * batchSize, (i + 1) * batchSize);
+          tx.set(gameRef.collection('hands').doc(p.uid), { cards: dealt });
+          return { ...p, handCount: dealt.length };
+        });
+        tx.delete(reserveDeckRef);
+        tx.update(gameRef, {
+          floor, players: redealtPlayers, currentTurnSeatIndex: sweepNextSeat(mySeatIndex, playerCount),
+          cardsPlayedThisDeal, capturedByTeam, lastCaptureTeam, sweepsThisDeal,
+          lastAction: { text: `${actionText} Next 12 cards dealt to each player.`, at: new Date().toISOString() },
+        });
+        const nextPlayer = redealtPlayers[sweepNextSeat(mySeatIndex, playerCount)];
+        return nextPlayer
+          ? { nextPlayerUid: nextPlayer.uid, opponentNames: redealtPlayers.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null }
+          : null;
+      }
+    }
+
+    if (!dealOver) {
+      tx.update(gameRef, {
+        floor, players: newPlayers, currentTurnSeatIndex: sweepNextSeat(mySeatIndex, playerCount),
+        cardsPlayedThisDeal, capturedByTeam, lastCaptureTeam, sweepsThisDeal,
+        lastAction: { text: actionText, at: new Date().toISOString() },
+      });
+      const nextPlayer = newPlayers[sweepNextSeat(mySeatIndex, playerCount)];
+      return nextPlayer
+        ? { nextPlayerUid: nextPlayer.uid, opponentNames: newPlayers.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null }
+        : null;
+    }
+
+    // Deal over — same trailing logic as the human /play endpoint's dealOver branch.
+    if (lastCaptureTeam != null) {
+      const leftover = [...floor.looseCards, ...floor.houses.flatMap((h) => sweepAllCardsOf(h))];
+      if (leftover.length > 0) (lastCaptureTeam === 0 ? capturedByTeam.team0 : capturedByTeam.team1).push(...leftover);
+    }
+    floor = { looseCards: [], houses: [] };
+
+    const sweepCount: [number, number] = [0, 0];
+    for (const s of sweepsThisDeal) sweepCount[s.team as 0 | 1] += 1;
+    const sweepPoints: number = game.sweepPoints;
+    const teamPoints: [number, number] = [
+      sweepSumPoints(capturedByTeam.team0) + sweepCount[0] * sweepPoints,
+      sweepSumPoints(capturedByTeam.team1) + sweepCount[1] * sweepPoints,
+    ];
+
+    const dealWinner: 0 | 1 | 'tie' = teamPoints[0] > teamPoints[1] ? 0 : teamPoints[1] > teamPoints[0] ? 1 : 'tie';
+    const diff = teamPoints[0] - teamPoints[1];
+    const netScore: number = (game.netScore || 0) + diff;
+
+    let status = 'deal_end';
+    let winnerTeam: 0 | 1 | null = null;
+    let newDealerSeatIndex = game.dealerSeatIndex;
+    if (Math.abs(netScore) >= 100) {
+      status = 'finished';
+      winnerTeam = netScore > 0 ? 0 : 1;
+    } else if (dealWinner !== 'tie') {
+      const losingTeam: 0 | 1 = dealWinner === 0 ? 1 : 0;
+      newDealerSeatIndex = sweepNextDealerSeat(newDealerSeatIndex, losingTeam, playerCount);
+    }
+    const dealHistoryEntry = { dealNumber: game.dealNumber, teamPoints, sweepCount, winnerTeam: dealWinner, netScoreAfter: netScore, capturedByTeam };
+
+    const sweepFinishedAt = status === 'finished' ? new Date().toISOString() : null;
+    if (status === 'finished' && winnerTeam !== null && gamePointsStates) {
+      writeGamePointsPlan(tx, gamePointsStates, {
+        gameType: 'sweep', gameId,
+        winnerUids: newPlayers.filter((p: any) => p.team === winnerTeam && !p.isBot).map((p: any) => p.uid),
+      });
+      recordGameOutcome(tx, db, gameId, {
+        gameType: 'sweep', playerUids: newPlayers.map((p: any) => p.uid),
+        players: newPlayers.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, team: p.team })),
+        winnerTeam, finishedAt: sweepFinishedAt,
+      });
+    }
+    tx.update(gameRef, {
+      status, floor, players: newPlayers, dealerSeatIndex: newDealerSeatIndex, capturedByTeam, lastCaptureTeam, sweepsThisDeal,
+      netScore, winnerTeam, finishedAt: sweepFinishedAt,
+      lastDealSummary: { dealNumber: game.dealNumber, teamPoints, sweepCount, winnerTeam: dealWinner, netScoreAfter: netScore },
+      dealHistory: [...(game.dealHistory || []), dealHistoryEntry],
+      lastAction: { text: `${actionText} Deal ${game.dealNumber} is over.`, at: new Date().toISOString() },
+    });
+    return null;
+  }
+
+  // No cron/background worker exists on Cloud Run — every endpoint that can leave the turn (bidding
+  // OR regular play) on a bot seat calls this synchronously after its own transaction commits.
+  async function drainSweepBotTurns(db: Firestore, gameId: string): Promise<void> {
+    const gameRef = db.collection('sweepGames').doc(gameId);
+    for (let i = 0; i < 150; i++) { // hard cap — safety net, not a real limit
+      const gameSnap = await gameRef.get();
+      if (!gameSnap.exists) break;
+      const game = gameSnap.data()!;
+
+      if (game.status === 'bidding') {
+        const bidderSeatIndex: number = game.bidderSeatIndex;
+        const bidder = (game.players || [])[bidderSeatIndex];
+        if (!bidder?.isBot) break;
+        const handRef = gameRef.collection('hands').doc(bidder.uid);
+
+        if (game.bidValue == null) {
+          const floorCardsRef = gameRef.collection('secret').doc('floorCards');
+          try {
+            const handSnap = await handRef.get();
+            if (!handSnap.exists) break;
+            const bidderCards: string[] = handSnap.data()!.cards || [];
+            const bidValue = sweepBotChooseBid(bidderCards);
+            await db.runTransaction(async (tx) => {
+              const [gs, fs] = await Promise.all([tx.get(gameRef), tx.get(floorCardsRef)]);
+              if (!gs.exists || !fs.exists) throw { status: 404, message: 'Not found.' };
+              const g = gs.data()!;
+              if (g.status !== 'bidding' || g.bidValue != null) throw { status: 409, message: 'Stale.' };
+              const b = g.players[g.bidderSeatIndex];
+              if (!b || b.uid !== bidder.uid) throw { status: 409, message: 'Stale.' };
+              const floorCards: string[] = fs.data()!.cards || [];
+              tx.delete(floorCardsRef);
+              tx.update(gameRef, {
+                bidValue,
+                floor: { looseCards: floorCards, houses: [] },
+                floorHiddenCount: 0,
+                lastAction: { text: `${b.displayName} bid ${bidValue}. The floor is revealed.`, at: new Date().toISOString() },
+              });
+            });
+          } catch (err) {
+            console.error('drainSweepBotTurns (bid) failed:', err);
+            break;
+          }
+          continue;
+        }
+
+        const restDeckRef = gameRef.collection('secret').doc('restDeck');
+        const reserveDeckRef = gameRef.collection('secret').doc('reserveDeck');
+        try {
+          const handSnap = await handRef.get();
+          if (!handSnap.exists) break;
+          const bidderCards: string[] = handSnap.data()!.cards || [];
+          const cardId = bidderCards.find((c) => sweepCaptureValue(c) === game.bidValue);
+          if (!cardId) break;
+          const floor: SweepFloorSrv = sweepCloneFloor(game.floor);
+          const combo = sweepBotFindSingleGroupCombo(floor, game.bidValue);
+          const action: 'capture' | 'throw' = combo ? 'capture' : 'throw';
+          const floorCardIds = combo ? combo.looseCardIds : [];
+
+          await db.runTransaction(async (tx) => {
+            const [gs, hs, rs] = await Promise.all([tx.get(gameRef), tx.get(handRef), tx.get(restDeckRef)]);
+            if (!gs.exists || !hs.exists || !rs.exists) throw { status: 404, message: 'Not found.' };
+            const g = gs.data()!;
+            if (g.status !== 'bidding' || g.bidValue == null) throw { status: 409, message: 'Stale.' };
+            const b = g.players[g.bidderSeatIndex];
+            if (!b || b.uid !== bidder.uid) throw { status: 409, message: 'Stale.' };
+            const currentCards: string[] = hs.data()!.cards || [];
+            const currentCardId = currentCards.find((c) => sweepCaptureValue(c) === g.bidValue);
+            if (!currentCardId) throw { status: 409, message: 'Stale.' };
+            const restDeck: string[] = rs.data()!.cards || [];
+            return sweepBotApplyResolveBid(tx, db, {
+              gameRef, game: g, handRef, restDeckRef, reserveDeckRef,
+              bidderSeatIndex: g.bidderSeatIndex, bidder: b, bidderCards: currentCards, cardId: currentCardId,
+              bidValue: g.bidValue, action, floorCardIds, restDeck, playerCount: g.playerCount,
+            });
+          });
+        } catch (err) {
+          console.error('drainSweepBotTurns (resolve-bid) failed:', err);
+          break;
+        }
+        continue;
+      }
+
+      if (game.status !== 'active') break;
+      const players: any[] = game.players || [];
+      const seatIndex = game.currentTurnSeatIndex;
+      const seat = players[seatIndex];
+      if (!seat?.isBot) break;
+
+      const handRef = gameRef.collection('hands').doc(seat.uid);
+      const reserveDeckRef = gameRef.collection('secret').doc('reserveDeck');
+      try {
+        const [handSnap, reserveSnap] = await Promise.all([handRef.get(), reserveDeckRef.get()]);
+        if (!handSnap.exists) break;
+        const cards: string[] = handSnap.data()!.cards || [];
+        if (cards.length === 0) break;
+        const floor: SweepFloorSrv = sweepCloneFloor(game.floor);
+        const move = sweepBotChoosePlay(cards, floor);
+
+        let turnNotice: { nextPlayerUid: string; opponentNames: string | null } | null = null;
+        await db.runTransaction(async (tx) => {
+          const [gs, hs, rs] = await Promise.all([tx.get(gameRef), tx.get(handRef), tx.get(reserveDeckRef)]);
+          if (!gs.exists || !hs.exists) throw { status: 404, message: 'Not found.' };
+          const g = gs.data()!;
+          if (g.status !== 'active') throw { status: 409, message: 'Stale.' };
+          const ps: any[] = g.players || [];
+          const s = ps[g.currentTurnSeatIndex];
+          if (!s || s.uid !== seat.uid) throw { status: 409, message: 'Stale.' };
+          const currentCards: string[] = hs.data()!.cards || [];
+          if (!currentCards.includes(move.cardId)) throw { status: 409, message: 'Stale.' };
+          turnNotice = await sweepBotApplyPlay(tx, db, {
+            gameRef, game: g, handRef, reserveDeckRef, mySeatIndex: g.currentTurnSeatIndex, mySeat: s,
+            cards: currentCards, cardId: move.cardId, action: move.action,
+            extraLooseCardIds: move.extraLooseCardIds, houseIds: move.houseIds, playerCount: g.playerCount,
+            reserveSnapExists: rs.exists, reserveCards: rs.exists ? (rs.data()!.cards || []) : [],
+            gameId,
+          });
+        });
+        if (turnNotice) {
+          const notice: { nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+          await notifyGameTurn(db, { gameType: 'sweep', gameId, nextPlayerUid: notice.nextPlayerUid, movedByUid: 'bot', opponentNames: notice.opponentNames }).catch(
+            (err) => console.error('notifyGameTurn (sweep bot) failed:', err),
+          );
+        }
+      } catch (err) {
+        console.error('drainSweepBotTurns (play) failed:', err);
+        break;
+      }
+    }
+  }
+
   app.post('/api/sweep/invite', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
@@ -8333,11 +9457,43 @@ async function startServer() {
         lastAction: { text: 'New deal — waiting on the bid.', at: new Date().toISOString() },
       });
       await batch.commit();
+      // The first bidder could immediately be a bot (dealer is random) — drain right away.
+      await drainSweepBotTurns(db, gameId).catch((err) => console.error('drainSweepBotTurns (start) failed:', err));
       return res.json({ ok: true });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
       console.error('sweep/start error:', error);
       return res.status(500).json({ error: 'Unable to start game.' });
+    }
+  });
+
+  // Host-only, lobby ('waiting') only — same pattern as the other games' fill-bot endpoints. Bots
+  // are placed at the next seat, team = seatIndex % 2, same default a human joiner gets client-side.
+  app.post('/api/sweep/fill-bot', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const gameId = String(req.body?.gameId || '');
+    if (!gameId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const gameRef = db.collection('sweepGames').doc(gameId);
+      const gameSnap = await gameRef.get();
+      if (!gameSnap.exists) return res.status(404).json({ error: 'Game not found.' });
+      const game = gameSnap.data()!;
+      if (game.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can add a bot.' });
+      if (game.status !== 'waiting') return res.status(400).json({ error: 'Game already started.' });
+      const players: any[] = game.players || [];
+      if (players.length >= game.playerCount) return res.status(400).json({ error: 'Table is already full.' });
+
+      const seatIndex = players.length;
+      const botUid = `bot_${gameId}_${seatIndex}`;
+      const botPlayer = { uid: botUid, displayName: `Bot ${seatIndex + 1}`, photoURL: '', seatIndex, team: seatIndex % 2, handCount: 0, isBot: true };
+      await gameRef.update({ players: [...players, botPlayer], playerUids: [...(game.playerUids || []), botUid] });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('sweep/fill-bot error:', error);
+      return res.status(500).json({ error: 'Unable to add a bot.' });
     }
   });
 
@@ -8586,6 +9742,7 @@ async function startServer() {
           (err) => console.error('notifyGameTurn (sweep resolve-bid) failed:', err),
         );
       }
+      await drainSweepBotTurns(db, gameId).catch((err) => console.error('drainSweepBotTurns (resolve-bid) failed:', err));
 
       return res.json({ ok: true });
     } catch (error: any) {
@@ -8803,8 +9960,12 @@ async function startServer() {
         // unconditionally whenever the deal is ending (a superset of "game finishes" — also covers
         // the ordinary deal_end and the 2-player mid-deal redeal cases, where these reads are simply
         // never used) so the winner can be decided later, safely, in the write phase.
-        const gamePointsStates = dealOver
-          ? await readGamePointsPlan(tx, db, { gameType: 'sweep', gameId, playerUids: players.map((p: any) => p.uid) })
+        // Bot uids don't correspond to real authenticated users — never award them points, so
+        // they're excluded from the participation read here (same fix as every other game's bot
+        // points-ledger bug — see Sequence/27-Hand Rummy/13-Card Rummy for the exact same pattern).
+        const humanPlayerUids = players.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+        const gamePointsStates = dealOver && humanPlayerUids.length > 0
+          ? await readGamePointsPlan(tx, db, { gameType: 'sweep', gameId, playerUids: humanPlayerUids })
           : null;
 
         if (capturedCards.length > 0) {
@@ -8926,7 +10087,7 @@ async function startServer() {
         if (status === 'finished' && winnerTeam !== null && gamePointsStates) {
           writeGamePointsPlan(tx, gamePointsStates, {
             gameType: 'sweep', gameId,
-            winnerUids: newPlayers.filter((p: any) => p.team === winnerTeam).map((p: any) => p.uid),
+            winnerUids: newPlayers.filter((p: any) => p.team === winnerTeam && !p.isBot).map((p: any) => p.uid),
           });
           recordGameOutcome(tx, db, gameId, {
             gameType: 'sweep', playerUids: newPlayers.map((p: any) => p.uid),
@@ -8956,6 +10117,7 @@ async function startServer() {
           (err) => console.error('notifyGameTurn (sweep play) failed:', err),
         );
       }
+      await drainSweepBotTurns(db, gameId).catch((err) => console.error('drainSweepBotTurns (play) failed:', err));
 
       return res.json({ ok: true });
     } catch (error: any) {
@@ -9010,6 +10172,7 @@ async function startServer() {
         lastAction: { text: 'New deal — waiting on the bid.', at: new Date().toISOString() },
       });
       await batch.commit();
+      await drainSweepBotTurns(db, gameId).catch((err) => console.error('drainSweepBotTurns (deal) failed:', err));
       return res.json({ ok: true });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
@@ -9124,6 +10287,7 @@ async function startServer() {
         seatIndex: p.seatIndex,
         team: p.team,
         handCount: 0,
+        isBot: !!p.isBot,
       }));
 
       const batch = db.batch();

@@ -76,6 +76,7 @@ export interface Rummy13Player {
   cumulativeScore: number;   // Pool formats only; always 0 for 'single'
   eliminated: boolean;       // Pool formats only; permanent for the rest of the table
   finishedRank?: number | null;
+  isBot?: boolean;
 }
 
 export interface Rummy13DealSummary {

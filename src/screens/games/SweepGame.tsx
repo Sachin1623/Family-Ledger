@@ -334,6 +334,10 @@ export default function SweepGame() {
     await call('/api/sweep/start', {}).catch(() => {});
   };
 
+  const handleFillBot = async () => {
+    await call('/api/sweep/fill-bot', {}).catch(() => {});
+  };
+
   const handleSetTeam = async (uid: string, team: 0 | 1) => {
     await call('/api/sweep/set-team', { uid, team }).catch(() => {});
   };
@@ -489,7 +493,7 @@ export default function SweepGame() {
                           className="w-full p-3 flex items-center gap-2 text-left disabled:opacity-100"
                         >
                           <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 overflow-hidden" style={{ background: TEAM_COLOR[t] }}>
-                            {p.photoURL ? (
+                            {p.isBot ? '🤖' : p.photoURL ? (
                               <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
                               p.displayName?.slice(0, 1) || '?'
@@ -518,7 +522,7 @@ export default function SweepGame() {
               {game.players.map((p) => (
                 <div key={p.uid} className="p-4 flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden" style={{ background: TEAM_COLOR[p.team] }}>
-                    {p.photoURL ? (
+                    {p.isBot ? '🤖' : p.photoURL ? (
                       <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     ) : (
                       p.displayName?.slice(0, 1) || '?'
@@ -558,6 +562,17 @@ export default function SweepGame() {
           )}
 
           {showInvite && <InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+
+          {isPlayer && user.uid === game.hostUid && game.players.length < game.playerCount && (
+            <button
+              onClick={handleFillBot}
+              disabled={busy}
+              className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+              Fill Empty Seat with Bot
+            </button>
+          )}
 
           {isPlayer && user.uid === game.hostUid ? (
             <button
@@ -1046,7 +1061,7 @@ export default function SweepGame() {
               >
                 <div className="relative w-5 h-5 shrink-0">
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold overflow-hidden" style={{ background: TEAM_COLOR[p.team] }}>
-                    {p.photoURL ? (
+                    {p.isBot ? '🤖' : p.photoURL ? (
                       <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     ) : (
                       p.displayName?.slice(0, 1) || '?'

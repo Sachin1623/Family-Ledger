@@ -450,6 +450,10 @@ export default function RummyGame() {
     await call('/api/rummy/start', {}).catch(() => {});
   };
 
+  const handleFillBot = async () => {
+    await call('/api/rummy/fill-bot', {}).catch(() => {});
+  };
+
   const handleCopyCode = () => {
     navigator.clipboard?.writeText(game.code).catch(() => {});
   };
@@ -675,7 +679,7 @@ export default function RummyGame() {
             {game.players.map((p) => (
               <div key={p.uid} className="p-4 flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                  {p.photoURL ? (
+                  {p.isBot ? '🤖' : p.photoURL ? (
                     <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     p.displayName?.slice(0, 1) || '?'
@@ -713,6 +717,17 @@ export default function RummyGame() {
 
           {showInvite && (
             <InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />
+          )}
+
+          {isPlayer && user.uid === game.hostUid && game.players.length < 4 && (
+            <button
+              onClick={handleFillBot}
+              disabled={busy}
+              className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+              Fill Empty Seat with Bot
+            </button>
           )}
 
           {isPlayer && user.uid === game.hostUid ? (

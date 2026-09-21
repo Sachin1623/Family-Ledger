@@ -95,6 +95,7 @@ export interface LudoPlayer {
   // which stopped making sense once color choice became fully free (any two colors could end up
   // opposite each other with no relation to who a player actually wants as a partner).
   team?: 0 | 1 | null;
+  isBot?: boolean;
 }
 
 // Converts a token's relative position (own color's frame of reference) to an absolute square on

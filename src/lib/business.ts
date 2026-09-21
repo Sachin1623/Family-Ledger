@@ -267,6 +267,7 @@ export interface BusinessPlayer {
   getOutOfJailCards: number;
   bankrupt: boolean;
   doublesStreak: number;
+  isBot?: boolean;
 }
 
 export interface PropertyState {

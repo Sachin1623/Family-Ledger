@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { doc, updateDoc, collection, query, where } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, collection, query, where } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -35,6 +35,7 @@ import {
   COMMUNITY_CHEST_CARDS,
   type BusinessGame as BusinessGameDoc,
   type BusinessPlayer,
+  type PropertyState,
   type PropertySquare,
   type RailwaySquare,
   type UtilitySquare,
@@ -67,6 +68,286 @@ const SQUARE_COORDS: [number, number][] = (() => {
 
 function formatMoney(n: number): string {
   return `₹${Math.round(n).toLocaleString('en-IN')}`;
+}
+
+// ---- Bot engine. Business is fully client-trusted (no Admin-SDK-mediated endpoint), so — like
+// Ludo — whichever human client currently has the game open drives a bot seat's turn, writing the
+// exact same shape of update a human's own click would. The one real complication versus Ludo is
+// money: `resolveLanding`/`handleAcknowledgeCard` fall back to the CURRENT VIEWER's own local
+// `debt` modal state whenever a payer can't afford something, which only makes sense for a human
+// looking at their own screen — a bot obviously never sees or dismisses that modal, so the game
+// would stall forever waiting on it. These bot-specific versions raise cash the same way the debt
+// modal's own options do (sell houses/hotels for half value, then mortgage everything unmortgaged)
+// and fall back to bankruptcy (mirroring handleDeclareBankruptcy exactly) if that still isn't
+// enough — both resolved immediately and automatically, never left pending.
+
+function botRaiseCash(uid: string, needed: number, playersIn: BusinessPlayer[], propertiesIn: PropertyState[]): { players: BusinessPlayer[]; properties: PropertyState[] } {
+  let players = playersIn;
+  let properties = [...propertiesIn];
+  const cashOf = () => players.find((p) => p.uid === uid)!.cash;
+  const setCash = (c: number) => { players = players.map((p) => (p.uid === uid ? { ...p, cash: c } : p)); };
+
+  // Sell houses/hotels one unit at a time, cheapest to unwind first isn't load-bearing here — just
+  // walk the board and keep going until solvent or nothing left to sell.
+  let progress = true;
+  while (cashOf() < needed && progress) {
+    progress = false;
+    for (let i = 0; i < BOARD.length; i++) {
+      if (cashOf() >= needed) break;
+      const sq = BOARD[i];
+      if (sq.type !== 'property') continue;
+      const state = properties[i];
+      if (state.ownerUid !== uid) continue;
+      if (state.hotel || state.houses > 0) {
+        const refund = Math.round(sq.houseCost / 2);
+        properties = properties.map((s, j) => (j === i ? { ...s, hotel: false, houses: state.hotel ? 4 : state.houses - 1 } : s));
+        setCash(cashOf() + refund);
+        progress = true;
+      }
+    }
+  }
+
+  // Then mortgage every unmortgaged, house-free property (mortgaging requires zero houses/hotel,
+  // same guard as handleMortgage — by this point the loop above has already cleared all of them).
+  progress = true;
+  while (cashOf() < needed && progress) {
+    progress = false;
+    for (let i = 0; i < BOARD.length; i++) {
+      if (cashOf() >= needed) break;
+      const sq = BOARD[i];
+      if (!isOwnable(sq)) continue;
+      const state = properties[i];
+      if (state.ownerUid !== uid || state.mortgaged || state.houses > 0 || state.hotel) continue;
+      properties = properties.map((s, j) => (j === i ? { ...s, mortgaged: true } : s));
+      setCash(cashOf() + sq.mortgageValue);
+      progress = true;
+    }
+  }
+
+  return { players, properties };
+}
+
+// Pays `amount` from `uid` to `toUid` ('bank' or another player's uid), raising cash first if
+// needed and going bankrupt (surrendering properties to the recipient, or to the bank if this was
+// owed to the bank) as the last resort — writes the result straight to Firestore itself, since the
+// three different outcomes (paid outright, paid after raising cash, bankrupt) each need a
+// differently-shaped update and the caller only needs to know whether play can continue.
+async function botTryPay(
+  gameId: string, uid: string, amount: number, toUid: string | 'bank', reason: string,
+  players: BusinessPlayer[], properties: PropertyState[], extraPatch: Record<string, unknown> = {},
+): Promise<{ bankrupted: boolean; gameEnded: boolean }> {
+  const payer = players.find((p) => p.uid === uid)!;
+  let workingPlayers = players;
+  let workingProperties = properties;
+  if (payer.cash < amount) {
+    const raised = botRaiseCash(uid, amount, players, properties);
+    workingPlayers = raised.players;
+    workingProperties = raised.properties;
+  }
+  const finalPayer = workingPlayers.find((p) => p.uid === uid)!;
+  if (finalPayer.cash >= amount) {
+    let next = workingPlayers.map((p) => (p.uid === uid ? { ...p, cash: p.cash - amount } : p));
+    if (toUid !== 'bank') next = next.map((p) => (p.uid === toUid ? { ...p, cash: p.cash + amount } : p));
+    await updateDoc(doc(db, 'businessGames', gameId), {
+      players: next, properties: workingProperties, ...extraPatch,
+      lastAction: { text: `${payer.displayName} paid ${formatMoney(amount)} (${reason}).`, at: new Date().toISOString() },
+    });
+    return { bankrupted: false, gameEnded: false };
+  }
+
+  const toBank = toUid === 'bank';
+  const newProperties = workingProperties.map((s) =>
+    s.ownerUid === uid ? { ownerUid: toBank ? null : toUid, houses: toBank ? 0 : s.houses, hotel: toBank ? false : s.hotel, mortgaged: toBank ? false : s.mortgaged } : s,
+  );
+  let finalPlayers = workingPlayers;
+  if (!toBank) {
+    const recipient = finalPlayers.find((p) => p.uid === toUid)!;
+    finalPlayers = finalPlayers.map((p) => (p.uid === toUid ? { ...p, cash: recipient.cash + finalPayer.cash } : p));
+  }
+  finalPlayers = finalPlayers.map((p) => (p.uid === uid ? { ...p, cash: 0, bankrupt: true } : p));
+  const stillIn = finalPlayers.filter((p) => !p.bankrupt);
+  const patch: Record<string, unknown> = {
+    players: finalPlayers, properties: newProperties, ...extraPatch,
+    lastAction: { text: `${payer.displayName} went bankrupt.`, at: new Date().toISOString() },
+  };
+  let gameEnded = false;
+  if (stillIn.length <= 1) {
+    patch.status = 'finished';
+    patch.winnerUid = stillIn[0]?.uid || null;
+    patch.finishedAt = new Date().toISOString();
+    gameEnded = true;
+  }
+  await updateDoc(doc(db, 'businessGames', gameId), patch);
+  return { bankrupted: true, gameEnded };
+}
+
+// Bot-safe mirror of BusinessGame's own resolveLanding — same branches, but any payment goes
+// through botTryPay instead of the local debt modal. Returns whether the bot's turn can continue
+// being processed (false once bankrupted/the game ended, since properties/player state have
+// already been finalized by botTryPay in that case).
+async function botResolveLanding(
+  gameId: string, game: BusinessGameDoc, position: number, seatIndex: number, diceSum: number,
+  currentPlayers: BusinessPlayer[],
+): Promise<boolean> {
+  const square = squareAt(position);
+  const mover = currentPlayers[seatIndex];
+  const properties = game.properties;
+
+  if (square.type === 'go_to_jail') {
+    const jailed = currentPlayers.map((p) => (p.uid === mover.uid ? { ...p, position: JAIL_INDEX, inJail: true, jailTurns: 0, doublesStreak: 0 } : p));
+    await updateDoc(doc(db, 'businessGames', gameId), { players: jailed, turnPhase: 'action', lastAction: { text: `${mover.displayName} was sent to Jail.`, at: new Date().toISOString() } });
+    return true;
+  }
+  if (square.type === 'free_parking') {
+    if (game.houseRules.freeParkingJackpot && game.freeParkingPot > 0) {
+      const paid = currentPlayers.map((p) => (p.uid === mover.uid ? { ...p, cash: p.cash + game.freeParkingPot } : p));
+      await updateDoc(doc(db, 'businessGames', gameId), { players: paid, freeParkingPot: 0, turnPhase: 'action', lastAction: { text: `${mover.displayName} collected the ${formatMoney(game.freeParkingPot)} Free Parking pot!`, at: new Date().toISOString() } });
+    } else {
+      await updateDoc(doc(db, 'businessGames', gameId), { players: currentPlayers, turnPhase: 'action' });
+    }
+    return true;
+  }
+  if (square.type === 'tax') {
+    const toFreeParking = game.houseRules.freeParkingJackpot;
+    const outcome = await botTryPay(gameId, mover.uid, INCOME_TAX, 'bank', 'Income Tax', currentPlayers, properties, {
+      turnPhase: 'action', ...(toFreeParking ? { freeParkingPot: game.freeParkingPot + INCOME_TAX } : {}),
+    });
+    return !outcome.bankrupted;
+  }
+  if (square.type === 'chance' || square.type === 'community') {
+    const isChance = square.type === 'chance';
+    const deck = isChance ? game.chanceDeck : game.communityDeck;
+    const [cardIndex, ...rest] = deck.length > 0 ? deck : Array.from({ length: (isChance ? CHANCE_CARDS : COMMUNITY_CHEST_CARDS).length }, (_, i) => i);
+    await updateDoc(doc(db, 'businessGames', gameId), {
+      players: currentPlayers,
+      [isChance ? 'chanceDeck' : 'communityDeck']: rest,
+      pendingCard: { deck: isChance ? 'chance' : 'community', cardIndex },
+      turnPhase: 'action',
+    });
+    return true;
+  }
+  if (isOwnable(square)) {
+    const state = properties[square.index];
+    if (!state.ownerUid) {
+      await updateDoc(doc(db, 'businessGames', gameId), { players: currentPlayers, turnPhase: 'action', lastAction: { text: `${mover.displayName} landed on ${square.name} (unowned).`, at: new Date().toISOString() } });
+      return true;
+    }
+    if (state.ownerUid === mover.uid || state.mortgaged) {
+      await updateDoc(doc(db, 'businessGames', gameId), { players: currentPlayers, turnPhase: 'action' });
+      return true;
+    }
+    let rent = 0;
+    if (square.type === 'property') {
+      rent = propertyRent(square, state.houses, state.hotel, ownsFullGroup(square.group, state.ownerUid, properties), game.houseRules.doubleRentFullSet);
+    } else if (square.type === 'railway') {
+      rent = railwayRent(ownedRailwayCount(state.ownerUid, properties));
+    } else {
+      rent = utilityRent(diceSum, ownsBothUtilities(state.ownerUid, properties));
+    }
+    const ownerName = currentPlayers.find((p) => p.uid === state.ownerUid)?.displayName || 'the owner';
+    const outcome = await botTryPay(gameId, mover.uid, rent, state.ownerUid, `Rent for ${square.name}`, currentPlayers, properties, {
+      turnPhase: 'action', lastAction: { text: `${mover.displayName} paid ${formatMoney(rent)} rent to ${ownerName} for ${square.name}.`, at: new Date().toISOString() },
+    });
+    return !outcome.bankrupted;
+  }
+
+  await updateDoc(doc(db, 'businessGames', gameId), { players: currentPlayers, turnPhase: 'action' });
+  return true;
+}
+
+// Bot-safe mirror of handleAcknowledgeCard — same card-effect switch, bank/other-player payments
+// routed through botTryPay instead of the local debt modal.
+async function botAcknowledgeCard(gameId: string, game: BusinessGameDoc, seatIndex: number): Promise<void> {
+  const players = game.players;
+  const properties = game.properties;
+  if (!game.pendingCard) return;
+  const isChance = game.pendingCard.deck === 'chance';
+  const card = (isChance ? CHANCE_CARDS : COMMUNITY_CHEST_CARDS)[game.pendingCard.cardIndex];
+  const effect: CardEffect = card.effect;
+  const mover = players[seatIndex];
+
+  const finish = async (next: BusinessPlayer[], extraPatch: Record<string, unknown> = {}) => {
+    await updateDoc(doc(db, 'businessGames', gameId), { players: next, pendingCard: null, ...extraPatch });
+  };
+
+  switch (effect.kind) {
+    case 'receive':
+      await finish(players.map((p) => (p.uid === mover.uid ? { ...p, cash: p.cash + effect.amount } : p)));
+      return;
+    case 'pay':
+      await botTryPay(gameId, mover.uid, effect.amount, 'bank', card.text, players, properties, { pendingCard: null });
+      return;
+    case 'payEachPlayer': {
+      const total = effect.amount * (players.length - 1);
+      const outcome = await botTryPay(gameId, mover.uid, total, 'bank', card.text, players, properties, { pendingCard: null });
+      if (outcome.bankrupted) return;
+      // botTryPay already moved `total` from the mover to the bank — now distribute it back out to
+      // every other player, same as the human path (which does this in a single combined write).
+      const afterSnap = await getDoc(doc(db, 'businessGames', gameId));
+      const afterGame = afterSnap.exists() ? (afterSnap.data() as BusinessGameDoc) : undefined;
+      if (!afterGame) return;
+      let next = afterGame.players;
+      for (const p of players) {
+        if (p.uid === mover.uid) continue;
+        next = next.map((q) => (q.uid === p.uid ? { ...q, cash: q.cash + effect.amount } : q));
+      }
+      await updateDoc(doc(db, 'businessGames', gameId), { players: next });
+      return;
+    }
+    case 'collectFromEachPlayer': {
+      let next = players;
+      let total = 0;
+      for (const p of players) {
+        if (p.uid === mover.uid) continue;
+        const pay = Math.min(p.cash, effect.amount);
+        total += pay;
+        next = next.map((q) => (q.uid === p.uid ? { ...q, cash: q.cash - pay } : q));
+      }
+      next = next.map((q) => (q.uid === mover.uid ? { ...q, cash: q.cash + total } : q));
+      await finish(next);
+      return;
+    }
+    case 'getOutOfJailCard':
+      await finish(players.map((p) => (p.uid === mover.uid ? { ...p, getOutOfJailCards: p.getOutOfJailCards + 1 } : p)));
+      return;
+    case 'goToJail':
+      await finish(players.map((p) => (p.uid === mover.uid ? { ...p, position: JAIL_INDEX, inJail: true, jailTurns: 0 } : p)));
+      return;
+    case 'repairs': {
+      let houses = 0, hotels = 0;
+      properties.forEach((s) => { if (s.ownerUid === mover.uid) { if (s.hotel) hotels += 1; else houses += s.houses; } });
+      const amount = houses * effect.perHouse + hotels * effect.perHotel;
+      if (amount === 0) { await finish(players); return; }
+      await botTryPay(gameId, mover.uid, amount, 'bank', card.text, players, properties, { pendingCard: null });
+      return;
+    }
+    case 'moveTo': {
+      const { newPosition, passedGo } = movePlayer(mover.position, effect.position - mover.position >= 0 ? effect.position - mover.position : BOARD_SIZE + effect.position - mover.position);
+      const cash = mover.cash + (passedGo ? SALARY : 0);
+      const moved = players.map((p) => (p.uid === mover.uid ? { ...p, position: effect.position, cash } : p));
+      await updateDoc(doc(db, 'businessGames', gameId), { players: moved, pendingCard: null });
+      await botResolveLanding(gameId, { ...game, players: moved, pendingCard: null }, effect.position, seatIndex, 0, moved);
+      return;
+    }
+    case 'moveRelative': {
+      const { newPosition, passedGo } = movePlayer(mover.position, effect.steps);
+      const cash = mover.cash + (passedGo ? SALARY : 0);
+      const moved = players.map((p) => (p.uid === mover.uid ? { ...p, position: newPosition, cash } : p));
+      await updateDoc(doc(db, 'businessGames', gameId), { players: moved, pendingCard: null });
+      await botResolveLanding(gameId, { ...game, players: moved, pendingCard: null }, newPosition, seatIndex, 0, moved);
+      return;
+    }
+    case 'moveToNearestRailway':
+    case 'moveToNearestUtility': {
+      const target = nearestSquareOfType(mover.position, effect.kind === 'moveToNearestRailway' ? 'railway' : 'utility');
+      const passedGo = target <= mover.position;
+      const cash = mover.cash + (passedGo ? SALARY : 0);
+      const moved = players.map((p) => (p.uid === mover.uid ? { ...p, position: target, cash } : p));
+      await updateDoc(doc(db, 'businessGames', gameId), { players: moved, pendingCard: null });
+      await botResolveLanding(gameId, { ...game, players: moved, pendingCard: null }, target, seatIndex, 0, moved);
+      return;
+    }
+  }
 }
 
 
@@ -258,6 +539,192 @@ export default function BusinessGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionsKey]);
 
+  // Bot auto-play. Business is fully client-trusted — no Admin-SDK-mediated endpoint drives turns,
+  // so (same model as Ludo) whichever human client has this game open acts on a bot seat's behalf
+  // after a short "thinking" delay, re-validating against the latest live doc right before writing.
+  const latestBusinessGameRef = useRef(game);
+  useEffect(() => { latestBusinessGameRef.current = game; }, [game]);
+
+  useEffect(() => {
+    if (!game || game.status !== 'active' || !gameId) return;
+    if (game.auction || game.pendingTrade) return; // handleEndTurn blocks on these too — the two effects below clear them first
+    const seat = game.players[game.currentTurnSeatIndex];
+    if (!seat?.isBot || seat.bankrupt) return;
+
+    const timer = setTimeout(async () => {
+      const g = latestBusinessGameRef.current;
+      if (!g || g.status !== 'active' || !gameId) return;
+      const currentSeat = g.players[g.currentTurnSeatIndex];
+      if (!currentSeat?.isBot || currentSeat.uid !== seat.uid || currentSeat.bankrupt) return;
+      if (g.auction || g.pendingTrade) return;
+
+      const gRefDoc = doc(db, 'businessGames', gameId);
+      const seatIndex = g.currentTurnSeatIndex;
+
+      if (g.pendingCard) {
+        await botAcknowledgeCard(gameId, g, seatIndex);
+        return;
+      }
+
+      if (currentSeat.inJail && g.turnPhase === 'roll') {
+        // Pay bail immediately if it leaves a comfortable cash buffer; otherwise try for doubles.
+        if (currentSeat.cash >= JAIL_BAIL * 3) {
+          const freed = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, cash: p.cash - JAIL_BAIL, inJail: false, jailTurns: 0 } : p));
+          await updateDoc(gRefDoc, { players: freed });
+          return;
+        }
+        const d1 = 1 + Math.floor(Math.random() * 6);
+        const d2 = 1 + Math.floor(Math.random() * 6);
+        if (d1 === d2) {
+          const { newPosition, passedGo } = movePlayer(currentSeat.position, d1 + d2);
+          const cash = currentSeat.cash + (passedGo ? SALARY : 0);
+          const freed = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, position: newPosition, cash, inJail: false, jailTurns: 0, doublesStreak: 0 } : p));
+          await updateDoc(gRefDoc, { players: freed, lastRoll: [d1, d2] });
+          await botResolveLanding(gameId, { ...g, players: freed }, newPosition, seatIndex, d1 + d2, freed);
+        } else {
+          const turns = currentSeat.jailTurns + 1;
+          if (turns >= MAX_JAIL_TURNS) {
+            const outcome = await botTryPay(gameId, currentSeat.uid, JAIL_BAIL, 'bank', 'Jail bail (3 failed attempts)', g.players, g.properties, {
+              turnPhase: 'action', lastRoll: [d1, d2],
+            });
+            if (!outcome.bankrupted) {
+              const cur = await getDoc(gRefDoc);
+              const curGame = cur.exists() ? (cur.data() as BusinessGameDoc) : null;
+              if (curGame) {
+                const freed = curGame.players.map((p) => (p.uid === currentSeat.uid ? { ...p, inJail: false, jailTurns: 0 } : p));
+                await updateDoc(gRefDoc, { players: freed });
+              }
+            }
+          } else {
+            const stayed = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, jailTurns: turns } : p));
+            await updateDoc(gRefDoc, { players: stayed, lastRoll: [d1, d2], turnPhase: 'action', lastAction: { text: `${currentSeat.displayName} failed to roll doubles (attempt ${turns}/${MAX_JAIL_TURNS}).`, at: new Date().toISOString() } });
+          }
+        }
+        return;
+      }
+
+      if (g.turnPhase === 'roll') {
+        const d1 = 1 + Math.floor(Math.random() * 6);
+        const d2 = 1 + Math.floor(Math.random() * 6);
+        const isDoubles = d1 === d2;
+        const nextStreak = isDoubles ? currentSeat.doublesStreak + 1 : 0;
+        if (g.houseRules.doublesExtraTurn && nextStreak >= 3) {
+          const working = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, position: JAIL_INDEX, inJail: true, jailTurns: 0, doublesStreak: 0 } : p));
+          await updateDoc(gRefDoc, { players: working, lastRoll: [d1, d2], turnPhase: 'action', lastAction: { text: `${currentSeat.displayName} rolled doubles 3 times in a row — straight to Jail!`, at: new Date().toISOString() } });
+          return;
+        }
+        const { newPosition, passedGo } = movePlayer(currentSeat.position, d1 + d2);
+        let cash = currentSeat.cash;
+        if (passedGo) {
+          const exact = newPosition === 0;
+          cash += exact && g.houseRules.doubleSalaryOnExactGo ? SALARY * 2 : SALARY;
+        }
+        const working = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, position: newPosition, cash, doublesStreak: nextStreak } : p));
+        await updateDoc(gRefDoc, { players: working, lastRoll: [d1, d2] });
+        await botResolveLanding(gameId, { ...g, players: working }, newPosition, seatIndex, d1 + d2, working);
+        return;
+      }
+
+      // turnPhase === 'action'
+      const square = squareAt(currentSeat.position);
+      if (isOwnable(square) && !g.properties[square.index].ownerUid) {
+        // Keep a cash buffer (1.2x price) so buying never strands the bot unable to cover a nearby
+        // rent — a simple, always-safe heuristic rather than real property-value evaluation.
+        if (currentSeat.cash >= square.price * 1.2) {
+          const newPlayers = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, cash: p.cash - square.price } : p));
+          const newProperties = g.properties.map((s, i) => (i === square.index ? { ...s, ownerUid: currentSeat.uid } : s));
+          await updateDoc(gRefDoc, { players: newPlayers, properties: newProperties, lastAction: { text: `${currentSeat.displayName} bought ${square.name} for ${formatMoney(square.price)}.`, at: new Date().toISOString() } });
+        } else {
+          await updateDoc(gRefDoc, {
+            auction: { propertyIndex: square.index, currentBid: 0, currentBidderUid: null, passedUids: [] },
+            lastAction: { text: `${currentSeat.displayName} put ${square.name} up for auction.`, at: new Date().toISOString() },
+          });
+        }
+        return;
+      }
+
+      // Nothing left to do — end the turn (re-roll on doubles, same as a human).
+      if (g.houseRules.doublesExtraTurn && currentSeat.doublesStreak > 0 && !currentSeat.inJail) {
+        await updateDoc(gRefDoc, { turnPhase: 'roll' });
+        return;
+      }
+      let nextSeat = (seatIndex + 1) % g.players.length;
+      let loops = 0;
+      while (g.players[nextSeat]?.bankrupt && loops < g.players.length) {
+        nextSeat = (nextSeat + 1) % g.players.length;
+        loops += 1;
+      }
+      const stillIn = g.players.filter((p) => !p.bankrupt);
+      if (stillIn.length <= 1) {
+        await updateDoc(gRefDoc, { status: 'finished', winnerUid: stillIn[0]?.uid || null, finishedAt: new Date().toISOString() });
+        return;
+      }
+      const resetPlayers = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, doublesStreak: 0 } : p));
+      await updateDoc(gRefDoc, { currentTurnSeatIndex: nextSeat, turnPhase: 'roll', players: resetPlayers });
+      const nextPlayer: BusinessPlayer | undefined = g.players[nextSeat];
+      if (nextPlayer && user) {
+        notifyGameTurnClient(user, {
+          gameType: 'business', gameId, nextPlayerUid: nextPlayer.uid,
+          opponentNames: g.players.filter((p) => p.uid !== nextPlayer.uid).map((p) => p.displayName).filter(Boolean).join(', ') || null,
+        });
+      }
+    }, 1100 + Math.random() * 500);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.status, game?.currentTurnSeatIndex, game?.turnPhase, game?.pendingCard, game?.auction, game?.pendingTrade, gameId]);
+
+  // Auto-decline any trade proposal directed at a bot seat — trades aren't gated to whose turn it
+  // is, and handleEndTurn refuses to advance while one is pending, so this can't just wait for the
+  // bot's own turn effect above.
+  useEffect(() => {
+    if (!game || game.status !== 'active' || !gameId || !game.pendingTrade) return;
+    const target = game.players.find((p) => p.uid === game.pendingTrade!.toUid);
+    if (!target?.isBot) return;
+    const tradeId = game.pendingTrade.id;
+    const timer = setTimeout(() => {
+      const g = latestBusinessGameRef.current;
+      if (!g || !g.pendingTrade || g.pendingTrade.id !== tradeId) return;
+      updateDoc(doc(db, 'businessGames', gameId), { pendingTrade: null }).catch((err) => console.error('bot decline trade failed:', err));
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [game?.pendingTrade?.id, game?.status, gameId]);
+
+  // Auto-pass any bot seat sitting in an open auction — bots never bid (kept deliberately simple
+  // and always-correct rather than adding real property-value bidding logic, the same "skip the
+  // deepest/riskiest branch" call made for Sweep's bot engine's house-building).
+  useEffect(() => {
+    if (!game || game.status !== 'active' || !gameId || !game.auction) return;
+    const auction = game.auction;
+    const botToPass = game.players.find((p) => p.isBot && !p.bankrupt && p.uid !== auction.currentBidderUid && !auction.passedUids.includes(p.uid));
+    if (!botToPass) return;
+    const timer = setTimeout(async () => {
+      const g = latestBusinessGameRef.current;
+      if (!g || !g.auction || g.auction.propertyIndex !== auction.propertyIndex) return;
+      const a = g.auction;
+      if (a.passedUids.includes(botToPass.uid) || a.currentBidderUid === botToPass.uid) return;
+      const passedUids = [...a.passedUids, botToPass.uid];
+      const remaining = g.players.filter((p) => !p.bankrupt && !passedUids.includes(p.uid));
+      const gRefDoc = doc(db, 'businessGames', gameId);
+      if (remaining.length > 1) {
+        await updateDoc(gRefDoc, { auction: { ...a, passedUids } });
+        return;
+      }
+      const winner = remaining.length === 1 && a.currentBidderUid === remaining[0].uid ? remaining[0] : null;
+      if (winner && a.currentBid > 0) {
+        const newProperties = g.properties.map((s, i) => (i === a.propertyIndex ? { ...s, ownerUid: winner.uid } : s));
+        const newPlayers = g.players.map((p) => (p.uid === winner.uid ? { ...p, cash: p.cash - a.currentBid } : p));
+        await updateDoc(gRefDoc, {
+          properties: newProperties, players: newPlayers, auction: null,
+          lastAction: { text: `${winner.displayName} won the auction for ${BOARD[a.propertyIndex].name} at ${formatMoney(a.currentBid)}.`, at: new Date().toISOString() },
+        });
+      } else {
+        await updateDoc(gRefDoc, { auction: null, lastAction: { text: `No bids on ${BOARD[a.propertyIndex].name} — it stays unowned.`, at: new Date().toISOString() } });
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [game?.auction?.propertyIndex, game?.auction?.currentBid, game?.auction?.currentBidderUid, game?.auction?.passedUids?.join(','), game?.status, gameId]);
+
   if (loading) return <div className="p-8 text-center text-text-muted">Loading…</div>;
   if (!game || !user) return <div className="p-8 text-center text-text-muted">Game not found.</div>;
 
@@ -293,6 +760,31 @@ export default function BusinessGame() {
       console.error('Failed to join Business game:', err);
       setError('Failed to join — the game may already be full or started.');
     }
+  };
+
+  const handleFillBot = async () => {
+    if (!user || game.hostUid !== user.uid || game.players.length >= 6) return;
+    const botPlayer: BusinessPlayer = {
+      uid: `bot_${gameId}_${game.players.length}`,
+      displayName: `Bot ${game.players.length + 1}`,
+      photoURL: '',
+      seatIndex: game.players.length,
+      cash: STARTING_CASH,
+      position: 0,
+      inJail: false,
+      jailTurns: 0,
+      getOutOfJailCards: 0,
+      bankrupt: false,
+      doublesStreak: 0,
+      isBot: true,
+    };
+    await updateDoc(gameRef(), {
+      players: [...game.players, botPlayer],
+      playerUids: [...game.playerUids, botPlayer.uid],
+    }).catch((err) => {
+      console.error('Failed to add bot:', err);
+      setError('Failed to add a bot.');
+    });
   };
 
   // Mirrors Ludo's End Game — any active player can force the match to finish early for
@@ -1030,7 +1522,7 @@ export default function BusinessGame() {
             {game.players.map((p) => (
               <div key={p.uid} className="p-4 flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                  {p.photoURL ? (
+                  {p.isBot ? '🤖' : p.photoURL ? (
                     <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     p.displayName?.slice(0, 1) || '?'
@@ -1080,6 +1572,16 @@ export default function BusinessGame() {
 
           {showInvite && <InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
 
+          {isPlayer && user.uid === game.hostUid && game.players.length < 6 && (
+            <button
+              onClick={handleFillBot}
+              className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2"
+            >
+              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+              Fill Empty Seat with Bot
+            </button>
+          )}
+
           {isPlayer && user.uid === game.hostUid ? (
             <button onClick={handleStart} disabled={busy || game.players.length < 2} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
               {game.players.length < 2 ? 'Need at least 2 players' : busy ? 'Starting…' : 'Start Game'}
@@ -1126,7 +1628,7 @@ export default function BusinessGame() {
             >
               <span className="w-6 text-center text-sm font-black text-text-muted">{idx + 1}</span>
               <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs overflow-hidden shrink-0">
-                {p.photoURL ? (
+                {p.isBot ? '🤖' : p.photoURL ? (
                   <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   p.displayName?.slice(0, 1) || '?'
@@ -1244,7 +1746,7 @@ export default function BusinessGame() {
             >
               <PawnToken color={playerColor(p.uid, players)} size={16} />
               <PresenceDot uid={p.uid} className="w-1.5 h-1.5" />
-              <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{p.uid === user.uid ? 'You' : p.displayName}</span>
+              <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{p.isBot && '🤖 '}{p.uid === user.uid ? 'You' : p.displayName}</span>
               <span className="text-[10px] text-text-muted whitespace-nowrap">{p.bankrupt ? 'out' : formatMoney(p.cash)}</span>
               {p.inJail && <span className="material-symbols-outlined text-[12px] text-warning">lock</span>}
             </div>

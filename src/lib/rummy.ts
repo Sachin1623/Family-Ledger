@@ -157,6 +157,7 @@ export interface RummyPlayer {
   pureRun543At: string | null;
   dropped: boolean;
   finishedRank?: number | null;
+  isBot?: boolean;
 }
 
 export type TurnPhase = 'draw' | 'discard';
