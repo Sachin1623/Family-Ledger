@@ -985,9 +985,6 @@ export default function BusinessGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          </button>
           <h1 className="font-black text-primary">Business</h1>
           <ReactionButton onSend={handleSendReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
@@ -1203,9 +1200,6 @@ export default function BusinessGame() {
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
       <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-        <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-        </button>
         <h1 className="font-black text-primary text-xs">Business</h1>
         <ReactionButton onSend={handleSendReaction} />
         <div className="flex items-center gap-1.5 ml-auto">
