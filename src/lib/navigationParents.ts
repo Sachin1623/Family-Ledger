@@ -48,7 +48,9 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/games/sudoku': '/tools?category=games',
   '/games/sudoku/leaderboard': '/games/sudoku',
   '/games/scramble': '/tools?category=games',
-  '/games/scramble/play': '/tools?category=games',
+  // Exception to the shortcut above: mid-game back returns to Scramble's own home rather than
+  // skipping past it (matches Sudoku/Chess).
+  '/games/scramble/play': '/games/scramble',
   '/games/scramble/leaderboard': '/games/scramble',
   '/games/scramble-multiplayer': '/games/scramble',
   '/games/ludo': '/tools?category=games',
@@ -75,16 +77,17 @@ const PARENT_OVERRIDES: Record<string, string> = {
 
 const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/games\/ranks\/[^/]+$/, '/games'],
-  // Sudoku is the one exception to the direct-to-Tools shortcut below: mid-puzzle back returns to
-  // Sudoku's own home (difficulty/streak/leaderboard) rather than skipping past it.
+  // Sudoku and Chess are exceptions to the direct-to-Tools shortcut below: mid-game back returns
+  // to the game's own home/lobby rather than skipping past it (Scramble's equivalent exception is
+  // in PARENT_OVERRIDES above, since /games/scramble/play is a fixed path, not a dynamic :id).
   [/^\/games\/sudoku\/play\/[^/]+$/, '/games/sudoku'],
+  [/^\/games\/chess\/[^/]+$/, '/games/chess'],
   // Same direct-to-Tools shortcut as the lobby overrides above — an active game's back goes
   // straight to Tools' Games tab, not through its own lobby.
   [/^\/games\/ludo\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/rummy\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/business\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/sweep\/[^/]+$/, '/tools?category=games'],
-  [/^\/games\/chess\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/sequence\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/rummy13\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/spadePledge\/[^/]+$/, '/tools?category=games'],

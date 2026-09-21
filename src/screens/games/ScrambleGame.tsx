@@ -220,10 +220,7 @@ export default function ScrambleGame() {
     <div className="flex flex-col min-h-screen bg-surface">
       <header className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-b border-border-subtle pt-[env(safe-area-inset-top)]">
         <div className="max-w-xl mx-auto w-full p-4 flex items-center justify-between gap-2">
-          <button onClick={handleQuit} className="text-xs font-bold text-primary flex items-center gap-1 shrink-0">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-            Scramble
-          </button>
+          <span className="text-xs font-bold text-primary shrink-0">Scramble</span>
           <div
             className={clsx(
               'px-3 py-1.5 rounded-full text-sm font-black tabular-nums',
@@ -232,7 +229,12 @@ export default function ScrambleGame() {
           >
             {formatClock(remaining)}
           </div>
-          <HelpButton onClick={() => setShowHelp(true)} />
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={handleQuit} className="p-2 text-error" aria-label="Quit match">
+              <span className="material-symbols-outlined text-[20px] block">logout</span>
+            </button>
+            <HelpButton onClick={() => setShowHelp(true)} />
+          </div>
         </div>
       </header>
 
