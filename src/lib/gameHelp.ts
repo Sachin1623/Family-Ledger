@@ -150,6 +150,45 @@ export const RUMMY13_HELP: GameHelpContent = {
   ],
 };
 
+export const SPADE_PLEDGE_HELP: GameHelpContent = {
+  title: 'Spade Pledge — How to Play',
+  sections: [
+    {
+      heading: 'Setup',
+      body: [
+        'Exactly 4 players, 13 cards each. Choose Partnership (2v2, you and the player opposite you are teammates) or Free-for-all (4 individuals) when you create the table.',
+        "Spades are always trump. If you're short of players, the host can fill empty seats with a bot before starting.",
+      ],
+    },
+    {
+      heading: 'Bidding',
+      body: [
+        'Before each hand, every player bids how many tricks they expect to win (0-13). A bid of 0 is a "Nil" — a high-risk, high-reward bid to win zero tricks.',
+      ],
+    },
+    {
+      heading: 'Playing a trick',
+      body: [
+        "Follow the led suit if you can — and if you can follow suit, you must play a card that beats the best card in the trick so far, if you have one. If you're out of the led suit, you may play anything, including a spade.",
+        "Spades can't lead a trick until someone has already played one when unable to follow suit.",
+      ],
+    },
+    {
+      heading: 'Scoring',
+      body: [
+        'Meeting your bid scores 10 points per bid trick, plus 1 for each extra trick ("bag"). Falling short costs 10 points per bid trick. A made Nil scores +100; a broken Nil costs -100.',
+        'Every 10 bags accumulated costs a 100-point penalty. First side (or player, in Free-for-all) to reach 300 points wins the match.',
+      ],
+    },
+    {
+      heading: 'Timeouts',
+      body: [
+        "Each turn has a 30-second timer — running out auto-bids or auto-plays your lowest legal card. Two timeouts in a row hands your seat to a bot for the rest of the match.",
+      ],
+    },
+  ],
+};
+
 export const BUSINESS_HELP: GameHelpContent = {
   title: 'Business — How to Play',
   sections: [

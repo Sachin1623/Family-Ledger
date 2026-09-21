@@ -715,6 +715,8 @@ const en = {
   'games.rummyDesc': 'Online multiplayer, up to 4 players — three decks, two jokers',
   'games.rummy13': '13-Card Rummy',
   'games.rummy13Desc': 'Classic Indian Rummy, 2-6 players — Single Deal or Pool 101/201',
+  'games.spadePledge': 'Spade Pledge',
+  'games.spadePledgeDesc': 'Trick-taking bidding game for 4 — Partnership or Free-for-all, first to 300',
   'games.business': 'Business',
   'games.businessDesc': 'Online multiplayer, 2-6 players — Indian city board',
   'games.sweep': 'Sweep',

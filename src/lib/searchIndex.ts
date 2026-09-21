@@ -47,6 +47,7 @@ export const SEARCHABLE_FEATURES: SearchableFeature[] = [
   { id: 'game-business', label: 'Business', description: 'Monopoly-style board game', labelKey: 'games.business', descriptionKey: 'games.businessDesc', icon: 'location_city', route: '/games/business', keywords: ['monopoly', 'board game'] },
   { id: 'game-sweep', label: 'Sweep', description: 'Card game, online multiplayer', labelKey: 'games.sweep', descriptionKey: 'games.sweepDesc', icon: 'style', route: '/games/sweep', keywords: ['cards'] },
   { id: 'game-sequence', label: 'Sequence', description: 'Board & card game, online multiplayer', labelKey: 'games.sequence', descriptionKey: 'games.sequenceDesc', icon: 'grid_4x4', route: '/games/sequence', keywords: ['board game', 'cards'] },
+  { id: 'game-spadePledge', label: 'Spade Pledge', description: 'Trick-taking card game, online multiplayer', labelKey: 'games.spadePledge', descriptionKey: 'games.spadePledgeDesc', icon: 'style', route: '/games/spadePledge', keywords: ['cards', 'spades'] },
   { id: 'health', label: 'Health', description: 'Glucose, blood pressure & medicine tracking', labelKey: 'nav.health', icon: 'favorite', route: '/health', keywords: ['glucose', 'blood pressure', 'medicine', 'medication'] },
   // Individual health trackers — child screens of the "Health" hub above.
   { id: 'health-glucose', label: 'Glucose Tracker', description: 'Log & chart blood glucose readings', labelKey: 'health.glucoseTracker', descriptionKey: 'health.glucoseTrackerDesc', icon: 'water_drop', route: '/health/glucose', keywords: ['sugar', 'diabetes'] },

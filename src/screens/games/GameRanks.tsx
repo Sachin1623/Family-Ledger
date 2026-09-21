@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { sideForSeat as sequenceSideForSeat } from '../../lib/sequence';
 import { useLanguage } from '../../context/LanguageContext';
 
-type GameType = 'ludo' | 'rummy' | 'rummy13' | 'business' | 'sweep' | 'chess' | 'sequence';
+type GameType = 'ludo' | 'rummy' | 'rummy13' | 'business' | 'sweep' | 'chess' | 'sequence' | 'spadePledge';
 type Period = 'day' | 'week' | 'month' | 'year' | 'lifetime';
 
 // 'individual': a single `winnerUid` per game (Ludo/Rummy/Business). 'team': fixed partnerships,
@@ -37,6 +37,7 @@ const GAME_META: Record<GameType, { gameLabelKey: string; collection: string; ba
   sweep: { gameLabelKey: 'games.sweep', collection: 'sweepGames', backTo: '/games/sweep', resultMode: 'team' },
   chess: { gameLabelKey: 'games.chess', collection: 'chessGames', backTo: '/games/chess', resultMode: 'color' },
   sequence: { gameLabelKey: 'games.sequence', collection: 'sequenceGames', backTo: '/games/sequence', resultMode: 'side' },
+  spadePledge: { gameLabelKey: 'games.spadePledge', collection: 'spadePledgeTables', backTo: '/games/spade-pledge', resultMode: 'team' },
 };
 
 type Outcome = 'win' | 'loss' | 'draw';
@@ -115,7 +116,7 @@ interface OpponentStats {
 export default function GameRanks() {
   const navigate = useNavigate();
   const { gameType: rawGameType } = useParams<{ gameType: string }>();
-  const gameType: GameType = (['rummy', 'rummy13', 'business', 'sweep', 'chess', 'sequence'].includes(rawGameType || '') ? rawGameType : 'ludo') as GameType;
+  const gameType: GameType = (['rummy', 'rummy13', 'business', 'sweep', 'chess', 'sequence', 'spadePledge'].includes(rawGameType || '') ? rawGameType : 'ludo') as GameType;
   const meta = GAME_META[gameType];
   // 'side' games (Sequence) can ALSO have partners, just not on every game (2/3-player Sequence is
   // individual) — the Partners section still renders, it's just empty for those periods/matchups.

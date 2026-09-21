@@ -76,6 +76,14 @@ const GAMES = [
     descKey: 'games.sequenceDesc',
     available: true,
   },
+  {
+    to: '/games/spadePledge',
+    favKey: 'game-spadePledge',
+    icon: '♠️',
+    titleKey: 'games.spadePledge',
+    descKey: 'games.spadePledgeDesc',
+    available: true,
+  },
 ];
 
 export default function GamesHub() {

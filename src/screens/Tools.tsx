@@ -67,6 +67,7 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
       { to: '/games/business', favKey: 'game-business', icon: '🏙️', titleKey: 'games.business', descKey: 'games.businessDesc' },
       { to: '/games/sweep', favKey: 'game-sweep', icon: '🧹', titleKey: 'games.sweep', descKey: 'games.sweepDesc' },
       { to: '/games/sequence', favKey: 'game-sequence', icon: '🔴', titleKey: 'games.sequence', descKey: 'games.sequenceDesc' },
+      { to: '/games/spadePledge', favKey: 'game-spadePledge', icon: '♠️', titleKey: 'games.spadePledge', descKey: 'games.spadePledgeDesc' },
     ],
   },
   {

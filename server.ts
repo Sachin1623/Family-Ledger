@@ -460,6 +460,7 @@ async function sendPush(
 const GAME_TURN_META: Record<string, { label: string; routeBase: string; pushType: string }> = {
   rummy: { label: '27-Hand Rummy', routeBase: '/games/rummy', pushType: 'rummy_turn' },
   rummy13: { label: '13-Card Rummy', routeBase: '/games/rummy13', pushType: 'rummy13_turn' },
+  spadePledge: { label: 'Spade Pledge', routeBase: '/games/spadePledge', pushType: 'spadePledge_turn' },
   sweep: { label: 'Sweep', routeBase: '/games/sweep', pushType: 'sweep_turn' },
   sequence: { label: 'Sequence', routeBase: '/games/sequence', pushType: 'sequence_turn' },
   business: { label: 'Business', routeBase: '/games/business', pushType: 'business_turn' },
@@ -6900,6 +6901,875 @@ async function startServer() {
     }
   });
 
+  // ===================== Spade Pledge =====================
+  // 4-player, server-authoritative Spades-family trick-taking game with bidding/contracts. Same
+  // server-mediated hidden-info pattern as 27-Hand Rummy/Sweep/13-Card Rummy: opponents' hands are
+  // genuine secrets, so every bid/play/timeout goes through these Admin-SDK endpoints inside
+  // Firestore transactions. Two-tier Firestore shape like 13-Card Rummy: `spadePledgeTables/{id}`
+  // is the persistent MATCH (scoring groups, current-deal pointer); each HAND (13 tricks) is its
+  // own `spadePledgeDeals/{id}` doc with a `tableId` FK, auto-created after every hand finishes via
+  // resolveSpadePledgeHandEnd below.
+  //
+  // Supports two formats, chosen at table creation and immutable thereafter: 'partnership' (2v2,
+  // teammates seated opposite, team = seatIndex % 2) and 'ffa' (4 individuals, team = seatIndex).
+  // Both are unified as "scoring groups" — see spadePledgeScoringGroupSeats/spadePledgeTeamForSeat
+  // — so the scoring algorithm (resolveSpadePledgeHandEnd) is written once with no branching on
+  // format: a group of 1 (FFA) collapses correctly to "my own bid/tricks" in every formula below.
+  //
+  // No cron/background worker exists in this codebase, so a bot seat's turn can't "just happen" on
+  // its own clock — drainSpadePledgeBotTurns runs a synchronous loop after every human-triggered
+  // endpoint, applying the SAME bid/play transition functions (spadePledgeApplyBid/
+  // spadePledgeApplyPlay) a human's own action would use, so there's exactly one implementation of
+  // "what happens on a bid/play," not a separate, driftable bot path.
+
+  const SPADE_PLEDGE_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  const SPADE_PLEDGE_SUITS = ['C', 'D', 'H', 'S'];
+  const SPADE_PLEDGE_HAND_SIZE = 13;
+  const SPADE_PLEDGE_TURN_TIMEOUT_MS = 30_000;
+  const SPADE_PLEDGE_TARGET_SCORE = 300;
+  const SPADE_PLEDGE_BID_TRICK_POINTS = 10;
+  const SPADE_PLEDGE_OVERTRICK_POINTS = 1;
+  const SPADE_PLEDGE_FAILED_BID_TRICK_PENALTY = 10;
+  const SPADE_PLEDGE_NIL_BONUS = 100;
+  const SPADE_PLEDGE_NIL_PENALTY = 100;
+  const SPADE_PLEDGE_BAG_PENALTY_THRESHOLD = 10;
+  const SPADE_PLEDGE_BAG_PENALTY = 100;
+  const SPADE_PLEDGE_BOT_CONVERSION_THRESHOLD = 2;
+
+  function buildSpadePledgeDeck(): string[] {
+    const deck: string[] = [];
+    for (const suit of SPADE_PLEDGE_SUITS) for (const rank of SPADE_PLEDGE_RANKS) deck.push(`${rank}${suit}`);
+    return deck;
+  }
+
+  function spadePledgeShuffle<T>(arr: T[]): T[] {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function spadePledgeParseCard(cardId: string): { rank: string; suit: string } {
+    return { suit: cardId.slice(-1), rank: cardId.slice(0, -1) };
+  }
+  function spadePledgeSuitOf(cardId: string): string { return cardId.slice(-1); }
+  function spadePledgeRankValue(cardId: string): number { return SPADE_PLEDGE_RANKS.indexOf(spadePledgeParseCard(cardId).rank); }
+
+  // true if `candidate` would win the trick if compared only against `currentBest`, given trump is
+  // always Spades.
+  function spadePledgeBeats(candidate: string, currentBest: string, ledSuit: string): boolean {
+    const cSpade = spadePledgeSuitOf(candidate) === 'S';
+    const bSpade = spadePledgeSuitOf(currentBest) === 'S';
+    if (cSpade && !bSpade) return true;
+    if (bSpade && !cSpade) return false;
+    if (cSpade && bSpade) return spadePledgeRankValue(candidate) > spadePledgeRankValue(currentBest);
+    if (spadePledgeSuitOf(candidate) !== ledSuit) return false;
+    return spadePledgeRankValue(candidate) > spadePledgeRankValue(currentBest);
+  }
+
+  function spadePledgeTrickBestPlay(trick: any): any {
+    const ledSuit = spadePledgeSuitOf(trick.cards[0].cardId);
+    let best = trick.cards[0];
+    for (const play of trick.cards.slice(1)) {
+      if (spadePledgeBeats(play.cardId, best.cardId, ledSuit)) best = play;
+    }
+    return best;
+  }
+  function spadePledgeTrickWinnerSeat(trick: any): number { return spadePledgeTrickBestPlay(trick).seatIndex; }
+
+  // The authoritative legal-move set for the seat whose turn it is. A player void in the led suit
+  // may discard or trump freely (no forced trumping — confirmed with the user). A player who CAN
+  // follow suit must beat the current best-in-trick card with a higher card of that suit if one is
+  // held (stricter than standard Spades' plain follow-suit rule — also confirmed with the user).
+  function spadePledgeLegalCards(hand: string[], trick: any, spadesBroken: boolean): string[] {
+    if (trick.cards.length === 0) {
+      const nonSpades = hand.filter((c) => spadePledgeSuitOf(c) !== 'S');
+      if (!spadesBroken && nonSpades.length > 0) return nonSpades; // can't lead spades until broken
+      return hand; // spades broken, or hand is all spades (exception)
+    }
+    const ledSuit = spadePledgeSuitOf(trick.cards[0].cardId);
+    const followCards = hand.filter((c) => spadePledgeSuitOf(c) === ledSuit);
+    if (followCards.length === 0) return hand; // void — free choice
+    const best = spadePledgeTrickBestPlay(trick);
+    if (spadePledgeSuitOf(best.cardId) === 'S') return followCards; // best is already trumped — can't beat it by following suit
+    const beatingFollowCards = followCards.filter((c) => spadePledgeRankValue(c) > spadePledgeRankValue(best.cardId));
+    return beatingFollowCards.length > 0 ? beatingFollowCards : followCards;
+  }
+
+  // The one place `format` ever affects seat->group mapping. Everything downstream (scoring,
+  // match-end, rewards) consumes only `team`/`groups`, never `format`, directly.
+  function spadePledgeScoringGroupSeats(format: string): number[][] {
+    return format === 'partnership' ? [[0, 2], [1, 3]] : [[0], [1], [2], [3]];
+  }
+  function spadePledgeTeamForSeat(format: string, seatIndex: number): number {
+    return format === 'partnership' ? seatIndex % 2 : seatIndex;
+  }
+
+  // Deliberately simple, deterministic heuristics — "good enough not to stall the match," not
+  // competitive AI. Neither reads `format`/`team` — a bot decides its bid/play purely from its own
+  // hand and the current trick; grouping is entirely a scoring-step concern (see
+  // resolveSpadePledgeHandEnd).
+  function spadePledgeBotBid(hand: string[]): number {
+    let bid = 0;
+    for (const card of hand) {
+      const { rank, suit } = spadePledgeParseCard(card);
+      if (suit === 'S' && (rank === 'A' || rank === 'K')) bid += 1;
+      if (suit !== 'S' && rank === 'A') bid += 1;
+    }
+    const spadeCount = hand.filter((c) => spadePledgeSuitOf(c) === 'S').length;
+    bid += Math.max(0, spadeCount - 3);
+    return Math.min(13, bid);
+  }
+
+  function spadePledgeBotPlayCard(hand: string[], trick: any, spadesBroken: boolean): string {
+    const legal = spadePledgeLegalCards(hand, trick, spadesBroken);
+    const suitPriority = ['C', 'D', 'H', 'S'];
+    return legal.slice().sort((a, b) => {
+      const rankDiff = spadePledgeRankValue(a) - spadePledgeRankValue(b);
+      if (rankDiff !== 0) return rankDiff;
+      const suitDiff = suitPriority.indexOf(spadePledgeSuitOf(a)) - suitPriority.indexOf(spadePledgeSuitOf(b));
+      if (suitDiff !== 0) return suitDiff;
+      return hand.indexOf(a) - hand.indexOf(b);
+    })[0];
+  }
+
+  function spadePledgeDealFreshHands(players: any[]): { hands: Record<number, string[]> } {
+    let deck = spadePledgeShuffle(buildSpadePledgeDeck());
+    const hands: Record<number, string[]> = {};
+    for (const p of players) {
+      hands[p.seatIndex] = deck.slice(0, SPADE_PLEDGE_HAND_SIZE);
+      deck = deck.slice(SPADE_PLEDGE_HAND_SIZE);
+    }
+    return { hands };
+  }
+
+  // Pure-write bid transition — safe to call any time after reads are done. Shared by /bid,
+  // /timeout's bidding-phase branch, and drainSpadePledgeBotTurns, so there's exactly one
+  // implementation of "what happens on a bid."
+  function spadePledgeApplyBid(
+    tx: FirebaseFirestore.Transaction,
+    ctx: { dealRef: FirebaseFirestore.DocumentReference; deal: any; seatIndex: number; value: number; nowIso: string },
+  ): { nextTurnSeatIndex: number } {
+    const { deal, seatIndex, value, nowIso } = ctx;
+    const newPlayers = deal.players.map((p: any, i: number) => (i === seatIndex ? { ...p, bid: value } : p));
+    const allBid = newPlayers.every((p: any) => p.bid !== null);
+    if (allBid) {
+      const leader = (deal.dealerSeatIndex + 1) % 4;
+      tx.update(ctx.dealRef, {
+        players: newPlayers, phase: 'playing',
+        currentTrick: { leaderSeatIndex: leader, cards: [] },
+        currentTurnSeatIndex: leader, turnStartedAt: nowIso,
+        lastAction: { type: 'bid', byUid: newPlayers[seatIndex].uid, at: nowIso },
+      });
+      return { nextTurnSeatIndex: leader };
+    }
+    const nextSeatIndex = (seatIndex + 1) % 4;
+    tx.update(ctx.dealRef, {
+      players: newPlayers, currentTurnSeatIndex: nextSeatIndex, turnStartedAt: nowIso,
+      lastAction: { type: 'bid', byUid: newPlayers[seatIndex].uid, at: nowIso },
+    });
+    return { nextTurnSeatIndex: nextSeatIndex };
+  }
+
+  // Applies one card play. `ctx.table` must ALREADY reflect any table-doc changes the caller wants
+  // persisted (e.g. a consecutiveTimeouts reset) — this function is the ONLY writer of `tableRef`
+  // in a transaction that calls it (via resolveSpadePledgeHandEnd, only when the hand ends), so
+  // callers must never also write tableRef themselves in the hand-ending branch. When the hand does
+  // NOT end, this function touches only `handRef`/`dealRef` — the caller is responsible for writing
+  // `tableRef` itself in that case (once, after this returns).
+  //
+  // PRECONDITION: every read this or resolveSpadePledgeHandEnd needs (deal, hand, table) must
+  // already have happened via the caller's own `tx.get`s before this is invoked, and the caller
+  // must not have issued any `tx.update`/`tx.set` yet.
+  async function spadePledgeApplyPlay(
+    tx: FirebaseFirestore.Transaction,
+    db: Firestore,
+    ctx: {
+      dealRef: FirebaseFirestore.DocumentReference; deal: any;
+      handRef: FirebaseFirestore.DocumentReference; hand: string[];
+      tableRef: FirebaseFirestore.DocumentReference; table: any;
+      seatIndex: number; uid: string; cardId: string; nowIso: string;
+    },
+  ): Promise<{ handFinished: boolean; newDealId?: string; nextTurnSeatIndex?: number }> {
+    const { deal, hand, cardId, seatIndex, uid, nowIso } = ctx;
+    const newHandCards = hand.filter((c) => c !== cardId);
+    const newCardPlay = { seatIndex, uid, cardId };
+    const newTrickCards = [...deal.currentTrick.cards, newCardPlay];
+    const newSpadesBroken = deal.spadesBroken || spadePledgeSuitOf(cardId) === 'S';
+    const willCompleteTrick = deal.currentTrick.cards.length === 3;
+
+    if (!willCompleteTrick) {
+      const nextSeatIndex = (seatIndex + 1) % 4;
+      tx.update(ctx.handRef, { cards: newHandCards });
+      tx.update(ctx.dealRef, {
+        currentTrick: { ...deal.currentTrick, cards: newTrickCards },
+        currentTurnSeatIndex: nextSeatIndex,
+        spadesBroken: newSpadesBroken,
+        players: deal.players.map((p: any, i: number) => (i === seatIndex ? { ...p, handCount: newHandCards.length } : p)),
+        turnStartedAt: nowIso,
+        lastAction: { type: 'play', byUid: uid, at: nowIso },
+      });
+      return { handFinished: false, nextTurnSeatIndex: nextSeatIndex };
+    }
+
+    const finishedTrick: any = { ...deal.currentTrick, cards: newTrickCards };
+    const winnerSeat = spadePledgeTrickWinnerSeat(finishedTrick);
+    finishedTrick.winnerSeatIndex = winnerSeat;
+    const newCompletedTricks = [...deal.completedTricks, finishedTrick];
+    const playersAfterTrick = deal.players.map((p: any, i: number) => {
+      const handCount = i === seatIndex ? newHandCards.length : p.handCount;
+      const tricksWon = i === winnerSeat ? p.tricksWon + 1 : p.tricksWon;
+      return { ...p, handCount, tricksWon };
+    });
+
+    if (newCompletedTricks.length < 13) {
+      tx.update(ctx.handRef, { cards: newHandCards });
+      tx.update(ctx.dealRef, {
+        completedTricks: newCompletedTricks,
+        currentTrick: { leaderSeatIndex: winnerSeat, cards: [] },
+        currentTurnSeatIndex: winnerSeat,
+        spadesBroken: newSpadesBroken,
+        players: playersAfterTrick,
+        turnStartedAt: nowIso,
+        lastAction: { type: 'play', byUid: uid, at: nowIso },
+      });
+      return { handFinished: false, nextTurnSeatIndex: winnerSeat };
+    }
+
+    const result = await resolveSpadePledgeHandEnd(tx, db, {
+      tableRef: ctx.tableRef, table: ctx.table,
+      dealRef: ctx.dealRef, previousDealerSeatIndex: deal.dealerSeatIndex,
+      dealPatch: {
+        completedTricks: newCompletedTricks,
+        currentTrick: { leaderSeatIndex: winnerSeat, cards: [] },
+        spadesBroken: newSpadesBroken,
+        players: playersAfterTrick,
+      },
+      extraWrites: () => { tx.update(ctx.handRef, { cards: newHandCards }); },
+    });
+    return { handFinished: true, newDealId: result.newDealId };
+  }
+
+  // The shared "13 tricks just completed — apply scores, then either finish the match or deal the
+  // next hand" transition. Generalized over `groups` (length 2 for partnership, 4 for FFA) — no
+  // branching on format anywhere below; a group of 1 (FFA) collapses correctly to "my own bid/
+  // tricks" in every formula.
+  //
+  // PRECONDITION: every read this needs (table, and whatever the caller itself needed) must already
+  // have happened via the caller's own `tx.get`s before this is invoked, and the caller must not
+  // have issued any `tx.update`/`tx.set` yet — `awardGamePoints` (called from here) does its own
+  // reads internally and must run before any write in the transaction, per Firestore's
+  // read-before-write rule. This is the EXACT ordering bug that shipped and was fixed in
+  // resolveRummy13DealEnd above (see its comment) — a real production 500 was caused by writing
+  // before this internal read.
+  async function resolveSpadePledgeHandEnd(
+    tx: FirebaseFirestore.Transaction,
+    db: Firestore,
+    ctx: {
+      tableRef: FirebaseFirestore.DocumentReference;
+      table: any; // must already reflect any consecutiveTimeouts/isBot changes the caller decided — persisted as-is
+      dealRef: FirebaseFirestore.DocumentReference;
+      previousDealerSeatIndex: number;
+      dealPatch: Record<string, any>; // completedTricks, currentTrick, spadesBroken, players (final bid/tricksWon)
+      extraWrites?: () => void; // e.g. the hand-card-removal write for the play that completed the 13th trick
+    },
+  ): Promise<{ finished: boolean; newDealId?: string }> {
+    const nowIso = new Date().toISOString();
+    const table = ctx.table;
+    const dealPlayers: any[] = ctx.dealPatch.players;
+
+    const newGroups = (table.groups || []).map((g: any) => ({ ...g }));
+    const bids: Record<string, number> = {};
+    const tricksWon: Record<string, number> = {};
+    const nilResults: Record<string, string | null> = {};
+    const groupScoreDelta = new Array(newGroups.length).fill(0);
+
+    for (const group of newGroups) {
+      const memberPlayers = dealPlayers.filter((p: any) => p.team === group.groupIndex);
+      const groupBidTarget = memberPlayers.reduce((s: number, p: any) => s + (p.bid > 0 ? p.bid : 0), 0);
+      const groupTricksWon = memberPlayers.reduce((s: number, p: any) => s + p.tricksWon, 0);
+      let delta = 0;
+      if (groupTricksWon >= groupBidTarget) {
+        delta += groupBidTarget * SPADE_PLEDGE_BID_TRICK_POINTS;
+        const overtricks = groupTricksWon - groupBidTarget;
+        delta += overtricks * SPADE_PLEDGE_OVERTRICK_POINTS;
+        group.bags += overtricks;
+      } else {
+        delta -= groupBidTarget * SPADE_PLEDGE_FAILED_BID_TRICK_PENALTY;
+      }
+      for (const p of memberPlayers) {
+        bids[p.uid] = p.bid;
+        tricksWon[p.uid] = p.tricksWon;
+        if (p.bid === 0) {
+          if (p.tricksWon === 0) { delta += SPADE_PLEDGE_NIL_BONUS; nilResults[p.uid] = 'made'; }
+          else { delta -= SPADE_PLEDGE_NIL_PENALTY; nilResults[p.uid] = 'broken'; }
+        } else {
+          nilResults[p.uid] = null;
+        }
+      }
+      while (group.bags >= SPADE_PLEDGE_BAG_PENALTY_THRESHOLD) {
+        group.bags -= SPADE_PLEDGE_BAG_PENALTY_THRESHOLD;
+        delta -= SPADE_PLEDGE_BAG_PENALTY;
+      }
+      group.cumulativeScore += delta;
+      groupScoreDelta[group.groupIndex] = delta;
+    }
+
+    // Among scoring groups that have crossed the target, a unique highest score wins immediately;
+    // a tie at the highest qualifying score is sudden death — dealing continues.
+    const meeting = newGroups.filter((g: any) => g.cumulativeScore >= SPADE_PLEDGE_TARGET_SCORE);
+    let shouldFinish = false;
+    let winnerTeam: number | null = null;
+    if (meeting.length > 0) {
+      const maxScore = Math.max(...meeting.map((g: any) => g.cumulativeScore));
+      const topGroups = meeting.filter((g: any) => g.cumulativeScore === maxScore);
+      if (topGroups.length === 1) { shouldFinish = true; winnerTeam = topGroups[0].groupIndex; }
+    }
+
+    // *** awardGamePoints does its own tx.get reads internally — must run before ANY write below. ***
+    if (shouldFinish && winnerTeam !== null) {
+      const humanUids = table.players.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+      const winningHumanUids = table.players.filter((p: any) => !p.isBot && p.team === winnerTeam).map((p: any) => p.uid);
+      if (humanUids.length > 0) {
+        await awardGamePoints(tx, db, { gameType: 'spadePledge', gameId: ctx.tableRef.id, playerUids: humanUids, winnerUids: winningHumanUids });
+      }
+    }
+
+    // Every write from here on — reads are done.
+    ctx.extraWrites?.();
+    tx.update(ctx.dealRef, { ...ctx.dealPatch, status: 'finished', finishedAt: nowIso });
+
+    const summary = {
+      handNumber: table.handNumber, bids, tricksWon, nilResults, groupScoreDelta,
+      groupBagsAfter: newGroups.map((g: any) => g.bags), netScoreAfter: newGroups.map((g: any) => g.cumulativeScore),
+    };
+
+    if (shouldFinish) {
+      tx.update(ctx.tableRef, {
+        status: 'finished', groups: newGroups, winnerTeam, finishedAt: nowIso,
+        players: table.players, lastHandSummary: summary, dealHistory: [...(table.dealHistory || []), summary],
+      });
+      if (winnerTeam !== null) {
+        recordGameOutcome(tx, db, ctx.tableRef.id, {
+          gameType: 'spadePledge', format: table.format,
+          playerUids: table.players.map((p: any) => p.uid),
+          players: table.players.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, team: p.team })),
+          winnerTeam, finishedAt: nowIso,
+        });
+      }
+      return { finished: true };
+    }
+
+    // Deal the next hand immediately, atomically — no host-confirm step, same pattern as rummy13.
+    const newDealerSeatIndex = (ctx.previousDealerSeatIndex + 1) % 4;
+    const activePlayers = table.players; // always all 4 — no elimination concept in Spade Pledge
+    const { hands } = spadePledgeDealFreshHands(activePlayers);
+    const newDealRef = db.collection('spadePledgeDeals').doc();
+    for (const p of activePlayers) tx.set(newDealRef.collection('hands').doc(p.uid), { cards: hands[p.seatIndex] });
+    const firstBidder = (newDealerSeatIndex + 1) % 4;
+    tx.set(newDealRef, {
+      tableId: ctx.tableRef.id,
+      playerUids: activePlayers.map((p: any) => p.uid),
+      handNumber: table.handNumber + 1,
+      players: activePlayers.map((p: any) => ({ uid: p.uid, seatIndex: p.seatIndex, team: p.team, handCount: SPADE_PLEDGE_HAND_SIZE, bid: null, tricksWon: 0 })),
+      dealerSeatIndex: newDealerSeatIndex,
+      phase: 'bidding',
+      currentTurnSeatIndex: firstBidder,
+      turnStartedAt: nowIso,
+      spadesBroken: false,
+      completedTricks: [],
+      currentTrick: { leaderSeatIndex: firstBidder, cards: [] },
+      status: 'active',
+      startedAt: nowIso,
+      finishedAt: null,
+    });
+    tx.update(ctx.tableRef, {
+      groups: newGroups, currentDealId: newDealRef.id, handNumber: table.handNumber + 1,
+      players: table.players, lastHandSummary: summary, dealHistory: [...(table.dealHistory || []), summary],
+    });
+    return { finished: false, newDealId: newDealRef.id };
+  }
+
+  // Cloud Run has no cron/background worker, so a bot's turn can't "just happen" on its own clock.
+  // Runs synchronously after every human-triggered endpoint that could leave `currentTurnSeatIndex`
+  // on a bot seat. Each bot action is its OWN small transaction (a full hand can be 4 bids + up to
+  // 52 plays — too much for one transaction's read/write budget), and calls the exact same
+  // spadePledgeApplyBid/spadePledgeApplyPlay functions a human's own action would use.
+  async function drainSpadePledgeBotTurns(db: Firestore, dealId: string): Promise<void> {
+    const dealRef = db.collection('spadePledgeDeals').doc(dealId);
+    for (let i = 0; i < 60; i++) { // hard cap — safety net against a logic bug looping forever, not a real limit
+      const result: any = await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) return { done: true };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') return { done: true };
+
+        const tableRef = db.collection('spadePledgeTables').doc(deal.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) return { done: true };
+        const table = tableSnap.data()!;
+
+        const seatIndex = deal.currentTurnSeatIndex;
+        const dealSeat = deal.players[seatIndex];
+        const tableSeat = table.players[seatIndex];
+        if (!dealSeat || !tableSeat?.isBot) return { done: true };
+
+        const handRef = dealRef.collection('hands').doc(dealSeat.uid);
+        const handSnap = await tx.get(handRef);
+        const hand: string[] = handSnap.exists ? (handSnap.data()!.cards || []) : [];
+        const nowIso = new Date().toISOString();
+
+        if (deal.phase === 'bidding') {
+          const autoBid = spadePledgeBotBid(hand);
+          spadePledgeApplyBid(tx, { dealRef, deal, seatIndex, value: autoBid, nowIso });
+          return { done: false };
+        }
+
+        const cardId = spadePledgeBotPlayCard(hand, deal.currentTrick, deal.spadesBroken);
+        const outcome = await spadePledgeApplyPlay(tx, db, {
+          dealRef, deal, handRef, hand, tableRef, table, seatIndex, uid: dealSeat.uid, cardId, nowIso,
+        });
+        if (outcome.handFinished) return { done: true, newDealId: outcome.newDealId || null };
+        return { done: false };
+      });
+
+      if (result.done) {
+        if (result.newDealId && result.newDealId !== dealId) return drainSpadePledgeBotTurns(db, result.newDealId);
+        break;
+      }
+    }
+  }
+
+  app.post('/api/spadePledge/invite', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    const inviteeUids: string[] = Array.isArray(req.body?.inviteeUids) ? req.body.inviteeUids.filter((u: unknown) => typeof u === 'string') : [];
+    const poke = req.body?.poke === true;
+    if (!tableId || inviteeUids.length === 0) return res.status(400).json({ error: 'gameId and inviteeUids are required.' });
+
+    try {
+      const tableSnap = await db.collection('spadePledgeTables').doc(tableId).get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (!(table.playerUids || []).includes(decoded.uid)) return res.status(403).json({ error: 'Not part of this table.' });
+
+      const targets = inviteeUids.filter((uid) => uid !== decoded.uid && !(table.playerUids || []).includes(uid));
+      const sent = await sendGameInvites(db, { gameId: tableId, game: table, callerUid: decoded.uid, targets, gameLabel: 'Spade Pledge', routeSegment: 'spadePledge', poke });
+      return res.json({ sent });
+    } catch (error) {
+      console.error('spadePledge/invite error:', error);
+      return res.status(500).json({ error: 'Unable to send invites.' });
+    }
+  });
+
+  // Host-only, lobby ('waiting') only. Fills the next open seat with a deterministic bot player, so
+  // the table can start without needing exactly 3 other humans free to join immediately.
+  app.post('/api/spadePledge/fill-bot', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('spadePledgeTables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can add a bot.' });
+      if (table.status !== 'waiting') return res.status(400).json({ error: 'Table already started.' });
+      const players: any[] = table.players || [];
+      if (players.length >= 4) return res.status(400).json({ error: 'Table is already full.' });
+
+      const seatIndex = players.length;
+      const botUid = `bot_${tableId}_${seatIndex}`;
+      const botPlayer = {
+        uid: botUid, displayName: `Bot ${seatIndex + 1}`, photoURL: '', seatIndex,
+        team: spadePledgeTeamForSeat(table.format, seatIndex), isBot: true, consecutiveTimeouts: 0,
+      };
+      await tableRef.update({ players: [...players, botPlayer], playerUids: [...table.playerUids, botUid] });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('spadePledge/fill-bot error:', error);
+      return res.status(500).json({ error: 'Unable to add a bot.' });
+    }
+  });
+
+  app.post('/api/spadePledge/start', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('spadePledgeTables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can start the table.' });
+      if (table.status !== 'waiting') return res.status(400).json({ error: 'Table already started.' });
+      const players: any[] = table.players || [];
+      // Exact-count gating (Sequence/Sweep pattern), NOT rummy13's flexible `< 2` check — Spade
+      // Pledge always needs exactly 4 seats before start is even offered.
+      if (players.length !== 4) return res.status(400).json({ error: 'Need exactly 4 players to start.' });
+
+      const playersWithTeam = players.map((p) => ({ ...p, team: spadePledgeTeamForSeat(table.format, p.seatIndex) }));
+      const groups = spadePledgeScoringGroupSeats(table.format).map((seats, groupIndex) => ({
+        groupIndex,
+        memberUids: playersWithTeam.filter((p) => seats.includes(p.seatIndex)).map((p) => p.uid),
+        cumulativeScore: 0,
+        bags: 0,
+      }));
+
+      const dealerSeatIndex = Math.floor(Math.random() * 4);
+      const firstBidder = (dealerSeatIndex + 1) % 4;
+      const { hands } = spadePledgeDealFreshHands(playersWithTeam);
+      const dealRef = db.collection('spadePledgeDeals').doc();
+      const nowIso = new Date().toISOString();
+
+      const batch = db.batch();
+      for (const p of playersWithTeam) batch.set(dealRef.collection('hands').doc(p.uid), { cards: hands[p.seatIndex] });
+      batch.set(dealRef, {
+        tableId, playerUids: playersWithTeam.map((p) => p.uid), handNumber: 1,
+        players: playersWithTeam.map((p) => ({ uid: p.uid, seatIndex: p.seatIndex, team: p.team, handCount: SPADE_PLEDGE_HAND_SIZE, bid: null, tricksWon: 0 })),
+        dealerSeatIndex, phase: 'bidding', currentTurnSeatIndex: firstBidder, turnStartedAt: nowIso,
+        spadesBroken: false, completedTricks: [], currentTrick: { leaderSeatIndex: firstBidder, cards: [] },
+        status: 'active', startedAt: nowIso, finishedAt: null,
+      });
+      batch.update(tableRef, {
+        status: 'active', startedAt: nowIso, currentDealId: dealRef.id, handNumber: 1,
+        players: playersWithTeam, groups,
+      });
+      await batch.commit();
+
+      // The host might be alone at a table with 3 pre-filled bots — drain immediately so the match
+      // doesn't sit waiting on a bot's bid that will never come on its own.
+      await drainSpadePledgeBotTurns(db, dealRef.id).catch((err) => console.error('drainSpadePledgeBotTurns (start) failed:', err));
+      return res.json({ ok: true, dealId: dealRef.id });
+    } catch (error) {
+      console.error('spadePledge/start error:', error);
+      return res.status(500).json({ error: 'Unable to start table.' });
+    }
+  });
+
+  app.post('/api/spadePledge/bid', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    const bid = Number(req.body?.bid);
+    if (!dealId || !Number.isInteger(bid) || bid < 0 || bid > 13) {
+      return res.status(400).json({ error: 'dealId and a bid from 0-13 are required.' });
+    }
+
+    try {
+      const dealRef = db.collection('spadePledgeDeals').doc(dealId);
+      let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+      let botDrainDealId: string | null = null;
+
+      await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'Deal is not active.' };
+        if (deal.phase !== 'bidding') throw { status: 400, message: 'Not in the bidding phase.' };
+        const players: any[] = deal.players || [];
+        const mySeatIndex = deal.currentTurnSeatIndex;
+        const mySeat = players[mySeatIndex];
+        if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'Not your turn.' };
+
+        const tableRef = db.collection('spadePledgeTables').doc(deal.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+        const tablePlayers = table.players.map((p: any, i: number) => (i === mySeatIndex ? { ...p, consecutiveTimeouts: 0 } : p));
+        tx.update(tableRef, { players: tablePlayers });
+
+        const nowIso = new Date().toISOString();
+        const result = spadePledgeApplyBid(tx, { dealRef, deal, seatIndex: mySeatIndex, value: bid, nowIso });
+        const nextPlayer = players[result.nextTurnSeatIndex];
+        if (nextPlayer) {
+          turnNotice = {
+            tableId: deal.tableId, nextPlayerUid: nextPlayer.uid,
+            opponentNames: table.players.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null,
+          };
+        }
+        botDrainDealId = dealId;
+      });
+
+      if (turnNotice) {
+        const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'spadePledge', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (spadePledge bid) failed:', err),
+        );
+      }
+      if (botDrainDealId) await drainSpadePledgeBotTurns(db, botDrainDealId).catch((err) => console.error('drainSpadePledgeBotTurns (bid) failed:', err));
+
+      return res.json({ ok: true });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('spadePledge/bid error:', error);
+      return res.status(500).json({ error: 'Unable to process bid.' });
+    }
+  });
+
+  app.post('/api/spadePledge/play', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    const cardId = String(req.body?.cardId || '');
+    if (!dealId || !cardId) return res.status(400).json({ error: 'dealId and cardId are required.' });
+
+    try {
+      const dealRef = db.collection('spadePledgeDeals').doc(dealId);
+      const handRef = dealRef.collection('hands').doc(decoded.uid);
+      let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+      let botDrainDealId: string | null = null;
+
+      await db.runTransaction(async (tx) => {
+        const [dealSnap, handSnap] = await Promise.all([tx.get(dealRef), tx.get(handRef)]);
+        if (!dealSnap.exists || !handSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'Deal is not active.' };
+        if (deal.phase !== 'playing') throw { status: 400, message: 'Not in the playing phase.' };
+        const players: any[] = deal.players || [];
+        const mySeatIndex = deal.currentTurnSeatIndex;
+        const mySeat = players[mySeatIndex];
+        if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'Not your turn.' };
+
+        const hand = handSnap.data()!;
+        const cards: string[] = hand.cards || [];
+        if (!cards.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
+        if (!spadePledgeLegalCards(cards, deal.currentTrick, deal.spadesBroken).includes(cardId)) {
+          throw { status: 400, message: 'Illegal move — you must follow suit and beat the trick if you can.' };
+        }
+
+        const tableRef = db.collection('spadePledgeTables').doc(deal.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+        const tablePlayers = table.players.map((p: any, i: number) => (i === mySeatIndex ? { ...p, consecutiveTimeouts: 0 } : p));
+
+        const nowIso = new Date().toISOString();
+        const outcome = await spadePledgeApplyPlay(tx, db, {
+          dealRef, deal, handRef, hand: cards,
+          tableRef, table: { ...table, players: tablePlayers },
+          seatIndex: mySeatIndex, uid: decoded.uid, cardId, nowIso,
+        });
+
+        if (!outcome.handFinished) {
+          tx.update(tableRef, { players: tablePlayers });
+          const nextPlayer = players[outcome.nextTurnSeatIndex!];
+          if (nextPlayer) {
+            turnNotice = {
+              tableId: deal.tableId, nextPlayerUid: nextPlayer.uid,
+              opponentNames: table.players.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null,
+            };
+          }
+          botDrainDealId = dealId;
+        } else {
+          botDrainDealId = outcome.newDealId || null;
+        }
+      });
+
+      if (turnNotice) {
+        const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'spadePledge', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (spadePledge play) failed:', err),
+        );
+      }
+      if (botDrainDealId) await drainSpadePledgeBotTurns(db, botDrainDealId).catch((err) => console.error('drainSpadePledgeBotTurns (play) failed:', err));
+
+      return res.json({ ok: true });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('spadePledge/play error:', error);
+      return res.status(500).json({ error: 'Unable to process play.' });
+    }
+  });
+
+  // Callable by ANY seated player's client, not just whoever's turn timed out — a disconnected
+  // client won't call anything itself. Fully server-validated: `turnStartedAt` is the deal's own
+  // authoritative clock. Unlike rummy13's /timeout (which resolves by dropping the player), this
+  // auto-BIDS or auto-PLAYS the lowest legal card for the timed-out seat — a 3-card trick can't be
+  // scored, so dropping isn't an option here. At SPADE_PLEDGE_BOT_CONVERSION_THRESHOLD consecutive
+  // timeouts, the seat permanently converts to a bot for the rest of the match.
+  app.post('/api/spadePledge/timeout', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    if (!dealId) return res.status(400).json({ error: 'dealId is required.' });
+
+    try {
+      const dealRef = db.collection('spadePledgeDeals').doc(dealId);
+      let turnNotice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } | null = null;
+
+      const result = await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') return { resolved: true, botDrain: null as string | null };
+        if (!(deal.playerUids || []).includes(decoded.uid)) throw { status: 403, message: 'Not part of this deal.' };
+
+        const elapsedMs = Date.now() - new Date(deal.turnStartedAt).getTime();
+        if (elapsedMs < SPADE_PLEDGE_TURN_TIMEOUT_MS) throw { status: 400, message: 'Turn has not timed out yet.' };
+
+        const mySeatIndex = deal.currentTurnSeatIndex;
+        const timedOutPlayer = deal.players[mySeatIndex];
+        if (!timedOutPlayer) return { resolved: true, botDrain: null as string | null };
+
+        const tableRef = db.collection('spadePledgeTables').doc(deal.tableId);
+        const handRef = dealRef.collection('hands').doc(timedOutPlayer.uid);
+        const [tableSnap, handSnap] = await Promise.all([tx.get(tableRef), tx.get(handRef)]);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+        const hand: string[] = handSnap.exists ? (handSnap.data()!.cards || []) : [];
+
+        const timedOutTablePlayer = table.players[mySeatIndex];
+        const newConsecutiveTimeouts = (timedOutTablePlayer.consecutiveTimeouts || 0) + 1;
+        const convertToBot = newConsecutiveTimeouts >= SPADE_PLEDGE_BOT_CONVERSION_THRESHOLD;
+        const tablePlayers = table.players.map((p: any, i: number) =>
+          i === mySeatIndex ? { ...p, consecutiveTimeouts: newConsecutiveTimeouts, isBot: p.isBot || convertToBot } : p,
+        );
+        const nowIso = new Date().toISOString();
+
+        if (deal.phase === 'bidding') {
+          tx.update(tableRef, { players: tablePlayers });
+          const autoBid = spadePledgeBotBid(hand);
+          const bidResult = spadePledgeApplyBid(tx, { dealRef, deal, seatIndex: mySeatIndex, value: autoBid, nowIso });
+          const nextPlayer = deal.players[bidResult.nextTurnSeatIndex];
+          if (nextPlayer) {
+            turnNotice = {
+              tableId: deal.tableId, nextPlayerUid: nextPlayer.uid,
+              opponentNames: table.players.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null,
+            };
+          }
+          return { resolved: true, botDrain: dealId };
+        }
+
+        const cardId = spadePledgeBotPlayCard(hand, deal.currentTrick, deal.spadesBroken);
+        const outcome = await spadePledgeApplyPlay(tx, db, {
+          dealRef, deal, handRef, hand,
+          tableRef, table: { ...table, players: tablePlayers },
+          seatIndex: mySeatIndex, uid: timedOutPlayer.uid, cardId, nowIso,
+        });
+        if (!outcome.handFinished) {
+          tx.update(tableRef, { players: tablePlayers });
+          const nextPlayer = deal.players[outcome.nextTurnSeatIndex!];
+          if (nextPlayer) {
+            turnNotice = {
+              tableId: deal.tableId, nextPlayerUid: nextPlayer.uid,
+              opponentNames: table.players.filter((p: any) => p.uid !== nextPlayer.uid).map((p: any) => p.displayName).filter(Boolean).join(', ') || null,
+            };
+          }
+          return { resolved: true, botDrain: dealId };
+        }
+        return { resolved: true, botDrain: outcome.newDealId || null };
+      });
+
+      if (turnNotice) {
+        const notice: { tableId: string; nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'spadePledge', gameId: notice.tableId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (spadePledge timeout) failed:', err),
+        );
+      }
+      const botDrain = (result as any)?.botDrain;
+      if (botDrain) await drainSpadePledgeBotTurns(db, botDrain).catch((err) => console.error('drainSpadePledgeBotTurns (timeout) failed:', err));
+
+      return res.json({ ok: true, resolved: (result as any)?.resolved !== false });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('spadePledge/timeout error:', error);
+      return res.status(500).json({ error: 'Unable to process timeout.' });
+    }
+  });
+
+  // Cascades every spadePledgeDeals doc for this table (and their hands subcollections) — a table
+  // can accumulate several finished hand docs by the time it's deletable.
+  app.post('/api/spadePledge/delete', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('spadePledgeTables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can delete this table.' });
+      if (table.status === 'active') {
+        return res.status(400).json({ error: 'Cannot delete a table in progress — wait for it to finish.' });
+      }
+
+      const dealsSnap = await db.collection('spadePledgeDeals').where('tableId', '==', tableId).get();
+      const batch = db.batch();
+      for (const dealDoc of dealsSnap.docs) {
+        const handsSnap = await dealDoc.ref.collection('hands').get();
+        handsSnap.docs.forEach((d) => batch.delete(d.ref));
+        batch.delete(dealDoc.ref);
+      }
+      if (table.code) batch.delete(db.collection('spadePledgeTableCodes').doc(table.code));
+      batch.delete(tableRef);
+      await batch.commit();
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('spadePledge/delete error:', error);
+      return res.status(500).json({ error: 'Unable to delete table.' });
+    }
+  });
+
+  app.post('/api/spadePledge/rematch', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('spadePledgeTables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (!(table.playerUids || []).includes(decoded.uid)) return res.status(403).json({ error: 'Not part of this table.' });
+      if (table.status !== 'finished') return res.status(400).json({ error: 'Table is not finished yet.' });
+      if (table.rematchGameId) return res.json({ gameId: table.rematchGameId });
+
+      const newTableRef = db.collection('spadePledgeTables').doc();
+      const code = table.code;
+      const players = (table.players || []).map((p: any) => ({
+        uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, seatIndex: p.seatIndex,
+        team: p.team, isBot: p.isBot, consecutiveTimeouts: 0,
+      }));
+
+      const batch = db.batch();
+      batch.set(newTableRef, {
+        hostUid: decoded.uid, code, status: 'waiting', format: table.format,
+        players, playerUids: table.playerUids,
+        groups: [], currentDealId: null, handNumber: 0,
+        createdAt: new Date().toISOString(), startedAt: null, finishedAt: null, winnerTeam: null,
+        lastHandSummary: null, dealHistory: [], rematchGameId: null,
+      });
+      batch.set(db.collection('spadePledgeTableCodes').doc(code), { gameId: newTableRef.id, hostUid: decoded.uid });
+      batch.update(tableRef, { rematchGameId: newTableRef.id });
+      await batch.commit();
+
+      return res.json({ gameId: newTableRef.id });
+    } catch (error) {
+      console.error('spadePledge/rematch error:', error);
+      return res.status(500).json({ error: 'Unable to start rematch.' });
+    }
+  });
+
   // ===================== Business (Indian Monopoly-style) =====================
   // Unlike Rummy, this game is fully client-trusted (same as Ludo) — there's no meaningful hidden
   // state (cash/properties/position are always public; only the Chance/Community Chest draw order
@@ -9561,6 +10431,7 @@ async function startServer() {
     sweep: 'sweepGames',
     chess: 'chessGames',
     sequence: 'sequenceGames',
+    spadePledge: 'spadePledgeTables',
   };
   const REACTION_EMOJI_SET = new Set(['👍', '❤️', '😂', '😮', '😢', '🎉']);
 
@@ -9998,6 +10869,7 @@ async function startServer() {
     directChats: { kind: 'dm', label: 'Direct message' },
     rummyGames: { kind: 'game', label: '27-Hand Rummy', routeSegment: 'rummy' },
     rummy13Tables: { kind: 'game', label: '13-Card Rummy', routeSegment: 'rummy13' },
+    spadePledgeTables: { kind: 'game', label: 'Spade Pledge', routeSegment: 'spadePledge' },
     sequenceGames: { kind: 'game', label: 'Sequence', routeSegment: 'sequence' },
     ludoGames: { kind: 'game', label: 'Ludo', routeSegment: 'ludo' },
     sweepGames: { kind: 'game', label: 'Sweep', routeSegment: 'sweep' },
