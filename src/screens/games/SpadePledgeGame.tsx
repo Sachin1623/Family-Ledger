@@ -379,8 +379,12 @@ export default function SpadePledgeGame() {
           <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
             {table.players.map((p) => (
               <div key={p.uid} className="p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold">
-                  {p.isBot ? '🤖' : p.displayName?.slice(0, 1) || '?'}
+                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
+                  {p.isBot ? '🤖' : p.photoURL ? (
+                    <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    p.displayName?.slice(0, 1) || '?'
+                  )}
                 </div>
                 <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
                 {p.uid === table.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
@@ -668,8 +672,16 @@ export default function SpadePledgeGame() {
                     }`}
                   >
                     <div className="relative w-5 h-5 shrink-0">
-                      <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-[9px] font-bold">
-                        {table.players.find((tp) => tp.uid === p.uid)?.isBot ? '🤖' : nameFor(p.uid).slice(0, 1)}
+                      <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-[9px] font-bold overflow-hidden">
+                        {(() => {
+                          const tp = table.players.find((tp) => tp.uid === p.uid);
+                          if (tp?.isBot) return '🤖';
+                          return tp?.photoURL ? (
+                            <img src={tp.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            nameFor(p.uid).slice(0, 1)
+                          );
+                        })()}
                       </div>
                       <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
                     </div>

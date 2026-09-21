@@ -435,8 +435,12 @@ export default function SequenceGame() {
               return (
                 <div key={p.uid} className="p-4 flex items-center gap-3">
                   <div className="relative w-9 h-9 shrink-0">
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: SIDE_COLOR[side] }}>
-                      {p.displayName?.slice(0, 1) || '?'}
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden" style={{ background: SIDE_COLOR[side] }}>
+                      {p.photoURL ? (
+                        <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        p.displayName?.slice(0, 1) || '?'
+                      )}
                     </div>
                     <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-3 h-3" />
                   </div>

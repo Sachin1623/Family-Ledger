@@ -1029,8 +1029,12 @@ export default function BusinessGame() {
           <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
             {game.players.map((p) => (
               <div key={p.uid} className="p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold">
-                  {p.displayName?.slice(0, 1) || '?'}
+                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
+                  {p.photoURL ? (
+                    <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    p.displayName?.slice(0, 1) || '?'
+                  )}
                 </div>
                 <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
                 {p.uid === game.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}

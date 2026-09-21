@@ -191,10 +191,14 @@ export default function ChessLobby() {
                     {(g.players || []).map((p: any) => (
                       <div
                         key={p.uid}
-                        className="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold"
+                        className="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold overflow-hidden"
                         style={{ backgroundColor: p.color === 'w' ? '#f3f4f6' : '#1f2937', color: p.color === 'w' ? '#1f2937' : '#f3f4f6' }}
                       >
-                        {p.displayName?.slice(0, 1) || '?'}
+                        {p.photoURL ? (
+                          <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          p.displayName?.slice(0, 1) || '?'
+                        )}
                       </div>
                     ))}
                   </div>
