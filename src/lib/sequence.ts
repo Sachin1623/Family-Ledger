@@ -231,6 +231,7 @@ export interface SequencePlayer {
   photoURL: string;
   seatIndex: number;
   handCount: number;
+  isBot?: boolean;
 }
 
 export type SequenceStatus = 'waiting' | 'active' | 'finished';

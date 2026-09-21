@@ -17,6 +17,7 @@ export default function SequenceLobby() {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [fillingBotId, setFillingBotId] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
   const [myGamesValue, loading] = useCollection(
@@ -46,6 +47,7 @@ export default function SequenceLobby() {
         photoURL: profile?.photoURL || user.photoURL || '',
         seatIndex: 0,
         handCount: 0,
+        isBot: false,
       };
 
       await setDoc(gameRef, {
@@ -97,6 +99,28 @@ export default function SequenceLobby() {
       setError(err.message || 'Failed to delete game.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleFillBot = async (e: React.MouseEvent, gameId: string) => {
+    e.stopPropagation();
+    if (!user) return;
+    setFillingBotId(gameId);
+    setError(null);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/sequence/fill-bot', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to add a bot.');
+    } catch (err: any) {
+      console.error('Failed to add bot to Sequence game:', err);
+      setError(err.message || 'Failed to add a bot.');
+    } finally {
+      setFillingBotId(null);
     }
   };
 
@@ -209,7 +233,7 @@ export default function SequenceLobby() {
                   <div className="flex -space-x-2">
                     {(g.players || []).map((p: any) => (
                       <div key={p.uid} className="w-8 h-8 rounded-full border-2 border-white bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                        {p.photoURL ? (
+                        {p.isBot ? '🤖' : p.photoURL ? (
                           <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           p.displayName?.slice(0, 1) || '?'
@@ -227,6 +251,17 @@ export default function SequenceLobby() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  {g.hostUid === user?.uid && g.status === 'waiting' && (g.players || []).length < g.playerCount && (
+                    <button
+                      onClick={(e) => handleFillBot(e, g.id)}
+                      disabled={fillingBotId === g.id}
+                      className="p-2 text-primary/70 disabled:opacity-40"
+                      aria-label="Fill empty seat with a bot"
+                      title="Fill empty seat with a bot"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                    </button>
+                  )}
                   {g.hostUid === user?.uid && g.status !== 'active' && (
                     <button
                       onClick={(e) => handleDelete(e, g.id)}

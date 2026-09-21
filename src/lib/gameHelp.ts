@@ -283,6 +283,12 @@ export const SEQUENCE_HELP: GameHelpContent = {
         'If both of a card\'s spaces are already covered (or, for a one-eyed jack, there\'s nothing left to remove), it\'s "dead" — exchange it for a fresh card instead of playing it.',
       ],
     },
+    {
+      heading: 'Playing with bots',
+      body: [
+        "If you're short of players, the host can fill any empty seat with a bot before starting — bots play their turn automatically as soon as it's their turn.",
+      ],
+    },
   ],
 };
 

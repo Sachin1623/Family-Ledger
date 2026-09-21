@@ -173,6 +173,7 @@ export default function SequenceGame() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [addingBot, setAddingBot] = useState(false);
   const { messages: chatMessages, loading: chatLoading, hasUnseen: chatUnseen, markSeen: markChatSeen } = useGameChat('sequenceGames', gameId);
   // A tapped "new chat message" push/in-app banner deep-links here as `?chat=1` (see
   // /api/chat/send's bannerTo + InviteBanner.tsx) — auto-opens the chat panel instead of just
@@ -310,6 +311,7 @@ export default function SequenceGame() {
         photoURL: profile?.photoURL || user.photoURL || '',
         seatIndex,
         handCount: 0,
+        isBot: false,
       };
       await updateDoc(doc(db, 'sequenceGames', gameId!), {
         players: [...game.players, newPlayer],
@@ -334,6 +336,18 @@ export default function SequenceGame() {
 
   const handleStart = async () => {
     await call('/api/sequence/start', {}).catch(() => {});
+  };
+
+  const handleFillBot = async () => {
+    setAddingBot(true);
+    setError(null);
+    try {
+      await call('/api/sequence/fill-bot', {});
+    } catch {
+      // error already surfaced via `error` state
+    } finally {
+      setAddingBot(false);
+    }
   };
 
   const handleCopyCode = () => {
@@ -436,7 +450,7 @@ export default function SequenceGame() {
                 <div key={p.uid} className="p-4 flex items-center gap-3">
                   <div className="relative w-9 h-9 shrink-0">
                     <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden" style={{ background: SIDE_COLOR[side] }}>
-                      {p.photoURL ? (
+                      {p.isBot ? '🤖' : p.photoURL ? (
                         <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         p.displayName?.slice(0, 1) || '?'
@@ -479,6 +493,17 @@ export default function SequenceGame() {
           )}
 
           {showInvite && <InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+
+          {isPlayer && isHost && game.players.length < game.playerCount && (
+            <button
+              onClick={handleFillBot}
+              disabled={addingBot}
+              className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+              {addingBot ? 'Adding…' : 'Fill Empty Seat with Bot'}
+            </button>
+          )}
 
           {isPlayer && isHost ? (
             <button

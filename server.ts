@@ -9296,6 +9296,238 @@ async function startServer() {
     return accepted;
   }
 
+  // Deterministic, "good enough to not stall the match" heuristic — not competitive AI. Every card
+  // in a Sequence hand always maps to exactly ONE legal action given the current board (place if an
+  // open matching/wild cell exists, remove if a one-eyed jack has a removable target, dead
+  // otherwise) — see the validation logic in /api/sequence/play below, which this mirrors. So the
+  // bot's only real choice is WHICH card (and which of its 1-2 candidate cells, for a normal card,
+  // or which of many, for a two-eyed jack/one-eyed jack) to play. Scored simply: a placement that
+  // wins the match outright > a placement that starts/extends toward a new sequence > any other
+  // placement > removing an opponent chip > a forced dead-card exchange (only when nothing else is
+  // legal for that card).
+  function sequenceBotChooseMove(
+    hand: string[],
+    board: (number | null)[],
+    lockedCells: Set<number>,
+    mySide: number,
+    sequencesNeeded: number,
+    currentSequenceCount: number,
+  ): { cardId: string; action: 'place' | 'remove' | 'dead'; cellIndex: number | null } {
+    type Candidate = { cardId: string; action: 'place' | 'remove' | 'dead'; cellIndex: number | null; score: number };
+    const candidates: Candidate[] = [];
+    for (const cardId of hand) {
+      const isTwoEyed = SEQUENCE_TWO_EYED_JACKS.includes(cardId);
+      const isOneEyed = SEQUENCE_ONE_EYED_JACKS.includes(cardId);
+      if (isOneEyed) {
+        const removable = board.map((v, i) => (v !== null && v !== mySide && !lockedCells.has(i) ? i : -1)).filter((i) => i >= 0);
+        if (removable.length === 0) candidates.push({ cardId, action: 'dead', cellIndex: null, score: 0 });
+        else for (const cellIndex of removable) candidates.push({ cardId, action: 'remove', cellIndex, score: 5 });
+        continue;
+      }
+      const openCells = isTwoEyed
+        ? board.map((v, i) => (v === null && !SEQUENCE_CORNERS.includes(i) ? i : -1)).filter((i) => i >= 0)
+        : (SEQUENCE_CARD_TO_CELLS[cardId] || []).filter((i) => board[i] === null);
+      if (openCells.length === 0) {
+        candidates.push({ cardId, action: 'dead', cellIndex: null, score: 0 });
+        continue;
+      }
+      for (const cellIndex of openCells) {
+        const newSeqs = sequenceFindNewSequences(board, lockedCells, cellIndex, mySide);
+        const score = newSeqs.length === 0 ? 10 : currentSequenceCount + newSeqs.length >= sequencesNeeded ? 1000 : 100;
+        candidates.push({ cardId, action: 'place', cellIndex, score });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]; // hand always has >= 1 card, so this is never empty
+  }
+
+  // Applies one turn's play — shared by the human-facing endpoint and drainSequenceBotTurns below,
+  // so there is exactly one implementation of "what happens on a play," not a duplicated bot path.
+  // Validates the action first (a no-op for bot calls, since sequenceBotChooseMove only ever picks
+  // an already-legal move, but essential for human calls). PRECONDITION: gameRef/game, handRef/
+  // hand, and deckRef/deck must already be read by the caller before this is invoked, and the
+  // caller must not have issued any writes yet — this function's own internal read (game-points,
+  // only when the play wins) must happen before ANY write in the transaction.
+  async function sequenceApplyPlay(
+    tx: FirebaseFirestore.Transaction,
+    db: Firestore,
+    ctx: {
+      gameRef: FirebaseFirestore.DocumentReference; game: any;
+      handRef: FirebaseFirestore.DocumentReference; hand: string[];
+      deckRef: FirebaseFirestore.DocumentReference; deck: string[];
+      seatIndex: number; uid: string; cardId: string; action: 'place' | 'remove' | 'dead'; cellIndex: number | null;
+    },
+  ): Promise<{ won: boolean; nextPlayerUid?: string; opponentNames?: string | null }> {
+    const { game, hand, deck, seatIndex: mySeatIndex, uid, cardId, action, cellIndex } = ctx;
+    const players: any[] = game.players;
+    const playerCount: number = game.playerCount;
+    const mySeat = players[mySeatIndex];
+    const mySide = sequenceSideForSeat(mySeatIndex, playerCount);
+    const board: (number | null)[] = (game.board || new Array(100).fill(null)).slice();
+    const lockedCells = new Set<number>(game.lockedCells || []);
+    const sequenceCountBySide: number[] = [...(game.sequenceCountBySide || [])];
+    const isTwoEyed = SEQUENCE_TWO_EYED_JACKS.includes(cardId);
+    const isOneEyed = SEQUENCE_ONE_EYED_JACKS.includes(cardId);
+
+    let newlyLocked: number[] = [];
+    let newSequenceGroups: { cells: number[]; side: number }[] = [];
+
+    if (action === 'dead') {
+      if (isTwoEyed) {
+        const anyOpen = board.some((v, i) => v === null && !SEQUENCE_CORNERS.includes(i));
+        if (anyOpen) throw { status: 400, message: 'That card can still be played — there are open spaces.' };
+      } else if (isOneEyed) {
+        const anyRemovable = board.some((v, i) => v !== null && v !== mySide && !lockedCells.has(i));
+        if (anyRemovable) throw { status: 400, message: 'That card can still remove a chip.' };
+      } else {
+        const cells = SEQUENCE_CARD_TO_CELLS[cardId] || [];
+        const bothTaken = cells.length === 2 && cells.every((i) => board[i] !== null);
+        if (!bothTaken) throw { status: 400, message: 'That card is not dead — you still have an open space for it.' };
+      }
+    } else if (action === 'place') {
+      if (isOneEyed) throw { status: 400, message: 'A one-eyed jack removes a chip — it cannot be placed.' };
+      if (cellIndex == null || cellIndex < 0 || cellIndex > 99) throw { status: 400, message: 'A valid cell is required.' };
+      if (SEQUENCE_CORNERS.includes(cellIndex)) throw { status: 400, message: 'Corners are already wild for everyone.' };
+      if (board[cellIndex] !== null) throw { status: 400, message: 'That space is already taken.' };
+      if (!isTwoEyed) {
+        const cells = SEQUENCE_CARD_TO_CELLS[cardId] || [];
+        if (!cells.includes(cellIndex)) throw { status: 400, message: 'That card does not match that space.' };
+      }
+      board[cellIndex] = mySide;
+      const newSeqs = sequenceFindNewSequences(board, lockedCells, cellIndex, mySide);
+      newSeqs.forEach((seq) => seq.forEach((i) => { lockedCells.add(i); newlyLocked.push(i); }));
+      newSequenceGroups = newSeqs.map((cells) => ({ cells, side: mySide }));
+      sequenceCountBySide[mySide] = (sequenceCountBySide[mySide] || 0) + newSeqs.length;
+    } else if (action === 'remove') {
+      if (!isOneEyed) throw { status: 400, message: 'Only a one-eyed jack can remove a chip.' };
+      if (cellIndex == null || cellIndex < 0 || cellIndex > 99) throw { status: 400, message: 'A valid cell is required.' };
+      if (board[cellIndex] === null || board[cellIndex] === mySide) throw { status: 400, message: 'Pick an opponent chip to remove.' };
+      if (lockedCells.has(cellIndex)) throw { status: 400, message: 'That chip is part of a completed sequence — it cannot be removed.' };
+      board[cellIndex] = null;
+    }
+
+    // Computed here, before any write, specifically so the game-points pre-fetch just below can
+    // decide whether it's needed BEFORE the deck/hand writes that follow — Firestore requires
+    // every read in a transaction before any write, and this can't leave that pre-fetch for later.
+    const won = sequenceCountBySide[mySide] >= sequenceSequencesToWin(playerCount);
+    // Bot uids don't correspond to real authenticated users — never award them points (not even the
+    // participation `game_played` bonus every real player gets), so they must be excluded from the
+    // read here too, not just from winnerUids below (readGamePointsPlan/writeGamePointsPlan awards
+    // game_played to every uid it's given, regardless of who wins).
+    const humanPlayerUids = players.filter((p: any) => !p.isBot).map((p: any) => p.uid);
+    const gamePointsStates = won && humanPlayerUids.length > 0
+      ? await readGamePointsPlan(tx, db, { gameType: 'sequence', gameId: ctx.gameRef.id, playerUids: humanPlayerUids })
+      : null;
+
+    // Remove only the ONE played card, not every card matching that value — a two-deck shoe
+    // routinely puts duplicate rank+suit cards in the same hand, and a value-based filter would
+    // silently discard both instead of just the one actually played.
+    const playedIdxInHand = hand.indexOf(cardId);
+    const remainingHand = [...hand.slice(0, playedIdxInHand), ...hand.slice(playedIdxInHand + 1)];
+    const newDeck = [...deck];
+    if (newDeck.length > 0) {
+      remainingHand.push(newDeck.shift()!);
+      tx.set(ctx.deckRef, { cards: newDeck });
+    }
+    tx.set(ctx.handRef, { cards: remainingHand });
+
+    const nextSeat = (mySeatIndex + 1) % playerCount;
+    const newPlayers = players.map((p: any, i: number) => (i === mySeatIndex ? { ...p, handCount: remainingHand.length } : p));
+
+    const actionText =
+      action === 'dead'
+        ? `${mySeat.displayName} exchanged a dead card.`
+        : action === 'remove'
+        ? `${mySeat.displayName} removed a chip.`
+        : `${mySeat.displayName} placed a chip.`;
+
+    // Pure writes from here — gamePointsStates was already read up front, so this is safe to call
+    // alongside the tx.update below regardless of order.
+    const sequenceFinishedAt = won ? new Date().toISOString() : null;
+    if (won && gamePointsStates) {
+      // gamePointsStates (above) already excludes bots entirely; this filter just keeps winnerUids
+      // consistent with that same set. Bots still appear in recordGameOutcome's player snapshot
+      // below so match history renders fully.
+      const winnerUids = newPlayers
+        .map((p: any, i: number) => ({ uid: p.uid, side: sequenceSideForSeat(i, playerCount), isBot: !!p.isBot }))
+        .filter((p: any) => p.side === mySide && !p.isBot)
+        .map((p: any) => p.uid);
+      writeGamePointsPlan(tx, gamePointsStates, { gameType: 'sequence', gameId: ctx.gameRef.id, winnerUids });
+      recordGameOutcome(tx, db, ctx.gameRef.id, {
+        gameType: 'sequence', playerUids: newPlayers.map((p: any) => p.uid),
+        players: newPlayers.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, seatIndex: p.seatIndex })),
+        playerCount, winnerSide: mySide, finishedAt: sequenceFinishedAt,
+      });
+    }
+
+    tx.update(ctx.gameRef, {
+      board,
+      lockedCells: Array.from(lockedCells),
+      sequences: [...(game.sequences || []), ...newSequenceGroups],
+      sequenceCountBySide,
+      players: newPlayers,
+      cardsRemaining: newDeck.length,
+      currentTurnSeatIndex: won ? mySeatIndex : nextSeat,
+      status: won ? 'finished' : 'active',
+      winnerSide: won ? mySide : null,
+      finishedAt: sequenceFinishedAt,
+      lastPlacedCell: action === 'place' ? cellIndex : game.lastPlacedCell ?? null,
+      lastAction: { text: won ? `${mySeat.displayName} completed a sequence and won!` : actionText, at: new Date().toISOString() },
+    });
+
+    if (won) return { won: true };
+    const nextPlayer = players[nextSeat];
+    return {
+      won: false,
+      nextPlayerUid: nextPlayer?.uid,
+      opponentNames: nextPlayer ? players.filter((p) => p.uid !== nextPlayer.uid).map((p) => p.displayName).filter(Boolean).join(', ') || null : null,
+    };
+  }
+
+  // Cloud Run has no cron/background worker, so a bot's turn can't "just happen" on its own clock
+  // — runs synchronously after every human-triggered endpoint that could leave currentTurnSeatIndex
+  // on a bot seat. Each bot action is its own small transaction (a full match can run many turns),
+  // and calls the exact same sequenceApplyPlay a human's own action would use.
+  async function drainSequenceBotTurns(db: Firestore, gameId: string): Promise<void> {
+    const gameRef = db.collection('sequenceGames').doc(gameId);
+    for (let i = 0; i < 300; i++) { // hard cap — safety net, not a real limit
+      const result: any = await db.runTransaction(async (tx) => {
+        const gameSnap = await tx.get(gameRef);
+        if (!gameSnap.exists) return { done: true };
+        const game = gameSnap.data()!;
+        if (game.status !== 'active') return { done: true };
+
+        const seatIndex = game.currentTurnSeatIndex;
+        const seat = game.players[seatIndex];
+        if (!seat?.isBot) return { done: true };
+
+        const handRef = gameRef.collection('hands').doc(seat.uid);
+        const deckRef = gameRef.collection('secret').doc('deck');
+        const [handSnap, deckSnap] = await Promise.all([tx.get(handRef), tx.get(deckRef)]);
+        const hand: string[] = handSnap.exists ? handSnap.data()!.cards || [] : [];
+        const deck: string[] = deckSnap.exists ? deckSnap.data()!.cards || [] : [];
+        if (hand.length === 0) return { done: true };
+
+        const mySide = sequenceSideForSeat(seatIndex, game.playerCount);
+        const board: (number | null)[] = game.board || new Array(100).fill(null);
+        const lockedCells = new Set<number>(game.lockedCells || []);
+        const { cardId, action, cellIndex } = sequenceBotChooseMove(
+          hand, board, lockedCells, mySide, sequenceSequencesToWin(game.playerCount), (game.sequenceCountBySide || [])[mySide] || 0,
+        );
+
+        const outcome = await sequenceApplyPlay(tx, db, { gameRef, game, handRef, hand, deckRef, deck, seatIndex, uid: seat.uid, cardId, action, cellIndex });
+        return { done: outcome.won, turnNotice: !outcome.won ? { nextPlayerUid: outcome.nextPlayerUid, opponentNames: outcome.opponentNames } : null };
+      });
+
+      if (result.turnNotice?.nextPlayerUid) {
+        await notifyGameTurn(db, { gameType: 'sequence', gameId, nextPlayerUid: result.turnNotice.nextPlayerUid, movedByUid: 'bot', opponentNames: result.turnNotice.opponentNames }).catch(
+          (err) => console.error('notifyGameTurn (sequence bot) failed:', err),
+        );
+      }
+      if (result.done) break;
+    }
+  }
+
   // Deals the first hand for a brand-new match. Host-only, requires the lobby to be exactly full.
   // Wrapped in a transaction (not a plain read-then-batch-write) so a double-tapped Start Game
   // button can't race two concurrent deals against the same game doc — the second attempt's
@@ -9349,11 +9581,44 @@ async function startServer() {
           lastAction: { text: `${players[startSeat].displayName} goes first.`, at: new Date().toISOString() },
         });
       });
+      // The host might be alone at a table with bot-filled seats — drain immediately so the match
+      // doesn't sit waiting on a bot's turn that will never come on its own.
+      await drainSequenceBotTurns(db, gameId).catch((err) => console.error('drainSequenceBotTurns (start) failed:', err));
       return res.json({ ok: true });
     } catch (error: any) {
       if (error?.status) return res.status(error.status).json({ error: error.message });
       console.error('sequence/start error:', error);
       return res.status(500).json({ error: 'Unable to start game.' });
+    }
+  });
+
+  // Host-only, lobby ('waiting') only. Fills the next open seat with a deterministic bot player, so
+  // the table can start without needing every other seat filled by a real person immediately.
+  app.post('/api/sequence/fill-bot', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const gameId = String(req.body?.gameId || '');
+    if (!gameId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const gameRef = db.collection('sequenceGames').doc(gameId);
+      const gameSnap = await gameRef.get();
+      if (!gameSnap.exists) return res.status(404).json({ error: 'Game not found.' });
+      const game = gameSnap.data()!;
+      if (game.hostUid !== decoded.uid) return res.status(403).json({ error: 'Only the host can add a bot.' });
+      if (game.status !== 'waiting') return res.status(400).json({ error: 'Game already started.' });
+      const players: any[] = game.players || [];
+      if (players.length >= game.playerCount) return res.status(400).json({ error: 'Table is already full.' });
+
+      const seatIndex = players.length;
+      const botUid = `bot_${gameId}_${seatIndex}`;
+      const botPlayer = { uid: botUid, displayName: `Bot ${seatIndex + 1}`, photoURL: '', seatIndex, handCount: 0, isBot: true };
+      await gameRef.update({ players: [...players, botPlayer], playerUids: [...game.playerUids, botUid] });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('sequence/fill-bot error:', error);
+      return res.status(500).json({ error: 'Unable to add a bot.' });
     }
   });
 
@@ -9384,141 +9649,30 @@ async function startServer() {
         if (!gameSnap.exists || !handSnap.exists) throw { status: 404, message: 'Game not found.' };
         const game = gameSnap.data()!;
         if (game.status !== 'active') throw { status: 400, message: 'Game is not active.' };
-        const players: any[] = game.players;
-        const playerCount: number = game.playerCount;
         const mySeatIndex: number = game.currentTurnSeatIndex;
-        const mySeat = players[mySeatIndex];
+        const mySeat = game.players[mySeatIndex];
         if (!mySeat || mySeat.uid !== decoded.uid) throw { status: 403, message: 'Not your turn.' };
 
         const hand: string[] = handSnap.data()!.cards || [];
         if (!hand.includes(cardId)) throw { status: 400, message: 'That card is not in your hand.' };
-
-        const mySide = sequenceSideForSeat(mySeatIndex, playerCount);
-        const board: (number | null)[] = (game.board || new Array(100).fill(null)).slice();
-        const lockedCells = new Set<number>(game.lockedCells || []);
-        const sequenceCountBySide: number[] = [...(game.sequenceCountBySide || [])];
-        const isTwoEyed = SEQUENCE_TWO_EYED_JACKS.includes(cardId);
-        const isOneEyed = SEQUENCE_ONE_EYED_JACKS.includes(cardId);
-
-        let newlyLocked: number[] = [];
-        let newSequenceGroups: { cells: number[]; side: number }[] = [];
-
-        if (action === 'dead') {
-          if (isTwoEyed) {
-            const anyOpen = board.some((v, i) => v === null && !SEQUENCE_CORNERS.includes(i));
-            if (anyOpen) throw { status: 400, message: 'That card can still be played — there are open spaces.' };
-          } else if (isOneEyed) {
-            const anyRemovable = board.some((v, i) => v !== null && v !== mySide && !lockedCells.has(i));
-            if (anyRemovable) throw { status: 400, message: 'That card can still remove a chip.' };
-          } else {
-            const cells = SEQUENCE_CARD_TO_CELLS[cardId] || [];
-            const bothTaken = cells.length === 2 && cells.every((i) => board[i] !== null);
-            if (!bothTaken) throw { status: 400, message: 'That card is not dead — you still have an open space for it.' };
-          }
-        } else if (action === 'place') {
-          if (isOneEyed) throw { status: 400, message: 'A one-eyed jack removes a chip — it cannot be placed.' };
-          if (cellIndex == null || cellIndex < 0 || cellIndex > 99) throw { status: 400, message: 'A valid cell is required.' };
-          if (SEQUENCE_CORNERS.includes(cellIndex)) throw { status: 400, message: 'Corners are already wild for everyone.' };
-          if (board[cellIndex] !== null) throw { status: 400, message: 'That space is already taken.' };
-          if (!isTwoEyed) {
-            const cells = SEQUENCE_CARD_TO_CELLS[cardId] || [];
-            if (!cells.includes(cellIndex)) throw { status: 400, message: 'That card does not match that space.' };
-          }
-          board[cellIndex] = mySide;
-          const newSeqs = sequenceFindNewSequences(board, lockedCells, cellIndex, mySide);
-          newSeqs.forEach((seq) => seq.forEach((i) => { lockedCells.add(i); newlyLocked.push(i); }));
-          newSequenceGroups = newSeqs.map((cells) => ({ cells, side: mySide }));
-          sequenceCountBySide[mySide] = (sequenceCountBySide[mySide] || 0) + newSeqs.length;
-        } else if (action === 'remove') {
-          if (!isOneEyed) throw { status: 400, message: 'Only a one-eyed jack can remove a chip.' };
-          if (cellIndex == null || cellIndex < 0 || cellIndex > 99) throw { status: 400, message: 'A valid cell is required.' };
-          if (board[cellIndex] === null || board[cellIndex] === mySide) throw { status: 400, message: 'Pick an opponent chip to remove.' };
-          if (lockedCells.has(cellIndex)) throw { status: 400, message: 'That chip is part of a completed sequence — it cannot be removed.' };
-          board[cellIndex] = null;
-        }
-
-        // Computed here, before any write, specifically so the game-points pre-fetch just below
-        // can decide whether it's needed BEFORE the deck/hand writes that follow — Firestore
-        // requires every read in a transaction before any write (see the Rummy declare-win
-        // handler's comment), and this handler can't leave that pre-fetch until after those writes.
-        const won = sequenceCountBySide[mySide] >= sequenceSequencesToWin(playerCount);
-        const gamePointsStates = won
-          ? await readGamePointsPlan(tx, db, { gameType: 'sequence', gameId, playerUids: players.map((p: any) => p.uid) })
-          : null;
-
-        // Remove only the ONE played card, not every card matching that value — a two-deck shoe
-        // routinely puts duplicate rank+suit cards in the same hand (e.g. two Kings of Hearts),
-        // and `.filter(c => c !== cardId)` would silently discard both instead of just the one
-        // actually played.
-        const playedIdxInHand = hand.indexOf(cardId);
-        const remainingHand = [...hand.slice(0, playedIdxInHand), ...hand.slice(playedIdxInHand + 1)];
         const deck: string[] = deckSnap.exists ? deckSnap.data()!.cards || [] : [];
-        if (deck.length > 0) {
-          remainingHand.push(deck.shift()!);
-          tx.set(deckRef, { cards: deck });
-        }
-        tx.set(handRef, { cards: remainingHand });
 
-        const nextSeat = (mySeatIndex + 1) % playerCount;
-        const newPlayers = players.map((p: any, i: number) => (i === mySeatIndex ? { ...p, handCount: remainingHand.length } : p));
-
-        const actionText =
-          action === 'dead'
-            ? `${mySeat.displayName} exchanged a dead card.`
-            : action === 'remove'
-            ? `${mySeat.displayName} removed a chip.`
-            : `${mySeat.displayName} placed a chip.`;
-
-        // Pure writes from here — gamePointsStates was already read up front (see comment above),
-        // so this is safe to call alongside the tx.update below regardless of order.
-        const sequenceFinishedAt = won ? new Date().toISOString() : null;
-        if (won && gamePointsStates) {
-          const winnerUids = newPlayers
-            .map((p: any, i: number) => ({ uid: p.uid, side: sequenceSideForSeat(i, playerCount) }))
-            .filter((p: any) => p.side === mySide)
-            .map((p: any) => p.uid);
-          writeGamePointsPlan(tx, gamePointsStates, { gameType: 'sequence', gameId, winnerUids });
-          recordGameOutcome(tx, db, gameId, {
-            gameType: 'sequence', playerUids: newPlayers.map((p: any) => p.uid),
-            players: newPlayers.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, seatIndex: p.seatIndex })),
-            playerCount, winnerSide: mySide, finishedAt: sequenceFinishedAt,
-          });
-        }
-
-        tx.update(gameRef, {
-          board,
-          lockedCells: Array.from(lockedCells),
-          sequences: [...(game.sequences || []), ...newSequenceGroups],
-          sequenceCountBySide,
-          players: newPlayers,
-          cardsRemaining: deck.length,
-          currentTurnSeatIndex: won ? mySeatIndex : nextSeat,
-          status: won ? 'finished' : 'active',
-          winnerSide: won ? mySide : null,
-          finishedAt: sequenceFinishedAt,
-          // Only a 'place' actually puts a new chip down — 'remove'/'dead' leave this pointing at
-          // whatever the last real placement was, so the "last played" glow never highlights an
-          // empty or just-vacated cell.
-          lastPlacedCell: action === 'place' ? cellIndex : game.lastPlacedCell ?? null,
-          lastAction: { text: won ? `${mySeat.displayName} completed a sequence and won!` : actionText, at: new Date().toISOString() },
+        const outcome = await sequenceApplyPlay(tx, db, {
+          gameRef, game, handRef, hand, deckRef, deck,
+          seatIndex: mySeatIndex, uid: decoded.uid, cardId, action: action as 'place' | 'remove' | 'dead', cellIndex,
         });
-
-        if (!won) {
-          const nextPlayer = players[nextSeat];
-          if (nextPlayer) {
-            turnNotice = {
-              nextPlayerUid: nextPlayer.uid,
-              opponentNames: players.filter((p) => p.uid !== nextPlayer.uid).map((p) => p.displayName).filter(Boolean).join(', ') || null,
-            };
-          }
+        if (!outcome.won && outcome.nextPlayerUid) {
+          turnNotice = { nextPlayerUid: outcome.nextPlayerUid, opponentNames: outcome.opponentNames ?? null };
         }
       });
 
       if (turnNotice) {
-        await notifyGameTurn(db, { gameType: 'sequence', gameId, nextPlayerUid: turnNotice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: turnNotice.opponentNames }).catch(
+        const notice: { nextPlayerUid: string; opponentNames: string | null } = turnNotice;
+        await notifyGameTurn(db, { gameType: 'sequence', gameId, nextPlayerUid: notice.nextPlayerUid, movedByUid: decoded.uid, opponentNames: notice.opponentNames }).catch(
           (err) => console.error('notifyGameTurn (sequence play) failed:', err),
         );
       }
+      await drainSequenceBotTurns(db, gameId).catch((err) => console.error('drainSequenceBotTurns (play) failed:', err));
 
       return res.json({ ok: true });
     } catch (error: any) {
@@ -9646,6 +9800,7 @@ async function startServer() {
         photoURL: p.photoURL,
         seatIndex: p.seatIndex,
         handCount: 0,
+        isBot: !!p.isBot,
       }));
 
       const batch = db.batch();
