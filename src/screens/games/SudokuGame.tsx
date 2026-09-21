@@ -272,7 +272,7 @@ export default function SudokuGame() {
   const handleQuit = () => {
     if (!window.confirm('Quit this puzzle? Your progress will be lost.')) return;
     clearActiveGame(game.difficulty);
-    navigate('/games/sudoku');
+    navigate('/tools?category=games');
   };
 
   const selectedRow = selected != null ? Math.floor(selected / 9) : null;
@@ -286,7 +286,7 @@ export default function SudokuGame() {
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
         <div className="flex items-center justify-between">
-          <button onClick={() => navigate('/games/sudoku')} className="text-xs font-bold text-primary flex items-center gap-1">
+          <button onClick={() => navigate('/tools?category=games')} className="text-xs font-bold text-primary flex items-center gap-1">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
             Sudoku
           </button>
@@ -444,8 +444,8 @@ export default function SudokuGame() {
                 <button onClick={() => navigate('/games/sudoku/leaderboard')} className="w-full py-3 text-primary font-bold rounded-2xl border border-border-subtle">
                   View Leaderboard
                 </button>
-                <button onClick={() => navigate('/games/sudoku')} className="w-full py-2 text-text-muted font-bold text-sm">
-                  Back to Sudoku Home
+                <button onClick={() => navigate('/tools?category=games')} className="w-full py-2 text-text-muted font-bold text-sm">
+                  Back to Games
                 </button>
               </div>
             </motion.div>

@@ -190,7 +190,7 @@ export default function ChessGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete game.');
-      navigate('/games/chess');
+      navigate('/tools?category=games');
     } catch (err: any) {
       console.error('Failed to delete Chess game:', err);
       setError(err.message || 'Failed to delete game.');
@@ -382,7 +382,7 @@ export default function ChessGame() {
       <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
-            <button onClick={() => navigate('/games/chess')} className="text-xs font-bold text-primary flex items-center gap-1">
+            <button onClick={() => navigate('/tools?category=games')} className="text-xs font-bold text-primary flex items-center gap-1">
               <span className="material-symbols-outlined text-[16px]">arrow_back</span>
               Chess
             </button>
@@ -487,8 +487,8 @@ export default function ChessGame() {
                 {game.rematchGameId ? 'Join Rematch' : busy ? 'Starting…' : 'Play Again (Swap Sides)'}
               </button>
             )}
-            <button onClick={() => navigate('/games/chess')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
-              Back to Chess
+            <button onClick={() => navigate('/tools?category=games')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
+              Back to Games
             </button>
             {game.hostUid === user?.uid && (
               <button onClick={handleDeleteGame} className="relative w-full py-2.5 text-error/70 font-bold text-sm">

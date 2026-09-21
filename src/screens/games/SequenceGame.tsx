@@ -349,7 +349,7 @@ export default function SequenceGame() {
     if (!window.confirm('Delete this game? This cannot be undone.')) return;
     try {
       await call('/api/sequence/delete', {});
-      navigate('/games/sequence');
+      navigate('/tools?category=games');
     } catch {
       // error already surfaced via `error` state
     }
@@ -388,7 +388,7 @@ export default function SequenceGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/games/sequence')} className="text-text-muted">
+          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <h1 className="font-black text-primary">Sequence</h1>
@@ -552,7 +552,7 @@ export default function SequenceGame() {
         </div>
       )}
       <header className="p-3 flex items-center gap-2 bg-white border-b border-border-subtle">
-        <button onClick={() => navigate('/games/sequence')} className="text-text-muted shrink-0">
+        <button onClick={() => navigate('/tools?category=games')} className="text-text-muted shrink-0">
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
         </button>
         <h1 className="font-black text-primary text-sm shrink-0">Sequence</h1>
@@ -717,8 +717,8 @@ export default function SequenceGame() {
                   {game.rematchGameId ? 'Join Rematch' : busy ? 'Starting…' : 'Play Again (Same Players)'}
                 </button>
               )}
-              <button onClick={() => navigate('/games/sequence')} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
-                Back to Lobby
+              <button onClick={() => navigate('/tools?category=games')} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
+                Back to Games
               </button>
               {isHost && (
                 <button onClick={handleDeleteGame} className="text-error/70 font-bold text-sm pt-1">

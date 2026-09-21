@@ -682,7 +682,7 @@ export default function LudoGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete game.');
-      navigate('/games/ludo');
+      navigate('/tools?category=games');
     } catch (err: any) {
       console.error('Failed to delete Ludo game:', err);
       setError(err.message || 'Failed to delete game.');
@@ -695,7 +695,7 @@ export default function LudoGame() {
       <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
-            <button onClick={() => navigate('/games/ludo')} className="text-xs font-bold text-primary flex items-center gap-1">
+            <button onClick={() => navigate('/tools?category=games')} className="text-xs font-bold text-primary flex items-center gap-1">
               <span className="material-symbols-outlined text-[16px]">arrow_back</span>
               Ludo
             </button>
@@ -879,8 +879,8 @@ export default function LudoGame() {
                   : `${players.find((p) => p.uid === game.winnerUid)?.displayName || 'Someone'} won!`
                 : `Game ended early${game.endedByName ? ` by ${game.endedByName}` : ''}.`}
             </p>
-            <button onClick={() => navigate('/games/ludo')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
-              Back to Ludo
+            <button onClick={() => navigate('/tools?category=games')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
+              Back to Games
             </button>
             {user?.uid === game.hostUid && (
               <button onClick={handleDeleteGame} className="relative w-full py-2.5 text-error/70 font-bold text-sm">

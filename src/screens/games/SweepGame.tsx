@@ -404,7 +404,7 @@ export default function SweepGame() {
     if (!window.confirm('Delete this game? This cannot be undone.')) return;
     try {
       await call('/api/sweep/delete', {});
-      navigate('/games/sweep');
+      navigate('/tools?category=games');
     } catch {
       // error already surfaced via `error` state
     }
@@ -428,7 +428,7 @@ export default function SweepGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/games/sweep')} className="text-text-muted">
+          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <h1 className="font-black text-primary">Sweep</h1>
@@ -642,8 +642,8 @@ export default function SweepGame() {
               {game.rematchGameId ? 'Join Rematch' : busy ? 'Starting…' : 'Play Again'}
             </button>
           )}
-          <button onClick={() => navigate('/games/sweep')} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl text-sm">
-            Back to Lobby
+          <button onClick={() => navigate('/tools?category=games')} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl text-sm">
+            Back to Games
           </button>
           {user.uid === game.hostUid && (
             <button onClick={handleDeleteGame} className="p-3 text-error/70" aria-label="Delete game">
@@ -726,7 +726,7 @@ export default function SweepGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/games/sweep')} className="text-text-muted">
+          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <h1 className="font-black text-primary text-xs">Sweep — Deal {game.dealNumber}</h1>
@@ -1017,7 +1017,7 @@ export default function SweepGame() {
       <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
       <div className="shrink-0">
       <header className="p-2 flex items-center gap-2 flex-wrap bg-white border-b border-border-subtle shrink-0">
-        <button onClick={() => navigate('/games/sweep')} className="text-text-muted">
+        <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
         </button>
         <h1 className="font-black text-primary text-xs shrink-0">Sweep — Deal {game.dealNumber}</h1>

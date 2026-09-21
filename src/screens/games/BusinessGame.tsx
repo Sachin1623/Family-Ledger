@@ -957,7 +957,7 @@ export default function BusinessGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete.');
-      navigate('/games/business');
+      navigate('/tools?category=games');
     } catch (err: any) {
       setError(err.message || 'Failed to delete game.');
     }
@@ -985,7 +985,7 @@ export default function BusinessGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/games/business')} className="text-text-muted">
+          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <h1 className="font-black text-primary">Business</h1>
@@ -1150,8 +1150,8 @@ export default function BusinessGame() {
               {game.rematchGameId ? 'Join Rematch' : 'Play Again'}
             </button>
           )}
-          <button onClick={() => navigate('/games/business')} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl text-sm">
-            Back to Lobby
+          <button onClick={() => navigate('/tools?category=games')} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl text-sm">
+            Back to Games
           </button>
           {user.uid === game.hostUid && (
             <button onClick={handleDeleteGame} className="p-3 text-error/70" aria-label="Delete game">
@@ -1203,7 +1203,7 @@ export default function BusinessGame() {
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
       <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-        <button onClick={() => navigate('/games/business')} className="text-text-muted">
+        <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
         </button>
         <h1 className="font-black text-primary text-xs">Business</h1>

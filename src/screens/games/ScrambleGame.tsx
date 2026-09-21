@@ -154,7 +154,7 @@ export default function ScrambleGame() {
     if (!result && (game.score > 0 || game.solvedAnswers.length > 0)) {
       if (!window.confirm("Leave this match? It's saved, so you can resume from Scramble whenever you're ready.")) return;
     }
-    navigate('/games/scramble');
+    navigate('/tools?category=games');
   };
 
   // Tap and drag share one gesture: pointerdown starts tracking, pointerup decides which it was
@@ -455,7 +455,7 @@ export default function ScrambleGame() {
                 )}
               </div>
               <div className="flex gap-2 p-6 pt-0 shrink-0">
-                <button onClick={() => navigate('/games/scramble')} className="flex-1 py-3 rounded-xl text-sm font-bold text-text-muted border border-border-subtle">
+                <button onClick={() => navigate('/tools?category=games')} className="flex-1 py-3 rounded-xl text-sm font-bold text-text-muted border border-border-subtle">
                   Done
                 </button>
                 <button onClick={handlePlayAgain} className="flex-1 py-3 rounded-xl text-sm font-bold text-white bg-primary">

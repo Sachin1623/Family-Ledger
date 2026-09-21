@@ -39,20 +39,24 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/health/glucose': '/health',
   '/health/blood-pressure': '/health',
   '/health/medicines': '/health',
-  '/games/sudoku': '/games',
+  // Every game below skips the /games hub entirely — Tools.tsx links every game directly (see its
+  // own header comment), so that's the real entry point players use, and back should return there
+  // with the Games tab already selected rather than bouncing through the hub. Applies to both a
+  // game's own lobby/home AND its actual gameplay screen (via PARENT_PATTERNS below) — only truly
+  // nested sub-pages (a leaderboard, Scramble's multiplayer mode reached from within Scramble
+  // itself) still go to their immediate in-game parent instead.
+  '/games/sudoku': '/tools?category=games',
   '/games/sudoku/leaderboard': '/games/sudoku',
-  '/games/scramble': '/games',
-  '/games/scramble/play': '/games/scramble',
+  '/games/scramble': '/tools?category=games',
+  '/games/scramble/play': '/tools?category=games',
   '/games/scramble/leaderboard': '/games/scramble',
   '/games/scramble-multiplayer': '/games/scramble',
-  '/games/ludo': '/games',
-  '/games/rummy': '/games',
-  '/games/business': '/games',
-  '/games/sweep': '/games',
-  '/games/chess': '/games',
-  // Rummy13 and Spade Pledge skip the /games hub entirely — Tools.tsx links every game directly
-  // (see its own header comment), so that's the real entry point players use, and back should
-  // return there with the Games tab already selected rather than bouncing through the hub.
+  '/games/ludo': '/tools?category=games',
+  '/games/rummy': '/tools?category=games',
+  '/games/business': '/tools?category=games',
+  '/games/sweep': '/tools?category=games',
+  '/games/chess': '/tools?category=games',
+  '/games/sequence': '/tools?category=games',
   '/games/rummy13': '/tools?category=games',
   '/games/spadePledge': '/tools?category=games',
   '/shop/profile': '/shop/sales',
@@ -70,15 +74,16 @@ const PARENT_OVERRIDES: Record<string, string> = {
 };
 
 const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
-  [/^\/games\/sudoku\/play\/[^/]+$/, '/games/sudoku'],
   [/^\/games\/ranks\/[^/]+$/, '/games'],
-  [/^\/games\/ludo\/[^/]+$/, '/games/ludo'],
-  [/^\/games\/rummy\/[^/]+$/, '/games/rummy'],
-  [/^\/games\/business\/[^/]+$/, '/games/business'],
-  [/^\/games\/sweep\/[^/]+$/, '/games/sweep'],
-  [/^\/games\/chess\/[^/]+$/, '/games/chess'],
-  // Same direct-to-Tools shortcut as the lobby overrides above — an active table's back goes
+  // Same direct-to-Tools shortcut as the lobby overrides above — an active game's back goes
   // straight to Tools' Games tab, not through its own lobby.
+  [/^\/games\/sudoku\/play\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/ludo\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/rummy\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/business\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/sweep\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/chess\/[^/]+$/, '/tools?category=games'],
+  [/^\/games\/sequence\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/rummy13\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/spadePledge\/[^/]+$/, '/tools?category=games'],
   [/^\/games\/scramble-multiplayer\/[^/]+$/, '/games/scramble-multiplayer'],

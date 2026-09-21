@@ -546,7 +546,7 @@ export default function RummyGame() {
     if (!window.confirm('Delete this game? This cannot be undone.')) return;
     try {
       await call('/api/rummy/delete', {});
-      navigate('/games/rummy');
+      navigate('/tools?category=games');
     } catch {
       // error already surfaced via `error` state
     }
@@ -630,7 +630,7 @@ export default function RummyGame() {
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
         <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/games/rummy')} className="text-text-muted">
+          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <h1 className="font-black text-primary">27-Hand Rummy</h1>
@@ -766,8 +766,8 @@ export default function RummyGame() {
                 {game.rematchGameId ? 'Join Rematch' : busy ? 'Starting…' : 'Play Again'}
               </button>
             )}
-            <button onClick={() => navigate('/games/rummy')} className="flex-1 py-2.5 bg-primary text-white font-bold rounded-2xl text-sm">
-              Back to Lobby
+            <button onClick={() => navigate('/tools?category=games')} className="flex-1 py-2.5 bg-primary text-white font-bold rounded-2xl text-sm">
+              Back to Games
             </button>
             {user.uid === game.hostUid && (
               <button onClick={handleDeleteGame} className="p-2.5 bg-white rounded-2xl border border-border-subtle text-error/70 shrink-0" aria-label="Delete game">
@@ -933,7 +933,7 @@ export default function RummyGame() {
       <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
         <div className="shrink-0">
         <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-          <button onClick={() => navigate('/games/rummy')} className="text-text-muted">
+          <button onClick={() => navigate('/tools?category=games')} className="text-text-muted">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <div className="flex flex-col leading-tight">
