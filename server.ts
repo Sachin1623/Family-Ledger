@@ -7631,6 +7631,16 @@ async function startServer() {
   const SPADE_PLEDGE_TURN_TIMEOUT_MS = 30_000;
   const SPADE_PLEDGE_TARGET_SCORE = 300;
   const SPADE_PLEDGE_BID_TRICK_POINTS = 10;
+  // A "top bid" special case: a player who bids the maximum (8) AND personally takes 8+ tricks
+  // themselves earns DOUBLE per-trick value on their own bid's portion of the score — confirmed by
+  // the user after a real-game scoring question (bid 8, won 10 -> 8*20 + 2 overtricks = 162, not
+  // the plain 8*10 + 2 = 82 the un-special-cased formula gave). Scoped to the INDIVIDUAL player's
+  // own bid and own tricksWon, not the group's combined total — in Partnership, a partner who
+  // personally bid 8 and personally took 8+ tricks gets this rate on their own bid's contribution
+  // even if the group's overall total came from both partners combined. The failed-bid penalty is
+  // explicitly NOT part of this special case (confirmed) — a missed bid always costs the plain rate
+  // below, even for an 8-bid.
+  const SPADE_PLEDGE_HIGH_BID_TRICK_POINTS = 20;
   const SPADE_PLEDGE_OVERTRICK_POINTS = 1;
   const SPADE_PLEDGE_FAILED_BID_TRICK_PENALTY = 10;
   const SPADE_PLEDGE_NIL_BONUS = 100;
@@ -7913,7 +7923,13 @@ async function startServer() {
       const groupTricksWon = memberPlayers.reduce((s: number, p: any) => s + p.tricksWon, 0);
       let delta = 0;
       if (groupTricksWon >= groupBidTarget) {
-        delta += groupBidTarget * SPADE_PLEDGE_BID_TRICK_POINTS;
+        // Each member's own bid contributes at the top-bid rate only if THEY personally bid the
+        // max (8) and THEY personally took 8+ tricks — not just because the group overall made it.
+        delta += memberPlayers.reduce((sum: number, p: any) => {
+          const b = p.bid > 0 ? p.bid : 0;
+          const isTopBidMade = p.bid >= SPADE_PLEDGE_MAX_BID && p.tricksWon >= SPADE_PLEDGE_MAX_BID;
+          return sum + b * (isTopBidMade ? SPADE_PLEDGE_HIGH_BID_TRICK_POINTS : SPADE_PLEDGE_BID_TRICK_POINTS);
+        }, 0);
         const overtricks = groupTricksWon - groupBidTarget;
         delta += overtricks * SPADE_PLEDGE_OVERTRICK_POINTS;
         group.bags += overtricks;
