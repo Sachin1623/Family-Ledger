@@ -7743,14 +7743,27 @@ async function startServer() {
     })[0];
   }
 
+  // Every player must be dealt at least one card of each suit — a plain uniform-random 13-card
+  // slice can (and, confirmed live in a real game, did) leave someone void in a suit for the whole
+  // hand, which this game's rules don't allow. Rejection sampling: reshuffle and redeal until every
+  // hand satisfies the constraint. A specific suit being entirely absent from a random 13-card hand
+  // happens under 2% of the time (C(39,13)/C(52,13)), so this almost always succeeds on the very
+  // first or second try — same "redeal until valid, capped" pattern as Sweep's sweepDealHand.
   function spadePledgeDealFreshHands(players: any[]): { hands: Record<number, string[]> } {
-    let deck = spadePledgeShuffle(buildSpadePledgeDeck());
-    const hands: Record<number, string[]> = {};
-    for (const p of players) {
-      hands[p.seatIndex] = deck.slice(0, SPADE_PLEDGE_HAND_SIZE);
-      deck = deck.slice(SPADE_PLEDGE_HAND_SIZE);
+    for (let attempt = 0; attempt < 500; attempt++) {
+      let deck = spadePledgeShuffle(buildSpadePledgeDeck());
+      const hands: Record<number, string[]> = {};
+      for (const p of players) {
+        hands[p.seatIndex] = deck.slice(0, SPADE_PLEDGE_HAND_SIZE);
+        deck = deck.slice(SPADE_PLEDGE_HAND_SIZE);
+      }
+      const valid = Object.values(hands).every((cards) => {
+        const suits = new Set(cards.map(spadePledgeSuitOf));
+        return SPADE_PLEDGE_SUITS.every((s) => suits.has(s));
+      });
+      if (valid) return { hands };
     }
-    return { hands };
+    throw { status: 500, message: 'Unable to find a valid deal — please try again.' };
   }
 
   // Pure-write bid transition — safe to call any time after reads are done. Shared by /bid,
