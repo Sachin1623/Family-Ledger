@@ -13294,6 +13294,84 @@ async function startServer() {
     }
   });
 
+  // Safety net against an abandoned game bleeding cost indefinitely. A real incident (2026-09-22)
+  // found a Spade Pledge table stuck on the same turn for 23+ hours — every connected client kept
+  // retrying its own client-side timeout-check against it the whole time, each attempt taking up to
+  // Cloud Run's 300s request ceiling, generating a sustained, large Firestore read spike with no
+  // human benefiting from any of it. Only the games with a server-side timeout/retry mechanism
+  // (13-Card Rummy, Spade Pledge) can bleed cost this way on their own — Ludo/Business/27-Hand
+  // Rummy/Sweep have no equivalent server-driven retry loop, so an abandoned game there just goes
+  // quiet rather than grinding. This scans both for any deal whose turn has sat untouched past the
+  // cutoff and force-finishes it (status: 'finished', no winner — same as a player-initiated "End
+  // Game") so nothing can keep retrying against it. Deliberately its OWN lightweight cron job
+  // (not folded into send-reminders, which is already the slowest job in the schedule) — this only
+  // ever touches a small number of stale docs, so it should stay fast regardless of user count.
+  const STALE_GAME_CUTOFF_MS = 3 * 60 * 60 * 1000; // 3 hours with zero progress
+
+  async function cleanupStaleGames(db: Firestore): Promise<{ spadePledgeResolved: string[]; rummy13Resolved: string[] }> {
+    const nowMs = Date.now();
+    const spadePledgeResolved: string[] = [];
+    const rummy13Resolved: string[] = [];
+
+    const spDealsSnap = await db.collection('spadePledgeDeals').where('status', '==', 'active').get();
+    for (const dealDoc of spDealsSnap.docs) {
+      const deal = dealDoc.data();
+      const turnStartedMs = deal.turnStartedAt ? new Date(deal.turnStartedAt).getTime() : 0;
+      if (nowMs - turnStartedMs < STALE_GAME_CUTOFF_MS) continue;
+      const nowIso = new Date().toISOString();
+      const batch = db.batch();
+      batch.update(dealDoc.ref, { status: 'finished', finishedAt: nowIso, lastAction: { type: 'system_cleanup', byUid: 'system', at: nowIso } });
+      if (deal.tableId) {
+        batch.update(db.collection('spadePledgeTables').doc(deal.tableId), {
+          status: 'finished', winnerTeam: null, finishedAt: nowIso,
+          endedBy: 'system_cleanup', endedByName: 'System (stale-game cleanup)',
+        });
+      }
+      await batch.commit();
+      spadePledgeResolved.push(dealDoc.id);
+    }
+
+    const r13DealsSnap = await db.collection('rummy13Deals').where('status', '==', 'active').get();
+    for (const dealDoc of r13DealsSnap.docs) {
+      const deal = dealDoc.data();
+      const turnStartedMs = deal.turnStartedAt ? new Date(deal.turnStartedAt).getTime() : 0;
+      if (nowMs - turnStartedMs < STALE_GAME_CUTOFF_MS) continue;
+      const nowIso = new Date().toISOString();
+      const batch = db.batch();
+      batch.update(dealDoc.ref, { status: 'void', finishedAt: nowIso });
+      if (deal.tableId) {
+        batch.update(db.collection('rummy13Tables').doc(deal.tableId), {
+          status: 'finished', winnerUid: null, finishedAt: nowIso,
+          endedBy: 'system_cleanup', endedByName: 'System (stale-game cleanup)',
+        });
+      }
+      await batch.commit();
+      rummy13Resolved.push(dealDoc.id);
+    }
+
+    return { spadePledgeResolved, rummy13Resolved };
+  }
+
+  app.post('/api/cron/cleanup-stale-games', async (req, res) => {
+    const providedSecret = req.headers['x-cron-secret'];
+    if (!process.env.CRON_SECRET || providedSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    if (!adminDb) return res.status(500).json({ error: 'Firestore not available.' });
+    const db = adminDb;
+
+    try {
+      const result = await cleanupStaleGames(db);
+      if (result.spadePledgeResolved.length > 0 || result.rummy13Resolved.length > 0) {
+        console.log('cleanup-stale-games resolved:', JSON.stringify(result));
+      }
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error('cron/cleanup-stale-games error:', error);
+      return res.status(500).json({ error: 'Cleanup job failed.' });
+    }
+  });
+
   // Runs once a day (new Cloud Scheduler job `familyledger-daily-digest`) — the multi-day-threshold
   // per-user nudges (2-day spend gap, 5-day inactivity, 14-day spread-the-word) plus the old-
   // activities cleanup sweep, none of which need — or benefit from — checking more than once a day.
