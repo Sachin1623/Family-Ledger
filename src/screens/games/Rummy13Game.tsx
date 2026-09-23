@@ -17,6 +17,7 @@ import {
   isValidSequence,
   isValidGroup,
   sortHandForDisplay,
+  computeRummy13HandPenalty,
   TURN_TIMEOUT_MS,
   TURN_WARNING_MS,
   type Rummy13Table,
@@ -367,6 +368,11 @@ export default function Rummy13Game() {
   const meInDeal = deal && myDealIndex >= 0 ? deal.players[myDealIndex] : null;
   const isMyTurn = deal?.status === 'active' && deal.players[deal.currentTurnSeatIndex]?.uid === user.uid;
   const wildcardRanks = withPrintedJoker(deal?.wildJokerRank ? [deal.wildJokerRank as Rank] : []);
+  const livePenaltyPreview = useMemo(() => {
+    if (!meInDeal || meInDeal.dropped || deal?.status !== 'active' || handSorted.length === 0) return null;
+    return computeRummy13HandPenalty(handSorted, wildcardRanks);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handSorted, deal?.wildJokerRank, meInDeal?.dropped, deal?.status]);
 
   const handleJoinTable = async () => {
     if (!user || isPlayer || table.players.length >= table.maxPlayers) return;
@@ -726,18 +732,20 @@ export default function Rummy13Game() {
                   </div>
                 ) : (
                   (() => {
-                    const groupedCards = new Set((rev.groups || []).flatMap((g) => g.cards));
-                    const ungrouped = rev.cards.filter((c) => !groupedCards.has(c));
-                    const hasGroups = (rev.groups || []).some((g) => g.cards.length > 0);
-                    return hasGroups ? (
+                    const { penalty, protectedCardIds } = computeRummy13HandPenalty(rev.cards, revealWildcardRanks);
+                    const protectedSet = new Set(protectedCardIds);
+                    const protectedCards = sortHandForDisplay(rev.cards.filter((c) => protectedSet.has(c)));
+                    const penalizedCards = sortHandForDisplay(rev.cards.filter((c) => !protectedSet.has(c)));
+                    return (
                       <div className="space-y-1.5">
-                        {(rev.groups || []).filter((g) => g.cards.length > 0).map((g, i) => (
-                          <GroupRow key={i} cardIds={g.cards} label={`Group ${i + 1}`} wildcardRanks={revealWildcardRanks} />
-                        ))}
-                        {ungrouped.length > 0 && <GroupRow cardIds={sortHandForDisplay(ungrouped)} label="Ungrouped" wildcardRanks={revealWildcardRanks} />}
+                        <p className="text-[10px] text-text-muted px-0.5">Best possible grouping of this hand — minimizes the penalty:</p>
+                        {protectedCards.length > 0 && (
+                          <GroupRow cardIds={protectedCards} valid label="Protected (0 pts)" wildcardRanks={revealWildcardRanks} />
+                        )}
+                        {penalizedCards.length > 0 && (
+                          <GroupRow cardIds={penalizedCards} label={`Penalized (${penalty} pts)`} wildcardRanks={revealWildcardRanks} />
+                        )}
                       </div>
-                    ) : (
-                      <GroupRow cardIds={sortHandForDisplay(rev.cards)} label="Final Hand" wildcardRanks={revealWildcardRanks} />
                     );
                   })()
                 )}
@@ -980,6 +988,15 @@ export default function Rummy13Game() {
                 <span className="text-[10px] text-warning">grouping looks invalid — declaring costs 80 pts if wrong</span>
               ) : null}
             </div>
+          )}
+
+          {livePenaltyPreview && (
+            <p className="text-[10px] font-bold px-1">
+              <span className="text-text-muted">If the hand ended now: </span>
+              <span className={livePenaltyPreview.penalty === 0 ? 'text-success' : 'text-error'}>
+                {livePenaltyPreview.penalty === 0 ? '0 pts (safe)' : `-${livePenaltyPreview.penalty} pts`}
+              </span>
+            </p>
           )}
 
           <div className="flex items-center justify-between px-1 gap-2 flex-wrap">
