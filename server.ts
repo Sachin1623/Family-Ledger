@@ -7925,14 +7925,21 @@ async function startServer() {
       if (groupTricksWon >= groupBidTarget) {
         // Each member's own bid contributes at the top-bid rate only if THEY personally bid the
         // max (8) and THEY personally took 8+ tricks — not just because the group overall made it.
+        let hasTopBid = false;
         delta += memberPlayers.reduce((sum: number, p: any) => {
           const b = p.bid > 0 ? p.bid : 0;
           const isTopBidMade = p.bid >= SPADE_PLEDGE_MAX_BID && p.tricksWon >= SPADE_PLEDGE_MAX_BID;
+          if (isTopBidMade) hasTopBid = true;
           return sum + b * (isTopBidMade ? SPADE_PLEDGE_HIGH_BID_TRICK_POINTS : SPADE_PLEDGE_BID_TRICK_POINTS);
         }, 0);
         const overtricks = groupTricksWon - groupBidTarget;
         delta += overtricks * SPADE_PLEDGE_OVERTRICK_POINTS;
-        group.bags += overtricks;
+        // Confirmed by the user: since 8 is the maximum possible bid, overtricks earned on top of
+        // an actually-made max bid are already rewarded via the top-bid rate above and don't ALSO
+        // count toward the sandbagging/bag penalty. Scoped to the same per-player condition as that
+        // bonus — if ANY member of this group hit it, none of the group's overtricks this hand add
+        // to its bag count (a bid under 8, or an unmade bid of 8, still accumulates bags normally).
+        if (!hasTopBid) group.bags += overtricks;
       } else {
         delta -= groupBidTarget * SPADE_PLEDGE_FAILED_BID_TRICK_PENALTY;
       }
