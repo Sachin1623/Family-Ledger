@@ -247,6 +247,7 @@ export default function Rummy13Game() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showExitMenu, setShowExitMenu] = useState(false);
   const [mode] = useState<SelectionMode>('none');
   const [handGroups, setHandGroups] = useState<string[][]>([]);
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
@@ -450,10 +451,16 @@ export default function Rummy13Game() {
     await call('/api/rummy13/drop', {}).catch(() => {});
   };
 
-  // Just leaves the screen — no penalty, no change to the table/deal at all. Distinct from Drop
-  // (which forfeits the deal/table with a scoring penalty), for players who just want to step away
-  // and come back later without giving up their seat.
-  const handleExitGame = () => navigate('/games/rummy13');
+  // Three distinct ways to leave this screen, offered as a menu rather than one button — "just
+  // leave" keeps your seat untouched (no penalty), the other two both forfeit via the same /drop
+  // endpoint Drop itself uses (with its own confirm dialog) before landing back on the lobby, which
+  // doubles as the create-a-table screen.
+  const handleGoToLobby = () => { setShowExitMenu(false); navigate('/games/rummy13'); };
+  const handleQuitAndGoToLobby = async () => {
+    setShowExitMenu(false);
+    await handleDrop();
+    navigate('/games/rummy13');
+  };
 
   const handleDeleteTable = async () => {
     if (!window.confirm('Delete this table? This cannot be undone.')) return;
@@ -694,13 +701,19 @@ export default function Rummy13Game() {
           {(table.players || []).map((p) => {
             const rev = revealed?.[p.uid];
             const isWinner = p.uid === table.winnerUid;
+            const dealPts = deal?.dealScores?.[p.uid];
             return (
               <div key={p.uid} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className={`text-sm font-black ${isWinner ? 'text-success' : 'text-on-surface'}`}>
+                  <span className={`text-sm font-black flex-1 ${isWinner ? 'text-success' : 'text-on-surface'}`}>
                     {isWinner ? '🏆 ' : ''}{p.displayName}
                     {p.uid === user.uid ? ' (You)' : ''}
                   </span>
+                  {dealPts != null && (
+                    <span className={`text-xs font-black shrink-0 ${dealPts === 0 ? 'text-success' : 'text-error'}`}>
+                      {dealPts === 0 ? '0 pts' : `+${dealPts} pts`}
+                    </span>
+                  )}
                 </div>
                 {!rev ? (
                   <p className="text-xs text-text-muted italic">Hand not available.</p>
@@ -804,6 +817,29 @@ export default function Rummy13Game() {
         />
       )}
 
+      {showExitMenu && (
+        <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowExitMenu(false)}>
+          <div className="w-full max-w-xs bg-white rounded-3xl shadow-2xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+            <p className="text-xs font-bold text-text-muted uppercase tracking-wider text-center pb-1">Leave this table?</p>
+            <button onClick={handleGoToLobby} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-on-surface text-left px-4">
+              <span className="block">Go to Lobby</span>
+              <span className="block text-[10px] font-medium text-text-muted mt-0.5">Keeps your seat — come back anytime</span>
+            </button>
+            <button onClick={handleQuitAndGoToLobby} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-error text-left px-4">
+              <span className="block">Quit &amp; Start New Game</span>
+              <span className="block text-[10px] font-medium text-text-muted mt-0.5">Forfeits this table, lands you on the create-table screen</span>
+            </button>
+            <button onClick={handleQuitAndGoToLobby} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-error text-left px-4">
+              <span className="block">Quit &amp; Go to Lobby</span>
+              <span className="block text-[10px] font-medium text-text-muted mt-0.5">Forfeits this table, back to the games list</span>
+            </button>
+            <button onClick={() => setShowExitMenu(false)} className="w-full py-2.5 text-sm font-bold text-text-muted">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
         <div className="shrink-0">
         <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
@@ -816,7 +852,7 @@ export default function Rummy13Game() {
             <button onClick={handleDrop} disabled={busy || meInDeal?.dropped} className="p-2 text-error shrink-0 disabled:opacity-30" aria-label="Drop">
               <span className="material-symbols-outlined text-[22px] block">flag</span>
             </button>
-            <button onClick={handleExitGame} className="p-2 text-text-muted shrink-0" aria-label="Exit Game">
+            <button onClick={() => setShowExitMenu(true)} className="p-2 text-text-muted shrink-0" aria-label="Exit Game">
               <span className="material-symbols-outlined text-[22px] block">logout</span>
             </button>
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
