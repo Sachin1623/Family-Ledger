@@ -67,8 +67,13 @@ export function generateGameCode(): string {
 // colors and differentiating purely by fill (white fill + a dark outline drawn via `text-shadow`,
 // black fill needing no outline) reads correctly at any square/theme, and `text-shadow` renders
 // far more reliably across browsers than the `-webkit-text-stroke` trick this replaced.
+// The trailing U+FE0E (VARIATION SELECTOR-15) forces TEXT presentation — without it, iOS/Safari
+// sometimes renders these chess symbols via its emoji font instead, which paints its own built-in
+// fill and ignores `color`/`text-shadow` entirely, making white pieces render solid black (the
+// shadow is all that shows) and black pieces render hollow (the emoji glyph's own outline shows
+// through instead of the CSS fill).
 export const PIECE_GLYPH: Record<PieceSymbol, string> = {
-  p: '♟', n: '♞', b: '♝', r: '♜', q: '♛', k: '♚',
+  p: '♟︎', n: '♞︎', b: '♝︎', r: '♜︎', q: '♛︎', k: '♚︎',
 };
 
 export const COLOR_LABEL: Record<PlayerColor, string> = { w: 'White', b: 'Black' };
