@@ -19,6 +19,8 @@ import {
   MAX_BID,
   TURN_TIMEOUT_MS,
   TURN_WARNING_MS,
+  BAG_PENALTY_THRESHOLD,
+  BAG_PENALTY,
   type SpadePledgeTable,
   type SpadePledgeDeal,
   type SpadePledgeHandHistoryEntry,
@@ -56,6 +58,21 @@ const CardChip: React.FC<{ cardId: string; dim?: boolean; highlight?: boolean; o
       <span className="text-base leading-none">{SUIT_SYMBOL[suit]}</span>
     </div>
   );
+};
+
+// Green/amber/red as a group's accumulated bags climb toward the penalty threshold — bags are
+// "over-achieved" tricks (made the bid, then took extra ones beyond it), and BAG_PENALTY_THRESHOLD
+// of them costs BAG_PENALTY points. 0-4 is comfortably safe, 5-8 is a genuine "start being careful"
+// zone, 9+ means the very next overtrick risks tipping the penalty.
+function bagTier(bags: number): 'safe' | 'caution' | 'danger' {
+  if (bags > 8) return 'danger';
+  if (bags >= 5) return 'caution';
+  return 'safe';
+}
+const BAG_TIER_CLASS: Record<ReturnType<typeof bagTier>, string> = {
+  safe: 'text-success',
+  caution: 'text-warning font-bold',
+  danger: 'text-error font-bold animate-pulse',
 };
 
 // "Swallow the value already present on mount, only fire on a genuinely NEW change" — same pattern
@@ -581,8 +598,12 @@ export default function SpadePledgeGame() {
                       </p>
                       <div className="flex items-center justify-between mt-1 pt-1 border-t border-border-subtle">
                         <span className="text-[9px] font-bold text-text-muted uppercase">Total</span>
-                        <span className="text-[11px] font-black text-primary">
-                          {handEndedSummary.netScoreAfter[g.groupIndex]} pts · {handEndedSummary.groupBagsAfter[g.groupIndex]} bags
+                        <span className="text-[11px] font-black">
+                          <span className="text-primary">{handEndedSummary.netScoreAfter[g.groupIndex]} pts</span>
+                          {' · '}
+                          <span className={BAG_TIER_CLASS[bagTier(handEndedSummary.groupBagsAfter[g.groupIndex])]}>
+                            {handEndedSummary.groupBagsAfter[g.groupIndex]} bags
+                          </span>
                         </span>
                       </div>
                     </div>
@@ -645,10 +666,16 @@ export default function SpadePledgeGame() {
                 <div key={g.groupIndex} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg shrink-0 ${g.groupIndex === (me ? teamForSeat(table.format, me.seatIndex) : -1) ? 'bg-primary/10' : ''}`}>
                   <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{g.memberUids.map((uid) => nameFor(uid)).join(' & ')}</span>
                   <span className="text-[10px] font-black text-primary whitespace-nowrap">{g.cumulativeScore}</span>
-                  <span className="text-[8px] text-text-muted whitespace-nowrap">{g.bags} bags</span>
+                  <span className={`text-[8px] whitespace-nowrap ${BAG_TIER_CLASS[bagTier(g.bags)]}`}>{g.bags} bags</span>
                 </div>
               ))}
             </div>
+            {table.groups.some((g) => g.bags >= 5) && (
+              <p className="text-[10px] font-bold text-warning px-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[13px]">warning</span>
+                {BAG_PENALTY_THRESHOLD} bags triggers a -{BAG_PENALTY} point penalty — {table.groups.some((g) => g.bags > 8) ? 'the next overtrick could tip it' : 'watch your overtricks'}.
+              </p>
+            )}
 
             <div className="bg-white rounded-xl border border-border-subtle p-2 space-y-1.5">
               <div className="flex items-center justify-between">

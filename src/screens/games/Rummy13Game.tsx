@@ -450,6 +450,11 @@ export default function Rummy13Game() {
     await call('/api/rummy13/drop', {}).catch(() => {});
   };
 
+  // Just leaves the screen — no penalty, no change to the table/deal at all. Distinct from Drop
+  // (which forfeits the deal/table with a scoring penalty), for players who just want to step away
+  // and come back later without giving up their seat.
+  const handleExitGame = () => navigate('/games/rummy13');
+
   const handleDeleteTable = async () => {
     if (!window.confirm('Delete this table? This cannot be undone.')) return;
     try {
@@ -808,7 +813,10 @@ export default function Rummy13Game() {
           </div>
           <ReactionButton onSend={handleSendReaction} />
           <div className="flex items-center gap-1.5 ml-auto">
-            <button onClick={handleDrop} disabled={busy || meInDeal?.dropped} className="p-2 text-error shrink-0 disabled:opacity-30" aria-label="Leave deal">
+            <button onClick={handleDrop} disabled={busy || meInDeal?.dropped} className="p-2 text-error shrink-0 disabled:opacity-30" aria-label="Drop">
+              <span className="material-symbols-outlined text-[22px] block">flag</span>
+            </button>
+            <button onClick={handleExitGame} className="p-2 text-text-muted shrink-0" aria-label="Exit Game">
               <span className="material-symbols-outlined text-[22px] block">logout</span>
             </button>
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
