@@ -4,11 +4,13 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  persistentSingleTabManager,
   memoryLocalCache,
   doc,
   getDocFromServer
 } from 'firebase/firestore';
 import { getAnalytics, isSupported, logEvent, setUserId, type Analytics } from 'firebase/analytics';
+import { Capacitor } from '@capacitor/core';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -20,15 +22,27 @@ const dbId = (firebaseConfig as any).firestoreDatabaseId;
 // synced instead of hanging/erroring while offline, and writes made offline (addDoc/updateDoc/
 // deleteDoc/transactions, everywhere in the app) are queued locally and sent automatically the
 // moment connectivity returns — this is the SDK's own built-in behavior once persistence is on,
-// not something built per-feature. `persistentMultipleTabManager` (over the older single-tab-only
-// default) avoids a `failed-precondition` error if the app is ever open in more than one WebView/
-// tab context at once. Falls back to a memory-only cache (today's prior behavior — works fine
-// online, just nothing survives offline) if persistence can't be enabled at all, e.g. a browser/
-// WebView with IndexedDB disabled or restricted (some private-browsing modes).
+// not something built per-feature. Falls back to a memory-only cache (today's prior behavior —
+// works fine online, just nothing survives offline) if persistence can't be enabled at all, e.g. a
+// browser/WebView with IndexedDB disabled or restricted (some private-browsing modes).
+//
+// Multi-tab vs single-tab ownership: `persistentMultipleTabManager` (used on web, where a real
+// user genuinely can have several browser tabs of this site open) makes every tab negotiate a
+// shared "primary" owner of the IndexedDB cache on startup. The installed Capacitor app is a
+// single WebView instance, not multiple tabs — it never needed that negotiation — but it was
+// paying its cost anyway: a stale ownership lock left behind by a force-closed previous session
+// (the WebView doesn't always get to release it cleanly) made every onSnapshot listener reset to
+// `undefined` and resubscribe moments after a correct first read, diagnosed live via a temporary
+// _medDebugLog trace showing a query's result flip from correct-from-cache to empty within ~450ms
+// of a fresh launch, with the id list it was querying unchanged throughout. `forceOwnership: true`
+// on native skips the negotiation entirely and claims the cache outright, eliminating that window.
 function createFirestore(firebaseApp: FirebaseApp, databaseId?: string) {
+  const tabManager = Capacitor.isNativePlatform()
+    ? persistentSingleTabManager({ forceOwnership: true })
+    : persistentMultipleTabManager();
   try {
     return initializeFirestore(firebaseApp, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      localCache: persistentLocalCache({ tabManager }),
     }, databaseId);
   } catch (err) {
     console.error('Failed to enable Firestore offline persistence, falling back to memory-only cache:', err);
