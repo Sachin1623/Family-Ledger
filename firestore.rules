@@ -894,6 +894,15 @@ service cloud.firestore {
       );
       allow create: if isSignedIn() && isValidMedicineLog(incoming()) && isSelfOrAuthorizedMedicineDelegate(incoming()) &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      // Re-logging an already-logged dose (e.g. correcting Skipped -> Taken, or a second family
+      // member re-tapping after someone else already logged it) is a `setDoc` overwrite of an
+      // EXISTING doc, which Firestore evaluates as an update, not a create — without this rule that
+      // overwrite was silently denied, and the app has no error UI on this path, so the tap just
+      // looked like it did nothing.
+      allow update: if isSignedIn() && isValidMedicineLog(incoming()) && isSelfOrAuthorizedMedicineDelegate(incoming()) &&
+        existing().userId == incoming().userId && existing().medicineId == incoming().medicineId &&
+        existing().doseTimeId == incoming().doseTimeId && existing().dateStr == incoming().dateStr &&
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId));
     }
 

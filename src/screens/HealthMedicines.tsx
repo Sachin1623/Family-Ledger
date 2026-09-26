@@ -1303,7 +1303,7 @@ export default function HealthMedicines() {
 
         {tab === 'medicines' && (
           <div className="space-y-4">
-            {pendingDueToday.length > 0 && (
+            {dueTodayAll.length > 0 && (
               <div className="rounded-2xl overflow-hidden shadow-sm border border-warning/30 bg-warning/5">
                 <div className="flex items-center gap-2 px-3 py-2.5 bg-warning/10">
                   <span className="material-symbols-outlined text-[18px] text-warning shrink-0">notifications_active</span>
@@ -1311,8 +1311,9 @@ export default function HealthMedicines() {
                   <span className="shrink-0 text-[10px] font-black rounded-full px-2 py-0.5 bg-warning/20 text-warning">{pendingDueToday.length}</span>
                 </div>
                 <div className="p-2.5 space-y-2">
-                  {pendingDueToday.map(({ medicine, doseTime }) => {
+                  {dueTodayAll.map(({ medicine, doseTime }) => {
                     const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr);
+                    const log = dueTodayAllLogsById.get(id);
                     return (
                       <div key={id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-2.5 flex items-center gap-2.5">
                         <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
@@ -1322,20 +1323,32 @@ export default function HealthMedicines() {
                           <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
                           <p className="text-[13px] font-bold text-text truncate">{formatDoseTimeDisplay(doseTime.time)} · {foodTimingLabel(doseTime.foodTiming)}</p>
                         </div>
-                        <div className="shrink-0 flex items-center gap-2.5">
-                          <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markTaken')}>
-                            <span className="w-9 h-9 rounded-full bg-success/15 text-success flex items-center justify-center">
-                              <span className="material-symbols-outlined text-[20px]">check</span>
+                        {log ? (
+                          <div className="shrink-0 flex flex-col items-end gap-0.5">
+                            <span className={clsx('text-[11px] font-black flex items-center gap-1', log.status === 'taken' ? 'text-success' : 'text-warning')}>
+                              <span className="material-symbols-outlined text-[16px]">{log.status === 'taken' ? 'check_circle' : 'block'}</span>
+                              {log.status === 'taken' ? t('medicine.doseStatusTaken') : t('medicine.doseStatusSkipped')}
                             </span>
-                            <span className="text-[9px] font-bold text-success">{t('medicine.doseStatusTaken')}</span>
-                          </button>
-                          <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markSkipped')}>
-                            <span className="w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
-                              <span className="material-symbols-outlined text-[20px]">close</span>
-                            </span>
-                            <span className="text-[9px] font-bold text-text-muted">{t('medicine.doseStatusSkipped')}</span>
-                          </button>
-                        </div>
+                            <button type="button" onClick={() => handleUndoDose(medicine, doseTime, todayStr)} className="text-[10px] font-bold text-text-muted underline">
+                              {t('medicine.undo')}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="shrink-0 flex items-center gap-2.5">
+                            <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markTaken')}>
+                              <span className="w-9 h-9 rounded-full bg-success/15 text-success flex items-center justify-center">
+                                <span className="material-symbols-outlined text-[20px]">check</span>
+                              </span>
+                              <span className="text-[9px] font-bold text-success">{t('medicine.doseStatusTaken')}</span>
+                            </button>
+                            <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markSkipped')}>
+                              <span className="w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                                <span className="material-symbols-outlined text-[20px]">close</span>
+                              </span>
+                              <span className="text-[9px] font-bold text-text-muted">{t('medicine.doseStatusSkipped')}</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
