@@ -880,7 +880,7 @@ export default function HealthMedicines() {
     [dueTodayAll, manageTargetUid, todayStr],
   );
   // Same (userId, dateStr) shape as dueLogsValue above, for the same reason.
-  const [dueTodayAllLogsValue] = useCollection(
+  const [dueTodayAllLogsValue, , dueTodayAllLogsError] = useCollection(
     manageTargetUid ? query(collection(db, 'medicineLogs'), where('userId', '==', manageTargetUid), where('dateStr', '==', todayStr)) : null,
   );
   const dueTodayAllLogsById = useMemo(() => {
@@ -902,8 +902,10 @@ export default function HealthMedicines() {
       hasPendingWrites: dueTodayAllLogsValue?.metadata.hasPendingWrites ?? null,
       docIds: dueTodayAllLogsValue?.docs.map((d) => d.id) ?? [],
       manageTargetUid,
+      errorCode: (dueTodayAllLogsError as any)?.code ?? null,
+      errorMessage: dueTodayAllLogsError?.message ?? null,
     }).catch((err) => console.error('medlog-diag write failed:', err));
-  }, [dueTodayAllIds, dueTodayAllLogsValue, manageTargetUid, user]);
+  }, [dueTodayAllIds, dueTodayAllLogsValue, manageTargetUid, user, dueTodayAllLogsError]);
   const pendingDueToday = useMemo(
     () =>
       dueTodayAll
