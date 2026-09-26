@@ -407,6 +407,25 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId]);
 
+  // Root-caused via a live 2-device trace: the unmount cleanup above only runs on a GRACEFUL
+  // exit (navigating away, closing the tab) — it never runs if the app is force-killed, crashes,
+  // or gets killed by the OS while backgrounded, which is a completely normal way for a mobile app
+  // to go away mid-call. That leaves `inVoice: true` stuck in Firestore indefinitely. The next time
+  // ANY other player opens this screen, they see that stale flag, believe this player is already
+  // in voice, and immediately start a doomed connectToPeer() attempt against nobody — one that
+  // completes its own offer/answer/ICE dance start (since nothing rejects it) but can never reach
+  // "connected". When the real player actually taps Join later and sends a genuinely fresh offer to
+  // the very same Firestore signaling doc, the other side's peer connection already has
+  // currentRemoteDescription set from the first attempt, so `!pc.currentRemoteDescription` is false
+  // and the fresh offer is silently ignored forever — a real, reproducible "voice chat won't
+  // connect" bug, not a NAT/TURN limitation. Fixed by clearing OWN presence to false on mount,
+  // unconditionally — whatever happened last session, every fresh screen load starts from a state
+  // no other player can mistake for "already in voice".
+  useEffect(() => {
+    if (myUid && gameId) writePresence({ inVoice: false, micMuted: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myUid, gameId]);
+
   const persistVolumes = (next: { master: number; perPeer: Record<string, number> }) => {
     setVolumes(next);
     try { localStorage.setItem(VOLUME_STORAGE_KEY, JSON.stringify(next)); } catch {}
