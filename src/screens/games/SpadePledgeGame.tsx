@@ -316,6 +316,16 @@ export default function SpadePledgeGame() {
     await call('/api/spadePledge/reclaim-seat', {}).catch(() => {});
   };
 
+  const handleLeaveGame = async () => {
+    if (!window.confirm('Quit this match? A bot will take over your seat and keep playing for the rest of the match — you can come back and reclaim it anytime before it finishes.')) return;
+    try {
+      await call('/api/spadePledge/leave', {});
+      navigate('/tools?category=games');
+    } catch {
+      // error already surfaced via `error` state
+    }
+  };
+
   const handleDeleteTable = async () => {
     if (!window.confirm('Delete this table? This cannot be undone.')) return;
     try {
@@ -657,6 +667,13 @@ export default function SpadePledgeGame() {
               <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
               <VoiceChatButton voice={voice} />
               <HelpButton onClick={() => setShowHelp(true)} />
+              <button
+                onClick={handleLeaveGame}
+                aria-label="Quit Match"
+                className="w-8 h-8 flex items-center justify-center rounded-full text-text-muted hover:bg-surface"
+              >
+                <span className="material-symbols-outlined text-[18px]">logout</span>
+              </button>
             </div>
           </header>
 

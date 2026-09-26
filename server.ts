@@ -8467,6 +8467,44 @@ async function startServer() {
     }
   });
 
+  // Lets a human voluntarily quit an in-progress match. Unlike rummy13's /drop, a hand mid-trick
+  // can't be forfeited without breaking the other seats' scoring, so this reuses the exact same
+  // mechanism as two consecutive /timeout misses: the seat permanently converts to a bot and keeps
+  // playing on the leaving player's behalf for the rest of the match. If it happens to be their
+  // turn right now, drains the bot's turn immediately so nobody is left waiting on a seat that will
+  // never respond. The player can still /reclaim-seat later if they come back.
+  app.post('/api/spadePledge/leave', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const tableId = String(req.body?.gameId || '');
+    if (!tableId) return res.status(400).json({ error: 'gameId is required.' });
+
+    try {
+      const tableRef = db.collection('spadePledgeTables').doc(tableId);
+      const tableSnap = await tableRef.get();
+      if (!tableSnap.exists) return res.status(404).json({ error: 'Table not found.' });
+      const table = tableSnap.data()!;
+      if (table.status !== 'active') return res.status(400).json({ error: 'This match is not in progress.' });
+
+      const myIndex = (table.players || []).findIndex((p: any) => p.uid === decoded.uid);
+      if (myIndex === -1) return res.status(403).json({ error: 'Not part of this table.' });
+
+      if (!table.players[myIndex].isBot) {
+        const newPlayers = table.players.map((p: any, i: number) => (i === myIndex ? { ...p, isBot: true } : p));
+        await tableRef.update({ players: newPlayers });
+      }
+
+      if (table.currentDealId) {
+        await drainSpadePledgeBotTurns(db, table.currentDealId).catch((err) => console.error('drainSpadePledgeBotTurns (leave) failed:', err));
+      }
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('spadePledge/leave error:', error);
+      return res.status(500).json({ error: 'Unable to leave the match.' });
+    }
+  });
+
   // Cascades every spadePledgeDeals doc for this table (and their hands subcollections) — a table
   // can accumulate several finished hand docs by the time it's deletable.
   app.post('/api/spadePledge/delete', async (req, res) => {
