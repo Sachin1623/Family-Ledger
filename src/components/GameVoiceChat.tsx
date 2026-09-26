@@ -1,8 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { arrayUnion, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { arrayUnion, addDoc, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+
+// TEMP diagnostic: tracing a report of voice chat not connecting between two real players.
+// Writes straight to a throwaway Firestore collection since console.log doesn't reach adb logcat
+// on a release build. Remove once root-caused.
+function voiceDiag(myUid: string, peerUid: string, event: string, extra?: Record<string, unknown>) {
+  addDoc(collection(db, '_voiceDebugLog'), {
+    at: new Date().toISOString(),
+    myUid,
+    peerUid,
+    event,
+    ...extra,
+  }).catch((err) => console.error('voiceDiag write failed:', err));
+}
 
 // In-game voice chat — a WebRTC MESH (every pair of players who are both "in voice" holds a
 // direct peer connection to each other), signaled entirely through Firestore rather than a
@@ -219,6 +232,7 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     peerConnectionsRef.current.set(peerUid, pc);
     localStreamRef.current?.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    voiceDiag(myUid, peerUid, 'connectToPeer');
 
     const isA = myUid < peerUid;
     const key = pairKey(myUid, peerUid);
@@ -227,6 +241,7 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
     appliedIceCountRef.current.set(peerUid, { local: 0, remote: 0 });
 
     pc.ontrack = (event) => {
+      voiceDiag(myUid, peerUid, 'ontrack');
       const stream = event.streams[0];
       attachAnalyser(peerUid, stream);
       let el = audioElsRef.current.get(peerUid);
@@ -240,6 +255,9 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
       }
       el.srcObject = stream;
     };
+    pc.oniceconnectionstatechange = () => voiceDiag(myUid, peerUid, 'iceConnectionStateChange', { state: pc.iceConnectionState });
+    pc.onconnectionstatechange = () => voiceDiag(myUid, peerUid, 'connectionStateChange', { state: pc.connectionState });
+    pc.onicegatheringstatechange = () => voiceDiag(myUid, peerUid, 'iceGatheringStateChange', { state: pc.iceGatheringState });
 
     // Firestore's `arrayUnion` means the doc's ICE array only ever grows — track how many of MY
     // own outgoing candidates have already been written so a later snapshot (from the peer's own
@@ -247,7 +265,12 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
     const pendingLocalIce: string[] = [];
     let flushed = 0;
     pc.onicecandidate = (event) => {
-      if (!event.candidate) return;
+      if (!event.candidate) {
+        voiceDiag(myUid, peerUid, 'iceGatheringComplete', { totalCandidates: pendingLocalIce.length });
+        return;
+      }
+      const type = event.candidate.candidate.match(/typ (\w+)/)?.[1] || 'unknown';
+      voiceDiag(myUid, peerUid, 'iceCandidate', { type, protocol: event.candidate.protocol });
       pendingLocalIce.push(JSON.stringify(event.candidate));
     };
     const flushIce = window.setInterval(() => {
@@ -255,7 +278,9 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
       const toWrite = pendingLocalIce.slice(flushed);
       flushed = pendingLocalIce.length;
       updateDoc(sigRef, { [localIceField]: arrayUnion(...toWrite), updatedAt: new Date().toISOString() }).catch(() =>
-        setDoc(sigRef, { [localIceField]: toWrite, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {}),
+        setDoc(sigRef, { [localIceField]: toWrite, updatedAt: new Date().toISOString() }, { merge: true }).catch((err) =>
+          voiceDiag(myUid, peerUid, 'iceWriteFailed', { message: String(err) }),
+        ),
       );
     }, 500);
     pc.addEventListener('connectionstatechange', () => {
@@ -271,23 +296,29 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
       try {
         if (isA) {
           if (data.answerFromB && !pc.currentRemoteDescription) {
+            voiceDiag(myUid, peerUid, 'settingRemoteAnswer');
             await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(data.answerFromB)));
           }
           const remoteIce: string[] = data.iceFromB || [];
           remoteIce.slice(applied.remote).forEach((c) => tryAddIce(pc, c));
+          if (remoteIce.length > applied.remote) voiceDiag(myUid, peerUid, 'appliedRemoteIce', { count: remoteIce.length - applied.remote });
           applied.remote = remoteIce.length;
         } else {
           if (data.offerFromA && !pc.currentRemoteDescription) {
+            voiceDiag(myUid, peerUid, 'settingRemoteOffer');
             await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(data.offerFromA)));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             await setDoc(sigRef, { answerFromB: JSON.stringify(answer), updatedAt: new Date().toISOString() }, { merge: true });
+            voiceDiag(myUid, peerUid, 'sentAnswer');
           }
           const remoteIce: string[] = data.iceFromA || [];
           remoteIce.slice(applied.remote).forEach((c) => tryAddIce(pc, c));
+          if (remoteIce.length > applied.remote) voiceDiag(myUid, peerUid, 'appliedRemoteIce', { count: remoteIce.length - applied.remote });
           applied.remote = remoteIce.length;
         }
       } catch (err) {
+        voiceDiag(myUid, peerUid, 'signalingError', { message: String(err) });
         console.error('Voice signaling error with peer', peerUid, err);
       }
       appliedIceCountRef.current.set(peerUid, applied);
@@ -300,7 +331,9 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           await setDoc(sigRef, { offerFromA: JSON.stringify(offer), updatedAt: new Date().toISOString() }, { merge: true });
+          voiceDiag(myUid, peerUid, 'sentOffer');
         } catch (err) {
+          voiceDiag(myUid, peerUid, 'offerFailed', { message: String(err) });
           console.error('Failed to create voice offer:', err);
         }
       })();
@@ -318,9 +351,11 @@ export function useGameVoice(collectionName: string, gameId: string | undefined,
       localStreamRef.current = stream;
       attachAnalyser('self', stream);
       setJoined(true);
+      if (myUid) voiceDiag(myUid, 'n/a', 'joined', { peersInVoiceAtJoin: peersInVoice.join(',') });
       writePresence({ inVoice: true, micMuted: false });
       peersInVoice.forEach((uid) => connectToPeer(uid));
     } catch (err) {
+      if (myUid) voiceDiag(myUid, 'n/a', 'getUserMediaFailed', { message: String(err) });
       console.error('Failed to join voice chat:', err);
       setError('Could not access your microphone — check app permissions.');
     } finally {
