@@ -44,5 +44,11 @@ export async function hardReloadApp(): Promise<void> {
   } catch (err) {
     console.error('hardReloadApp cleanup failed:', err);
   }
-  window.location.reload();
+  // A plain reload() can still be answered from an in-memory/disk cache on some Android WebViews
+  // regardless of index.html's `no-store` header — a cache-busting query param forces this to be
+  // treated as a URL the browser has never seen, so it can't be served from any cache layer
+  // between here and the server, guaranteeing the fetch is genuinely fresh.
+  const url = new URL(window.location.href);
+  url.searchParams.set('_r', Date.now().toString());
+  window.location.replace(url.toString());
 }
