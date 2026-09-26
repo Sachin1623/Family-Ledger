@@ -691,6 +691,84 @@ export default function HealthMedicines() {
     fireWrite(batch.commit(), 'delete incident');
   };
 
+  // --- Transfer an incident (and everything under it) to a different person ---
+  // Scoped to "yourself, or anyone you're already a delegate for" — matches the trust boundary
+  // firestore.rules enforces (medicines.userId already allowed this; medicalIncidents.userId was
+  // opened up to match, see its own rule comment). Medicine docs are a plain field update (their
+  // own id doesn't encode an owner), but medicineLogs' id is `medicineLogId(userId, ...)` — moving
+  // one to a new owner means a different id, so each log is a delete-old + create-new, not an
+  // update. Recomputes groupId/sharedFriendUids against the NEW owner's current sharing settings
+  // (the old owner's sharing preferences aren't meaningful for someone else's medicines) — same
+  // logic handleSaveSharing already uses when a medicine's own dates fall in/out of an active
+  // share window.
+  const [transferringIncident, setTransferringIncident] = useState<MedicalIncident | null>(null);
+  const [transferring, setTransferring] = useState(false);
+  const transferTargets = useMemo(
+    () => (user ? [{ userId: user.uid, displayName: t('health.myself') }, ...delegatorsForMe] : []),
+    [user, delegatorsForMe, t],
+  );
+  const handleTransferIncident = async (inc: MedicalIncident, newOwnerUid: string) => {
+    if (!user || newOwnerUid === inc.userId) return;
+    setTransferring(true);
+    try {
+      const newOwnerShareSnap = await getDoc(doc(db, 'medicineShareSettings', newOwnerUid));
+      const newOwnerShare: MedicineShareSettings = (newOwnerShareSnap.data()?.medicine as any) || DEFAULT_MEDICINE_SHARE_SETTINGS;
+      const nextGroupIdFor = (dateStr: string) => (isMedicineShareActiveForDate(newOwnerShare, dateStr) ? newOwnerShare.groupId : null);
+      const nextFriendUidsFor = (dateStr: string) => (isMedicineShareActiveForDate(newOwnerShare, dateStr) ? newOwnerShare.friendUids : []);
+
+      const meds = medicines.filter((m) => m.incidentId === inc.id && m.userId === inc.userId);
+      const medIds = new Set(meds.map((m) => m.id));
+      const logs = allLogs.filter((l) => medIds.has(l.medicineId));
+
+      await updateDoc(doc(db, 'medicalIncidents', inc.id), { userId: newOwnerUid, loggedBy: user.uid });
+
+      for (const group of chunk(meds, 400)) {
+        const batch = writeBatch(db);
+        group.forEach((m) => {
+          batch.update(doc(db, 'medicines', m.id), {
+            userId: newOwnerUid,
+            loggedBy: user.uid,
+            groupId: nextGroupIdFor(m.startDate),
+            sharedFriendUids: nextFriendUidsFor(m.startDate),
+          });
+        });
+        await batch.commit();
+      }
+
+      for (const group of chunk(logs, 200)) {
+        const batch = writeBatch(db);
+        group.forEach((l) => {
+          const newId = medicineLogId(newOwnerUid, l.medicineId, l.doseTimeId, l.dateStr);
+          batch.set(doc(db, 'medicineLogs', newId), {
+            userId: newOwnerUid,
+            loggedBy: user.uid,
+            groupId: nextGroupIdFor(l.dateStr),
+            sharedFriendUids: nextFriendUidsFor(l.dateStr),
+            medicineId: l.medicineId,
+            medicineName: l.medicineName,
+            doseTimeId: l.doseTimeId,
+            doseLabel: l.doseLabel,
+            scheduledTime: l.scheduledTime,
+            status: l.status,
+            dateStr: l.dateStr,
+            loggedAt: l.loggedAt,
+            notes: l.notes ?? null,
+            createdAt: l.createdAt,
+          });
+          batch.delete(doc(db, 'medicineLogs', l.id));
+        });
+        await batch.commit();
+      }
+
+      setTransferringIncident(null);
+    } catch (err) {
+      console.error('Failed to transfer incident:', err);
+      alert(t('medicine.transferFailed'));
+    } finally {
+      setTransferring(false);
+    }
+  };
+
   const manageMedicines = useMemo(
     () =>
       medicines
@@ -1233,6 +1311,11 @@ export default function HealthMedicines() {
                   <button type="button" onClick={() => openEditIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1">
                     <span className="material-symbols-outlined text-[12px]">edit</span>{t('common.edit')}
                   </button>
+                  {transferTargets.some((tgt) => tgt.userId !== incident.userId) && (
+                    <button type="button" onClick={() => setTransferringIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[12px]">sync_alt</span>{t('medicine.transferIncident')}
+                    </button>
+                  )}
                   <button type="button" onClick={() => handleDeleteIncident(incident)} className="text-[10px] font-bold text-error flex items-center gap-1">
                     <span className="material-symbols-outlined text-[12px]">delete</span>{t('medicine.deleteIncident')}
                   </button>
@@ -1959,6 +2042,33 @@ export default function HealthMedicines() {
             <button type="button" onClick={handleSaveIncident} disabled={savingIncident || !incidentFormName.trim()} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
               {savingIncident ? t('common.saving') : t('common.save')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {transferringIncident && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !transferring && setTransferringIncident(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-black text-primary flex-1">{t('medicine.transferIncident')}</h2>
+              <button type="button" onClick={() => setTransferringIncident(null)} disabled={transferring} className="text-text-muted shrink-0"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <p className="text-xs text-text-muted">{t('medicine.transferIncidentHint', { name: transferringIncident.name })}</p>
+            <div className="space-y-1.5">
+              {transferTargets.filter((tgt) => tgt.userId !== transferringIncident.userId).map((tgt) => (
+                <button
+                  key={tgt.userId}
+                  type="button"
+                  disabled={transferring}
+                  onClick={() => handleTransferIncident(transferringIncident, tgt.userId)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 bg-surface rounded-xl text-sm font-bold text-on-surface hover:bg-surface-container-high transition-colors text-left disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[18px] text-text-muted">person</span>
+                  {tgt.displayName}
+                </button>
+              ))}
+            </div>
+            {transferring && <p className="text-[11px] text-text-muted text-center">{t('medicine.transferring')}</p>}
           </div>
         </div>
       )}

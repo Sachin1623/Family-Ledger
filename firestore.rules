@@ -856,10 +856,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidMedicalIncident(incoming()) &&
         incoming().loggedBy == request.auth.uid &&
         (incoming().userId == request.auth.uid || isMedicineDelegateFor(incoming().userId));
+      // userId is allowed to change (transferring an incident — and everything under it — to a
+      // different person) under the same safe condition medicines.userId already uses: the NEW
+      // owner must be either the requester themself or someone the requester is already a
+      // delegate for, never an arbitrary uid.
       allow update: if isSignedIn() && isValidMedicalIncident(incoming()) &&
         incoming().loggedBy == request.auth.uid &&
         (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId)) &&
-        incoming().userId == existing().userId;
+        (incoming().userId == existing().userId || incoming().userId == request.auth.uid || isMedicineDelegateFor(incoming().userId));
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().loggedBy == request.auth.uid || isMedicineDelegateFor(existing().userId));
     }
 
