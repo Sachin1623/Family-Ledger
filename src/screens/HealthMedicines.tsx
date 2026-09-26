@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
-import { collection, query, where, documentId, doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch, addDoc } from 'firebase/firestore';
+import { collection, query, where, doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch, addDoc } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
@@ -849,8 +849,16 @@ export default function HealthMedicines() {
     () => dueToday.map(({ medicine, doseTime }) => medicineLogId(manageTargetUid, medicine.id, doseTime.id, logDate)),
     [dueToday, manageTargetUid, logDate],
   );
+  // Queries by (userId, dateStr) rather than an `in` filter over `dueTodayIds` — most of those ids
+  // point at doses that haven't been logged yet, so the id list is mostly NON-existent document
+  // paths. A live device trace showed that shape of `in`-over-documentId() listener intermittently
+  // resetting to an empty result ~450ms after correctly finding a match, on every single app
+  // launch, with the id list itself unchanged throughout — a real-time listener reliability issue
+  // specific to that query shape. Querying by plain field equality against documents that actually
+  // exist sidesteps it entirely, and firestore.rules' per-document read check doesn't care which
+  // query shape found the doc.
   const [dueLogsValue] = useCollection(
-    dueTodayIds.length > 0 ? query(collection(db, 'medicineLogs'), where(documentId(), 'in', dueTodayIds.slice(0, 30))) : null,
+    manageTargetUid ? query(collection(db, 'medicineLogs'), where('userId', '==', manageTargetUid), where('dateStr', '==', logDate)) : null,
   );
   const dueLogsById = useMemo(() => {
     const map = new Map<string, MedicineLog>();
@@ -871,8 +879,9 @@ export default function HealthMedicines() {
     () => dueTodayAll.map(({ medicine, doseTime }) => medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr)),
     [dueTodayAll, manageTargetUid, todayStr],
   );
+  // Same (userId, dateStr) shape as dueLogsValue above, for the same reason.
   const [dueTodayAllLogsValue] = useCollection(
-    dueTodayAllIds.length > 0 ? query(collection(db, 'medicineLogs'), where(documentId(), 'in', dueTodayAllIds.slice(0, 30))) : null,
+    manageTargetUid ? query(collection(db, 'medicineLogs'), where('userId', '==', manageTargetUid), where('dateStr', '==', todayStr)) : null,
   );
   const dueTodayAllLogsById = useMemo(() => {
     const map = new Map<string, MedicineLog>();
