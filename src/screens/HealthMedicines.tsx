@@ -879,6 +879,18 @@ export default function HealthMedicines() {
     dueTodayAllLogsValue?.docs.forEach((d) => map.set(d.id, { id: d.id, ...(d.data() as any) } as MedicineLog));
     return map;
   }, [dueTodayAllLogsValue]);
+  // TEMP diagnostic: tracing a report of a dose's Taken badge flipping back to "not logged"
+  // shortly after a correct first render. Logs every snapshot this query delivers, remove once
+  // root-caused.
+  useEffect(() => {
+    console.log('[medlog-diag] dueTodayAllIds=', JSON.stringify(dueTodayAllIds));
+    console.log(
+      '[medlog-diag] snapshot fromCache=', dueTodayAllLogsValue?.metadata.fromCache,
+      'hasPendingWrites=', dueTodayAllLogsValue?.metadata.hasPendingWrites,
+      'docIds=', JSON.stringify(dueTodayAllLogsValue?.docs.map((d) => d.id)),
+      'manageTargetUid=', manageTargetUid,
+    );
+  }, [dueTodayAllIds, dueTodayAllLogsValue, manageTargetUid]);
   const pendingDueToday = useMemo(
     () =>
       dueTodayAll
