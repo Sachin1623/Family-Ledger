@@ -886,6 +886,19 @@ export default function HealthMedicines() {
         .sort((a, b) => a.doseTime.time.localeCompare(b.doseTime.time)),
     [dueTodayAll, dueTodayAllLogsById, manageTargetUid, todayStr],
   );
+  // Groups the "Due Today" banner by scheduled clock time (earliest first) instead of listing
+  // every medicine flat — several medicines sharing an 8am/3pm/9pm slot is the common case, and a
+  // caregiver thinks in "what's due at 10am" batches, not one long undifferentiated list.
+  const dueTodayGrouped = useMemo(() => {
+    const byTime = new Map<string, { medicine: Medicine; doseTime: MedicineDoseTime }[]>();
+    for (const item of dueTodayAll) {
+      const key = item.doseTime.time;
+      if (!byTime.has(key)) byTime.set(key, []);
+      byTime.get(key)!.push(item);
+    }
+    return [...byTime.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [dueTodayAll],
+  );
 
   const handleMarkDose = async (medicine: Medicine, doseTime: MedicineDoseTime, status: MedicineLogStatus, dateStr: string = logDate) => {
     if (!user) return;
@@ -1310,48 +1323,61 @@ export default function HealthMedicines() {
                   <span className="flex-1 min-w-0 text-sm font-bold text-primary truncate">{t('medicine.dueTodayTitle')}</span>
                   <span className="shrink-0 text-[10px] font-black rounded-full px-2 py-0.5 bg-warning/20 text-warning">{pendingDueToday.length}</span>
                 </div>
-                <div className="p-2.5 space-y-2">
-                  {dueTodayAll.map(({ medicine, doseTime }) => {
-                    const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr);
-                    const log = dueTodayAllLogsById.get(id);
-                    return (
-                      <div key={id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-2.5 flex items-center gap-2.5">
-                        <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
-                          <span className="material-symbols-outlined text-[18px]">medication</span>
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
-                          <p className="text-[13px] font-bold text-text truncate">{formatDoseTimeDisplay(doseTime.time)} · {foodTimingLabel(doseTime.foodTiming)}</p>
-                        </div>
-                        {log ? (
-                          <div className="shrink-0 flex flex-col items-end gap-0.5">
-                            <span className={clsx('text-[11px] font-black flex items-center gap-1', log.status === 'taken' ? 'text-success' : 'text-warning')}>
-                              <span className="material-symbols-outlined text-[16px]">{log.status === 'taken' ? 'check_circle' : 'block'}</span>
-                              {log.status === 'taken' ? t('medicine.doseStatusTaken') : t('medicine.doseStatusSkipped')}
+                <div className="p-2.5 space-y-3">
+                  {dueTodayGrouped.map(([time, items]) => (
+                    <div key={time} className="space-y-2">
+                      <p className="text-[10px] font-black text-text-muted uppercase tracking-wider px-1">{formatDoseTimeDisplay(time)}</p>
+                      {items.map(({ medicine, doseTime }) => {
+                        const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr);
+                        const log = dueTodayAllLogsById.get(id);
+                        return (
+                          <div
+                            key={id}
+                            className={clsx(
+                              'rounded-2xl border border-l-[5px] shadow-sm p-2.5 flex items-center gap-2.5',
+                              !log && 'bg-white border-border-subtle border-l-border-subtle',
+                              log?.status === 'taken' && 'bg-success/5 border-success/20 border-l-success',
+                              log?.status === 'skipped' && 'bg-warning/5 border-warning/20 border-l-warning',
+                            )}
+                          >
+                            <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[18px]">medication</span>
                             </span>
-                            <button type="button" onClick={() => handleUndoDose(medicine, doseTime, todayStr)} className="text-[10px] font-bold text-text-muted underline">
-                              {t('medicine.undo')}
-                            </button>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
+                              <p className="text-[13px] font-bold text-text truncate">{foodTimingLabel(doseTime.foodTiming)}</p>
+                            </div>
+                            {log ? (
+                              <div className="shrink-0 flex flex-col items-end gap-0.5">
+                                <span className={clsx('text-[11px] font-black flex items-center gap-1', log.status === 'taken' ? 'text-success' : 'text-warning')}>
+                                  <span className="material-symbols-outlined text-[16px]">{log.status === 'taken' ? 'check_circle' : 'block'}</span>
+                                  {log.status === 'taken' ? t('medicine.doseStatusTaken') : t('medicine.doseStatusSkipped')}
+                                </span>
+                                <button type="button" onClick={() => handleUndoDose(medicine, doseTime, todayStr)} className="text-[10px] font-bold text-text-muted underline">
+                                  {t('medicine.undo')}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="shrink-0 flex items-center gap-2.5">
+                                <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markTaken')}>
+                                  <span className="w-9 h-9 rounded-full bg-success/15 text-success flex items-center justify-center">
+                                    <span className="material-symbols-outlined text-[20px]">check</span>
+                                  </span>
+                                  <span className="text-[9px] font-bold text-success">{t('medicine.doseStatusTaken')}</span>
+                                </button>
+                                <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markSkipped')}>
+                                  <span className="w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                                    <span className="material-symbols-outlined text-[20px]">close</span>
+                                  </span>
+                                  <span className="text-[9px] font-bold text-text-muted">{t('medicine.doseStatusSkipped')}</span>
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        ) : (
-                          <div className="shrink-0 flex items-center gap-2.5">
-                            <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markTaken')}>
-                              <span className="w-9 h-9 rounded-full bg-success/15 text-success flex items-center justify-center">
-                                <span className="material-symbols-outlined text-[20px]">check</span>
-                              </span>
-                              <span className="text-[9px] font-bold text-success">{t('medicine.doseStatusTaken')}</span>
-                            </button>
-                            <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markSkipped')}>
-                              <span className="w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
-                                <span className="material-symbols-outlined text-[20px]">close</span>
-                              </span>
-                              <span className="text-[9px] font-bold text-text-muted">{t('medicine.doseStatusSkipped')}</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
