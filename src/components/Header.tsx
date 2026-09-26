@@ -177,24 +177,28 @@ export default function Header() {
       //
       // Both direct children below are `shrink-0` (deliberately — see the comment on the left one),
       // so on a narrow enough device their combined natural width (back button + logo on the left,
-      // up to 5 icon buttons + the profile badge on the right) can exceed the viewport. Without
-      // `overflow-x-auto` that just silently clips whatever's rightmost — the profile badge, since
-      // it's the last child — off the edge of the screen with no way to reach it. `no-scrollbar`
-      // (index.css) hides the scrollbar so this reads as "everything fits" on every device that
-      // genuinely has room, and only reveals a swipeable row on the few narrow ones that don't —
-      // same idiom already used elsewhere in this app for horizontal-scroll strips.
-      "sticky top-0 z-50 border-b px-4 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 flex items-center justify-between min-h-[60px] transition-colors overflow-x-auto no-scrollbar",
+      // up to 5 icon buttons + the profile badge on the right) can exceed the viewport. This used to
+      // rely on `overflow-x-auto no-scrollbar` as a silent horizontal-scroll fallback, reasoning
+      // that "it only shows up on the few narrow devices that don't have room" — but on real
+      // devices (reported: profile badge barely visible/cut off at the right edge) that fallback
+      // was the bug, not a mitigation: `no-scrollbar` hides ANY indication there's more to see, so
+      // users had no way to discover they could swipe to reach their own profile icon. The icon
+      // sizes/gaps/padding below are trimmed specifically so the full row (back + logo + up to 4
+      // icon buttons + the profile badge) fits within ~360px content width, the narrowest Android
+      // viewport in real use — `overflow-x-auto` stays only as a genuine last-resort safety net for
+      // anything narrower than that, not the primary fit strategy.
+      "sticky top-0 z-50 border-b px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 flex items-center justify-between min-h-[60px] transition-colors overflow-x-auto no-scrollbar",
       shopMode ? "bg-[#7C3AED]/5 border-[#7C3AED]/20" : "bg-white border-border-subtle",
     )}>
       {/* `shrink-0` here is load-bearing — without it, this side has no protection against the
           right-hand icon cluster's natural width, and flexbox squeezes THIS side (specifically
           the logo <img>, a replaced element that visually shrinks to fit) instead of ever
           admitting the icon cluster doesn't fit. The logo must always render at its real size. */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0">
         {!isHome && !isLogin && (
           <button
             onClick={() => navigate(getParentPath(location.pathname, location.search))}
-            className="w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-primary transition-colors shrink-0"
+            className="w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-primary transition-colors shrink-0"
           >
             {/* Material Symbols glyphs don't auto-mirror for RTL — a horizontal flip reads
                 correctly since arrow_back is a simple directional chevron shape. */}
@@ -203,11 +207,11 @@ export default function Header() {
         )}
         {/* logo.svg's own viewBox is 400x120 (a wide wordmark, not square) — `w-10 h-10` (a
             square box) was a real regression: object-contain then letterboxes it down to a
-            sliver instead of showing the wordmark at readable size. `h-10 w-auto` lets it size
+            sliver instead of showing the wordmark at readable size. `h-9 w-auto` lets it size
             to its natural ~3.3:1 ratio, so it actually reads as "FamilyLedger" again. */}
         <div
           onClick={() => navigate(shopMode ? '/shop/sales' : '/')}
-          className="h-10 shrink-0 cursor-pointer transform active:scale-95 transition-transform"
+          className="h-9 shrink-0 cursor-pointer transform active:scale-95 transition-transform"
         >
           <img src="/logo.svg" alt="FamilyLedger" className="h-full w-auto object-contain" />
         </div>
@@ -222,7 +226,7 @@ export default function Header() {
           icon next to the bell (moved out of the menu per feedback — it's used often enough to
           deserve one tap, not two). This row's remaining elements are the reload nudge, search,
           the bell, the menu trigger, and the combined profile/level/coins badge. */}
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
         {user && updateAvailable && (
           <button
             onClick={async () => {
@@ -230,7 +234,7 @@ export default function Header() {
               await hardReloadApp();
             }}
             disabled={reloadingFromHeader}
-            className="w-10 h-10 rounded-full bg-error text-white flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-60 animate-pulse"
+            className="w-9 h-9 rounded-full bg-error text-white flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-60 animate-pulse"
             title={t('update.available')}
           >
             <span className={clsx('material-symbols-outlined', reloadingFromHeader && 'animate-spin')}>
@@ -242,7 +246,7 @@ export default function Header() {
           <button
             data-tour="header-search"
             onClick={() => setSearchOpen(true)}
-            className="w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+            className="w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
             title={t('header.search')}
           >
             <span className="material-symbols-outlined">search</span>
@@ -255,7 +259,7 @@ export default function Header() {
               setFeedGroupId(undefined);
               setFeedOpen(true);
             }}
-            className="relative w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+            className="relative w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
             title={t('feed.title')}
           >
             <span className="material-symbols-outlined">notifications</span>
@@ -270,7 +274,7 @@ export default function Header() {
           <div className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}
-              className="relative w-10 h-10 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+              className="relative w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
               title="Menu"
             >
               <span className="material-symbols-outlined">menu</span>
@@ -479,7 +483,7 @@ export default function Header() {
         {user && shopMode && (
           <button
             onClick={() => navigate('/profile')}
-            className="w-10 h-10 rounded-full bg-primary/5 flex items-center justify-center text-primary hover:bg-primary/10 transition-all overflow-hidden border border-primary/20 active:scale-95 shrink-0"
+            className="w-9 h-9 rounded-full bg-primary/5 flex items-center justify-center text-primary hover:bg-primary/10 transition-all overflow-hidden border border-primary/20 active:scale-95 shrink-0"
             title="View Profile"
           >
             {profileImage ? (
