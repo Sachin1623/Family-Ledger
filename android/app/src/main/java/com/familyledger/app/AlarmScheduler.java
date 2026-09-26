@@ -37,16 +37,19 @@ class AlarmScheduler {
         if (am == null) return;
         long trigger = computeNextTrigger(hour, minute, parseWeekdays(weekdaysCsv), intervalDays, startDate);
         PendingIntent pi = buildPendingIntent(context, id, title, body, hour, minute, weekdaysCsv, intervalDays, startDate, route);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
-            // Same graceful fallback as @capacitor/local-notifications uses elsewhere in this app
-            // (see LocalNotificationManager.setExactIfPossible) — an inexact alarm still fires,
-            // just not guaranteed to the minute, until the user grants "Alarms & reminders".
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
-        } else {
-            am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi);
-        }
+        // setAlarmClock() (API 21+, this app's minSdk is 24) is Android's dedicated API for genuine
+        // "alarm clock" apps — unlike setExactAndAllowWhileIdle(), it is NOT subject to Doze-mode
+        // deferral at all and doesn't depend on the user having granted the "Alarms & reminders"
+        // special permission. It also puts a persistent alarm-clock icon in the status bar, which
+        // in practice makes OEM battery managers (ColorOS/OxygenOS, seen killing an
+        // setExactAndAllowWhileIdle alarm outright on a Vivo device, and suspected on a OnePlus one
+        // too, despite standard Doze whitelisting + exact-alarm permission both already granted)
+        // far less likely to treat this as a killable background task — the OS itself is visibly
+        // vouching for it. `showIntent` is what launches if the user taps that status-bar icon
+        // before the alarm fires; opening the app plainly is enough; AlarmReceiver/AlarmActivity
+        // still own everything about what actually happens when it fires.
+        PendingIntent showIntent = buildShowIntent(context, id);
+        am.setAlarmClock(new AlarmManager.AlarmClockInfo(trigger, showIntent), pi);
     }
 
     /**
@@ -72,13 +75,8 @@ class AlarmScheduler {
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
         long trigger = System.currentTimeMillis() + (long) delayMinutes * 60_000L;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
-        } else {
-            am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi);
-        }
+        PendingIntent showIntent = buildShowIntent(context, id);
+        am.setAlarmClock(new AlarmManager.AlarmClockInfo(trigger, showIntent), pi);
     }
 
     static void cancel(Context context, int id) {
@@ -133,6 +131,17 @@ class AlarmScheduler {
         intent.putExtra(AlarmReceiver.EXTRA_ROUTE, route);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
         return PendingIntent.getBroadcast(context, id, intent, flags);
+    }
+
+    // setAlarmClock()'s required "show" intent — what launches if the user taps the status-bar
+    // alarm-clock icon before it fires. A plain app launch is enough; distinct request-code space
+    // (2_000_000_000 + id) so it never collides with this alarm's own broadcast PendingIntent or a
+    // snoozed one's (1_000_000_000 + id).
+    private static PendingIntent buildShowIntent(Context context, int id) {
+        Intent intent = new Intent(context, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_IMMUTABLE : 0);
+        return PendingIntent.getActivity(context, 2_000_000_000 + id, intent, flags);
     }
 
     private static void persist(Context context, int id, String title, String body, int hour, int minute, String weekdaysCsv, int intervalDays, String startDate, String route) {
