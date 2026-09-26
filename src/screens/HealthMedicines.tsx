@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
-import { collection, query, where, documentId, doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, documentId, doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch, addDoc } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
@@ -880,17 +880,21 @@ export default function HealthMedicines() {
     return map;
   }, [dueTodayAllLogsValue]);
   // TEMP diagnostic: tracing a report of a dose's Taken badge flipping back to "not logged"
-  // shortly after a correct first render. Logs every snapshot this query delivers, remove once
-  // root-caused.
+  // shortly after a correct first render. console.log doesn't reach logcat on this release build
+  // (Capacitor suppresses WebView console forwarding by default), so this writes each snapshot
+  // straight to a throwaway Firestore collection instead. Remove once root-caused.
   useEffect(() => {
-    console.log('[medlog-diag] dueTodayAllIds=', JSON.stringify(dueTodayAllIds));
-    console.log(
-      '[medlog-diag] snapshot fromCache=', dueTodayAllLogsValue?.metadata.fromCache,
-      'hasPendingWrites=', dueTodayAllLogsValue?.metadata.hasPendingWrites,
-      'docIds=', JSON.stringify(dueTodayAllLogsValue?.docs.map((d) => d.id)),
-      'manageTargetUid=', manageTargetUid,
-    );
-  }, [dueTodayAllIds, dueTodayAllLogsValue, manageTargetUid]);
+    if (!user) return;
+    addDoc(collection(db, '_medDebugLog'), {
+      at: new Date().toISOString(),
+      uid: user.uid,
+      dueTodayAllIds,
+      fromCache: dueTodayAllLogsValue?.metadata.fromCache ?? null,
+      hasPendingWrites: dueTodayAllLogsValue?.metadata.hasPendingWrites ?? null,
+      docIds: dueTodayAllLogsValue?.docs.map((d) => d.id) ?? [],
+      manageTargetUid,
+    }).catch((err) => console.error('medlog-diag write failed:', err));
+  }, [dueTodayAllIds, dueTodayAllLogsValue, manageTargetUid, user]);
   const pendingDueToday = useMemo(
     () =>
       dueTodayAll

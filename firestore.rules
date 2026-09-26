@@ -2606,5 +2606,14 @@ service cloud.firestore {
       allow create, update: if isSignedIn() && incoming().uid == request.auth.uid;
       allow delete: if false;
     }
+
+    // TEMP — diagnostic-only collection for tracing a Due Today sync bug (client console.log
+    // doesn't reach logcat on this release build, so writing straight to Firestore is the only
+    // channel that works). Remove this block once the bug is root-caused.
+    match /_medDebugLog/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
   }
 }
