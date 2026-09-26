@@ -14011,10 +14011,12 @@ async function startServer() {
   // learns a new deploy has landed, without polling. Guarded to Cloud Run only (`K_REVISION` is
   // absent from local `npm start`) so a local dev server never overwrites the real production
   // marker with a value every real user's tab would then treat as "newer" than what they're
-  // actually running.
+  // actually running. `DEPLOY_CHANGELOG` is set via `--update-env-vars` on the `gcloud run deploy`
+  // that ships this revision — a one-line summary of what changed, shown in the update popup.
   if (adminDb && process.env.K_REVISION) {
     adminDb.collection('app_config').doc('webBuild').set({
       revision: process.env.K_REVISION,
+      changelog: process.env.DEPLOY_CHANGELOG || null,
       updatedAt: new Date().toISOString(),
     }).catch((err) => console.error('Failed to stamp app_config/webBuild:', err));
   }

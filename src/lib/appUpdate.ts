@@ -23,8 +23,12 @@ export function useAppUpdateAvailable() {
   // 'local' is what /api/build-info reports outside Cloud Run (no K_REVISION) — never treat that
   // as stale, or every local dev session would flag an update forever.
   const available = !!(latestRevision && myRevision && latestRevision !== myRevision && myRevision !== 'local');
+  // One-line summary of what shipped in this revision — set via the DEPLOY_CHANGELOG env var at
+  // deploy time (see server.ts's app_config/webBuild stamp). Optional: an older revision deployed
+  // before this existed simply has no changelog field, and the popup falls back to a generic line.
+  const changelog = buildDoc?.data()?.changelog as string | undefined;
 
-  return { available };
+  return { available, changelog };
 }
 
 // Clears the service worker's precached app-shell/asset cache and reloads — deliberately NOT

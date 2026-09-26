@@ -862,6 +862,8 @@ const en = {
   'friends.confirmDeleteFamily': 'Delete this family? This removes all its members.',
 
   'update.available': 'A new version is available.',
+  'update.title': 'Update available',
+  'update.later': 'Later',
   'consent.body': "We'd like to use privacy-friendly analytics to understand how the app is used and fix problems faster. You can decline and the app works exactly the same either way. See our",
   'consent.privacyLink': 'Privacy Policy.',
   'consent.decline': 'Decline',
