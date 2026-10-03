@@ -46,12 +46,162 @@ export default function Login() {
   const [otpSent, setOtpSent] = React.useState(false);
   const [otpVerified, setOtpVerified] = React.useState(false);
   const [loginError, setLoginError] = React.useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
+  // Lazy initializer (not a useEffect) so a message passed via navigate('/login', { state: {
+  // message } }) — e.g. Profile.tsx's account-deletion confirmation — shows immediately on the
+  // very first render, with no blocking alert() anywhere in the chain that triggered it.
+  const [statusMessage, setStatusMessage] = React.useState<string | null>(() => (location.state as any)?.message || null);
   const [resetToken, setResetToken] = React.useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = React.useState(false);
   const [isSendingOtp, setIsSendingOtp] = React.useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = React.useState(false);
   const [agreedToTerms, setAgreedToTerms] = React.useState(false);
+
+  // Apple only ever asks "Share/Hide Email" on a given device's FIRST authorization for this
+  // app — a persistent dismiss (not per-session) so a user who's already seen and closed this
+  // doesn't keep seeing it on every return visit to the login screen, long after that one-time
+  // dialog has already come and gone for them. Best-effort: localStorage can throw/be
+  // unavailable (private browsing, blocked site data) — defaults to showing the tip in that
+  // case, which is the safe direction to fail in (an extra tip vs. a silently lost one).
+  const [showAppleEmailTip, setShowAppleEmailTip] = React.useState(() => {
+    try { return localStorage.getItem('familyledger_apple_email_tip_dismissed') !== 'true'; } catch { return true; }
+  });
+  const dismissAppleEmailTip = () => {
+    setShowAppleEmailTip(false);
+    try { localStorage.setItem('familyledger_apple_email_tip_dismissed', 'true'); } catch { /* best-effort */ }
+  };
+
+  // --- Account recovery: a paused (soft-deleted) account tried to sign in. Firebase blocks a
+  // disabled Auth user at the SDK level before this app ever sees a uid, so there's no session
+  // to prove identity with the normal way — this reuses the existing OTP infrastructure
+  // (send-otp/verify-otp's 'recover' purpose) to prove email ownership instead, then offers the
+  // three choices from Profile's "Recover deleted account" banner's own design: relink (restore
+  // everything, nothing ever moved so this is instant), delete permanently now (skip the rest
+  // of the 30-day wait), or back out and keep the option available in Profile for 30 days. A
+  // standalone panel (not woven into the `mode` state machine above) since it's triggered by an
+  // error from sign-in, not a deliberate mode switch. */
+  const [showRecoverPanel, setShowRecoverPanel] = React.useState(false);
+  const [recoverEmail, setRecoverEmail] = React.useState("");
+  const [recoverStep, setRecoverStep] = React.useState<"send" | "verify" | "choose" | "done">("send");
+  const [recoverOtp, setRecoverOtp] = React.useState("");
+  const [recoverToken, setRecoverToken] = React.useState<string | null>(null);
+  const [recoverPurgeAt, setRecoverPurgeAt] = React.useState<string | null>(null);
+  const [recoverMode, setRecoverMode] = React.useState<string | null>(null);
+  const [recoverError, setRecoverError] = React.useState<string | null>(null);
+  const [recoverBusy, setRecoverBusy] = React.useState(false);
+  const [recoverDoneMessage, setRecoverDoneMessage] = React.useState<string | null>(null);
+
+  const openRecoverPanel = (prefillEmail: string) => {
+    setRecoverEmail(prefillEmail || "");
+    setRecoverStep("send");
+    setRecoverOtp("");
+    setRecoverToken(null);
+    setRecoverPurgeAt(null);
+    setRecoverMode(null);
+    setRecoverError(null);
+    setRecoverDoneMessage(null);
+    setShowRecoverPanel(true);
+  };
+
+  // A 'hard' delete (or "delete permanently now" on top of an original soft one) sets purgeAt to
+  // the moment it was REQUESTED, not +30 days — the backend purge cron picks it up on its next
+  // run rather than instantly, so by the time someone's looking at this screen that timestamp
+  // may already be in the past. Showing "Scheduled to delete: <a time already gone by>" would
+  // read as broken, so that case gets its own "processing now" copy instead of a date.
+  const recoverPurgeDate = recoverPurgeAt ? new Date(recoverPurgeAt) : null;
+  const recoverPurgeIsFuture = recoverPurgeDate ? recoverPurgeDate.getTime() > Date.now() : false;
+  const recoverPurgeFormatted = recoverPurgeDate
+    // Can't combine dateStyle/timeStyle with timeZoneName — Intl.DateTimeFormat throws
+    // (ECMA-402 forbids mixing the style shorthands with explicit component options), so this
+    // spells out each component instead of using the shorthand.
+    ? recoverPurgeDate.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })
+    : null;
+
+  const handleSendRecoveryOtp = async () => {
+    setRecoverError(null);
+    setRecoverBusy(true);
+    try {
+      const response = await fetch("/api/send-recovery-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: recoverEmail }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setRecoverError(payload.error || "Unable to send a recovery code right now.");
+        return;
+      }
+      setRecoverStep("verify");
+    } catch (error) {
+      console.error("send-recovery-otp error:", error);
+      setRecoverError("Unable to send a recovery code right now.");
+    } finally {
+      setRecoverBusy(false);
+    }
+  };
+
+  const handleVerifyRecoveryOtp = async () => {
+    setRecoverError(null);
+    setRecoverBusy(true);
+    try {
+      const response = await fetch("/api/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: recoverEmail, code: recoverOtp, purpose: "recover" }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setRecoverError(payload.error || "Unable to verify that code.");
+        return;
+      }
+      setRecoverToken(payload.recoverToken);
+      setRecoverPurgeAt(payload.purgeAt || null);
+      setRecoverMode(payload.mode || null);
+      setRecoverStep("choose");
+    } catch (error) {
+      console.error("verify-recovery-otp error:", error);
+      setRecoverError("Unable to verify that code.");
+    } finally {
+      setRecoverBusy(false);
+    }
+  };
+
+  const handleRecoverAction = async (action: "relink" | "delete-now") => {
+    setRecoverError(null);
+    setRecoverBusy(true);
+    try {
+      const response = await fetch("/api/account/recover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: recoverEmail, recoverToken, action }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setRecoverError(payload.error || "Unable to process that request right now.");
+        return;
+      }
+      if (action === "relink") {
+        setRecoverDoneMessage("Your account is back. Sign in again with your usual credentials to pick up right where you left off.");
+      } else {
+        setRecoverDoneMessage("Got it — your account and data will be permanently deleted shortly. We'll send a confirmation to your email once it's done.");
+      }
+      setRecoverStep("done");
+    } catch (error) {
+      console.error("account/recover error:", error);
+      setRecoverError("Unable to process that request right now.");
+    } finally {
+      setRecoverBusy(false);
+    }
+  };
+
+  // Firebase throws this for ANY sign-in method once an account has been disabled (soft
+  // deletion's Auth-level block) — true for Google/Apple/email alike, so one shared check
+  // covers all three handlers' catch blocks below. Returns whether it handled the error (and
+  // routed to the recovery panel) so each catch block's own fallback error message is skipped.
+  const maybeHandleDisabledAccount = (error: any, fallbackEmail: string): boolean => {
+    if (error?.code !== "auth/user-disabled") return false;
+    openRecoverPanel(fallbackEmail);
+    return true;
+  };
 
   const from = (location.state as any)?.from || "/";
 
@@ -200,7 +350,9 @@ export default function Login() {
       navigate(from, { replace: true });
     } catch (error: any) {
       console.error("Login error:", error);
-      if (error.code === "auth/popup-blocked") {
+      if (maybeHandleDisabledAccount(error, "")) {
+        // handled — recovery panel is open
+      } else if (error.code === "auth/popup-blocked") {
         setLoginError(t('auth.errPopupBlocked'));
       } else if (
         error.code !== "auth/popup-closed-by-user" &&
@@ -250,7 +402,9 @@ export default function Login() {
       navigate(from, { replace: true });
     } catch (error: any) {
       console.error("Apple sign-in error:", error);
-      if (
+      if (maybeHandleDisabledAccount(error, "")) {
+        // handled — recovery panel is open
+      } else if (
         error.code !== "auth/popup-closed-by-user" &&
         error.code !== "1001" &&
         error.errorMessage !== "The user canceled the sign-in flow."
@@ -274,7 +428,9 @@ export default function Login() {
       navigate(from, { replace: true });
     } catch (error: any) {
       console.error("Email login error:", error);
-      if (error?.code === "auth/wrong-password") {
+      if (maybeHandleDisabledAccount(error, email)) {
+        // handled — recovery panel is open
+      } else if (error?.code === "auth/wrong-password") {
         setLoginError(t('auth.errWrongPassword'));
       } else if (
         error?.code === "auth/user-not-found" ||
@@ -549,6 +705,155 @@ export default function Login() {
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showRecoverPanel && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="w-full max-w-sm bg-white rounded-3xl shadow-xl border border-border-subtle p-6 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 bg-primary/10 text-primary rounded-2xl flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-2xl">restore</span>
+                </div>
+                <div>
+                  <h2 className="text-lg font-black text-primary">Paused account found</h2>
+                  <p className="text-xs text-text-secondary">This account was paused, not deleted yet.</p>
+                </div>
+              </div>
+
+              {recoverStep === "done" ? (
+                <>
+                  <p className="text-sm text-text-secondary leading-relaxed">{recoverDoneMessage}</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowRecoverPanel(false)}
+                    className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-all"
+                  >
+                    {t('common.done')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {recoverStep === "send" && (
+                    <p className="text-sm text-text-secondary leading-relaxed">
+                      We'll send a code to confirm it's really you before showing any options for this account.
+                    </p>
+                  )}
+                  {recoverStep === "verify" && (
+                    <p className="text-sm text-text-secondary leading-relaxed">
+                      Enter the 4-digit code we sent to <strong>{recoverEmail}</strong>.
+                    </p>
+                  )}
+                  {recoverStep === "choose" && (
+                    <>
+                      {recoverPurgeDate && (
+                        <div className="flex items-start gap-2 px-3 py-2 bg-surface rounded-xl border border-border-subtle">
+                          <span className="material-symbols-outlined text-[16px] text-text-muted mt-0.5">schedule</span>
+                          {recoverPurgeIsFuture ? (
+                            <p className="text-xs font-bold text-text-secondary leading-snug">
+                              Scheduled to delete: {recoverPurgeFormatted}
+                            </p>
+                          ) : (
+                            <p className="text-xs font-bold text-text-secondary leading-snug">
+                              This was scheduled to delete on {recoverPurgeFormatted} and may complete at any moment — link it back now if you still want to keep it.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-sm text-text-secondary leading-relaxed">
+                        {recoverMode === "hard"
+                          ? "Link it back to stop the deletion and pick up right where you left off, or let it go through."
+                          : "Link it back and pick up right where you left off, or permanently delete it now instead of waiting."}
+                      </p>
+                    </>
+                  )}
+
+                  {recoverError && <p className="text-xs font-bold text-error">{recoverError}</p>}
+
+                  {(recoverStep === "send" || recoverStep === "verify") && (
+                    <input
+                      type="email"
+                      value={recoverEmail}
+                      onChange={(e) => setRecoverEmail(e.target.value)}
+                      disabled={recoverStep === "verify"}
+                      placeholder="you@example.com"
+                      className="w-full px-4 py-3 bg-surface border border-border-subtle rounded-2xl text-sm disabled:opacity-60"
+                    />
+                  )}
+
+                  {recoverStep === "verify" && (
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={recoverOtp}
+                      onChange={(e) => setRecoverOtp(e.target.value.replace(/\D/g, ""))}
+                      placeholder="4-digit code"
+                      className="w-full px-4 py-3 bg-surface border border-border-subtle rounded-2xl text-sm text-center tracking-[0.3em] font-bold"
+                    />
+                  )}
+
+                  {recoverStep === "choose" && (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        disabled={recoverBusy}
+                        onClick={() => handleRecoverAction("relink")}
+                        className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {recoverBusy ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Link my account back"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={recoverBusy}
+                        onClick={() => handleRecoverAction("delete-now")}
+                        className="w-full py-3.5 bg-error/10 text-error font-bold rounded-2xl active:scale-95 transition-all disabled:opacity-50"
+                      >
+                        Delete permanently now
+                      </button>
+                    </div>
+                  )}
+
+                  {recoverStep === "send" && (
+                    <button
+                      type="button"
+                      disabled={recoverBusy || !recoverEmail}
+                      onClick={handleSendRecoveryOtp}
+                      className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {recoverBusy ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Send code"}
+                    </button>
+                  )}
+                  {recoverStep === "verify" && (
+                    <button
+                      type="button"
+                      disabled={recoverBusy || recoverOtp.length !== 4}
+                      onClick={handleVerifyRecoveryOtp}
+                      className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {recoverBusy ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Verify code"}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowRecoverPanel(false)}
+                    className="w-full text-xs font-bold text-text-muted"
+                  >
+                    {recoverStep === "choose"
+                      ? "Not now — you can still link it any time in the next 30 days from Profile → Recover deleted account."
+                      : "Cancel"}
+                  </button>
+                </>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -659,6 +964,25 @@ export default function Login() {
                 </>
               )}
             </button>
+          )}
+
+          {/* A light, dismissible nudge — never a blocking screen in front of Apple's own dialog
+              (see the account-recovery discussion this was built from: Apple's "Hide My Email"
+              relay address can stop forwarding later if the user revokes this app's access or
+              manages their relay addresses, with no way for us to detect that — losing the only
+              channel a paused account can be recovered through). Can't make Apple default to
+              "Share Email" — no API for that — so this is purely informational, shown right
+              before the dialog that actually makes the choice. */}
+          {Capacitor.getPlatform() === 'ios' && showAppleEmailTip && (
+            <div className="flex items-start gap-2 px-3 py-2.5 bg-primary/5 border border-primary/15 rounded-xl text-left">
+              <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">info</span>
+              <p className="flex-1 text-[11px] text-text-secondary leading-snug">
+                When Apple asks, we recommend choosing <strong>Share My Email</strong> — it's how we can reach you if you ever need to recover a paused account.
+              </p>
+              <button type="button" onClick={dismissAppleEmailTip} className="shrink-0 text-text-muted" aria-label="Dismiss">
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            </div>
           )}
 
           <button

@@ -10,6 +10,7 @@ import { trackPageView } from './lib/firebase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { ShopModeProvider } from './context/ShopModeContext';
+import { FabActionProvider } from './context/FabActionContext';
 import { LanguageProvider } from './context/LanguageContext';
 import Login from './screens/Login';
 import Dashboard from './screens/Dashboard';
@@ -30,6 +31,16 @@ import DataDeletion from './screens/DataDeletion';
 import Terms from './screens/Terms';
 import Contact from './screens/Contact';
 import Feedback from './screens/Feedback';
+import PendingActions from './screens/PendingActions';
+import AlarmsHub from './screens/AlarmsHub';
+import BabyVaccinations from './screens/BabyVaccinations';
+import AddBabyProfile from './screens/AddBabyProfile';
+import LogVaccineVisit from './screens/LogVaccineVisit';
+import VaccineVisitDetail from './screens/VaccineVisitDetail';
+import VaccineCaregivers from './screens/VaccineCaregivers';
+import VaccineReminders from './screens/VaccineReminders';
+import VaccineProfileView from './screens/VaccineProfileView';
+import VaccineDeletedBabies from './screens/VaccineDeletedBabies';
 import WeeklySummary from './screens/WeeklySummary';
 import RecurringExpenses from './screens/RecurringExpenses';
 import RecurringApprovals from './screens/RecurringApprovals';
@@ -121,6 +132,7 @@ import GameTurnIndicator from './components/GameTurnIndicator';
 import AccountGoalNudgePrompt from './components/AccountGoalNudgePrompt';
 import GlobalReminderScheduler from './components/GlobalReminderScheduler';
 import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
+import GlobalVaccineReminderScheduler from './components/GlobalVaccineReminderScheduler';
 import GlobalAlarmRingingBanner from './components/GlobalAlarmRingingBanner';
 import FeedbackRatingPrompt from './components/FeedbackRatingPrompt';
 import AppPermissionsReminder from './components/AppPermissionsReminder';
@@ -161,14 +173,14 @@ const NavigationBridge = () => {
 
   // Scroll to top on every genuine page change — React Router doesn't do this itself (unlike a
   // real multi-page site), so scrolling down on one screen, navigating away, and coming back to a
-  // DIFFERENT screen left the next screen's content scrolled down too. Resets both window scroll
-  // (most screens) and AuthenticatedLayout's own `<main overflow-y-auto>` (the actual scrolling
-  // container on screens tall enough to need it) since either could be the one that's scrolled.
-  // Keyed on pathname only, not the full location — a query-param-only change (e.g. a `?chat=1`
-  // deep link on a page you're already viewing) shouldn't yank your scroll position back to zero.
+  // DIFFERENT screen left the next screen's content scrolled down too. #route-scroll (see App's
+  // root JSX) is the ONE real scrolling container for every route now — window.scrollTo is kept
+  // alongside it only as a harmless no-op safety net, not because it's ever actually the element
+  // that scrolled. Keyed on pathname only, not the full location — a query-param-only change
+  // (e.g. a `?chat=1` deep link on a page you're already viewing) shouldn't yank scroll to zero.
   React.useEffect(() => {
     window.scrollTo(0, 0);
-    document.querySelector('main')?.scrollTo(0, 0);
+    document.getElementById('route-scroll')?.scrollTo(0, 0);
   }, [location.pathname]);
 
   // Android 15+ (targetSdk 35+) makes edge-to-edge display mandatory and Android 16 removes the
@@ -249,7 +261,14 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   if (!admin.isAdmin) return <Navigate to="/" replace />;
   return (
     <ProtectedRoute>
-      <main className="flex-1 overflow-y-auto pb-32">{children}</main>
+      {/* h-full: resolves against #route-scroll's own real, capped height (see App's root JSX),
+          so any page can size a child to "exactly the visible area" via h-full/percentage heights
+          if it needs to (e.g. a page that wants ONE of its own regions non-scrollable while another
+          scrolls). Doesn't change anything for a page that doesn't opt into that — overflow is
+          still the default `visible`, so taller-than-available content still just flows past this
+          box's bottom edge and gets caught by #route-scroll's own overflow-y-auto exactly as
+          before. */}
+      <main className="h-full pb-32">{children}</main>
       <Navigation />
     </ProtectedRoute>
   );
@@ -277,7 +296,7 @@ const AuthenticatedLayout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <ProtectedRoute>
-      <main className="flex-1 overflow-y-auto pb-32">{children}</main>
+      <main className="h-full pb-32">{children}</main>
       <Navigation />
     </ProtectedRoute>
   );
@@ -289,6 +308,7 @@ export default function App() {
       <LanguageProvider>
       <ShopModeProvider>
       <NotificationProvider>
+      <FabActionProvider>
         <Router>
           <NavigationBridge />
           <PointsToastBridge />
@@ -303,6 +323,7 @@ export default function App() {
           <GameTurnIndicator />
           <GlobalReminderScheduler />
           <GlobalMedicineReminderScheduler />
+          <GlobalVaccineReminderScheduler />
           <GlobalAlarmRingingBanner />
           <FeedbackRatingPrompt />
           <AppPermissionsReminder />
@@ -310,9 +331,23 @@ export default function App() {
           <ProfileSetupWizard />
           <OnboardingTour />
           <AccountGoalNudgePrompt />
-          <div className="min-h-screen bg-surface font-sans text-on-surface flex flex-col">
+          {/* h-dvh + overflow-hidden (not the old min-h-screen, which had no ceiling) makes this
+              the one true viewport-bounded box in the whole tree. Header stays in normal flow (it's
+              sticky, not fixed, so it still needs real space reserved above the scroll area) and
+              the div below is the SINGLE scrolling container for every route's content — public
+              and authenticated alike. Without a genuinely bounded ancestor here, `overflow-y-auto`
+              on that div (or on AuthenticatedLayout's own <main>) never actually triggers: flexbox
+              just grows the whole tree to fit its content instead of clipping it, so the browser
+              WINDOW ends up doing the scrolling instead — which is harmless for plain scrolling,
+              but breaks every `position: sticky` element inside, since a `sticky` element sticks
+              relative to its nearest ancestor that's a genuine scroll container, not to whatever
+              actually happens to be moving on screen. (Reported as "header not fixed, still
+              scrolls" — see BabyVaccinations.tsx / HealthGlucose.tsx / LogVaccineVisit.tsx's own
+              sticky headers, none of which could ever have worked before this fix.) */}
+          <div className="h-dvh bg-surface font-sans text-on-surface flex flex-col overflow-hidden">
             <Header />
             <FloatingCalculator />
+            <div id="route-scroll" className="flex-1 min-h-0 overflow-y-auto">
             <Routes>
               {/* Public & Utility Routes */}
               <Route path="/login" element={<Login />} />
@@ -340,9 +375,11 @@ export default function App() {
               <Route path="/feed" element={<AuthenticatedLayout><ActivityFeed /></AuthenticatedLayout>} />
               <Route path="/profile" element={<AuthenticatedLayout><Profile /></AuthenticatedLayout>} />
               <Route path="/feedback" element={<AuthenticatedLayout><Feedback /></AuthenticatedLayout>} />
+              <Route path="/pending-actions" element={<AuthenticatedLayout><PendingActions /></AuthenticatedLayout>} />
               <Route path="/weekly-summary" element={<AuthenticatedLayout><WeeklySummary /></AuthenticatedLayout>} />
               <Route path="/recurring-expenses" element={<AuthenticatedLayout><RecurringExpenses /></AuthenticatedLayout>} />
               <Route path="/recurring-approvals" element={<AuthenticatedLayout><RecurringApprovals /></AuthenticatedLayout>} />
+              <Route path="/alarms" element={<AuthenticatedLayout><AlarmsHub /></AuthenticatedLayout>} />
               <Route path="/todo" element={<AuthenticatedLayout><ToDoList /></AuthenticatedLayout>} />
               <Route path="/chat" element={<AuthenticatedLayout><MembersChat /></AuthenticatedLayout>} />
               <Route path="/friends" element={<AuthenticatedLayout><Friends /></AuthenticatedLayout>} />
@@ -351,6 +388,15 @@ export default function App() {
               <Route path="/health/glucose" element={<AuthenticatedLayout><HealthGlucose /></AuthenticatedLayout>} />
               <Route path="/health/blood-pressure" element={<AuthenticatedLayout><HealthBloodPressure /></AuthenticatedLayout>} />
               <Route path="/health/medicines" element={<AuthenticatedLayout><HealthMedicines /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations" element={<AuthenticatedLayout><BabyVaccinations /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/add-child" element={<AuthenticatedLayout><AddBabyProfile /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/edit-profile/:profileId" element={<AuthenticatedLayout><AddBabyProfile /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/profile/:profileId" element={<AuthenticatedLayout><VaccineProfileView /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/deleted-babies" element={<AuthenticatedLayout><VaccineDeletedBabies /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/log-visit/:profileId/:visitKey" element={<AuthenticatedLayout><LogVaccineVisit /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/visit/:profileId/:visitKey" element={<AuthenticatedLayout><VaccineVisitDetail /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/caregivers/:profileId" element={<AuthenticatedLayout><VaccineCaregivers /></AuthenticatedLayout>} />
+              <Route path="/baby-vaccinations/reminders/:profileId" element={<AuthenticatedLayout><VaccineReminders /></AuthenticatedLayout>} />
               <Route path="/u/:uid" element={<AuthenticatedLayout><PublicProfile /></AuthenticatedLayout>} />
               <Route path="/calculator" element={<AuthenticatedLayout><Calculator /></AuthenticatedLayout>} />
               <Route path="/financial-calculators" element={<AuthenticatedLayout><FinancialCalculators /></AuthenticatedLayout>} />
@@ -425,8 +471,10 @@ export default function App() {
               {/* Global Catch-all */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </div>
           </div>
         </Router>
+      </FabActionProvider>
       </NotificationProvider>
       </ShopModeProvider>
       </LanguageProvider>

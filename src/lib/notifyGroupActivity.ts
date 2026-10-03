@@ -46,6 +46,11 @@ export function notifyGroupActivity(params: {
   // whichever language the *viewer* (not the actor) has selected.
   month?: number;
   year?: number;
+  // medicine_logged only — 'taken' vs 'skipped' (server + FeedList both branch on this so a
+  // skipped dose doesn't read as "took a dose"), and whose medicine this was, for the tapped
+  // push's deep link to filter to (see pushNotifications.ts's routeNotificationTap).
+  status?: 'taken' | 'skipped';
+  ownerUid?: string;
 }) {
   try {
     auth.currentUser
@@ -78,6 +83,7 @@ export function notifyGroupActivity(params: {
     if (params.reminderTime !== undefined) data.time = params.reminderTime;
     if (params.month !== undefined) data.month = params.month;
     if (params.year !== undefined) data.year = params.year;
+    if (params.status !== undefined) data.status = params.status;
 
     addDoc(collection(db, 'activities'), {
       groupId: params.groupId,

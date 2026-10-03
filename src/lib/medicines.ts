@@ -48,6 +48,13 @@ export interface Medicine {
   notes: string | null;
   active: boolean; // manually paused/stopped independent of the duration having elapsed
   createdAt: string;
+  // Front/back photos of the actual pill/box/strip — purely so whoever's taking it (or a caregiver
+  // logging on their behalf) can visually confirm they've got the right one at dose time, same
+  // "base64 JPEG data URI on the doc, no Storage bucket" convention as every other embedded image
+  // in this app (see ImageAttachments.tsx's header comment). Two fixed slots, not the
+  // multi-attachment pattern those use — a medicine has exactly a front and a back, not a gallery.
+  photoFront: string | null;
+  photoBack: string | null;
 }
 
 export const FOOD_TIMING_OPTIONS: FoodTiming[] = ['before', 'after', 'empty', 'any'];

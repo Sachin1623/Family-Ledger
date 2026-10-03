@@ -15,6 +15,7 @@ import { useFamilies } from '../lib/useFamilies';
 import { WEEKDAY_LABELS } from '../lib/frequency';
 import { auth } from '../lib/firebase';
 import { todayLocalDateString } from '../lib/dateUtils';
+import { usePageFabAction } from '../context/FabActionContext';
 import {
   SharedReminder,
   ReminderCadence,
@@ -241,6 +242,9 @@ export default function RemindersHub() {
     setFriendSearch('');
     setShowForm(true);
   };
+  // Global floating "+" button (Navigation.tsx) becomes "New Reminder" here instead of the
+  // default "Add Expense" — see FabActionContext.tsx.
+  usePageFabAction('📌', t('reminders.newReminder'), openCreate);
   const openEdit = (r: SharedReminder) => {
     setEditing(r);
     setTitle(r.title);

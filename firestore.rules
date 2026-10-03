@@ -96,11 +96,23 @@ service cloud.firestore {
     // CALLER has been authorized by `targetUid` to log a reading or set reminders on their
     // behalf. Defined at top level (not nested in the healthDelegateSettings match block) since
     // both `users/{userId}`'s update rule and `glucoseLogs`'s create/delete rules need it.
+    // A friend-based (not group-based) health delegate grant only takes effect once the FRIEND has
+    // accepted it — see healthDelegateInvites/{ownerUid}_{friendUid}_{kind} below (added so a
+    // delegate grant shows up as a real pending action the friend must accept/reject, matching
+    // friend/group/game invites, instead of silently taking effect the moment the owner saves).
+    // Group-based delegation (any member of a chosen group) is deliberately NOT gated the same way
+    // — there's no single "who" to ask consent of for an open-ended, owner-chosen group, so that
+    // path keeps its original "owner's choice is enough" trust level.
+    function isHealthDelegateAccepted(ownerUid, kind) {
+      let path = /databases/$(database)/documents/healthDelegateInvites/$(ownerUid + '_' + request.auth.uid + '_' + kind);
+      return exists(path) && get(path).data.status == 'accepted';
+    }
+
     function isGlucoseDelegateFor(targetUid) {
       let path = /databases/$(database)/documents/healthDelegateSettings/$(targetUid);
       return isSignedIn() && exists(path) && (
         (get(path).data.glucose.groupId != null && canModifyGroup(get(path).data.glucose.groupId)) ||
-        (get(path).data.glucose.keys().hasAll(['friendUids']) && get(path).data.glucose.friendUids.hasAny([request.auth.uid]))
+        (get(path).data.glucose.keys().hasAll(['friendUids']) && get(path).data.glucose.friendUids.hasAny([request.auth.uid]) && isHealthDelegateAccepted(targetUid, 'glucose'))
       );
     }
 
@@ -111,7 +123,7 @@ service cloud.firestore {
       let path = /databases/$(database)/documents/bpDelegateSettings/$(targetUid);
       return isSignedIn() && exists(path) && (
         (get(path).data.bp.groupId != null && canModifyGroup(get(path).data.bp.groupId)) ||
-        (get(path).data.bp.keys().hasAll(['friendUids']) && get(path).data.bp.friendUids.hasAny([request.auth.uid]))
+        (get(path).data.bp.keys().hasAll(['friendUids']) && get(path).data.bp.friendUids.hasAny([request.auth.uid]) && isHealthDelegateAccepted(targetUid, 'bp'))
       );
     }
 
@@ -123,7 +135,7 @@ service cloud.firestore {
       let path = /databases/$(database)/documents/medicineDelegateSettings/$(targetUid);
       return isSignedIn() && exists(path) && (
         (get(path).data.medicine.groupId != null && canModifyGroup(get(path).data.medicine.groupId)) ||
-        (get(path).data.medicine.keys().hasAll(['friendUids']) && get(path).data.medicine.friendUids.hasAny([request.auth.uid]))
+        (get(path).data.medicine.keys().hasAll(['friendUids']) && get(path).data.medicine.friendUids.hasAny([request.auth.uid]) && isHealthDelegateAccepted(targetUid, 'medicine'))
       );
     }
 
@@ -442,14 +454,25 @@ service cloud.firestore {
       // Cancelling: only the group creator or the member who sent a given invite.
       // Accepting: the invitee themself, once they've joined (matched by email on their
       // own auth token) — lets JoinGroup.tsx mark its own invite accepted after joining.
-      allow read: if canModifyGroup(groupId);
+      // Also readable, and DECLINABLE (only), by the invitee themself via `targetUid` — set only
+      // once the invite resolves to a registered account (see server.ts's group-invite endpoint) —
+      // without this a non-member invitee couldn't even see their own pending invite for the
+      // Pending Actions screen, and had no way to decline at all (only "accept by joining" existed
+      // before). Deliberately NOT allowed to self-accept this way — accepting must still go through
+      // the real join flow below (creates the actual `members` doc), so this branch only ever
+      // permits flipping 'pending' -> 'declined', never -> 'accepted'.
+      allow read: if canModifyGroup(groupId) || (isSignedIn() && resource.data.keys().hasAll(['targetUid']) && resource.data.targetUid == request.auth.uid);
       allow create: if canModifyGroup(groupId) && isValidInvite(incoming());
-      allow update: if canModifyGroup(groupId) && (
+      allow update: if (canModifyGroup(groupId) && (
         isGroupCreator(groupId) ||
         (resource.data.keys().hasAll(['invitedBy']) && request.auth.uid == resource.data.invitedBy) ||
         (resource.data.keys().hasAll(['email']) && request.auth.token.email != null &&
          resource.data.email == request.auth.token.email.lower() &&
          incoming().diff(existing()).affectedKeys().hasOnly(['status']) && incoming().status == 'accepted')
+      )) || (
+        isSignedIn() && resource.data.keys().hasAll(['targetUid']) && resource.data.targetUid == request.auth.uid &&
+        resource.data.status == 'pending' &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status']) && incoming().status == 'declined'
       );
       allow delete: if canModifyGroup(groupId) && (isGroupCreator(groupId) || (resource.data.keys().hasAll(['invitedBy']) && request.auth.uid == resource.data.invitedBy));
 
@@ -512,8 +535,13 @@ service cloud.firestore {
     // they re-register with the same email within the 30-day retention window promised
     // in the Privacy Policy / Data Deletion pages. Only the backend (admin SDK, bypasses
     // rules) reads these — client rules here only need to allow the self-write.
+    // Written/read exclusively by the backend (Admin SDK, bypasses these rules) — see
+    // /api/account/delete, /api/account/recover, and /api/cron/purge-deleted-accounts in
+    // server.ts. The client used to write its own tombstone directly here on self-deletion;
+    // that path is retired now that soft/hard delete needs to also disable the Firebase Auth
+    // user, which only the Admin SDK can do, so there's no longer any legitimate client write.
     match /accountDeletions/{uid} {
-      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow read, write: if false;
     }
 
     // --- Admin roles ---
@@ -664,15 +692,20 @@ service cloud.firestore {
     match /glucoseLogs/{logId} {
       function isValidGlucoseLog(data) {
         return data.keys().hasAll(['userId', 'loggedBy', 'mealType', 'timing', 'value', 'loggedAt', 'createdAt']) &&
-               data.mealType in ['breakfast', 'lunch', 'dinner'] &&
-               data.timing in ['before', 'after'] &&
+               data.mealType in ['breakfast', 'lunch', 'dinner', 'random'] &&
+               // 'random' (a spot-check, no before/after meal concept) is the only mealType allowed
+               // to have a null timing — every other mealType still requires an explicit before/after.
+               (data.timing in ['before', 'after'] || (data.mealType == 'random' && data.timing == null)) &&
                data.value is number && data.value > 0 && data.value <= 1000 &&
                data.loggedAt is string &&
                data.createdAt is string &&
                (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
                (!data.keys().hasAll(['sharedFriendUids']) || data.sharedFriendUids is list) &&
                (!data.keys().hasAll(['postMealHours']) || data.postMealHours == null || data.postMealHours is number) &&
-               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500));
+               (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+               // Random readings have no meal/timing context to explain why they were taken —
+               // notes are mandatory there (enforced client-side too, see HealthGlucose.tsx).
+               (data.mealType != 'random' || (data.keys().hasAll(['notes']) && data.notes is string && data.notes.size() > 0));
       }
 
       function isSelfOrAuthorizedDelegate(data) {
@@ -812,7 +845,13 @@ service cloud.firestore {
                (!data.keys().hasAll(['dayCount']) || data.dayCount == null || data.dayCount is number) &&
                (!data.keys().hasAll(['notes']) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
                (!data.keys().hasAll(['incidentId']) || data.incidentId == null || (data.incidentId is string && data.incidentId.size() > 0)) &&
-               (!data.keys().hasAll(['intervalDays']) || data.intervalDays == null || (data.intervalDays is number && data.intervalDays >= 1));
+               (!data.keys().hasAll(['intervalDays']) || data.intervalDays == null || (data.intervalDays is number && data.intervalDays >= 1)) &&
+               // `photo` (singular) is the old, since-replaced single-photo field — kept accepted
+               // here (never required) so any medicine saved during that brief window still passes
+               // validation on a future unrelated update; new writes use photoFront/photoBack.
+               (!data.keys().hasAll(['photo']) || data.photo == null || (data.photo is string && data.photo.size() <= 1000000)) &&
+               (!data.keys().hasAll(['photoFront']) || data.photoFront == null || (data.photoFront is string && data.photoFront.size() <= 1000000)) &&
+               (!data.keys().hasAll(['photoBack']) || data.photoBack == null || (data.photoBack is string && data.photoBack.size() <= 1000000));
       }
 
       function isSelfOrAuthorizedMedicineDelegate(data) {
@@ -911,7 +950,15 @@ service cloud.firestore {
     }
 
     match /medicineShareSettings/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+      // Read also granted to a delegate FOR uid — not for the delegate's own sharing UI (they
+      // only ever see their own doc there), but because transferring an incident to uid needs to
+      // read uid's CURRENT share settings to correctly recompute the transferred medicines'/logs'
+      // groupId/sharedFriendUids against the new owner (see HealthMedicines.tsx's
+      // handleTransferIncident) — without this the read was silently denied and the whole
+      // transfer failed before writing anything. Write stays self-only; only the owner controls
+      // their own default sharing preferences.
+      allow read: if isSignedIn() && (request.auth.uid == uid || isMedicineDelegateFor(uid));
+      allow write: if isSignedIn() && request.auth.uid == uid;
     }
 
     match /medicineDelegateSettings/{uid} {
@@ -927,6 +974,174 @@ service cloud.firestore {
         resource.data.medicine.friendUids.hasAny([request.auth.uid])
       );
       allow write: if isSignedIn() && request.auth.uid == uid && isValidMedicineDelegateSettings(incoming());
+    }
+
+    // A friend-based health-delegate grant (medicine/glucose/bp) awaiting the friend's consent —
+    // see isHealthDelegateAccepted() above. One doc per (owner, friend, kind) triple, deterministic
+    // id so re-inviting the same friend for the same metric is an upsert, not a duplicate. Powers
+    // the Pending Actions screen (Header.tsx) alongside friend/group/game invites.
+    match /healthDelegateInvites/{inviteId} {
+      function isValidHealthDelegateInvite(data) {
+        return data.keys().hasAll(['ownerUid', 'friendUid', 'kind', 'status', 'createdAt']) &&
+          data.ownerUid is string && data.friendUid is string &&
+          data.kind in ['medicine', 'glucose', 'bp'] &&
+          data.status in ['pending', 'accepted', 'declined'] &&
+          data.createdAt is string;
+      }
+      allow read: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || resource.data.friendUid == request.auth.uid);
+      // Only the owner proposes one, always starting 'pending' — the id itself pins ownerUid to
+      // the caller and encodes the (owner, friend, kind) triple so it can't be created under a
+      // mismatched id.
+      allow create: if isSignedIn() && isValidHealthDelegateInvite(incoming()) &&
+        incoming().ownerUid == request.auth.uid && incoming().status == 'pending' &&
+        inviteId == (incoming().ownerUid + '_' + incoming().friendUid + '_' + incoming().kind);
+      // Only the invited friend can respond, and only while it's still pending — the owner can't
+      // flip their own invite to 'accepted' to bypass consent.
+      allow update: if isSignedIn() && isValidHealthDelegateInvite(incoming()) &&
+        existing().ownerUid == incoming().ownerUid && existing().friendUid == incoming().friendUid && existing().kind == incoming().kind &&
+        incoming().friendUid == request.auth.uid && existing().status == 'pending' && incoming().status in ['accepted', 'declined'];
+      // Either side can delete — the owner revoking access they granted, or the friend removing a
+      // stale/declined entry from their own history.
+      allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || existing().friendUid == request.auth.uid);
+    }
+
+    // --- Baby Vaccinations ---
+    // A structurally different model from medicines: a child has no FamilyLedger account of their
+    // own to grant delegate access FROM, so a "profile" is just a lightweight record the owner
+    // creates directly, and caregiver access is a consent-gated invite scoped to that profile (not
+    // a relationship between two real users' own accounts, unlike healthDelegateInvites above).
+    function isBabyCaregiverFor(profileId) {
+      let path = /databases/$(database)/documents/babyCaregiverInvites/$(profileId + '_' + request.auth.uid);
+      return isSignedIn() && exists(path) && get(path).data.status == 'accepted';
+    }
+
+    match /babyProfiles/{profileId} {
+      function isValidBabyProfile(data) {
+        return data.keys().hasAll(['ownerUid', 'name', 'dob', 'sex', 'scheduleTemplate', 'createdAt']) &&
+          data.ownerUid is string && data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+          data.dob is string && data.sex in ['male', 'female', 'other'] &&
+          data.scheduleTemplate in ['uip', 'iap', 'cdc', 'nhs', 'who', 'blank'] && data.createdAt is string &&
+          (!data.keys().hasAll(['country']) || data.country in ['IN', 'US', 'UK', 'other']) &&
+          (!data.keys().hasAll(['photo']) || data.photo == null || (data.photo is string && data.photo.size() <= 1000000)) &&
+          (!data.keys().hasAll(['backgroundPhoto']) || data.backgroundPhoto == null || (data.backgroundPhoto is string && data.backgroundPhoto.size() <= 1000000)) &&
+          (!data.keys().hasAll(['birthWeek']) || data.birthWeek == null || (data.birthWeek is number && data.birthWeek >= 20 && data.birthWeek <= 45)) &&
+          (!data.keys().hasAll(['motherBloodGroup']) || data.motherBloodGroup == null || data.motherBloodGroup is string) &&
+          (!data.keys().hasAll(['babyBloodGroup']) || data.babyBloodGroup == null || data.babyBloodGroup is string) &&
+          (!data.keys().hasAll(['reminderPrefs']) || (
+            data.reminderPrefs.keys().hasAll(['leadUpNotices', 'dayOfAlarm', 'overdueRecurring']) &&
+            data.reminderPrefs.leadUpNotices is bool && data.reminderPrefs.dayOfAlarm is bool && data.reminderPrefs.overdueRecurring is bool
+          )) &&
+          (!data.keys().hasAll(['deletedAt']) || data.deletedAt == null || data.deletedAt is string);
+      }
+      allow read: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isBabyCaregiverFor(profileId));
+      allow create: if isSignedIn() && isValidBabyProfile(incoming()) && incoming().ownerUid == request.auth.uid;
+      // A caregiver can update profile fields (e.g. a corrected DOB) but never reassign ownership.
+      allow update: if isSignedIn() && isValidBabyProfile(incoming()) &&
+        incoming().ownerUid == existing().ownerUid &&
+        (existing().ownerUid == request.auth.uid || isBabyCaregiverFor(profileId));
+      allow delete: if isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    // One doc per vaccine dose — the schedule slot and its eventual log entry are the same doc
+    // (unlike medicines' separate medicines/medicineLogs split), since a dose only ever happens
+    // once, ever.
+    match /vaccineDoses/{doseId} {
+      function isValidVaccineDose(data) {
+        return data.keys().hasAll(['profileId', 'ownerUid', 'loggedBy', 'visitKey', 'visitLabel', 'dueDate', 'vaccineName', 'doseNumber', 'status', 'createdAt']) &&
+          data.profileId is string && data.ownerUid is string && data.loggedBy is string &&
+          data.visitKey is string && data.visitLabel is string && data.dueDate is string &&
+          data.vaccineName is string && data.doseNumber is number &&
+          data.status in ['pending', 'given', 'skipped', 'not_needed'] && data.createdAt is string &&
+          (!data.keys().hasAll(['photoFront']) || data.photoFront == null || (data.photoFront is string && data.photoFront.size() <= 1000000)) &&
+          (!data.keys().hasAll(['photoBack']) || data.photoBack == null || (data.photoBack is string && data.photoBack.size() <= 1000000)) &&
+          (!data.keys().hasAll(['expiryDate']) || data.expiryDate == null || data.expiryDate is string) &&
+          (!data.keys().hasAll(['source']) || data.source in ['template', 'custom']) &&
+          (!data.keys().hasAll(['doseGroupId']) || data.doseGroupId == null || data.doseGroupId is string) &&
+          (!data.keys().hasAll(['deletedAt']) || data.deletedAt == null || data.deletedAt is string);
+      }
+      allow read: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isBabyCaregiverFor(resource.data.profileId));
+      allow create: if isSignedIn() && isValidVaccineDose(incoming()) && incoming().loggedBy == request.auth.uid &&
+        (incoming().ownerUid == request.auth.uid || isBabyCaregiverFor(incoming().profileId));
+      allow update: if isSignedIn() && isValidVaccineDose(incoming()) && incoming().loggedBy == request.auth.uid &&
+        incoming().profileId == existing().profileId && incoming().ownerUid == existing().ownerUid &&
+        (existing().ownerUid == request.auth.uid || isBabyCaregiverFor(existing().profileId));
+      allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isBabyCaregiverFor(existing().profileId));
+    }
+
+    // One doc per physical dose/shot shared across several vaccineDoses (see VaccineDoseGroup in
+    // vaccinations.ts) — same ownership/caregiver trust model as vaccineDoses itself, just without
+    // the schedule-specific fields.
+    match /vaccineDoseGroups/{groupId} {
+      function isValidVaccineDoseGroup(data) {
+        return data.keys().hasAll(['profileId', 'ownerUid', 'loggedBy', 'name', 'createdAt']) &&
+          data.profileId is string && data.ownerUid is string && data.loggedBy is string &&
+          data.name is string && data.createdAt is string &&
+          (!data.keys().hasAll(['brand']) || data.brand == null || data.brand is string) &&
+          (!data.keys().hasAll(['batchNo']) || data.batchNo == null || data.batchNo is string) &&
+          (!data.keys().hasAll(['expiryDate']) || data.expiryDate == null || data.expiryDate is string) &&
+          (!data.keys().hasAll(['photoFront']) || data.photoFront == null || (data.photoFront is string && data.photoFront.size() <= 1000000)) &&
+          (!data.keys().hasAll(['photoBack']) || data.photoBack == null || (data.photoBack is string && data.photoBack.size() <= 1000000)) &&
+          (!data.keys().hasAll(['deletedAt']) || data.deletedAt == null || data.deletedAt is string);
+      }
+      allow read: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isBabyCaregiverFor(resource.data.profileId));
+      allow create: if isSignedIn() && isValidVaccineDoseGroup(incoming()) && incoming().loggedBy == request.auth.uid &&
+        (incoming().ownerUid == request.auth.uid || isBabyCaregiverFor(incoming().profileId));
+      allow update: if isSignedIn() && isValidVaccineDoseGroup(incoming()) && incoming().loggedBy == request.auth.uid &&
+        incoming().profileId == existing().profileId && incoming().ownerUid == existing().ownerUid &&
+        (existing().ownerUid == request.auth.uid || isBabyCaregiverFor(existing().profileId));
+      allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isBabyCaregiverFor(existing().profileId));
+    }
+
+    // Single shared doc (vaccineBrandCatalog/current) — AI-curated, web-search-sourced list of
+    // common India vaccine brand/product names mapped to the vaccines each covers, regenerated
+    // every 3 months by server.ts's /api/cron/refresh-vaccine-brand-catalog. Every signed-in user reads
+    // the same doc (it's reference data, not per-user); only the Admin SDK (which bypasses these
+    // rules entirely) ever writes it, so client writes are flatly denied.
+    match /vaccineBrandCatalog/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // One doc per (profile, visit) — whether an appointment's been booked, which is what
+    // vaccinationReminders.ts's reminder logic branches on. Id is deterministic
+    // (`${profileId}_${visitKey}`) so setting it again is an upsert.
+    match /vaccineAppointments/{apptId} {
+      function isValidVaccineAppointment(data) {
+        return data.keys().hasAll(['profileId', 'ownerUid', 'visitKey', 'visitLabel', 'booked', 'walkIn', 'updatedAt', 'updatedBy']) &&
+          data.profileId is string && data.ownerUid is string && data.visitKey is string && data.visitLabel is string &&
+          data.booked is bool && data.walkIn is bool && data.updatedAt is string && data.updatedBy is string &&
+          (!data.keys().hasAll(['date']) || data.date == null || data.date is string) &&
+          (!data.keys().hasAll(['time']) || data.time == null || data.time is string) &&
+          (!data.keys().hasAll(['clinic']) || data.clinic == null || data.clinic is string) &&
+          (!data.keys().hasAll(['doctor']) || data.doctor == null || data.doctor is string);
+      }
+      allow read: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isBabyCaregiverFor(resource.data.profileId));
+      allow create, update: if isSignedIn() && isValidVaccineAppointment(incoming()) && incoming().updatedBy == request.auth.uid &&
+        (incoming().ownerUid == request.auth.uid || isBabyCaregiverFor(incoming().profileId));
+      // Split out from the old "allow write" (which combined create/update/delete under one
+      // isValidVaccineAppointment(incoming()) check) — request.resource is null on a delete, so
+      // that check always failed and deletes were silently impossible. Needed now that permanently
+      // deleting a baby profile (VaccineDeletedBabies.tsx) cascades into deleting its appointments.
+      allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isBabyCaregiverFor(existing().profileId));
+    }
+
+    // Consent-gated caregiver access to one baby profile — same shape and trust model as
+    // healthDelegateInvites above (a grant only takes effect once accepted), scoped to a profile
+    // id instead of a real person + metric kind, since a baby has no account of its own.
+    match /babyCaregiverInvites/{inviteId} {
+      function isValidBabyCaregiverInvite(data) {
+        return data.keys().hasAll(['profileId', 'profileName', 'ownerUid', 'caregiverUid', 'status', 'createdAt']) &&
+          data.profileId is string && data.profileName is string && data.ownerUid is string && data.caregiverUid is string &&
+          data.status in ['pending', 'accepted', 'declined'] && data.createdAt is string;
+      }
+      allow read: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || resource.data.caregiverUid == request.auth.uid);
+      allow create: if isSignedIn() && isValidBabyCaregiverInvite(incoming()) &&
+        incoming().ownerUid == request.auth.uid && incoming().status == 'pending' &&
+        inviteId == (incoming().profileId + '_' + incoming().caregiverUid);
+      allow update: if isSignedIn() && isValidBabyCaregiverInvite(incoming()) &&
+        existing().profileId == incoming().profileId && existing().ownerUid == incoming().ownerUid && existing().caregiverUid == incoming().caregiverUid &&
+        incoming().caregiverUid == request.auth.uid && existing().status == 'pending' && incoming().status in ['accepted', 'declined'];
+      allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || existing().caregiverUid == request.auth.uid);
     }
 
     // --- Shared Reminders (Galarm-style: create once, share with a group and/or friends, each
@@ -2585,6 +2800,16 @@ service cloud.firestore {
     // notification's inconsistent-across-platforms foreground-delivery behavior. Read/delete are
     // restricted to the addressee; nobody, including the sender, can read who else was invited.
     match /inviteNotices/{noticeId} {
+      allow read, delete: if isSignedIn() && resource.data.toUid == request.auth.uid;
+      allow create, update: if false;
+    }
+
+    // --- Durable game invites (Pending Actions screen) ---
+    // Unlike inviteNotices above (a self-deleting toast), this persists until the recipient acts —
+    // written server-side only by sendGameInvites() (server.ts). Accept is just navigating into the
+    // game (joining IS accepting, same as before this existed); "reject"/dismiss and "clean up
+    // after accepting" are both just the recipient deleting their own copy.
+    match /gameInvites/{inviteId} {
       allow read, delete: if isSignedIn() && resource.data.toUid == request.auth.uid;
       allow create, update: if false;
     }

@@ -542,6 +542,11 @@ export default function BusinessGame() {
   // Bot auto-play. Business is fully client-trusted — no Admin-SDK-mediated endpoint drives turns,
   // so (same model as Ludo) whichever human client has this game open acts on a bot seat's behalf
   // after a short "thinking" delay, re-validating against the latest live doc right before writing.
+  // A single bot turn is actually driven by SEVERAL passes through this effect (roll -> resolve
+  // landing -> end turn is 2 separate re-triggers, more if an auction/jail/card path adds another)
+  // — each pass waits out this SAME delay, so it compounds. Originally 1100-1600ms, which made a
+  // multi-bot game (3 bots ahead of you) feel like it stalled for 6-12+ seconds before your own
+  // turn; shortened to keep a "thinking" beat without the wait becoming the complaint.
   const latestBusinessGameRef = useRef(game);
   useEffect(() => { latestBusinessGameRef.current = game; }, [game]);
 
@@ -668,11 +673,18 @@ export default function BusinessGame() {
           opponentNames: g.players.filter((p) => p.uid !== nextPlayer.uid).map((p) => p.displayName).filter(Boolean).join(', ') || null,
         });
       }
-    }, 1100 + Math.random() * 500);
+    }, 450 + Math.random() * 250);
 
     return () => clearTimeout(timer);
+    // Depends on the whole `game` object (a fresh reference on every snapshot, whether or not any
+    // particular field changed), not a hand-picked list of fields — that was the actual bug: buying
+    // a property, or paying jail bail outright, both write ONLY `players`/`properties`, neither of
+    // which was in the old dependency list (game.status/currentTurnSeatIndex/turnPhase/pendingCard/
+    // auction/pendingTrade). Since none of those specific fields changed, this effect never
+    // re-fired after either write, so the bot's turn just stopped dead right there — not slow,
+    // genuinely stuck, needing an unrelated state change elsewhere to accidentally nudge it loose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game?.status, game?.currentTurnSeatIndex, game?.turnPhase, game?.pendingCard, game?.auction, game?.pendingTrade, gameId]);
+  }, [game, gameId]);
 
   // Auto-decline any trade proposal directed at a bot seat — trades aren't gated to whose turn it
   // is, and handleEndTurn refuses to advance while one is pending, so this can't just wait for the
@@ -686,7 +698,7 @@ export default function BusinessGame() {
       const g = latestBusinessGameRef.current;
       if (!g || !g.pendingTrade || g.pendingTrade.id !== tradeId) return;
       updateDoc(doc(db, 'businessGames', gameId), { pendingTrade: null }).catch((err) => console.error('bot decline trade failed:', err));
-    }, 900);
+    }, 500);
     return () => clearTimeout(timer);
   }, [game?.pendingTrade?.id, game?.status, gameId]);
 
@@ -721,7 +733,7 @@ export default function BusinessGame() {
       } else {
         await updateDoc(gRefDoc, { auction: null, lastAction: { text: `No bids on ${BOARD[a.propertyIndex].name} — it stays unowned.`, at: new Date().toISOString() } });
       }
-    }, 900);
+    }, 500);
     return () => clearTimeout(timer);
   }, [game?.auction?.propertyIndex, game?.auction?.currentBid, game?.auction?.currentBidderUid, game?.auction?.passedUids?.join(','), game?.status, gameId]);
 

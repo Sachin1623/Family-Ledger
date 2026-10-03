@@ -12,11 +12,34 @@ import { BigQuery } from "@google-cloud/bigquery";
 import allEnglishWords from "an-array-of-english-words";
 import { Filter as BadWordsFilter } from "bad-words";
 import { getWordsList as getMostCommonWordsList } from "most-common-words-by-language";
+import { z } from "zod";
 
 dotenv.config();
 
 const otpStore = new Map<string, { codeHash: string; expiresAt: number }>();
 const resetTokenStore = new Map<string, { token: string; expiresAt: number }>();
+// Proves email ownership for a Firebase-Auth-disabled (soft-deleted) account, which can't sign
+// in through Firebase Auth itself to prove who's asking — see /api/send-recovery-otp and
+// /api/account/recover. Same short-lived-token shape as resetTokenStore, kept separate so a
+// stray password-reset code never doubles as proof for account recovery or vice versa.
+const recoverTokenStore = new Map<string, { token: string; expiresAt: number }>();
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+// Must match the Cloud Scheduler job "familyledger-purge-deleted-accounts" (0 * * * * UTC, hourly).
+const PURGE_CRON_INTERVAL_MS = 60 * 60 * 1000;
+
+// A tombstone's real `purgeAt` can be "now" (immediate hard-delete) or a lagging-cron artifact —
+// both display as a confusing already-past timestamp. For anything due or overdue, show the next
+// cron tick (+1min buffer for the run to actually complete) instead, which is always a believable
+// near-future time. Still-future purgeAt (the normal 30-day soft-delete case) passes through as-is.
+function displayPurgeAt(rawPurgeAtIso: string): string {
+  const raw = new Date(rawPurgeAtIso).getTime();
+  const now = Date.now();
+  if (!Number.isFinite(raw) || raw <= now) {
+    const nextTick = Math.ceil(now / PURGE_CRON_INTERVAL_MS) * PURGE_CRON_INTERVAL_MS;
+    return new Date(nextTick + 60 * 1000).toISOString();
+  }
+  return rawPurgeAtIso;
+}
 
 // --- Scramble dictionary (multiplayer answer validation + hints) ---
 // Built once at process startup — cheap (a single pass over ~275k words). Filtering matches
@@ -395,6 +418,301 @@ async function mergeUidData(
   return summary;
 }
 
+function pushDeleteAll(ops: Array<(batch: FirebaseFirestore.WriteBatch) => void>, snap: FirebaseFirestore.QuerySnapshot) {
+  snap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+}
+
+// Sent once, right at the end of hardDeleteUserData — the one point where deletion is actually,
+// permanently done (whether that's the 30-day expiry or an immediate "delete now"). Uses the
+// email captured on the tombstone at delete-REQUEST time, not a live profile lookup — by this
+// point users/{uid}.email has already been scrubbed to null as part of the same sweep. Best
+// effort: logged, never thrown — a confirmation email failing to send must never leave an
+// account's data undeleted or retry the whole purge over it.
+async function sendAccountDeletedEmail(email: string | null, displayName: string | null) {
+  if (!email || !transporter) return;
+  const playStoreUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+  const name = displayName || 'there';
+  try {
+    await transporter.sendMail({
+      from: emailFrom,
+      to: email,
+      subject: 'Your FamilyLedger account has been deleted',
+      text: `Hi ${name},\n\nYour FamilyLedger account and all of its information have now been completely and permanently deleted, as you requested.\n\nIf you'd like to use FamilyLedger again, you're welcome to start a brand new account any time:\nWeb: ${PUBLIC_APP_URL}\nAndroid: ${playStoreUrl}\n\n— The FamilyLedger team`,
+      html: `
+        <p>Hi ${name},</p>
+        <p>Your FamilyLedger account and all of its information have now been completely and permanently deleted, as you requested.</p>
+        <p>If you'd like to use FamilyLedger again, you're welcome to start a brand new account any time:</p>
+        <p>
+          <a href="${PUBLIC_APP_URL}">Open FamilyLedger on the web</a><br/>
+          <a href="${playStoreUrl}">Get it on Google Play</a>
+        </p>
+        <p>— The FamilyLedger team</p>
+      `,
+    });
+  } catch (error) {
+    console.error(`sendAccountDeletedEmail failed for ${email}:`, error);
+  }
+}
+
+// Random 6-digit suffix for the anonymized placeholder identity a hard-deleted user's
+// users/{uid} doc is rewritten to — see hardDeleteUserData's own comment for why the doc is
+// kept (not removed) with just its fields scrubbed.
+function randomDeletedUserSuffix(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// Permanently purges a uid's account — the hard-delete half of the soft-delete/hard-delete
+// design (see /api/account/delete's own comment). Runs either immediately ('hard' mode) or 30
+// days after a 'soft' delete, via the SAME code path either way (see
+// /api/cron/purge-deleted-accounts below) — there's no separate "delete right now"
+// implementation, just a different purgeAt on the same tombstone.
+//
+// The core idea that makes this tractable across ~30 collections without hunting down and
+// rewriting foreign keys everywhere: for data this uid SHARES with other real people (a group
+// expense, a multiplayer game table, a shared reminder, a DM thread), every display surface in
+// this app already resolves "whose name is this" by looking up users/{uid} live, with
+// `'Someone'` as the fallback when that doc is missing or has no name (the `|| 'Someone'`
+// pattern used throughout this file's own notification code). So instead of rewriting
+// addedBy/paidBy/splits[].userId/playerUids/etc. across dozens of collections, this function
+// leaves every SHARED document completely alone and rewrites the ONE users/{uid} doc to a
+// "DeletedUser_######" placeholder (no photo, no email) — every shared expense, game seat, and
+// chat message picks that up automatically, for free. Only data that's PRIVATE to this uid
+// (nobody else's record depends on it existing) is actually, physically deleted.
+//
+// Known, accepted limitation: a handful of collections (leaderboards, game seats) may
+// denormalize a displayName at write time rather than resolving it live — those keep showing
+// the pre-deletion name in old, already-written records, same as a renamed-but-not-deleted user
+// would. Not addressed here; rewriting historical records is a much bigger, riskier undertaking
+// for what's ultimately a cosmetic concern.
+async function hardDeleteUserData(
+  db: Firestore,
+  adminAuthClient: admin.auth.Auth,
+  uid: string,
+  tombstoneEmail: string | null,
+  tombstoneDisplayName: string | null,
+): Promise<void> {
+  // --- 1. Group/shop ownership — reassigned (or the whole thing deleted if solely owned)
+  // BEFORE anything else touches `members`, so nothing is ever briefly ownerless. Mirrors
+  // Profile.tsx's old client-side reassignment logic (now retired in favor of this one
+  // server-side sweep), extended here to also cover shops. ---
+  const membershipsSnap = await db.collection('members').where('userId', '==', uid).get();
+  const membershipOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+  for (const memberDoc of membershipsSnap.docs) {
+    const memberData = memberDoc.data();
+    if (memberData.role === 'owner') {
+      const othersSnap = await db.collection('members').where('groupId', '==', memberData.groupId).get();
+      const others = othersSnap.docs.filter((d) => d.data().userId !== uid);
+      if (others.length > 0) {
+        const newOwner = others[Math.floor(Math.random() * others.length)];
+        membershipOps.push((batch) => batch.update(newOwner.ref, { role: 'owner' }));
+      }
+    }
+    membershipOps.push((batch) => batch.delete(memberDoc.ref));
+  }
+  await commitInChunks(db, membershipOps);
+
+  const ownedShopsSnap = await db.collection('shops').where('ownerId', '==', uid).get();
+  for (const shopDoc of ownedShopsSnap.docs) {
+    const staffSnap = await db.collection('shops').doc(shopDoc.id).collection('staff').get();
+    const otherStaff = staffSnap.docs.filter((d) => d.id !== uid);
+    if (otherStaff.length > 0) {
+      // Staff can keep operating the shop on its existing data — just hand off nominal
+      // ownership to one of them rather than leave an owner reference pointing at a purged uid.
+      await shopDoc.ref.update({ ownerId: otherStaff[0].id });
+    } else {
+      // Solely owned, no one else depends on it — delete the shop and its subcollections.
+      for (const sub of ['staff', 'activities', 'customers', 'sales']) {
+        const subSnap = await db.collection('shops').doc(shopDoc.id).collection(sub).get();
+        const subOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+        pushDeleteAll(subOps, subSnap);
+        if (subOps.length > 0) await commitInChunks(db, subOps);
+      }
+      await shopDoc.ref.delete();
+    }
+  }
+
+  // --- 2. Private, single-owner collections — physically deleted entirely. "Shared" here only
+  // ever means read-only visibility granted to a friend/group/delegate/caregiver, never joint
+  // ownership the way a group expense is, so all of this disappears regardless of who it was
+  // shared with (matches what DataDeletion.tsx already told users would happen). ---
+  const privateCollections: { name: string; field: string }[] = [
+    // Finance
+    { name: 'pendingRecurringExpenses', field: 'userId' },
+    { name: 'expenseReminders', field: 'userId' },
+    { name: 'userGoalMonths', field: 'userId' },
+    // Health
+    { name: 'glucoseLogs', field: 'userId' },
+    { name: 'healthShareSettings', field: '__docId' },
+    { name: 'healthDelegateSettings', field: '__docId' },
+    { name: 'bloodPressureLogs', field: 'userId' },
+    { name: 'bpShareSettings', field: '__docId' },
+    { name: 'bpDelegateSettings', field: '__docId' },
+    { name: 'medicines', field: 'userId' },
+    { name: 'medicalIncidents', field: 'userId' },
+    { name: 'medicineLogs', field: 'userId' },
+    { name: 'medicineShareSettings', field: '__docId' },
+    { name: 'medicineDelegateSettings', field: '__docId' },
+    // Vaccination — same reasoning as health; a caregiver's VIEW access doesn't make the baby
+    // profile theirs.
+    { name: 'babyProfiles', field: 'ownerUid' },
+    { name: 'vaccineDoses', field: 'ownerUid' },
+    { name: 'vaccineDoseGroups', field: 'ownerUid' },
+    { name: 'vaccineAppointments', field: 'ownerUid' },
+    // Games — personal gamification state, no one else's record depends on it.
+    { name: 'userPoints', field: '__docId' },
+    { name: 'pointsLedger', field: 'uid' },
+    { name: 'sudokuLeaderboard', field: 'userId' },
+    { name: 'scrambleLeaderboard', field: 'userId' },
+    { name: 'gameInvites', field: 'toUid' },
+    // Social/reminders — personal only.
+    { name: 'userWeeklySummaries', field: 'userId' },
+    { name: 'inviteNotices', field: 'toUid' },
+    // Account/auth-adjacent
+    { name: 'loginEvents', field: 'uid' },
+    { name: 'growthEvents', field: 'uid' },
+    { name: 'shopkeeperRequests', field: '__docId' },
+    { name: 'admins', field: '__docId' },
+  ];
+
+  for (const { name, field } of privateCollections) {
+    const ops: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    if (field === '__docId') {
+      const ref = db.collection(name).doc(uid);
+      const snap = await ref.get();
+      if (snap.exists) ops.push((batch) => batch.delete(ref));
+    } else {
+      const snap = await db.collection(name).where(field, '==', uid).get();
+      pushDeleteAll(ops, snap);
+    }
+    if (ops.length > 0) await commitInChunks(db, ops);
+  }
+
+  // userPoints' own subcollections (badges/meta/habitStreaks) don't get swept by the parent
+  // doc's own delete above (Firestore never cascades), so sweep them explicitly.
+  for (const sub of ['habitStreaks', 'meta', 'badges']) {
+    const subSnap = await db.collection('userPoints').doc(uid).collection(sub).get();
+    const subOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    pushDeleteAll(subOps, subSnap);
+    if (subOps.length > 0) await commitInChunks(db, subOps);
+  }
+
+  // Personal (non-group) todos and shopping lists only — group-shared ones stay for the rest
+  // of the group (the content itself, e.g. "buy milk", isn't this uid's identity).
+  for (const { name, groupField } of [
+    { name: 'todos', groupField: 'groupId' },
+    { name: 'shoppingLists', groupField: 'groupId' },
+  ]) {
+    const snap = await db.collection(name).where('userId', '==', uid).get();
+    const ops: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    snap.docs.forEach((d) => {
+      if (!d.data()[groupField]) ops.push((batch) => batch.delete(d.ref));
+    });
+    if (ops.length > 0) await commitInChunks(db, ops);
+  }
+
+  // Goals / financial accounts / policies — private (not shared to a group or specific
+  // friends) ones are deleted outright, including their append-only ledger/log subcollection;
+  // shared ones are left alone (same "identity resolves via the scrubbed profile" reasoning).
+  for (const name of ['goals', 'financialAccounts', 'policies']) {
+    const snap = await db.collection(name).where('userId', '==', uid).get();
+    for (const docSnap of snap.docs) {
+      const data = docSnap.data();
+      const isShared = !!data.groupId || (Array.isArray(data.friendUids) && data.friendUids.length > 0);
+      if (isShared) continue;
+      const subName = name === 'financialAccounts' ? 'log' : name === 'goals' ? 'ledger' : null;
+      if (subName) {
+        const subSnap = await docSnap.ref.collection(subName).get();
+        const subOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+        pushDeleteAll(subOps, subSnap);
+        if (subOps.length > 0) await commitInChunks(db, subOps);
+      }
+      await docSnap.ref.delete();
+    }
+  }
+
+  // Loan contacts: delete outright only if never linked to a real counterparty account — a
+  // linked one is a two-party debt record the other person still has a stake in.
+  {
+    const snap = await db.collection('loanContacts').where('ownerId', '==', uid).get();
+    for (const docSnap of snap.docs) {
+      if (docSnap.data().linkedUserId) continue;
+      for (const sub of ['entries', 'comments']) {
+        const subSnap = await docSnap.ref.collection(sub).get();
+        const subOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+        pushDeleteAll(subOps, subSnap);
+        if (subOps.length > 0) await commitInChunks(db, subOps);
+      }
+      await docSnap.ref.delete();
+    }
+  }
+
+  // Friendships — delete outright, both directions; nothing shared relies on the edge existing
+  // once one side is gone.
+  {
+    const snap = await db.collection('friendships').where('participants', 'array-contains', uid).get();
+    const ops: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    pushDeleteAll(ops, snap);
+    if (ops.length > 0) await commitInChunks(db, ops);
+  }
+
+  // Health/baby-profile delegate+caregiver INVITES — two-party records (ownerUid + friendUid /
+  // ownerUid + caregiverUid); delete wherever this uid appears on either side.
+  for (const { name, fields } of [
+    { name: 'healthDelegateInvites', fields: ['ownerUid', 'friendUid'] },
+    { name: 'babyCaregiverInvites', fields: ['ownerUid', 'caregiverUid'] },
+  ]) {
+    const ops: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    for (const field of fields) {
+      const snap = await db.collection(name).where(field, '==', uid).get();
+      pushDeleteAll(ops, snap);
+    }
+    if (ops.length > 0) await commitInChunks(db, ops);
+  }
+
+  // --- 3. This uid's own PRIVATE subdocs inside otherwise-shared multiplayer game tables — the
+  // hidden hand/progress doc other players were never able to read anyway, but no reason to
+  // leave it behind. The table/deal/outcome itself stays untouched (other players' match
+  // history). ---
+  const gamePrivateSubs: { collection: string; sub: string }[] = [
+    { collection: 'rummyGames', sub: 'hands' },
+    { collection: 'rummy13Deals', sub: 'hands' },
+    { collection: 'spadePledgeDeals', sub: 'hands' },
+    { collection: 'sweepGames', sub: 'hands' },
+    { collection: 'sequenceGames', sub: 'hands' },
+    { collection: 'scrambleGames', sub: 'private' },
+  ];
+  for (const { collection, sub } of gamePrivateSubs) {
+    const tablesSnap = await db.collection(collection).where('playerUids', 'array-contains', uid).get();
+    const ops: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    for (const tableDoc of tablesSnap.docs) {
+      const subRef = tableDoc.ref.collection(sub).doc(uid);
+      const subSnap = await subRef.get();
+      if (subSnap.exists) ops.push((batch) => batch.delete(subRef));
+    }
+    if (ops.length > 0) await commitInChunks(db, ops);
+  }
+
+  // --- 4. Finally, scrub the profile identity (NOT delete the doc — see this function's own
+  // header comment for why) and release the email/Auth record for real re-use. ---
+  const suffix = randomDeletedUserSuffix();
+  await db.collection('users').doc(uid).set({
+    displayName: `DeletedUser_${suffix}`,
+    photoURL: null,
+    email: null,
+    deletedAt: admin.firestore.FieldValue.delete(),
+    hardDeletedAt: new Date().toISOString(),
+  }, { merge: true });
+  await db.collection('users').doc(uid).collection('private').doc('info').delete().catch(() => {});
+
+  await db.collection('accountDeletions').doc(uid).set({ status: 'purged', purgedAt: new Date().toISOString() }, { merge: true });
+
+  await adminAuthClient.deleteUser(uid).catch((err) => console.error(`hardDeleteUserData: failed to delete Auth user ${uid}:`, err));
+
+  // Deletion is now actually, permanently done — the one point this confirmation email is sent
+  // from, regardless of whether this ran via the 30-day expiry or an immediate "delete now".
+  await sendAccountDeletedEmail(tombstoneEmail, tombstoneDisplayName);
+}
+
 // Fetches FCM tokens for a set of users, skipping anyone who has disabled the given
 // preference field (default: enabled, matching the app's "on by default" notification design).
 async function collectPushTokens(db: Firestore, uids: string[], prefField: string): Promise<string[]> {
@@ -446,6 +764,27 @@ async function sendPush(
     console.error('sendPush error:', error);
     return 0;
   }
+}
+
+// Every uid `ownerUid` has granted medicine-delegate access to — friendUids on their own
+// medicineDelegateSettings doc, plus every member of the delegate group if one's set. Shared by
+// every server-side medicine notifier (dose logged/missed, incident transferred) that needs to
+// page "whoever manages this person's medicines" — mirrors firestore.rules' isMedicineDelegateFor,
+// but that's a per-request boolean check against the CALLER; this instead lists every delegate for
+// a given owner, since a push has to reach all of them, not just check whether one specific uid is
+// among them.
+async function resolveMedicineDelegateUids(db: Firestore, ownerUid: string): Promise<string[]> {
+  const uids = new Set<string>();
+  const settingsSnap = await db.collection('medicineDelegateSettings').doc(ownerUid).get();
+  if (settingsSnap.exists) {
+    const medicine = settingsSnap.data()?.medicine || {};
+    if (Array.isArray(medicine.friendUids)) medicine.friendUids.forEach((uid: string) => uids.add(uid));
+    if (medicine.groupId) {
+      const membersSnap = await db.collection('members').where('groupId', '==', medicine.groupId).get();
+      membersSnap.docs.forEach((m) => uids.add(m.data().userId));
+    }
+  }
+  return Array.from(uids);
 }
 
 // Shared "it's your turn" notifier for every server-mediated multiplayer game (Rummy, Sweep,
@@ -1404,7 +1743,8 @@ async function sendGameInvites(
   },
 ): Promise<number> {
   const { gameId, game, callerUid, targets, gameLabel, routeSegment, poke } = opts;
-  const hostName = (game.players || []).find((p: any) => p.uid === callerUid)?.displayName || 'Someone';
+  const host = (game.players || []).find((p: any) => p.uid === callerUid);
+  const hostName = host?.displayName || 'Someone';
   const title = poke ? `${gameLabel} — come join!` : `${gameLabel} invite`;
   const body = poke
     ? `${hostName} is waiting for you to join ${gameLabel}. Code: ${game.code}`
@@ -1413,6 +1753,21 @@ async function sendGameInvites(
   const feedType = `${routeSegment}_${poke ? 'poke' : 'invite'}`;
   const sent = await sendPush(tokens, title, body, { type: feedType, gameId });
   await Promise.all(targets.map((uid) => createInviteNotice(db, uid, 'game', title, body, `/games/${routeSegment}/${gameId}`)));
+  // Durable pending-action record for the Pending Actions screen (Header.tsx) — inviteNotices
+  // above is a self-deleting toast, not something a recipient can come back to later. A poke
+  // doesn't create a NEW invite (one already exists from the original invite call) — it only
+  // refreshes lastPokedAt so "last nudged" is visible, never resets status/createdAt on an invite
+  // the recipient may have already responded to.
+  await Promise.all(targets.map((uid) => {
+    const inviteId = `${routeSegment}_${gameId}_${uid}`;
+    const ref = db.collection('gameInvites').doc(inviteId);
+    if (poke) return ref.set({ lastPokedAt: new Date().toISOString() }, { merge: true });
+    return ref.set({
+      toUid: uid, gameId, routeSegment, gameLabel, code: game.code,
+      hostUid: callerUid, hostName, hostPhoto: host?.photoURL || '',
+      status: 'pending', createdAt: new Date().toISOString(),
+    });
+  }));
   // `routeSegment` (e.g. 'ludo', 'chess') doubles as the i18n key suffix FeedList.tsx looks up
   // (`games.${routeSegment}`) to render the game's name in the viewer's own language, and `code`
   // is a room code, not translatable content, so it's passed through as-is.
@@ -2063,8 +2418,10 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
 
   for (const medDoc of snap.docs) {
     const med = medDoc.data();
-    const hasShareTarget = !!med.groupId || (Array.isArray(med.sharedFriendUids) && med.sharedFriendUids.length > 0);
-    if (!hasShareTarget || !Array.isArray(med.times) || med.times.length === 0) continue;
+    if (!Array.isArray(med.times) || med.times.length === 0) continue;
+    const delegateUids = await resolveMedicineDelegateUids(db, med.userId);
+    const hasNotifyTarget = !!med.groupId || (Array.isArray(med.sharedFriendUids) && med.sharedFriendUids.length > 0) || delegateUids.length > 0;
+    if (!hasNotifyTarget) continue;
 
     try {
       const tz = (await getUserTimezone(db, med.userId)) || 'UTC';
@@ -2116,7 +2473,7 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
         ]);
         if (logSnap.exists || alertSnap.exists) continue;
 
-        const notifyUids = new Set<string>();
+        const notifyUids = new Set<string>(delegateUids);
         if (Array.isArray(med.sharedFriendUids)) med.sharedFriendUids.forEach((uid: string) => notifyUids.add(uid));
         if (med.groupId) {
           const membersSnap = await db.collection('members').where('groupId', '==', med.groupId).get();
@@ -2125,12 +2482,22 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
         notifyUids.delete(med.userId);
         if (notifyUids.size === 0) continue;
 
-        const tokens = await collectPushTokens(db, Array.from(notifyUids), 'notificationsEnabled');
+        const recipients = Array.from(notifyUids);
+        const contextLabel = `${med.name} — ${slot.label}`;
+        const tokens = await collectPushTokens(db, recipients, 'notificationsEnabled');
         const sent = await sendPush(
           tokens,
           'Missed medicine dose',
           `${med.name} (${slot.label}) hasn't been marked taken yet.`,
-          { type: 'medicine_missed', medicineId: medDoc.id, doseTimeId: slot.id },
+          { type: 'medicine_missed', ownerUid: med.userId, medicineId: medDoc.id, doseTimeId: slot.id },
+        );
+        await Promise.all(
+          recipients.map((uid) =>
+            logFeedActivity(db, {
+              userId: uid, type: 'medicine_missed',
+              description: contextLabel, data: { contextLabel },
+            }),
+          ),
         );
         // Marked regardless of `sent` count — 0 tokens (no caregiver has push enabled) is a
         // legitimate steady state, not a transient failure worth retrying every 15 min forever.
@@ -2410,6 +2777,12 @@ async function startServer() {
   // `npm start` outside Cloud Run, where the banner should never fire (see the startup write's
   // matching guard below).
   app.get("/api/build-info", (req, res) => {
+    // Must never be cached — a stale cached response here is exactly what makes UpdateBanner.tsx
+    // loop forever: hardReloadApp() gets a fresh page, but if this specific GET is served from the
+    // browser's HTTP cache instead of hitting the network, myRevision never actually advances, so
+    // the mismatch against Firestore's app_config/webBuild persists and the same "update
+    // available" prompt reappears every reload no matter how many times the user reloads.
+    res.set("Cache-Control", "no-store");
     res.json({ revision: process.env.K_REVISION || "local" });
   });
 
@@ -2740,7 +3113,7 @@ async function startServer() {
   const sendOtpEmail = async (
     res: express.Response,
     email: string,
-    purpose: 'signup' | 'reset',
+    purpose: 'signup' | 'reset' | 'recover',
   ) => {
     let otpCode = '';
 
@@ -2757,10 +3130,14 @@ async function startServer() {
       const subject =
         purpose === 'reset'
           ? 'Your FamilyLedger password reset code'
+          : purpose === 'recover'
+          ? 'Your FamilyLedger account recovery code'
           : 'Your FamilyLedger verification code';
       const intro =
         purpose === 'reset'
           ? 'Your 4-digit FamilyLedger password reset code is:'
+          : purpose === 'recover'
+          ? 'Your 4-digit FamilyLedger account recovery code is:'
           : 'Your 4-digit FamilyLedger verification code is:';
 
       if (!transporter) {
@@ -2853,11 +3230,39 @@ async function startServer() {
     return sendOtpEmail(res, email, 'reset');
   });
 
+  // Proves ownership of a soft-deleted (Firebase-Auth-disabled) account's email so it can be
+  // recovered — see the big comment above the /api/account/* routes below for why this can't
+  // just be a normal sign-in. 404s on anything that isn't actually a pending soft-delete, so it
+  // can't be used to probe whether an arbitrary email has an account at all.
+  app.post('/api/send-recovery-otp', async (req, res) => {
+    const email = normalizeEmail(String(req.body.email || ''));
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Please provide a valid email address.' });
+    }
+    if (!adminAuth || !adminDb) {
+      return res.status(500).json({ error: 'Account recovery is not available right now.' });
+    }
+    try {
+      const userRecord = await adminAuth.getUserByEmail(email).catch(() => null);
+      if (!userRecord || !userRecord.disabled) {
+        return res.status(404).json({ error: 'No paused account found for that email.' });
+      }
+      const tombstoneSnap = await adminDb.collection('accountDeletions').doc(userRecord.uid).get();
+      if (!tombstoneSnap.exists || tombstoneSnap.data()?.status !== 'pending') {
+        return res.status(404).json({ error: 'No paused account found for that email.' });
+      }
+      return sendOtpEmail(res, email, 'recover');
+    } catch (error) {
+      console.error('send-recovery-otp error:', error);
+      return res.status(500).json({ error: 'Unable to send a recovery code at this time.' });
+    }
+  });
+
   app.post('/api/verify-otp', async (req, res) => {
     try {
       const email = normalizeEmail(String(req.body.email || ''));
       const code = String(req.body.code || '').trim();
-      const purpose = req.body.purpose === 'reset' ? 'reset' : 'signup';
+      const purpose = req.body.purpose === 'reset' ? 'reset' : req.body.purpose === 'recover' ? 'recover' : 'signup';
 
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return res.status(400).json({ error: 'Please provide a valid email address.' });
@@ -2891,6 +3296,30 @@ async function startServer() {
         const resetToken = crypto.randomBytes(24).toString('hex');
         resetTokenStore.set(email, { token: resetToken, expiresAt: Date.now() + 10 * 60 * 1000 });
         return res.json({ ok: true, email, resetToken });
+      }
+
+      if (purpose === 'recover') {
+        const recoverToken = crypto.randomBytes(24).toString('hex');
+        recoverTokenStore.set(email, { token: recoverToken, expiresAt: Date.now() + 10 * 60 * 1000 });
+        // So the client can show "N days left" on the restore-or-delete choice right after this
+        // — send-recovery-otp already confirmed this tombstone is pending before issuing the
+        // code, so this lookup is just fetching the number to display, not re-validating.
+        // `mode` matters here too: a 'hard' delete already has purgeAt set to the moment it was
+        // requested (not +30 days), so the client needs to tell "still has real days left" apart
+        // from "already past its purge time, could complete any moment" instead of showing a
+        // misleading "1 day left" for the latter.
+        let purgeAt: string | null = null;
+        let mode: string | null = null;
+        if (adminAuth && adminDb) {
+          const userRecord = await adminAuth.getUserByEmail(email).catch(() => null);
+          if (userRecord) {
+            const tombstoneSnap = await adminDb.collection('accountDeletions').doc(userRecord.uid).get();
+            const rawPurgeAt = tombstoneSnap.exists ? tombstoneSnap.data()?.purgeAt || null : null;
+            purgeAt = rawPurgeAt ? displayPurgeAt(rawPurgeAt) : null;
+            mode = tombstoneSnap.exists ? tombstoneSnap.data()?.mode || null : null;
+          }
+        }
+        return res.json({ ok: true, email, recoverToken, purgeAt, mode });
       }
 
       return res.json({ ok: true, email });
@@ -2968,10 +3397,26 @@ async function startServer() {
   });
 
   // Finds any other account(s) tied to the caller's verified email address — either a
-  // still-active duplicate (e.g. created via a different sign-in provider) or one deleted
-  // within the last 30 days via the in-app "Delete account" flow — and migrates their
-  // groups/expenses/activities onto the currently signed-in uid. Safe to call on every
-  // login: a no-op when there's nothing to merge.
+  // still-active duplicate (e.g. created via a different sign-in provider) or a PENDING
+  // soft-deletion tombstone (not yet purged) from the in-app "Delete account" flow — and
+  // migrates their groups/expenses/activities onto the currently signed-in uid.
+  //
+  // Deliberately NOT called automatically anymore (it used to run fire-and-forget on every
+  // login — see AuthContext.tsx's old comment on this). That silently restored a "permanently
+  // deleted" account's data with zero confirmation, which is exactly the bug this whole
+  // account-deletion rework fixes. Now it only runs once the user has EXPLICITLY confirmed via
+  // the "link this account" prompt (see /api/account/check-mergeable, the read-only probe
+  // AuthContext.tsx calls instead) — the merge itself is unchanged, just no longer silent.
+  //
+  // This is the fallback path for recovering a deleted account under a genuinely DIFFERENT uid
+  // (different sign-in provider, same verified email). The primary recovery path — same
+  // credentials, account merely Auth-disabled — never needs this at all: see
+  // /api/account/recover below, which just re-enables the original uid in place since nothing
+  // ever moved. This endpoint's own data-migration scope (groups/expenses/activities) predates
+  // the rest of this app's data model — see hardDeleteUserData's own comment for the full,
+  // current collection inventory most of which this endpoint does NOT migrate (health, goals,
+  // games, vaccination...). Acceptable because it only matters for the rarer different-uid case;
+  // the common case (recover below) preserves literally everything by never moving it.
   app.post('/api/merge-account', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminAuth || !adminDb) {
@@ -2992,15 +3437,15 @@ async function startServer() {
         adminDb.collection('users').doc(newUid).get(),
       ]);
 
-      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
       const candidateUids = new Set<string>();
 
       duplicateProfiles.docs.forEach((d) => {
         if (d.id !== newUid) candidateUids.add(d.id);
       });
       deletionTombstones.docs.forEach((d) => {
-        const deletedAt = new Date(d.data().deletedAt || 0).getTime();
-        if (d.id !== newUid && Date.now() - deletedAt <= THIRTY_DAYS_MS) {
+        const data = d.data();
+        const deletedAt = new Date(data.deletedAt || 0).getTime();
+        if (d.id !== newUid && data.status === 'pending' && Date.now() - deletedAt <= THIRTY_DAYS_MS) {
           candidateUids.add(d.id);
         }
       });
@@ -3022,6 +3467,180 @@ async function startServer() {
     } catch (error) {
       console.error('merge-account error:', error);
       return res.status(500).json({ error: 'Unable to merge account data at this time.' });
+    }
+  });
+
+  // Read-only probe AuthContext.tsx calls on every login in place of the old silent
+  // /api/merge-account auto-call — tells the client whether a mergeable account exists for this
+  // uid's verified email WITHOUT touching any data, so the UI can ask before acting. The actual
+  // merge only happens if the user confirms (POST /api/merge-account, unchanged).
+  app.get('/api/account/check-mergeable', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const email = normalizeEmail(decoded.email || '');
+    const isGoogleProvider = decoded.firebase?.sign_in_provider === 'google.com';
+    if (!email || !(decoded.email_verified || isGoogleProvider)) {
+      return res.json({ mergeable: false });
+    }
+    try {
+      const [duplicateProfiles, deletionTombstones] = await Promise.all([
+        adminDb.collection('users').where('email', '==', email).get(),
+        adminDb.collection('accountDeletions').where('email', '==', email).get(),
+      ]);
+      const candidates: { uid: string; deletedAt?: string; purgeAt?: string; mode?: string; displayName?: string | null }[] = [];
+      duplicateProfiles.docs.forEach((d) => {
+        if (d.id !== decoded.uid) candidates.push({ uid: d.id });
+      });
+      deletionTombstones.docs.forEach((d) => {
+        const data = d.data();
+        if (d.id === decoded.uid || data.status !== 'pending') return;
+        const deletedAt = new Date(data.deletedAt || 0).getTime();
+        if (Date.now() - deletedAt <= THIRTY_DAYS_MS) {
+          candidates.push({
+            uid: d.id,
+            deletedAt: data.deletedAt,
+            purgeAt: data.purgeAt ? displayPurgeAt(data.purgeAt) : data.purgeAt,
+            mode: data.mode,
+            displayName: data.displayName ?? null,
+          });
+        }
+      });
+      if (candidates.length === 0) return res.json({ mergeable: false });
+      return res.json({ mergeable: true, candidates });
+    } catch (error) {
+      console.error('check-mergeable error:', error);
+      return res.json({ mergeable: false });
+    }
+  });
+
+  // Self-service account deletion — two modes, same underlying mechanism:
+  //   - 'soft' (default/recommended): pause for 30 days. Disables the Firebase Auth user (blocks
+  //     sign-in everywhere, revokes existing sessions) and schedules a purge 30 days out.
+  //     EVERY data collection is left completely untouched — nothing is deleted or moved — only
+  //     `users/{uid}.deletedAt` is set, which the UI reads to show a "Paused" indicator next to
+  //     this person's (still-real) name/photo wherever it appears to others.
+  //   - 'hard': same as soft except the purge is scheduled for right now instead of +30 days —
+  //     picked up by the SAME cron (see hardDeleteUserData / purge-deleted-accounts below) on its
+  //     next run rather than a separate immediate-delete code path.
+  // Group/shop ownership is deliberately NOT touched here, in either mode — only at actual purge
+  // time, since a paused account might still come back and get its ownership yanked for nothing.
+  app.post('/api/account/delete', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminAuth || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const mode: 'soft' | 'hard' = req.body?.mode === 'hard' ? 'hard' : 'soft';
+    const uid = decoded.uid;
+    const db = adminDb;
+    try {
+      const [userSnap, privateSnap] = await Promise.all([
+        db.collection('users').doc(uid).get(),
+        db.collection('users').doc(uid).collection('private').doc('info').get(),
+      ]);
+      const userData = userSnap.exists ? userSnap.data()! : {};
+      const now = new Date();
+      const purgeAt = new Date(now.getTime() + (mode === 'hard' ? 0 : THIRTY_DAYS_MS));
+
+      await adminAuth.updateUser(uid, { disabled: true });
+      await adminAuth.revokeRefreshTokens(uid).catch((err) => console.error('revokeRefreshTokens failed:', err));
+
+      await db.collection('accountDeletions').doc(uid).set({
+        email: normalizeEmail(decoded.email || userData.email || ''),
+        displayName: userData.displayName || null,
+        photoURL: userData.photoURL || null,
+        deletedAt: now.toISOString(),
+        purgeAt: purgeAt.toISOString(),
+        mode,
+        status: 'pending',
+      });
+
+      await db.collection('users').doc(uid).set({ deletedAt: now.toISOString() }, { merge: true });
+      if (privateSnap.exists) {
+        await privateSnap.ref.set({ fcmTokens: [] }, { merge: true });
+      }
+
+      return res.json({ ok: true, mode, purgeAt: displayPurgeAt(purgeAt.toISOString()) });
+    } catch (error) {
+      console.error('account/delete error:', error);
+      return res.status(500).json({ error: 'Unable to process account deletion right now.' });
+    }
+  });
+
+  // The primary recovery path — same login credentials, account is Auth-disabled from a soft
+  // delete. signInWith* throws auth/user-disabled client-side with no way to prove identity
+  // through Firebase Auth itself (that's the whole point of disabling it), so this is OTP-gated
+  // on the email instead (see /api/send-recovery-otp + /api/verify-otp's 'recover' purpose).
+  // 'relink' re-enables the EXACT SAME uid — nothing was ever moved during the soft-delete, so
+  // this is a trivial, total, instant restore. 'delete-now' leaves it disabled and just moves
+  // the scheduled purge up to immediately, reusing the exact same purge mechanism as the 30-day
+  // expiry rather than a separate immediate-delete path.
+  app.post('/api/account/recover', async (req, res) => {
+    const email = normalizeEmail(String(req.body?.email || ''));
+    const recoverToken = String(req.body?.recoverToken || '');
+    const action: 'relink' | 'delete-now' = req.body?.action === 'delete-now' ? 'delete-now' : 'relink';
+    if (!adminAuth || !adminDb) {
+      return res.status(500).json({ error: 'Account recovery is not available right now.' });
+    }
+
+    const record = recoverTokenStore.get(email);
+    if (!record || record.token !== recoverToken) {
+      return res.status(400).json({ error: 'Recovery session is invalid. Please verify your email again.' });
+    }
+    if (record.expiresAt < Date.now()) {
+      recoverTokenStore.delete(email);
+      return res.status(400).json({ error: 'Recovery session has expired. Please verify your email again.' });
+    }
+
+    try {
+      const userRecord = await adminAuth.getUserByEmail(email).catch(() => null);
+      if (!userRecord) return res.status(404).json({ error: 'No paused account found for that email.' });
+      const tombstoneRef = adminDb.collection('accountDeletions').doc(userRecord.uid);
+      const tombstoneSnap = await tombstoneRef.get();
+      if (!tombstoneSnap.exists || tombstoneSnap.data()?.status !== 'pending') {
+        return res.status(404).json({ error: 'No paused account found for that email.' });
+      }
+
+      recoverTokenStore.delete(email);
+
+      if (action === 'relink') {
+        await adminAuth.updateUser(userRecord.uid, { disabled: false });
+        await adminDb.collection('users').doc(userRecord.uid).update({ deletedAt: admin.firestore.FieldValue.delete() });
+        await tombstoneRef.delete();
+        return res.json({ ok: true, action: 'relink' });
+      }
+
+      await tombstoneRef.set({ purgeAt: new Date().toISOString(), mode: 'hard' }, { merge: true });
+      return res.json({ ok: true, action: 'delete-now' });
+    } catch (error) {
+      console.error('account/recover error:', error);
+      return res.status(500).json({ error: 'Unable to process your request right now.' });
+    }
+  });
+
+  // Companion to /api/account/recover's 'delete-now' for the OTHER recovery entry point — the
+  // user is already signed in (as a genuinely different, newer uid) and saw the "we found a
+  // paused account for this email" banner (see check-mergeable above), and chose to permanently
+  // delete the OLD one rather than link it. Trusts the caller's own verified email instead of an
+  // OTP, same trust model /api/merge-account already uses for that same banner's "link" choice.
+  app.post('/api/account/purge-old-now', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const oldUid = String(req.body?.oldUid || '');
+    const email = normalizeEmail(decoded.email || '');
+    const isGoogleProvider = decoded.firebase?.sign_in_provider === 'google.com';
+    if (!oldUid || !email || !(decoded.email_verified || isGoogleProvider)) {
+      return res.status(400).json({ error: 'Invalid request.' });
+    }
+    try {
+      const tombstoneRef = adminDb.collection('accountDeletions').doc(oldUid);
+      const tombstoneSnap = await tombstoneRef.get();
+      const data = tombstoneSnap.data();
+      if (!tombstoneSnap.exists || data?.email !== email || data?.status !== 'pending') {
+        return res.status(404).json({ error: 'No matching paused account found.' });
+      }
+      await tombstoneRef.set({ purgeAt: new Date().toISOString(), mode: 'hard' }, { merge: true });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('purge-old-now error:', error);
+      return res.status(500).json({ error: 'Unable to process your request right now.' });
     }
   });
 
@@ -4521,7 +5140,7 @@ async function startServer() {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
 
-    const { groupId, action, description, amount, actorName, contextLabel, listId, expenseId } = req.body || {};
+    const { groupId, action, description, amount, actorName, contextLabel, listId, expenseId, status, ownerUid } = req.body || {};
     if (!groupId || !action) {
       return res.status(400).json({ error: 'groupId and action are required.' });
     }
@@ -4597,7 +5216,8 @@ async function startServer() {
         pushType = 'bp_logged';
       } else if (action === 'medicine_logged') {
         title = `${groupName}: Medicine dose`;
-        body = `${actorName || 'Someone'} ${actionText.medicine_logged}${contextLabel ? `: ${contextLabel}` : ''}`;
+        const verb = status === 'skipped' ? 'skipped a medicine dose' : actionText.medicine_logged;
+        body = `${actorName || 'Someone'} ${verb}${contextLabel ? `: ${contextLabel}` : ''}`;
         pushType = 'medicine_logged';
       } else if (action === 'reminder_set') {
         title = `${groupName}: New reminder`;
@@ -4620,6 +5240,7 @@ async function startServer() {
       const pushData: Record<string, string> = { type: pushType, groupId };
       if (listId) pushData.listId = listId;
       if (expenseId) pushData.expenseId = expenseId;
+      if (ownerUid) pushData.ownerUid = ownerUid;
       const sent = await sendPush(tokens, title, body, pushData);
       return res.json({ sent });
     } catch (error) {
@@ -4703,6 +5324,115 @@ async function startServer() {
       return res.json({ sent });
     } catch (error) {
       console.error('notify-glucose-shared error:', error);
+      return res.status(500).json({ error: 'Unable to send notification.' });
+    }
+  });
+
+  // Fired by HealthMedicines.tsx's handleTransferIncident right after a successful transfer —
+  // tells the NEW owner's circle (the owner themselves, whoever they delegate medicine management
+  // to, and whoever the just-moved medicines are now shared with, per the same
+  // groupId/sharedFriendUids the transfer itself just recomputed) that an incident and its
+  // medicines/history landed under this account. Old owner's circle isn't paged here — they still
+  // see it vanish from that person's own list, which is self-explanatory; this is about the people
+  // who now have something new to look at. Recipient uids are re-resolved server-side from
+  // newOwnerUid's own medicineDelegateSettings doc (never trusted from the client) — same
+  // "delegate list belongs to the owner, not the requester" model as isMedicineDelegateFor.
+  app.post('/api/health/notify-medicine-transferred', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const { incidentId, incidentName, newOwnerUid, groupId, sharedFriendUids, actorName } = req.body || {};
+    if (typeof newOwnerUid !== 'string' || !newOwnerUid || typeof incidentName !== 'string' || !incidentName) {
+      return res.status(400).json({ error: 'newOwnerUid and incidentName are required.' });
+    }
+
+    try {
+      const notifyUids = new Set<string>([newOwnerUid]);
+      if (Array.isArray(sharedFriendUids)) sharedFriendUids.forEach((uid: unknown) => typeof uid === 'string' && notifyUids.add(uid));
+      if (typeof groupId === 'string' && groupId) {
+        const membersSnap = await adminDb.collection('members').where('groupId', '==', groupId).get();
+        membersSnap.docs.forEach((m) => notifyUids.add(m.data().userId));
+      }
+      (await resolveMedicineDelegateUids(adminDb, newOwnerUid)).forEach((uid) => notifyUids.add(uid));
+      notifyUids.delete(decoded.uid);
+      if (notifyUids.size === 0) return res.json({ sent: 0 });
+
+      const newOwnerSnap = await adminDb.collection('users').doc(newOwnerUid).get();
+      const newOwnerName = newOwnerSnap.exists ? newOwnerSnap.data()!.displayName || newOwnerSnap.data()!.email || 'someone' : 'someone';
+
+      const recipients = Array.from(notifyUids);
+      const tokens = await collectPushTokens(adminDb, recipients, 'notificationsEnabled');
+      const sent = await sendPush(
+        tokens,
+        'Medicine incident transferred',
+        `${actorName || 'Someone'} transferred "${incidentName}" to ${newOwnerName}`,
+        { type: 'medicine_incident_transferred', ownerUid: newOwnerUid, ...(typeof incidentId === 'string' ? { incidentId } : {}) },
+      );
+      // Recipient-only Feed entry (matching account/goal shares' own reasoning — the actor already
+      // sees the transfer reflected in the incident list's own UI, so no self-entry needed).
+      await Promise.all(
+        recipients.map((uid) =>
+          logFeedActivity(adminDb, {
+            userId: uid, type: 'medicine_incident_transferred',
+            description: incidentName, userName: actorName,
+            data: { contextLabel: incidentName, newOwnerName },
+          }),
+        ),
+      );
+      return res.json({ sent });
+    } catch (error) {
+      console.error('notify-medicine-transferred error:', error);
+      return res.status(500).json({ error: 'Unable to send notification.' });
+    }
+  });
+
+  // Fired by HealthMedicines.tsx's handleMarkDose on every taken/skipped tap — the non-group half
+  // of "notify whoever cares about this medicine" (a shared group's own members are already
+  // covered by the existing notifyGroupActivity call, which this deliberately does NOT re-resolve,
+  // to avoid double-pushing a group member who also happens to be a delegate). This endpoint
+  // covers: whoever the medicine is individually shared with (sharedFriendUids), whoever the
+  // OWNER delegates medicine management to (resolved server-side, never trusted from the client —
+  // same model as every other medicine notifier here), and the owner themselves if someone ELSE
+  // (a delegate) is the one who just marked it — they should know even if they didn't do it.
+  app.post('/api/health/notify-medicine-logged', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const { ownerUid, medicineName, doseLabel, status, sharedFriendUids, actorName } = req.body || {};
+    if (typeof ownerUid !== 'string' || !ownerUid || typeof medicineName !== 'string' || !medicineName || (status !== 'taken' && status !== 'skipped')) {
+      return res.status(400).json({ error: 'ownerUid, medicineName, and a valid status are required.' });
+    }
+
+    try {
+      const notifyUids = new Set<string>([ownerUid]);
+      if (Array.isArray(sharedFriendUids)) sharedFriendUids.forEach((uid: unknown) => typeof uid === 'string' && notifyUids.add(uid));
+      (await resolveMedicineDelegateUids(adminDb, ownerUid)).forEach((uid) => notifyUids.add(uid));
+      notifyUids.delete(decoded.uid);
+      if (notifyUids.size === 0) return res.json({ sent: 0 });
+
+      const contextLabel = `${medicineName}${doseLabel ? ` — ${doseLabel}` : ''}`;
+      const recipients = Array.from(notifyUids);
+      const tokens = await collectPushTokens(adminDb, recipients, 'notificationsEnabled');
+      const sent = await sendPush(
+        tokens,
+        status === 'skipped' ? 'Medicine dose skipped' : 'Medicine dose taken',
+        `${actorName || 'Someone'} ${status === 'skipped' ? 'skipped a medicine dose' : 'logged a medicine dose'}: ${contextLabel}`,
+        { type: 'medicine_logged', ownerUid, status },
+      );
+      // Recipient-only Feed entry — the actor already sees the dose marked in the UI they're
+      // looking at, same reasoning as every other "share" push in this file that also feeds.
+      await Promise.all(
+        recipients.map((uid) =>
+          logFeedActivity(adminDb, {
+            userId: uid, type: 'medicine_logged',
+            description: contextLabel, userName: actorName,
+            data: { contextLabel, status },
+          }),
+        ),
+      );
+      return res.json({ sent });
+    } catch (error) {
+      console.error('notify-medicine-logged error:', error);
       return res.status(500).json({ error: 'Unable to send notification.' });
     }
   });
@@ -13417,6 +14147,49 @@ async function startServer() {
     }
   });
 
+  // Daily job: finds every soft/hard-deleted account whose scheduled purge date has arrived
+  // (30 days out for a normal "pause" delete, immediately for "delete everything now" or a
+  // "delete permanently now" upgrade — see /api/account/delete and /api/account/recover) and
+  // runs hardDeleteUserData on it. One account's purge failing (e.g. a transient Firestore
+  // error) is logged and skipped rather than aborting the rest of the batch — it'll simply be
+  // picked up again on tomorrow's run, since its tombstone stays 'pending' until it succeeds.
+  app.post('/api/cron/purge-deleted-accounts', async (req, res) => {
+    const providedSecret = req.headers['x-cron-secret'];
+    if (!process.env.CRON_SECRET || providedSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    if (!adminDb || !adminAuth) return res.status(500).json({ error: 'Not available.' });
+    const db = adminDb;
+    const authClient = adminAuth;
+
+    try {
+      const nowIso = new Date().toISOString();
+      // Single-field query (no composite index needed) + filter purgeAt in memory — this
+      // collection is bounded by how many accounts are ever mid-pause at once, never large
+      // enough for that to matter, and it avoids a deploy-time step (provisioning a
+      // status+purgeAt composite index) for one small daily cron query.
+      const pendingSnap = await db.collection('accountDeletions').where('status', '==', 'pending').get();
+      const dueDocs = pendingSnap.docs.filter((d) => (d.data().purgeAt || '') <= nowIso);
+      const results: { uid: string; ok: boolean; error?: string }[] = [];
+      for (const tombstoneDoc of dueDocs) {
+        const uid = tombstoneDoc.id;
+        const tombstoneData = tombstoneDoc.data();
+        try {
+          await hardDeleteUserData(db, authClient, uid, tombstoneData.email || null, tombstoneData.displayName || null);
+          results.push({ uid, ok: true });
+        } catch (err) {
+          console.error(`purge-deleted-accounts: failed for ${uid}:`, err);
+          results.push({ uid, ok: false, error: String(err) });
+        }
+      }
+      if (results.length > 0) console.log('purge-deleted-accounts:', JSON.stringify(results));
+      return res.json({ ok: true, processed: results.length, results });
+    } catch (error) {
+      console.error('cron/purge-deleted-accounts error:', error);
+      return res.status(500).json({ error: 'Purge job failed.' });
+    }
+  });
+
   // Runs once a day (new Cloud Scheduler job `familyledger-daily-digest`) — the multi-day-threshold
   // per-user nudges (2-day spend gap, 5-day inactivity, 14-day spread-the-word) plus the old-
   // activities cleanup sweep, none of which need — or benefit from — checking more than once a day.
@@ -13894,6 +14667,12 @@ async function startServer() {
       return res.status(500).json({ error: 'Account/goal nudge job failed.' });
     }
   });
+
+  // The quarterly AI-generated vaccine brand catalog refresh (/api/cron/refresh-vaccine-brand-
+  // catalog, powered by the Anthropic API) was removed — the admin now updates the
+  // vaccineBrandCatalog/current doc by hand at whatever frequency they choose. LogVaccineVisit.tsx
+  // still reads that doc for its "known shots" suggestions; only the automated regeneration (and
+  // the Anthropic API dependency that came with it) is gone.
 
   // Self-service "Generate my weekly recap" button (Profile.tsx) — lets a signed-in user trigger
   // their OWN summary on demand, for trying the feature out before the real weekly Cloud Scheduler

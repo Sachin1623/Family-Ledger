@@ -1,10 +1,7 @@
 import { useEffect } from 'react';
-import { collection, query, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../lib/firebase';
-import { Medicine } from '../lib/medicines';
 import { scheduleMedicineReminders } from '../lib/medicineReminders';
+import { useMedicineDelegators } from '../lib/useMedicineDelegators';
 
 // Medicine reminder alarms previously only got (re)armed by HealthMedicines.tsx's own mount
 // effect — so on any day the user didn't happen to open Medicine Reminders before a dose's time,
@@ -22,21 +19,31 @@ import { scheduleMedicineReminders } from '../lib/medicineReminders';
 // Reminders itself is visited. HealthMedicines.tsx keeps its own local scheduling call too (same
 // belt-and-suspenders precedent RemindersHub.tsx follows for shared reminders) — rescheduling with
 // identical data twice is a harmless no-op, not a real duplicate.
+//
+// ALSO includes every medicine the signed-in user is a DELEGATE for (via useMedicineDelegators,
+// mirroring HealthMedicines.tsx's own `myActiveMedicines` filter) — this used to be a bare
+// userId==uid query that deliberately left delegate-managed medicines out, on the theory that
+// HealthMedicines.tsx's own effect would cover them. It doesn't, in practice: that effect only
+// runs while the Medicines screen is mounted, so a delegate's alarm for someone else's medicine
+// only ever gets reconciled against that medicine's CURRENT state (course ended, incident closed,
+// paused, deleted...) if the delegate happens to reopen that specific screen afterward. A native
+// AlarmClock alarm has no built-in expiry (see medicineReminders.ts's own comment on this) — it
+// just keeps ringing on schedule until something explicitly cancels it — so a delegate who
+// scheduled the alarm once while the course was active, then never revisited Medicines after it
+// ended, kept hearing it forever. Folding delegate medicines into this app-root scheduler closes
+// that gap the same way it already closed it for the user's own medicines.
 export default function GlobalMedicineReminderScheduler() {
   const { user } = useAuth();
-  // Only this user's OWN medicines — group/friend-shared ones (someone else's medicine visible to
-  // you) and delegate-managed ones (added by a caregiver, owned by the OTHER person) never belong
-  // on THIS device's alarm list, same filter HealthMedicines.tsx's own scheduling effect applies.
-  const [medicinesValue] = useCollection(user ? query(collection(db, 'medicines'), where('userId', '==', user.uid)) : null);
-  const myMedicines: Medicine[] = medicinesValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
+  const { medicines, ownerNames } = useMedicineDelegators(user?.uid);
 
   useEffect(() => {
     if (!user) return;
-    scheduleMedicineReminders(myMedicines);
+    scheduleMedicineReminders(medicines, user.uid, ownerNames);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     user?.uid,
-    JSON.stringify(myMedicines.map((m) => [m.id, m.active, m.remindersEnabled, m.times, m.weekdays, m.intervalDays, m.startDate, m.durationMode, m.endDate, m.dayCount])),
+    JSON.stringify(medicines.map((m) => [m.id, m.userId, m.active, m.remindersEnabled, m.times, m.weekdays, m.intervalDays, m.startDate, m.durationMode, m.endDate, m.dayCount])),
+    ownerNames,
   ]);
 
   return null;

@@ -182,6 +182,8 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'glucose_logged': return 'bloodtype';
       case 'bp_logged': return 'monitor_heart';
       case 'medicine_logged': return 'medication';
+      case 'medicine_missed': return 'notifications_active';
+      case 'medicine_incident_transferred': return 'sync_alt';
       case 'reminder_set': case 'reminder_activity': return 'notifications_active';
       case 'recurring_created': case 'recurring_changed': return 'autorenew';
       case 'recurring_deleted': return 'event_busy';
@@ -439,7 +441,31 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
           <div className="space-y-1">
             <p className="text-[10px] font-bold text-error uppercase tracking-wider">{t('feed.medicineLoggedLabel')}</p>
             <p className="text-sm font-bold text-on-surface">
-              {t('feed.medicineLoggedActivity', { name: activity.userName || t('common.someone'), dose: activity.data?.contextLabel || '' })}
+              {t(activity.data?.status === 'skipped' ? 'feed.medicineSkippedActivity' : 'feed.medicineLoggedActivity', {
+                name: activity.userName || t('common.someone'), dose: activity.data?.contextLabel || '',
+              })}
+            </p>
+          </div>
+        );
+      case 'medicine_missed':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-warning uppercase tracking-wider">{t('feed.medicineMissedLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">
+              {t('feed.medicineMissedActivity', { dose: activity.data?.contextLabel || '' })}
+            </p>
+          </div>
+        );
+      case 'medicine_incident_transferred':
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">{t('feed.medicineIncidentTransferredLabel')}</p>
+            <p className="text-sm font-bold text-on-surface">
+              {t('feed.medicineIncidentTransferredActivity', {
+                name: activity.userName || t('common.someone'),
+                incident: activity.data?.contextLabel || '',
+                newOwner: activity.data?.newOwnerName || '',
+              })}
             </p>
           </div>
         );

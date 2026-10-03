@@ -27,6 +27,7 @@ import {
   frequencyConfigForUpdate,
 } from '../lib/frequency';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageFabAction } from '../context/FabActionContext';
 
 // Local YYYY-MM-DD (not UTC) — matches what a `date` input produces/expects, and what we key the
 // calendar's per-day due-count map by, so "today" lines up with the user's own calendar day.
@@ -217,6 +218,11 @@ export default function ToDoList() {
     setReminderOffsetMinutes(null);
     setShowForm(false);
   };
+
+  const openAdd = () => { resetForm(); setShowForm(true); };
+  // Global floating "+" button (Navigation.tsx) becomes "New To-Do" here instead of the default
+  // "Add Expense" — see FabActionContext.tsx.
+  usePageFabAction('✅', t('todo.newToDo'), openAdd);
 
   const handleEditStart = (todo: any) => {
     setEditingId(todo.id);
@@ -463,7 +469,7 @@ export default function ToDoList() {
           </div>
           {!showForm && (
             <button
-              onClick={() => { resetForm(); setShowForm(true); }}
+              onClick={openAdd}
               title={t('todo.newToDo')}
               data-tour="todo-add"
               className="shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center shadow-md hover:opacity-90 active:scale-95 transition-all"

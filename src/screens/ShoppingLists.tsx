@@ -8,12 +8,16 @@ import { clsx } from 'clsx';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { EXPENSE_CATEGORIES } from '../lib/constants';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageFabAction } from '../context/FabActionContext';
 
 export default function ShoppingLists() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t } = useLanguage();
   const [showForm, setShowForm] = useState(false);
+  // Global floating "+" button (Navigation.tsx) becomes "New List" here instead of the default
+  // "Add Expense" — see FabActionContext.tsx.
+  usePageFabAction('🛒', t('shoppingLists.newList'), () => setShowForm(true));
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('food');

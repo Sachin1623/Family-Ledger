@@ -20,6 +20,7 @@ import { triggerNewUserGuide } from '../lib/newUserGuideRef';
 import { startTour } from '../lib/tourRef';
 import { checkAppPermissions, PermissionKey, PermissionStatus, PERMISSION_ORDER } from '../lib/appPermissions';
 import MissingPermissionsList from './MissingPermissionsList';
+import { usePendingActions } from '../lib/usePendingActions';
 
 export default function Header() {
   const navigate = useNavigate();
@@ -127,6 +128,11 @@ export default function Header() {
   );
   const pendingRecurringCount = (pendingRecurringValue?.docs || []).filter((d) => d.data().status === 'pending').length;
 
+  // "Pending Actions" menu entry + its red dot — every friend/health-delegation/group/game item
+  // still awaiting an accept/reject from this user (see usePendingActions.ts and PendingActions.tsx).
+  const { items: pendingActionsItems } = usePendingActions(user?.uid);
+  const pendingActionsCount = pendingActionsItems.length;
+
   // "App Permissions" menu entry + its red dot — always checked (no 24h snooze, unlike
   // AppPermissionsReminder.tsx's own auto-popup) since this is a persistent status indicator the
   // user can act on anytime, not a nag. Native-only; nothing to check on web.
@@ -156,7 +162,7 @@ export default function Header() {
   // entry has one, so the icon itself is always a reliable "something in here needs you" signal
   // without having to remember which specific item to check. Add future menu-item red dots to
   // this list too, rather than introducing a second, separate aggregate.
-  const anyMenuRedDot = missingPermissions.length > 0 || pendingRecurringCount > 0;
+  const anyMenuRedDot = missingPermissions.length > 0 || pendingRecurringCount > 0 || pendingActionsCount > 0;
 
   // Lets other components (a group card's Feed button, say) open this SAME slide-over — see
   // feedPanelRef.ts. Mirrors NavigationBridge's setNavigateFn registration pattern in App.tsx.
@@ -320,6 +326,23 @@ export default function Header() {
                   {user && (
                     <>
                       <button
+                        onClick={() => { setMenuOpen(false); navigate('/pending-actions'); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="relative material-symbols-outlined text-[20px] text-text-muted">
+                          checklist
+                          {pendingActionsCount > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-error border border-white" />
+                          )}
+                        </span>
+                        Pending Actions
+                      </button>
+                      <div className="border-t border-border-subtle my-1" />
+                    </>
+                  )}
+                  {user && (
+                    <>
+                      <button
                         onClick={() => { setMenuOpen(false); navigate('/recurring-approvals'); }}
                         className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
                       >
@@ -330,6 +353,13 @@ export default function Header() {
                           )}
                         </span>
                         Recurring Expense Confirmation
+                      </button>
+                      <button
+                        onClick={() => { setMenuOpen(false); navigate('/alarms'); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="material-symbols-outlined text-[20px] text-text-muted">alarm</span>
+                        Alarms
                       </button>
                       <div className="border-t border-border-subtle my-1" />
                     </>

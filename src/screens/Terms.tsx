@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 export default function Terms() {
   const navigate = useNavigate();
@@ -9,7 +9,7 @@ export default function Terms() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Terms of Service</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: August 8, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 3, 2026</p>
           <p>
             Welcome to FamilyLedger. By using our application, you agree to these terms. Please read them carefully.
           </p>
@@ -18,14 +18,14 @@ export default function Terms() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-primary">1. Acceptable Use</h2>
           <p>
-            You agree to use FamilyLedger only for lawful purposes and in a way that does not infringe the rights of, restrict or inhibit anyone else's use and enjoyment of the service. Prohibited behavior includes harassing or causing distress or inconvenience to any person.
+            You agree to use FamilyLedger only for lawful purposes and in a way that does not infringe the rights of, restrict or inhibit anyone else's use and enjoyment of the service. Prohibited behavior includes harassing or causing distress or inconvenience to any person, or posting abusive, threatening, or otherwise objectionable content in any chat. Where in-app chat is available (such as during a multiplayer game), you can report an abusive message for our review and block that sender so you no longer see their messages. We may remove content and suspend or terminate accounts that violate this policy — see Section 9 (Termination).
           </p>
         </section>
 
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-primary">2. User Accounts</h2>
           <p>
-            To use certain features of the app, you must register for an account using either a Google account or an email address and password. Email and password accounts must be verified with a one-time code before use. You are responsible for maintaining the confidentiality of your account information and for all activities that occur under your account.
+            To use certain features of the app, you must register for an account using a Google account, Sign in with Apple, or an email address and password. Email and password accounts must be verified with a one-time code before use. You are responsible for maintaining the confidentiality of your account information and for all activities that occur under your account. You may delete your account at any time from within the app — see our <Link to="/delete-account" className="text-primary font-bold underline">Data Deletion</Link> page for details.
           </p>
         </section>
 

@@ -1,21 +1,24 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { GlucoseMealType, GlucoseReminderSettings, BEFORE_MEAL_REMINDER_LEAD_MINUTES } from './health';
+import { GlucoseReminderSettings, BEFORE_MEAL_REMINDER_LEAD_MINUTES } from './health';
 
 // On-device only, same reasoning as localReminders.ts's to-do reminders — no server round trip,
 // works offline, exact to the minute. Deterministic ids over the FULL possible id space (every
 // meal × before/after × every weekday, plus the plain-daily variant) so cancelGlucoseReminders can
 // always clear everything this feature could ever have scheduled, regardless of what the previous
 // cadence/meal selection was, before scheduling the current one.
-const MEAL_INDEX: Record<GlucoseMealType, number> = { breakfast: 0, lunch: 1, dinner: 2 };
-const MEAL_LABELS: Record<GlucoseMealType, string> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
+// Only the 3 fixed-time meals — matches GlucoseReminderSettings.meals, which deliberately excludes
+// 'random' (no fixed meal time to remind against).
+type ReminderMeal = 'breakfast' | 'lunch' | 'dinner';
+const MEAL_INDEX: Record<ReminderMeal, number> = { breakfast: 0, lunch: 1, dinner: 2 };
+const MEAL_LABELS: Record<ReminderMeal, string> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
 
 // Daily ids: 9100 + meal*10 + timing(1|2) — 6 ids, 9101..9132.
-function dailyId(meal: GlucoseMealType, timing: 'before' | 'after'): number {
+function dailyId(meal: ReminderMeal, timing: 'before' | 'after'): number {
   return 9100 + MEAL_INDEX[meal] * 10 + (timing === 'before' ? 1 : 2);
 }
 // Weekly ids: 9200 + meal*70 + timing(0|35) + weekday(0-6) — 42 ids, 9200..9341, never overlapping daily's range.
-function weeklyId(meal: GlucoseMealType, timing: 'before' | 'after', weekday: number): number {
+function weeklyId(meal: ReminderMeal, timing: 'before' | 'after', weekday: number): number {
   return 9200 + MEAL_INDEX[meal] * 70 + (timing === 'before' ? 0 : 35) + weekday;
 }
 

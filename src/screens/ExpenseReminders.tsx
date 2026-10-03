@@ -14,6 +14,7 @@ import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import DetailSheet, { DetailField } from '../components/DetailSheet';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageFabAction } from '../context/FabActionContext';
 
 const toDatetimeLocalValue = (iso: string) => {
   const d = new Date(iso);
@@ -124,6 +125,11 @@ export default function ExpenseReminders() {
     setShowForm(false);
   };
 
+  const openAdd = () => { resetForm(); setShowForm(true); };
+  // Global floating "+" button (Navigation.tsx) becomes "New Reminder" here instead of the
+  // default "Add Expense" — see FabActionContext.tsx.
+  usePageFabAction('🔔', t('reminders.newReminder'), openAdd);
+
   const handleEditStart = (reminder: any) => {
     setEditingId(reminder.id);
     setGroupId(reminder.presetGroupId || '');
@@ -228,7 +234,7 @@ export default function ExpenseReminders() {
           </div>
           {!showForm && (
             <button
-              onClick={() => { resetForm(); setShowForm(true); }}
+              onClick={openAdd}
               title={t('reminders.newReminder')}
               data-tour="reminders-add"
               className="shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center shadow-md hover:opacity-90 active:scale-95 transition-all"

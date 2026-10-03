@@ -259,10 +259,6 @@ export default function RecurringExpenses() {
     setMemberSplits(rule.memberSplits || {});
     setImages(rule.images || []);
     setShowForm(true);
-    // The edit form renders up near the top of the page, above the rule list — without this,
-    // starting an edit from a card further down leaves the scroll position unchanged and it
-    // looks like the button did nothing.
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const guide = searchParams.get('guide') === '1' && !editingRuleId;
@@ -469,6 +465,18 @@ export default function RecurringExpenses() {
           {t('recurring.viewPendingConfirmations')}
         </button>
 
+        {/* Editing opens as a popup (closes itself on Cancel/Save, same handleSubmit/
+            resetFormFields as before) instead of the inline form scrolling into view at the top
+            of the page — adding a new rule (and the guided tour, which never runs while editing)
+            keeps the original inline placement untouched. */}
+        <div
+          className={showForm && editingRuleId ? 'fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 pt-10 overflow-y-auto' : undefined}
+          onClick={() => { if (showForm && editingRuleId) { resetFormFields(); setShowForm(false); } }}
+        >
+        <div
+          className={showForm && editingRuleId ? 'w-full max-w-lg' : undefined}
+          onClick={(e) => { if (showForm && editingRuleId) e.stopPropagation(); }}
+        >
         {showForm && (
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-border-subtle p-6 space-y-4">
             <h2 className="text-sm font-bold text-primary">
@@ -786,6 +794,8 @@ export default function RecurringExpenses() {
             )}
           </form>
         )}
+        </div>
+        </div>
 
         <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
           {(['all', 'expense', 'income'] as const).map((opt) => (

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { db } from '../lib/firebase';
@@ -9,13 +10,16 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'rec
 import { motion } from 'motion/react';
 import { fireWrite } from '../lib/offlineWrite';
 import { shareOrDownloadFile } from '../lib/fileShare';
-import { toLocalDateString, todayLocalDateString } from '../lib/dateUtils';
+import { toLocalDateString, todayLocalDateString, parseLocalDate } from '../lib/dateUtils';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { scheduleMedicineReminders } from '../lib/medicineReminders';
 import { useFriendships } from '../lib/useFriendships';
+import { usePageFabAction } from '../context/FabActionContext';
 import { useFamilies } from '../lib/useFamilies';
 import { WEEKDAY_LABELS } from '../lib/frequency';
 import { auth } from '../lib/firebase';
+import ImageAttachments from '../components/ImageAttachments';
+import { syncHealthDelegateInvites } from '../lib/healthDelegateInvites';
 import {
   Medicine,
   MedicineDoseTime,
@@ -129,6 +133,42 @@ function computeNextDue(med: Medicine, now: Date): { dateStr: string; time: stri
   return null;
 }
 
+// Shows both of a medicine's photos (front/back) stacked in one scrollable column rather than
+// ImageLightbox's single-image swipe-between-photos model — front and back are two distinct,
+// simultaneously-useful views of the same medicine, not a gallery to page through one at a time.
+function MedicinePhotosLightbox({ front, back, t, onClose }: {
+  front: string | null; back: string | null;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/80 flex flex-col" onClick={onClose}>
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white z-10"
+        aria-label={t('common.close')}
+      >
+        <span className="material-symbols-outlined">close</span>
+      </button>
+      <div className="flex-1 overflow-y-auto p-4 pt-16 pb-8 flex flex-col items-center gap-4" onClick={(e) => e.stopPropagation()}>
+        {front && (
+          <div className="w-full max-w-md shrink-0">
+            <p className="text-white/70 text-[11px] font-bold uppercase tracking-wider mb-1 text-center">{t('medicine.photoFront')}</p>
+            <img src={front} alt="" className="w-full rounded-xl" />
+          </div>
+        )}
+        {back && (
+          <div className="w-full max-w-md shrink-0">
+            <p className="text-white/70 text-[11px] font-bold uppercase tracking-wider mb-1 text-center">{t('medicine.photoBack')}</p>
+            <img src={back} alt="" className="w-full rounded-xl" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // One medicine row on the Medicines tab — pulled out to its own component so the incident
 // grouping above (medicinesByIncident.map) can render it identically whether a medicine sits
 // under a colored incident section or (single-section case) in a plain flat list. Collapsible in
@@ -154,6 +194,11 @@ interface MedicineCardProps {
 const MedicineCard: React.FC<MedicineCardProps> = ({
   med, status, canManage, expanded, onToggleExpand, onEdit, onTogglePause, onDelete, doseTimeSummary, durationSummary, allLogs, today, t,
 }) => {
+  const [photoOpen, setPhotoOpen] = useState(false);
+  // Falls back to the old, since-replaced single `photo` field as the front photo, for any
+  // medicine photographed during that brief window before front/back existed.
+  const photoFront = med.photoFront ?? (med as any).photo ?? null;
+  const photoBack = med.photoBack ?? null;
   const logsForMed = useMemo(() => (expanded ? allLogs.filter((l) => l.medicineId === med.id) : []), [expanded, allLogs, med.id]);
 
   const lastTaken = useMemo(() => {
@@ -185,26 +230,36 @@ const MedicineCard: React.FC<MedicineCardProps> = ({
 
   return (
     <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-      <button type="button" onClick={onToggleExpand} className="w-full p-3 flex items-start justify-between gap-2 text-left">
-        <div className="min-w-0">
-          <p className="font-bold text-primary text-sm truncate">{med.name}{med.dosage ? <span className="text-text-muted font-semibold"> · {med.dosage}</span> : null}</p>
-          <p className="text-[11px] text-text-muted mt-0.5">{doseTimeSummary(med)}</p>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <span
-            className={clsx(
-              'text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full',
-              status === 'active' && 'bg-success/10 text-success',
-              status === 'paused' && 'bg-surface-container text-text-muted',
-              status === 'ended' && 'bg-error/10 text-error',
-              status === 'upcoming' && 'bg-primary/10 text-primary',
-            )}
-          >
-            {t(`medicine.status${status.charAt(0).toUpperCase()}${status.slice(1)}`)}
-          </span>
-          <span className={clsx('material-symbols-outlined text-[18px] text-text-muted transition-transform', expanded && 'rotate-180')}>expand_more</span>
-        </div>
-      </button>
+      <div className="w-full p-3 flex items-start gap-2">
+        {/* Its own sibling button (not nested inside the toggle-expand button below) so tapping
+            the photo opens the lightbox instead of also expanding/collapsing the card. */}
+        {(photoFront || photoBack) && (
+          <button type="button" onClick={() => setPhotoOpen(true)} className="shrink-0" aria-label={t('medicine.viewPhoto')}>
+            <img src={photoFront || photoBack || ''} alt="" className="w-10 h-10 object-cover rounded-lg border border-border-subtle" />
+          </button>
+        )}
+        <button type="button" onClick={onToggleExpand} className="flex-1 min-w-0 flex items-start justify-between gap-2 text-left">
+          <div className="min-w-0">
+            <p className="font-bold text-primary text-sm truncate">{med.name}{med.dosage ? <span className="text-text-muted font-semibold"> · {med.dosage}</span> : null}</p>
+            <p className="text-[11px] text-text-muted mt-0.5">{doseTimeSummary(med)}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <span
+              className={clsx(
+                'text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full',
+                status === 'active' && 'bg-success/10 text-success',
+                status === 'paused' && 'bg-surface-container text-text-muted',
+                status === 'ended' && 'bg-error/10 text-error',
+                status === 'upcoming' && 'bg-primary/10 text-primary',
+              )}
+            >
+              {t(`medicine.status${status.charAt(0).toUpperCase()}${status.slice(1)}`)}
+            </span>
+            <span className={clsx('material-symbols-outlined text-[18px] text-text-muted transition-transform', expanded && 'rotate-180')}>expand_more</span>
+          </div>
+        </button>
+      </div>
+      {photoOpen && <MedicinePhotosLightbox front={photoFront} back={photoBack} t={t} onClose={() => setPhotoOpen(false)} />}
       {expanded && (
         <div className="px-3 pb-3 space-y-2.5 border-t border-border-subtle pt-2.5">
           <p className="text-[11px] text-text-muted">{durationSummary(med)}</p>
@@ -276,6 +331,7 @@ const MedicineCard: React.FC<MedicineCardProps> = ({
 export default function HealthMedicines() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<'medicines' | 'log' | 'dashboard'>('medicines');
 
   const [membershipsValue] = useCollection(
@@ -310,6 +366,19 @@ export default function HealthMedicines() {
   const [delegatedToMeByFriendValue] = useCollection(
     user ? query(collection(db, 'medicineDelegateSettings'), where('medicine.friendUids', 'array-contains', user.uid)) : null,
   );
+  // A friend-based grant only actually works (per firestore.rules' isHealthDelegateAccepted) once
+  // THIS accepted — being listed in someone's friendUids alone isn't enough anymore. Without this
+  // filter, delegatorsForMe would list someone the UI can't actually act on yet (or ever, if
+  // declined), and every write attempt against them would fail with permission-denied.
+  const [myAcceptedMedicineInvitesValue] = useCollection(
+    user
+      ? query(collection(db, 'healthDelegateInvites'), where('friendUid', '==', user.uid), where('kind', '==', 'medicine'), where('status', '==', 'accepted'))
+      : null,
+  );
+  const acceptedMedicineOwnerUids = useMemo(
+    () => new Set((myAcceptedMedicineInvitesValue?.docs || []).map((d) => d.data().ownerUid as string)),
+    [myAcceptedMedicineInvitesValue],
+  );
   const resolveSharer = (uid: string): { userId: string; displayName: string; photoURL: string } => {
     const member = allMembers.find((m: any) => m.userId === uid);
     if (member) return { userId: uid, displayName: member.displayName, photoURL: member.photoURL };
@@ -319,10 +388,10 @@ export default function HealthMedicines() {
   const delegatorsForMe = useMemo(() => {
     const uids = new Set<string>();
     delegatedToMeByGroupValue?.docs.forEach((d) => uids.add(d.id));
-    delegatedToMeByFriendValue?.docs.forEach((d) => uids.add(d.id));
+    delegatedToMeByFriendValue?.docs.forEach((d) => { if (acceptedMedicineOwnerUids.has(d.id)) uids.add(d.id); });
     return Array.from(uids).filter((uid) => uid !== user?.uid).map(resolveSharer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, allMembers, friendUsersByUid, user]);
+  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, acceptedMedicineOwnerUids, allMembers, friendUsersByUid, user]);
   const delegatorUids = useMemo(() => delegatorsForMe.map((d) => d.userId), [delegatorsForMe]);
 
   // Medicines belonging to anyone who's granted ME delegate access — the delegate READ grant in
@@ -367,13 +436,24 @@ export default function HealthMedicines() {
   const [sharedLogsByFriendValue] = useCollection(
     user ? query(collection(db, 'medicineLogs'), where('sharedFriendUids', 'array-contains', user.uid)) : null,
   );
+  // Logs belonging to anyone who's granted ME delegate access — mirrors delegatedMedicinesValue
+  // above, and was the missing piece here: a medicine can be visible to a delegate purely via
+  // isMedicineDelegateFor (firestore.rules already allows this read) with NO group/friend sharing
+  // configured on it at all, in which case its LOGS never carry a matching groupId/sharedFriendUids
+  // either. Without this query, every one of that person's actually-logged doses was invisible to
+  // their delegate, making the Dashboard tab's "no log found" fallback wrongly mark the entire day
+  // as missed even when every dose had genuinely been taken/skipped.
+  const [delegatedLogsValue] = useCollection(
+    delegatorUids.length > 0 ? query(collection(db, 'medicineLogs'), where('userId', 'in', delegatorUids.slice(0, 30))) : null,
+  );
   const allLogs: MedicineLog[] = useMemo(() => {
     const byId = new Map<string, MedicineLog>();
     ownLogsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
     sharedLogsByGroupValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
     sharedLogsByFriendValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
+    delegatedLogsValue?.docs.forEach((d) => byId.set(d.id, { id: d.id, ...(d.data() as any) }));
     return Array.from(byId.values());
-  }, [ownLogsValue, sharedLogsByGroupValue, sharedLogsByFriendValue]);
+  }, [ownLogsValue, sharedLogsByGroupValue, sharedLogsByFriendValue, delegatedLogsValue]);
   const logsById = useMemo(() => new Map(allLogs.map((l) => [l.id, l])), [allLogs]);
 
   const shareSettingsDocRef = user ? doc(db, 'medicineShareSettings', user.uid) : null;
@@ -486,6 +566,10 @@ export default function HealthMedicines() {
     setSavingSettings(true);
     try {
       await setDoc(delegateSettingsDocRef, { userId: user.uid, medicine: delegateForm, updatedAt: new Date().toISOString() });
+      await syncHealthDelegateInvites(
+        'medicine', user.uid, profile?.displayName || user.displayName || 'Someone', profile?.photoURL || user.photoURL || '',
+        delegateSettings.friendUids, delegateForm.friendUids,
+      );
       setSettingsPanel(null);
     } catch (err) {
       console.error('Failed to save medicine delegate settings:', err);
@@ -495,19 +579,33 @@ export default function HealthMedicines() {
     }
   };
 
-  // Reminders live on each medicine itself — reconcile native notifications whenever the
-  // caller's OWN active medicine list changes (add/edit/pause/delete/duration elapses).
-  const myActiveMedicines = useMemo(() => medicines.filter((m) => m.userId === user?.uid), [medicines, user]);
+  // Reminders live on each medicine itself — reconcile native alarms whenever the reminder-worthy
+  // medicine list changes (add/edit/pause/delete/duration elapses). Includes not just the caller's
+  // OWN medicines but everyone THEY delegate for too — a delegate's own phone now also rings for
+  // whoever they manage medicines for, not just the patient's own device, so ownerNames lets the
+  // alarm text say whose dose it is for anything that isn't the caller's own.
+  const ownerNames = useMemo(() => Object.fromEntries(delegatorsForMe.map((d) => [d.userId, d.displayName])), [delegatorsForMe]);
+  const myActiveMedicines = useMemo(
+    () => medicines.filter((m) => m.userId === user?.uid || delegatorUids.includes(m.userId)),
+    [medicines, user, delegatorUids],
+  );
   useEffect(() => {
-    scheduleMedicineReminders(myActiveMedicines);
+    scheduleMedicineReminders(myActiveMedicines, user?.uid, ownerNames);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(myActiveMedicines.map((m) => [m.id, m.active, m.remindersEnabled, m.times, m.weekdays, m.intervalDays, m.startDate, m.durationMode, m.endDate, m.dayCount]))]);
+  }, [
+    JSON.stringify(myActiveMedicines.map((m) => [m.id, m.userId, m.active, m.remindersEnabled, m.times, m.weekdays, m.intervalDays, m.startDate, m.durationMode, m.endDate, m.dayCount])),
+    user?.uid,
+    ownerNames,
+  ]);
 
   // --- "Managing for" — who Medicines/Log tabs act on behalf of (me, or someone who's granted
   // delegate access) — distinct from Dashboard's "viewing" picker below, which is read-only and
   // covers anyone who's *shared* with me (a broader, non-delegate set). ---
   const [manageUid, setManageUid] = useState<string>('me');
   const manageTargetUid = manageUid === 'me' ? user?.uid || '' : manageUid;
+  // Shared lightbox for photo thumbnails OUTSIDE MedicineCard (which keeps its own) — currently
+  // just the Due Today list, whose rows are plain JSX in this component rather than a subcomponent.
+  const [viewingPhoto, setViewingPhoto] = useState<{ front: string | null; back: string | null } | null>(null);
 
   // --- Medicines tab ---
   const [medForm, setMedForm] = useState(false); // whether the add/edit floating form is open
@@ -537,6 +635,8 @@ export default function HealthMedicines() {
   const [formDayCount, setFormDayCount] = useState('30');
   const [formReminders, setFormReminders] = useState(true);
   const [formNotes, setFormNotes] = useState('');
+  const [formPhotoFront, setFormPhotoFront] = useState<string | null>(null);
+  const [formPhotoBack, setFormPhotoBack] = useState<string | null>(null);
   const [savingMed, setSavingMed] = useState(false);
 
   // `presetIncidentId` is set when opened from a specific incident section's own "Add Medicine"
@@ -561,6 +661,8 @@ export default function HealthMedicines() {
     setFormDayCount('30');
     setFormReminders(true);
     setFormNotes('');
+    setFormPhotoFront(null);
+    setFormPhotoBack(null);
     setMedForm(true);
   };
   const openEditMedicine = (med: Medicine) => {
@@ -585,6 +687,11 @@ export default function HealthMedicines() {
     setFormDayCount(med.dayCount ? String(med.dayCount) : '30');
     setFormReminders(med.remindersEnabled);
     setFormNotes(med.notes || '');
+    // Falls back to the old, since-replaced single `photo` field as the front photo, so a medicine
+    // photographed during that brief window doesn't just disappear once this screen only knows
+    // about photoFront/photoBack.
+    setFormPhotoFront(med.photoFront ?? (med as any).photo ?? null);
+    setFormPhotoBack(med.photoBack ?? null);
     setManageUid(med.userId === user?.uid ? 'me' : med.userId);
     setMedForm(true);
   };
@@ -611,6 +718,8 @@ export default function HealthMedicines() {
         dayCount: formDurationMode === 'dayCount' ? parseInt(formDayCount, 10) || null : null,
         remindersEnabled: formReminders,
         notes: formNotes.trim() || null,
+        photoFront: formPhotoFront,
+        photoBack: formPhotoBack,
         groupId: shouldShare ? effectiveShareSettings.groupId : null,
         sharedFriendUids: shouldShare ? effectiveShareSettings.friendUids : [],
       };
@@ -653,6 +762,9 @@ export default function HealthMedicines() {
     setIncidentFormEndDate('');
     setIncidentForm(true);
   };
+  // Global floating "+" button (Navigation.tsx) becomes "Add Incident" while this screen is
+  // mounted, in place of the default "Add Expense" — see FabActionContext.tsx.
+  usePageFabAction('🩺', t('medicine.addIncident'), openAddIncident);
   const openEditIncident = (inc: MedicalIncident) => {
     setEditingIncident(inc);
     setIncidentFormName(inc.name);
@@ -759,6 +871,32 @@ export default function HealthMedicines() {
         });
         await batch.commit();
       }
+
+      // Tell the new owner's circle (them, whoever they delegate to, whoever the transferred
+      // medicines are now shared with) something just landed in their account — fire-and-forget,
+      // same pattern as the dose-logged push below. `newOwnerShare.groupId`/`.friendUids` is a
+      // single settings doc per owner (not per-medicine), so whether ANY transferred medicine's
+      // startDate falls in the currently-active share window tells us whether that one groupId/
+      // friendUids list applies at all — no need to union per-medicine results, they're all the
+      // same underlying value or all null/[].
+      const anyShared = meds.some((m) => isMedicineShareActiveForDate(newOwnerShare, m.startDate));
+      auth.currentUser
+        ?.getIdToken()
+        .then((idToken) =>
+          fetch('/api/health/notify-medicine-transferred', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              incidentId: inc.id,
+              incidentName: inc.name,
+              newOwnerUid,
+              groupId: anyShared ? newOwnerShare.groupId : null,
+              sharedFriendUids: anyShared ? newOwnerShare.friendUids : [],
+              actorName: profile?.displayName || user.displayName || undefined,
+            }),
+          }),
+        )
+        .catch((err) => console.error('notify-medicine-transferred failed:', err));
 
       setTransferringIncident(null);
     } catch (err) {
@@ -884,6 +1022,16 @@ export default function HealthMedicines() {
     for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
     return INCIDENT_PALETTE[Math.abs(hash) % INCIDENT_PALETTE.length];
   };
+  // parseLocalDate (not `new Date(dateStr)`) avoids the UTC-midnight-parse day-shift bug in any
+  // negative-UTC-offset timezone (see dateUtils.ts's own comment) — matters here since an
+  // incident's endDate is a plain yyyy-mm-dd with no time component.
+  const formatIncidentDate = (dateStr: string) =>
+    parseLocalDate(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  // Which incident section a given medicine lives under — used on the Due Today list so a tile
+  // reads clearly even outside its own colored section (unlike the Medicines tab, Due Today mixes
+  // doses from every incident into one time-ordered list).
+  const incidentNameFor = (med: Medicine) =>
+    med.incidentId ? incidents.find((i) => i.id === med.incidentId)?.name || t('medicine.generalIncident') : t('medicine.generalIncident');
 
   const foodTimingLabel = (ft: FoodTiming) => t(`medicine.foodTiming.${ft}`);
   const doseTimeSummary = (med: Medicine) =>
@@ -1020,25 +1168,28 @@ export default function HealthMedicines() {
       }),
       'mark medicine dose',
     );
-    if (status === 'taken') {
-      const actorName = profile?.displayName || user.displayName || undefined;
-      const contextLabel = `${medicine.name} — ${doseTime.label}`;
-      if (groupId) {
-        notifyGroupActivity({ groupId, action: 'medicine_logged', contextLabel, actorName });
-      }
-      if (sharedFriendUids.length > 0) {
-        auth.currentUser
-          ?.getIdToken()
-          .then((idToken) =>
-            fetch('/api/health/notify-glucose-shared', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ friendUids: sharedFriendUids, kind: 'medicine', readingLabel: doseTime.label, contextLabel: medicine.name, actorName }),
-            }),
-          )
-          .catch((err) => console.error('notify-medicine-shared failed:', err));
-      }
+    // Fires for BOTH taken and skipped now (used to be taken-only) — a caregiver wants to know a
+    // dose was deliberately skipped just as much as that it was taken. Group members are notified
+    // by the existing notifyGroupActivity call below (writes its own group Feed entry); every
+    // other audience — individually shared friends, whoever the OWNER delegates medicine
+    // management to, and the owner themselves if someone else (a delegate) marked it — goes
+    // through the new dedicated endpoint, which resolves delegates server-side and also writes a
+    // personal Feed entry for each recipient (see server.ts's notify-medicine-logged).
+    const actorName = profile?.displayName || user.displayName || undefined;
+    const contextLabel = `${medicine.name} — ${doseTime.label}`;
+    if (groupId) {
+      notifyGroupActivity({ groupId, action: 'medicine_logged', contextLabel, actorName, status, ownerUid: targetUid });
     }
+    auth.currentUser
+      ?.getIdToken()
+      .then((idToken) =>
+        fetch('/api/health/notify-medicine-logged', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ownerUid: targetUid, medicineName: medicine.name, doseLabel: doseTime.label, status, sharedFriendUids, actorName }),
+        }),
+      )
+      .catch((err) => console.error('notify-medicine-logged failed:', err));
   };
   const handleUndoDose = (medicine: Medicine, doseTime: MedicineDoseTime, dateStr: string = logDate) => {
     const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, dateStr);
@@ -1048,12 +1199,40 @@ export default function HealthMedicines() {
   // --- Dashboard tab ---
   const [viewUid, setViewUid] = useState<string>('me');
   const viewTargetUid = viewUid === 'me' ? user?.uid || '' : viewUid;
+
+  // Deep-link from a "medicine dose logged/missed" push notification (see pushNotifications.ts's
+  // routeNotificationTap) — ?forUid=<ownerUid> lands the viewer on whichever of the two "someone
+  // else's medicines" mechanisms actually applies to them: the Medicines tab's manage-for
+  // selector if they're a genuine delegate for that owner (so they can act on it), or the
+  // Dashboard tab's read-only viewing selector if they're merely shared with (viewing only).
+  // Reactive on the param VALUE, not mount-only (React Router reuses this route's instance across
+  // same-pattern navigations — see feedback_mount_only_query_param_effects memory), and waits for
+  // the two delegatedToMe queries to have loaded at least once so a cold-start tap doesn't
+  // misjudge "not a delegate" just because that data hasn't arrived yet.
+  const appliedForUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const forUidParam = searchParams.get('forUid');
+    if (
+      !forUidParam || forUidParam === user?.uid || forUidParam === appliedForUidRef.current ||
+      delegatedToMeByGroupValue === undefined || delegatedToMeByFriendValue === undefined
+    ) return;
+    appliedForUidRef.current = forUidParam;
+    if (delegatorUids.includes(forUidParam)) {
+      setManageUid(forUidParam);
+      setTab('medicines');
+    } else {
+      setViewUid(forUidParam);
+      setTab('dashboard');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, user?.uid, delegatorUids, delegatedToMeByGroupValue, delegatedToMeByFriendValue]);
   const [datePreset, setDatePreset] = useState<DatePreset>('7d');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [filterMedicineId, setFilterMedicineId] = useState('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'taken' | 'skipped' | 'missed'>('all');
   const [filterIncident, setFilterIncident] = useState('all');
+  const [showFilterModal, setShowFilterModal] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [tableCollapsed, setTableCollapsed] = useState(false);
 
@@ -1123,6 +1302,26 @@ export default function HealthMedicines() {
     setFilterIncident('all');
   };
 
+  const filterSummaryText = useMemo(() => {
+    const statusLabel = filterStatus === 'all' ? t('medicine.allStatuses')
+      : filterStatus === 'taken' ? t('medicine.doseStatusTaken')
+      : filterStatus === 'skipped' ? t('medicine.doseStatusSkipped')
+      : t('medicine.doseStatusMissed');
+    const parts = [
+      datePreset === 'custom' && customStart && customEnd ? `${customStart} – ${customEnd}` : t(`health.datePreset.${datePreset}`),
+      filterMedicineId === 'all' ? t('medicine.allMedicines') : viewMedicines.find((m) => m.id === filterMedicineId)?.name || t('medicine.allMedicines'),
+      statusLabel,
+    ];
+    if (viewIncidents.length > 0) {
+      parts.push(
+        filterIncident === 'all' ? t('medicine.allIncidents')
+          : filterIncident === GENERAL_INCIDENT_ID ? t('medicine.generalIncident')
+          : viewIncidents.find((inc) => inc.id === filterIncident)?.name || t('medicine.allIncidents'),
+      );
+    }
+    return parts.join(' · ');
+  }, [datePreset, customStart, customEnd, filterMedicineId, filterStatus, filterIncident, viewMedicines, viewIncidents, t]);
+
   const viewingName =
     viewUid === 'me' ? profile?.displayName || user?.displayName || t('health.myReport') : shareableMembers.find((m: any) => m.userId === viewUid)?.displayName || t('common.someone');
 
@@ -1170,7 +1369,7 @@ export default function HealthMedicines() {
       const html2canvas = html2canvasModule.default;
       const docPdf = new jsPDF();
       const brandColor: [number, number, number] = [15, 71, 97];
-      const webUrl = 'https://familyledger-backend-192700919713.us-central1.run.app';
+      const webUrl = 'https://familyledger.thirteenapps.com/';
       const androidUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 
       const pageWidth = docPdf.internal.pageSize.getWidth();
@@ -1279,9 +1478,16 @@ export default function HealthMedicines() {
     const isGeneral = incidentId === GENERAL_INCIDENT_ID;
     const incident = isGeneral ? null : incidents.find((i) => i.id === incidentId) || null;
     const style = isGeneral ? { bg: 'bg-surface-container-high', light: 'bg-surface-container', icon: 'medication' } : incidentStyle(incident?.name || '');
-    const sectionLabel = isGeneral ? t('medicine.generalIncident') : incident?.name || '';
+    const sectionLabel = isGeneral
+      ? t('medicine.generalIncident')
+      : `${incident?.name || ''}${incident?.endDate ? ` ${t('medicine.incidentTillDate', { date: formatIncidentDate(incident.endDate) })}` : ''}`;
     const expanded = forceSolo || expandedIncidents.has(incidentId);
-    const canManageIncident = isGeneral ? true : incident?.userId === user?.uid || incident?.loggedBy === user?.uid;
+    // `loggedBy` only ever names whoever most recently created/edited the incident — gating on it
+    // meant a SECOND delegate (someone else the owner also delegates to) could view but not
+    // manage an incident the first delegate had set up, even though firestore.rules already lets
+    // any valid delegate write it. `delegatorUids` (every uid the current user is a delegate FOR)
+    // is the correct, symmetric check — matches every medicine below it.
+    const canManageIncident = isGeneral ? true : !!incident && (incident.userId === user?.uid || delegatorUids.includes(incident.userId));
     return (
       <div key={incidentId} className={clsx(forceSolo ? 'space-y-2' : 'rounded-2xl overflow-hidden shadow-sm border border-border-subtle')}>
         {!forceSolo && (
@@ -1305,18 +1511,18 @@ export default function HealthMedicines() {
             {!isGeneral && incident?.description && (
               <p className="text-[11px] text-text-muted px-1">{incident.description}</p>
             )}
-            <div className="flex items-center justify-between gap-2 px-1">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1">
               {!isGeneral && canManageIncident && incident ? (
-                <div className="flex items-center gap-3">
-                  <button type="button" onClick={() => openEditIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <button type="button" onClick={() => openEditIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1 shrink-0">
                     <span className="material-symbols-outlined text-[12px]">edit</span>{t('common.edit')}
                   </button>
                   {transferTargets.some((tgt) => tgt.userId !== incident.userId) && (
-                    <button type="button" onClick={() => setTransferringIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1">
+                    <button type="button" onClick={() => setTransferringIncident(incident)} className="text-[10px] font-bold text-primary flex items-center gap-1 shrink-0">
                       <span className="material-symbols-outlined text-[12px]">sync_alt</span>{t('medicine.transferIncident')}
                     </button>
                   )}
-                  <button type="button" onClick={() => handleDeleteIncident(incident)} className="text-[10px] font-bold text-error flex items-center gap-1">
+                  <button type="button" onClick={() => handleDeleteIncident(incident)} className="text-[10px] font-bold text-error flex items-center gap-1 shrink-0">
                     <span className="material-symbols-outlined text-[12px]">delete</span>{t('medicine.deleteIncident')}
                   </button>
                 </div>
@@ -1338,7 +1544,7 @@ export default function HealthMedicines() {
                   key={med.id}
                   med={med}
                   status={medicineStatusLabel(med, today)}
-                  canManage={med.userId === user?.uid || med.loggedBy === user?.uid}
+                  canManage={med.userId === user?.uid || delegatorUids.includes(med.userId)}
                   expanded={expandedMedicineIds.has(med.id)}
                   onToggleExpand={() => toggleMedicineExpanded(med.id)}
                   onEdit={openEditMedicine}
@@ -1359,8 +1565,11 @@ export default function HealthMedicines() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24">
+    // Same self-contained layout as HealthGlucose.tsx/HealthBloodPressure.tsx — title/tabs/picker
+    // live in a shrink-0 region above, each tab gets its own overflow-y-auto scroll region below.
+    // Relies on AuthenticatedLayout's <main> carrying h-full (see App.tsx) for h-full to resolve.
+    <div className="flex flex-col h-full bg-surface overflow-hidden">
+      <div className="shrink-0 p-3 md:p-8 pb-1.5 max-w-xl mx-auto w-full space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h1 className="text-lg font-black text-primary leading-tight">{t('medicine.tracker')}</h1>
@@ -1393,20 +1602,37 @@ export default function HealthMedicines() {
         {(tab === 'medicines' || tab === 'log') && delegatorsForMe.length > 0 && (
           <div className="space-y-1">
             <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.managingFor')}</label>
-            <select
-              value={manageUid}
-              onChange={(e) => setManageUid(e.target.value)}
-              className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none"
-            >
-              <option value="me">{t('health.myself')}</option>
-              {delegatorsForMe.map((d) => (
-                <option key={d.userId} value={d.userId}>{d.displayName}</option>
-              ))}
-            </select>
+            <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+              {[
+                { userId: 'me', displayName: t('health.myself'), photoURL: profile?.photoURL || user?.photoURL || '' },
+                ...delegatorsForMe,
+              ].map((d) => {
+                const isActive = d.userId === manageUid;
+                return (
+                  <button
+                    key={d.userId}
+                    type="button"
+                    onClick={() => setManageUid(d.userId)}
+                    className="flex flex-col items-center gap-0.5 shrink-0 w-12"
+                  >
+                    {d.photoURL ? (
+                      <img src={d.photoURL} alt="" className={clsx('w-9 h-9 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
+                    ) : (
+                      <div className={clsx('w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
+                        {d.displayName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <span className={clsx('text-[9px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{d.displayName}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
+      </div>
 
-        {tab === 'medicines' && (
+      {tab === 'medicines' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
           <div className="space-y-4">
             {dueTodayAll.length > 0 && (
               <div className="rounded-2xl overflow-hidden shadow-sm border border-warning/30 bg-warning/5">
@@ -1432,11 +1658,26 @@ export default function HealthMedicines() {
                               log?.status === 'skipped' && 'bg-warning/5 border-warning/20 border-l-warning',
                             )}
                           >
-                            <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
-                              <span className="material-symbols-outlined text-[18px]">medication</span>
-                            </span>
+                            {(medicine.photoFront || medicine.photoBack || (medicine as any).photo) ? (
+                              <button
+                                type="button"
+                                onClick={() => setViewingPhoto({
+                                  front: medicine.photoFront ?? (medicine as any).photo ?? null,
+                                  back: medicine.photoBack ?? null,
+                                })}
+                                className="shrink-0"
+                                aria-label={t('medicine.viewPhoto')}
+                              >
+                                <img src={medicine.photoFront || medicine.photoBack || (medicine as any).photo} alt="" className="w-9 h-9 object-cover rounded-full border border-border-subtle" />
+                              </button>
+                            ) : (
+                              <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
+                                <span className="material-symbols-outlined text-[18px]">medication</span>
+                              </span>
+                            )}
                             <div className="min-w-0 flex-1">
                               <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
+                              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">{incidentNameFor(medicine)}</p>
                               <p className="text-[13px] font-bold text-text truncate">{foodTimingLabel(doseTime.foodTiming)}</p>
                             </div>
                             {log ? (
@@ -1502,29 +1743,43 @@ export default function HealthMedicines() {
               </div>
             )}
           </div>
-        )}
+        </div>
+      )}
 
-        {tab === 'log' && (
+      {tab === 'log' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
           <div className="space-y-3">
-            <div className="space-y-1">
-              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.forDate')}</label>
-              <input
-                type="date"
-                value={logDate}
-                max={todayLocalDateString()}
-                onChange={(e) => setLogDate(e.target.value)}
-                className="w-full bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-
-            {manageIncidents.length > 0 && (
+            {manageIncidents.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.forDate')}</label>
+                  <input
+                    type="date"
+                    value={logDate}
+                    max={todayLocalDateString()}
+                    onChange={(e) => setLogDate(e.target.value)}
+                    className="w-full bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.incident')}</label>
+                  <select value={logFilterIncident} onChange={(e) => setLogFilterIncident(e.target.value)} className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none">
+                    <option value="all">{t('medicine.allIncidents')}</option>
+                    {manageIncidents.map((inc) => <option key={inc.id} value={inc.id}>{inc.name}</option>)}
+                    <option value={GENERAL_INCIDENT_ID}>{t('medicine.generalIncident')}</option>
+                  </select>
+                </div>
+              </div>
+            ) : (
               <div className="space-y-1">
-                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.incident')}</label>
-                <select value={logFilterIncident} onChange={(e) => setLogFilterIncident(e.target.value)} className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none">
-                  <option value="all">{t('medicine.allIncidents')}</option>
-                  {manageIncidents.map((inc) => <option key={inc.id} value={inc.id}>{inc.name}</option>)}
-                  <option value={GENERAL_INCIDENT_ID}>{t('medicine.generalIncident')}</option>
-                </select>
+                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.forDate')}</label>
+                <input
+                  type="date"
+                  value={logDate}
+                  max={todayLocalDateString()}
+                  onChange={(e) => setLogDate(e.target.value)}
+                  className="w-full bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                />
               </div>
             )}
 
@@ -1603,77 +1858,65 @@ export default function HealthMedicines() {
               })()
             )}
           </div>
-        )}
+        </div>
+      )}
 
-        {tab === 'dashboard' && (
+      {tab === 'dashboard' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
           <div className="space-y-6">
+            {/* Fixed while only the stats/chart/table below scroll — same pattern as
+                HealthGlucose.tsx/HealthBloodPressure.tsx's own dashboard header. */}
+            <div className="sticky top-0 z-20 bg-surface pb-3 space-y-3">
             {shareableMembers.length > 0 && (
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('health.viewingReportFor')}</label>
-                <select value={viewUid} onChange={(e) => setViewUid(e.target.value)} className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none shadow-sm">
-                  <option value="me">{t('health.myReport')}</option>
-                  {shareableMembers.map((m: any) => (
-                    <option key={m.userId} value={m.userId}>{m.displayName}</option>
-                  ))}
-                </select>
+                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+                  {[
+                    { userId: 'me', displayName: profile?.displayName || user?.displayName || t('health.myReport'), photoURL: profile?.photoURL || user?.photoURL || '' },
+                    ...shareableMembers,
+                  ].map((m: any) => {
+                    const isActive = m.userId === viewUid;
+                    return (
+                      <button
+                        key={m.userId}
+                        type="button"
+                        onClick={() => setViewUid(m.userId)}
+                        className="flex flex-col items-center gap-1 shrink-0 w-16"
+                      >
+                        {m.photoURL ? (
+                          <img src={m.photoURL} alt="" className={clsx('w-12 h-12 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
+                        ) : (
+                          <div className={clsx('w-12 h-12 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
+                            {m.displayName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span className={clsx('text-[10px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{m.userId === 'me' ? t('health.myReport') : m.displayName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('health.filters')}</span>
-                <button type="button" onClick={clearDashboardFilters} className="text-[10px] font-bold text-primary">{t('health.clearFilters')}</button>
-              </div>
-              <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-                {DATE_PRESETS.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setDatePreset(p)}
-                    className={clsx('shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all', datePreset === p ? 'bg-primary text-white border-primary' : 'bg-surface text-text-muted border-border-subtle')}
-                  >
-                    {t(`health.datePreset.${p}`)}
-                  </button>
-                ))}
-              </div>
-              {datePreset === 'custom' && (
-                <div className="flex items-center gap-2">
-                  <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-xs font-bold text-primary outline-none" />
-                  <span className="text-[10px] font-bold text-text-muted uppercase shrink-0">{t('common.to')}</span>
-                  <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-xs font-bold text-primary outline-none" />
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-1.5">
-                <select value={filterMedicineId} onChange={(e) => setFilterMedicineId(e.target.value)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
-                  <option value="all">{t('medicine.allMedicines')}</option>
-                  {viewMedicines.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as any)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
-                  <option value="all">{t('medicine.allStatuses')}</option>
-                  <option value="taken">{t('medicine.doseStatusTaken')}</option>
-                  <option value="skipped">{t('medicine.doseStatusSkipped')}</option>
-                  <option value="missed">{t('medicine.doseStatusMissed')}</option>
-                </select>
-              </div>
-              {viewIncidents.length > 0 && (
-                <select value={filterIncident} onChange={(e) => setFilterIncident(e.target.value)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
-                  <option value="all">{t('medicine.allIncidents')}</option>
-                  {viewIncidents.map((inc) => <option key={inc.id} value={inc.id}>{inc.name}</option>)}
-                  <option value={GENERAL_INCIDENT_ID}>{t('medicine.generalIncident')}</option>
-                </select>
-              )}
+            <button
+              type="button"
+              onClick={() => setShowFilterModal(true)}
+              className="w-full bg-white rounded-2xl border border-border-subtle shadow-sm p-3 flex items-center gap-2 text-left"
+            >
+              <span className="material-symbols-outlined text-text-muted text-[16px] shrink-0">filter_alt</span>
+              <span className="flex-1 min-w-0 text-xs font-bold text-primary truncate">{filterSummaryText}</span>
+              <span className="shrink-0 text-[11px] font-bold text-primary">{t('common.edit')}</span>
+            </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.adherenceRate')}</p>
-                <p className="text-2xl font-black text-primary mt-1">{resolvedInstances.length > 0 ? `${adherenceRate}%` : '—'}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm px-3 py-2 flex items-center justify-between gap-2">
+                <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.adherenceRate')}</p>
+                <p className="text-base font-black text-primary shrink-0">{resolvedInstances.length > 0 ? `${adherenceRate}%` : '—'}</p>
               </div>
-              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.totalDoses')}</p>
-                <p className="text-2xl font-black text-primary mt-1">{resolvedInstances.length} <span className="text-xs font-bold text-text-muted">{t('health.records')}</span></p>
+              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm px-3 py-2 flex items-center justify-between gap-2">
+                <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('medicine.totalDoses')}</p>
+                <p className="text-base font-black text-primary shrink-0">{resolvedInstances.length} <span className="text-xs font-bold text-text-muted">{t('health.records')}</span></p>
               </div>
             </div>
 
@@ -1761,8 +2004,8 @@ export default function HealthMedicines() {
                 ))}
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      )}
 
       {medForm && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setMedForm(false)}>
@@ -1993,6 +2236,29 @@ export default function HealthMedicines() {
             </div>
             <p className="text-[10px] text-text-muted">{t('medicine.reminderNote')}</p>
 
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.photo')}</label>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('medicine.photoFront')}</p>
+                <ImageAttachments
+                  images={formPhotoFront ? [formPhotoFront] : []}
+                  onChange={(imgs) => setFormPhotoFront(imgs[imgs.length - 1] || null)}
+                  maxImages={1}
+                  label={t('medicine.addPhoto')}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('medicine.photoBack')}</p>
+                <ImageAttachments
+                  images={formPhotoBack ? [formPhotoBack] : []}
+                  onChange={(imgs) => setFormPhotoBack(imgs[imgs.length - 1] || null)}
+                  maxImages={1}
+                  label={t('medicine.addPhoto')}
+                />
+              </div>
+              <p className="text-[10px] text-text-muted px-1">{t('medicine.photoHint')}</p>
+            </div>
+
             <textarea value={formNotes} onChange={(e) => setFormNotes(e.target.value)} placeholder={t('health.notesPlaceholder')} rows={2} className="w-full bg-white p-2 rounded-xl border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none" />
 
             <button type="button" onClick={handleSaveMedicine} disabled={savingMed || !formName.trim()} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
@@ -2009,6 +2275,27 @@ export default function HealthMedicines() {
               <h2 className="text-base font-black text-primary flex-1">{editingIncident ? t('medicine.editIncident') : t('medicine.addIncident')}</h2>
               <button type="button" onClick={() => setIncidentForm(false)} className="text-text-muted shrink-0"><span className="material-symbols-outlined">close</span></button>
             </div>
+            {/* Who the whole incident (and every medicine/dose added under it afterward) belongs
+                to — only offered when adding, never editing (an existing incident's owner only
+                ever changes via the explicit Transfer flow below). Bound to the SAME manageUid
+                state as the page's ambient "Managing For" selector (shown elsewhere on the
+                Medicines/Log tabs), so picking someone here also carries forward to every
+                medicine subsequently added under this incident, not just the incident shell. */}
+            {!editingIncident && delegatorsForMe.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('medicine.addingFor')}</label>
+                <select
+                  value={manageUid}
+                  onChange={(e) => setManageUid(e.target.value)}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm font-bold text-primary outline-none"
+                >
+                  <option value="me">{t('health.myself')}</option>
+                  {delegatorsForMe.map((d) => (
+                    <option key={d.userId} value={d.userId}>{d.displayName}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-text-muted px-1">{t('medicine.incidentName')}</label>
               <input
@@ -2262,6 +2549,63 @@ export default function HealthMedicines() {
 
             <button type="button" onClick={handleSaveDelegates} disabled={savingSettings} className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50">
               {savingSettings ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {viewingPhoto && <MedicinePhotosLightbox front={viewingPhoto.front} back={viewingPhoto.back} t={t} onClose={() => setViewingPhoto(null)} />}
+
+      {showFilterModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 pt-20" onClick={() => setShowFilterModal(false)}>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-black text-primary flex-1">{t('health.filters')}</h2>
+              <button type="button" onClick={clearDashboardFilters} className="shrink-0 text-[11px] font-bold text-primary">{t('health.clearFilters')}</button>
+              <button type="button" onClick={() => setShowFilterModal(false)} className="text-text-muted shrink-0"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+              {DATE_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setDatePreset(p)}
+                  className={clsx('shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all', datePreset === p ? 'bg-primary text-white border-primary' : 'bg-surface text-text-muted border-border-subtle')}
+                >
+                  {t(`health.datePreset.${p}`)}
+                </button>
+              ))}
+            </div>
+            {datePreset === 'custom' && (
+              <div className="flex items-center gap-2">
+                <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-xs font-bold text-primary outline-none" />
+                <span className="text-[10px] font-bold text-text-muted uppercase shrink-0">{t('common.to')}</span>
+                <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="flex-1 min-w-0 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-xs font-bold text-primary outline-none" />
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-1.5">
+              <select value={filterMedicineId} onChange={(e) => setFilterMedicineId(e.target.value)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
+                <option value="all">{t('medicine.allMedicines')}</option>
+                {viewMedicines.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as any)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
+                <option value="all">{t('medicine.allStatuses')}</option>
+                <option value="taken">{t('medicine.doseStatusTaken')}</option>
+                <option value="skipped">{t('medicine.doseStatusSkipped')}</option>
+                <option value="missed">{t('medicine.doseStatusMissed')}</option>
+              </select>
+            </div>
+            {viewIncidents.length > 0 && (
+              <select value={filterIncident} onChange={(e) => setFilterIncident(e.target.value)} className="w-full bg-surface border border-border-subtle rounded-lg px-1.5 py-1.5 text-[10px] font-bold text-primary outline-none">
+                <option value="all">{t('medicine.allIncidents')}</option>
+                {viewIncidents.map((inc) => <option key={inc.id} value={inc.id}>{inc.name}</option>)}
+                <option value={GENERAL_INCIDENT_ID}>{t('medicine.generalIncident')}</option>
+              </select>
+            )}
+            <button type="button" onClick={() => setShowFilterModal(false)} className="w-full py-2.5 bg-primary text-white font-bold rounded-xl text-sm">
+              {t('common.done')}
             </button>
           </div>
         </div>

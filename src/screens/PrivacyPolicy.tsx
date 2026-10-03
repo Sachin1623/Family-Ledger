@@ -9,7 +9,7 @@ export default function PrivacyPolicy() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Privacy Policy</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: September 3, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 3, 2026</p>
           <p>
             FamilyLedger ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our mobile application and services.
           </p>
@@ -158,7 +158,7 @@ export default function PrivacyPolicy() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-primary">7. Data Retention</h2>
           <p>
-            We keep your data for as long as your account is active, since group/loan/game history stays meaningful to the other members you share it with for as long as you're all using the app. When you delete your account (see our <Link to="/delete-account" className="text-primary font-bold underline">Data Deletion</Link> page for the full details), your personal identifiers are removed; data you shared with others (like a split expense) may be retained in an anonymized form so their own balances stay accurate. Backups are retained for up to 30 days after deletion before being fully purged.
+            We keep your data for as long as your account is active, since group/loan/game history stays meaningful to the other members you share it with for as long as you're all using the app. When you choose to delete your account (see our <Link to="/delete-account" className="text-primary font-bold underline">Data Deletion</Link> page for the full details), you can pause it for 30 days — fully reversible, sign back in anytime during that window to get everything back — or delete it immediately. Once a deletion actually completes, your personal identifiers are permanently removed; data you shared with others (like a split expense) is retained with your name replaced by a generic "Deleted User" label so their own balances and records stay accurate. Backups are retained for a short additional period after deletion for disaster-recovery purposes, then fully purged.
           </p>
         </section>
 
@@ -179,7 +179,7 @@ export default function PrivacyPolicy() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-primary">10. Children's Privacy</h2>
           <p>
-            Our service is not directed at children and is not intended for use by anyone under 16. We do not knowingly collect personal information from anyone under 16 — if you believe a child has provided us with personal information, please contact us and we'll delete it. (Some countries set this age lower, down to 13; where that applies to you, that lower age governs instead.)
+            Our service is not directed at children and is not intended for direct use by anyone under 16. We do not knowingly collect personal information directly from anyone under 16 — if you believe a child has provided us with personal information themselves, please contact us and we'll delete it. (Some countries set this age lower, down to 13; where that applies to you, that lower age governs instead.) This is separate from our baby/child health and vaccination tracking features, where an adult account holder chooses to enter and manage records (name, date of birth, health and vaccination history) about their own child or dependent — that information is provided and controlled entirely by the adult, not collected from the child, the same way a paper vaccination record or a pediatrician's chart would be.
           </p>
         </section>
 

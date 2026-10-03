@@ -14,31 +14,46 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/chat': '/',
   '/profile': '/',
   '/feedback': '/',
+  '/pending-actions': '/',
   // Recurring Expenses is genuinely reached from Dashboard (its header button) or ManageGroup,
   // never from Tools — '/' is its correct parent. Everything below IS a Tools.tsx tile, though
   // (see TOOLS array there), so back from any of them belongs on '/tools', not the dashboard.
   '/recurring-expenses': '/',
   '/recurring-approvals': '/',
-  '/todo': '/tools',
-  '/calculator': '/tools',
-  '/financial-calculators': '/tools',
-  '/games': '/tools',
+  // Each of these is a specific Tools.tsx tile — the plain '/tools' Tools.tsx used to fall back
+  // to happens to land on the right tab only for the 'finance' category (index 0's default), so
+  // every tile outside Finance needs its actual tab spelled out or back lands on the wrong one
+  // (caught 2026-09-26 on Policy Vault and To-Do, both of which are NOT in the finance tab).
+  '/todo': '/tools?category=productivity',
+  '/calculator': '/tools?category=finance',
+  '/financial-calculators': '/tools?category=finance',
+  '/games': '/tools?category=games',
   '/tools': '/',
-  '/shopping-lists': '/tools',
-  '/expense-reminders': '/tools',
-  '/reminders': '/tools',
+  '/shopping-lists': '/tools?category=productivity',
+  '/expense-reminders': '/tools?category=finance',
+  '/reminders': '/tools?category=productivity',
   '/goals': '/',
   '/goals/allocate': '/goals',
   '/goals/reports': '/goals',
   '/goals/reconcile': '/goals',
   '/goals/accounts': '/goals',
-  '/personal-loans': '/tools',
-  '/friends': '/tools',
-  '/progress': '/tools',
-  '/health': '/tools',
-  '/health/glucose': '/health',
-  '/health/blood-pressure': '/health',
-  '/health/medicines': '/health',
+  '/personal-loans': '/tools?category=finance',
+  '/policies': '/tools?category=finance',
+  '/policies/new': '/policies',
+  '/friends': '/tools?category=social',
+  '/progress': '/tools?category=social',
+  // Tools.tsx links each tracker directly, skipping the /health hub (same shortcut as the Games
+  // tab's own tiles — see the /games entry above) — so back from any of the three goes straight to
+  // Tools' Health tab, not to the hub. /health itself still exists as its own route (reached e.g.
+  // by a notification deep link) and goes to the same place for the same 'wrong default tab' reason
+  // as every other entry in this block.
+  '/health': '/tools?category=health',
+  '/health/glucose': '/tools?category=health',
+  '/health/blood-pressure': '/tools?category=health',
+  '/health/medicines': '/tools?category=health',
+  '/baby-vaccinations': '/tools?category=health',
+  '/baby-vaccinations/add-child': '/baby-vaccinations',
+  '/baby-vaccinations/deleted-babies': '/baby-vaccinations',
   // Every game below skips the /games hub entirely — Tools.tsx links every game directly (see its
   // own header comment), so that's the real entry point players use, and back should return there
   // with the Games tab already selected rather than bouncing through the hub. Applies to both a
@@ -91,6 +106,13 @@ const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/games\/sequence\/[^/]+$/, '/games/sequence'],
   [/^\/games\/spadePledge\/[^/]+$/, '/games/spadePledge'],
   [/^\/games\/scramble-multiplayer\/[^/]+$/, '/games/scramble-multiplayer'],
+  // Edit Profile is only ever reached from View Profile (see BabyVaccinations.tsx / VaccineProfileView.tsx) — back returns there, not straight to the dashboard.
+  [/^\/baby-vaccinations\/edit-profile\/[^/]+$/, (p) => p.replace('/edit-profile/', '/profile/')],
+  [/^\/baby-vaccinations\/profile\/[^/]+$/, '/baby-vaccinations'],
+  [/^\/baby-vaccinations\/log-visit\/[^/]+\/[^/]+$/, '/baby-vaccinations'],
+  [/^\/baby-vaccinations\/visit\/[^/]+\/[^/]+$/, '/baby-vaccinations'],
+  [/^\/baby-vaccinations\/caregivers\/[^/]+$/, '/baby-vaccinations'],
+  [/^\/baby-vaccinations\/reminders\/[^/]+$/, '/baby-vaccinations'],
   [/^\/groups\/[^/]+\/expenses$/, (p) => p.replace(/\/expenses$/, '')],
   [/^\/groups\/[^/]+\/manage$/, (p) => p.replace(/\/manage$/, '')],
   [/^\/groups\/[^/]+$/, '/'],
@@ -101,6 +123,8 @@ const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
   [/^\/settlements\/[^/]+$/, '/settlements'],
   [/^\/shopping-lists\/[^/]+$/, '/shopping-lists'],
   [/^\/personal-loans\/[^/]+$/, '/personal-loans'],
+  [/^\/policies\/[^/]+\/edit$/, (p) => p.replace(/\/edit$/, '')],
+  [/^\/policies\/[^/]+$/, '/policies'],
   [/^\/shop\/customers\/[^/]+$/, '/shop/customers'],
   [/^\/admin\/users\/[^/]+$/, '/admin/users'],
   [/^\/admin\//, '/admin'],
@@ -149,6 +173,22 @@ export function getParentPath(pathname: string, search?: string): string {
   if (/^\/goals\/accounts\/[^/]+$/.test(pathname)) {
     const from = new URLSearchParams(search || '').get('from');
     if (from) return `/goals?tab=${from}`;
+  }
+  // AlarmsHub.tsx's Medicine (Person -> Incident -> Medicine) and Vaccination (Baby -> Visit)
+  // drill-downs are React state elsewhere in this app, but here they're carried entirely in query
+  // params (cat/person/incident/baby) specifically so this one function can walk back one level at
+  // a time — AlarmsHub itself has no in-page back buttons of its own.
+  if (pathname === '/alarms') {
+    const params = new URLSearchParams(search || '');
+    const cat = params.get('cat');
+    const person = params.get('person');
+    const incident = params.get('incident');
+    const baby = params.get('baby');
+    if (cat === 'medicine' && person && incident) return `/alarms?cat=medicine&person=${person}`;
+    if (cat === 'medicine' && person) return '/alarms?cat=medicine';
+    if (cat === 'vaccination' && baby) return '/alarms?cat=vaccination';
+    if (cat) return '/alarms';
+    return '/';
   }
   if (PARENT_OVERRIDES[pathname]) return PARENT_OVERRIDES[pathname];
   for (const [pattern, parent] of PARENT_PATTERNS) {

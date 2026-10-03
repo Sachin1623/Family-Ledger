@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { Medicine, isMedicineDueOn } from './medicines';
+import { Medicine, MedicineDoseTime, isMedicineDueOn, medicineEndDateStr } from './medicines';
 import { toLocalDateString } from './dateUtils';
 import { scheduleAlarm, cancelAlarm } from './alarmClock';
 
@@ -86,7 +86,18 @@ async function cancelIosIds(ids: number[]) {
   await LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) });
 }
 
-export async function scheduleMedicineReminders(medicines: Medicine[]) {
+// `currentUid`/`ownerNames` are only needed once a caller passes medicines belonging to someone
+// OTHER than the signed-in user (a delegate's own device now also schedules alarms for whoever
+// delegates to them — see HealthMedicines.tsx's call site) — every body text below prefixes the
+// owner's name for any medicine that isn't the signed-in user's own, so a delegate's ringing alarm
+// says whose dose it's for instead of reading like their own.
+function ownerPrefix(med: Medicine, currentUid?: string, ownerNames?: Record<string, string>): string {
+  if (!currentUid || med.userId === currentUid) return '';
+  const name = ownerNames?.[med.userId];
+  return name ? `${name}: ` : '';
+}
+
+export async function scheduleMedicineReminders(medicines: Medicine[], currentUid?: string, ownerNames?: Record<string, string>) {
   if (!Capacitor.isNativePlatform()) return; // no native alarms on web
   const platform = Capacitor.getPlatform();
   try {
@@ -102,31 +113,57 @@ export async function scheduleMedicineReminders(medicines: Medicine[]) {
       return;
     }
 
-    const active = medicines.filter((m) => m.active && m.remindersEnabled);
+    // A native recurring alarm (Android AlarmClock, iOS's cron-style `on`/`every` trigger) has no
+    // built-in expiry — scheduleAlarm() below just means "ring every day/N days/these weekdays",
+    // forever, until explicitly cancelled. Filtering on `m.active`/`m.remindersEnabled` alone (the
+    // old behavior) never excluded a medicine whose fixed-length course (dayCount/endDate) had
+    // already elapsed, so e.g. a 1-day course kept ringing daily past its end date until someone
+    // manually paused or deleted it — this is what actually stops it, not just "reopen the app".
+    const todayStr = toLocalDateString(new Date());
+    const active = medicines.filter((m) => {
+      if (!m.active || !m.remindersEnabled) return false;
+      const end = medicineEndDateStr(m);
+      return !end || todayStr <= end;
+    });
     const scheduledIds: number[] = [];
     const iosNotifications: any[] = [];
+
+    // Two (or more) medicines due at the exact same moment used to each get their OWN alarm — on
+    // Android that meant two separate full-screen AlarmActivity takeovers (and two overlapping
+    // ringtones) firing at once, since AlarmManager has no concept of "these are really one event".
+    // Grouped here by a signature covering everything that has to match for two slots to truly BE
+    // the same alarm: the clock time, AND the exact recurrence rule (every day / the same explicit
+    // weekday set / the same interval-days schedule) — two medicines that only coincidentally share
+    // a clock time but ring on different days still get their own alarms, correctly. Deliberately
+    // NOT scoped to one owner — a delegate managing two different people's 8am medicines hears one
+    // combined alarm too, same as one person's own two medicines would.
+    interface AndroidGroup {
+      hour: number; minute: number; weekdays: number[]; intervalDays?: number; startDate?: string;
+      items: { med: Medicine; slot: MedicineDoseTime }[];
+    }
+    const androidGroups = new Map<string, AndroidGroup>();
 
     for (const med of active) {
       for (const slot of med.times) {
         const [hour, minute] = slot.time.split(':').map(Number);
-        const body = `${med.name}${med.dosage ? ` (${med.dosage})` : ''} — ${slot.label}`;
+        const body = `${ownerPrefix(med, currentUid, ownerNames)}${med.name}${med.dosage ? ` (${med.dosage})` : ''} — ${slot.label}`;
         const alternating = !!med.intervalDays && med.intervalDays > 1;
         const everyDay = !alternating && (med.weekdays.length === 0 || med.weekdays.length === 7);
 
         if (platform === 'android') {
-          const id = hashId(`med_${med.id}_${slot.id}`);
-          scheduledIds.push(id);
-          await scheduleAlarm({
-            id,
-            title: 'Medicine reminder',
-            body,
-            hour,
-            minute,
-            weekdays: alternating || everyDay ? [] : med.weekdays,
-            intervalDays: alternating ? med.intervalDays! : undefined,
-            startDate: alternating ? med.startDate : undefined,
-            route: '/health/medicines',
-          });
+          const weekdaysForAlarm = alternating || everyDay ? [] : [...med.weekdays].sort((a, b) => a - b);
+          const signature = alternating
+            ? `${hour}:${minute}|i${med.intervalDays}|${med.startDate}`
+            : `${hour}:${minute}|w${weekdaysForAlarm.join(',')}`;
+          if (!androidGroups.has(signature)) {
+            androidGroups.set(signature, {
+              hour, minute, weekdays: weekdaysForAlarm,
+              intervalDays: alternating ? med.intervalDays! : undefined,
+              startDate: alternating ? med.startDate : undefined,
+              items: [],
+            });
+          }
+          androidGroups.get(signature)!.items.push({ med, slot });
         } else if (alternating) {
           // @capacitor/local-notifications' cron-style `on` trigger has no "every N days" concept
           // at all (only day/week/month/year) — an interval-based medicine gets a bounded batch of
@@ -187,6 +224,31 @@ export async function scheduleMedicineReminders(medicines: Medicine[]) {
             });
           }
         }
+      }
+    }
+
+    if (platform === 'android') {
+      for (const group of androidGroups.values()) {
+        // Sorted so the id (and therefore whether this group is treated as "already scheduled" vs
+        // new on the next reconcile) doesn't depend on iteration order — only on WHICH med/slot
+        // pairs are actually in it.
+        const key = group.items.map((it) => `med_${it.med.id}_${it.slot.id}`).sort().join('|');
+        const id = hashId(key);
+        scheduledIds.push(id);
+        const body = group.items
+          .map((it) => `${ownerPrefix(it.med, currentUid, ownerNames)}${it.med.name}${it.med.dosage ? ` (${it.med.dosage})` : ''} — ${it.slot.label}`)
+          .join('; ');
+        await scheduleAlarm({
+          id,
+          title: group.items.length > 1 ? `Medicine reminder (${group.items.length} due)` : 'Medicine reminder',
+          body,
+          hour: group.hour,
+          minute: group.minute,
+          weekdays: group.weekdays,
+          intervalDays: group.intervalDays,
+          startDate: group.startDate,
+          route: '/health/medicines',
+        });
       }
     }
 

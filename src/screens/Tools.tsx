@@ -80,6 +80,7 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
       { to: '/health/glucose', favKey: 'glucose-tracker', icon: '🩸', titleKey: 'health.glucoseTracker', descKey: 'health.glucoseTrackerDesc' },
       { to: '/health/blood-pressure', favKey: 'bp-tracker', icon: '❤️', titleKey: 'bp.tracker', descKey: 'bp.trackerDesc' },
       { to: '/health/medicines', favKey: 'medicine-tracker', icon: '💊', titleKey: 'medicine.tracker', descKey: 'medicine.trackerDesc' },
+      { to: '/baby-vaccinations', favKey: 'baby-vaccinations', icon: '👶', titleKey: 'babyVax.tracker', descKey: 'babyVax.trackerDesc' },
     ],
   },
 ];

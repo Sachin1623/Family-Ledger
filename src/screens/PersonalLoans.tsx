@@ -11,6 +11,7 @@ import { todayLocalDateString } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { searchUsers, FoundUser } from '../lib/inviteApi';
+import { usePageFabAction } from '../context/FabActionContext';
 
 const CURRENCIES = Object.keys(CURRENCY_SYMBOLS);
 
@@ -19,6 +20,9 @@ export default function PersonalLoans() {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
+  // Global floating "+" button (Navigation.tsx) becomes "New Entry" here instead of the default
+  // "Add Expense" — see FabActionContext.tsx.
+  usePageFabAction('🤝', t('loans.newEntry'), () => setShowForm(true));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

@@ -5,6 +5,7 @@ import { useShopMode } from '../context/ShopModeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useDmChats } from '../lib/useDmChats';
+import { useFabAction } from '../context/FabActionContext';
 
 // Pilot for the app-wide "vibrant, colorful icons" pass — native emoji instead of monochrome
 // Material Symbols. Zero new dependency (every OS/browser renders emoji in full color already,
@@ -33,6 +34,45 @@ const PERSONAL_LINKS = [
   { to: '/tools', icon: '🛠️', labelKey: 'nav.tools', tour: 'nav-tools' },
 ];
 
+// Pages where "Add Expense" has no meaning at all — no floating action button shown, rather than
+// one whose target doesn't belong there. Exact-path entries plus two prefix/pattern checks below
+// (every game screen, and any group's own Manage tab) since those aren't single fixed paths.
+const HIDDEN_FAB_EXACT_PATHS = new Set([
+  '/health/blood-pressure',
+  '/friends',
+  '/progress',
+  '/health/glucose',
+  '/create-group',
+  // Own account settings — "Add Expense" has no relationship to anything on this page.
+  '/profile',
+]);
+function isHiddenFabPath(pathname: string): boolean {
+  if (HIDDEN_FAB_EXACT_PATHS.has(pathname)) return true;
+  if (pathname.startsWith('/games')) return true;
+  if (/^\/groups\/[^/]+\/manage$/.test(pathname)) return true;
+  // Every baby-vaccinations screen except the dashboard itself already has its own primary
+  // action (Save Visit, Send Invite, ...) in a bottom bar — a second "Add Expense"-flavored FAB
+  // floating over it would just compete for the same corner.
+  if (pathname.startsWith('/baby-vaccinations/') && pathname !== '/baby-vaccinations') return true;
+  // Every /admin page (dashboard + every child page: users, analytics, growth, feedback, ...) —
+  // an admin operating on other people's accounts should never see a button to add THEIR OWN
+  // expense floating over it.
+  if (pathname.startsWith('/admin')) return true;
+  return false;
+}
+
+// Pages with their own, more relevant "add" action — each registers it via usePageFabAction
+// (FabActionContext.tsx) while mounted, read here through `fabAction`.
+const ACTION_FAB_PATHS = new Set([
+  '/health/medicines',
+  '/expense-reminders',
+  '/personal-loans',
+  '/todo',
+  '/reminders',
+  '/shopping-lists',
+  '/baby-vaccinations',
+]);
+
 const SHOP_LINKS = [
   { to: '/shop/sales', icon: '💳', labelKey: 'nav.sales' },
   { to: '/shop/customers', icon: '👥', labelKey: 'nav.customers' },
@@ -50,6 +90,7 @@ export default function Navigation() {
   // spec (a badge showing "37" for one very chatty conversation would be more noise than signal
   // on a small bottom-nav icon).
   const { unreadChatCount } = useDmChats(shopMode ? undefined : user?.uid);
+  const { fabAction } = useFabAction();
   const links = shopMode ? SHOP_LINKS : PERSONAL_LINKS;
 
   // The floating action button is "Add Expense" everywhere by default, but that action has no
@@ -60,10 +101,17 @@ export default function Navigation() {
   // tabs) rather than showing an Add Expense button that doesn't belong there. `openAdd=1` is a
   // deep-link AccountsHub reacts to (see its own openAddParam effect) to open the Add Account form
   // the same way `?open=<id>` already opens a specific existing account.
+  //
+  // A further set of pages has its own more relevant "add" concept (Medicine Reminders -> Add
+  // Incident, Personal Loans -> New Entry, etc.) — those swap in the page's own registered
+  // `fabAction` (see FabActionContext.tsx / usePageFabAction), and a last set has no add concept
+  // at all (trackers, games, group management) and hides the button entirely (isHiddenFabPath).
   const isGoalsArea = location.pathname === '/goals' || location.pathname.startsWith('/goals/');
   const goalsTab = location.pathname === '/goals' ? searchParams.get('tab') : null;
-  let fab: { to: string; label: string; icon: string; tour?: string } | null = null;
+  let fab: { to?: string; onClick?: () => void; label: string; icon: string; tour?: string } | null = null;
   if (shopMode) {
+    fab = null;
+  } else if (isHiddenFabPath(location.pathname)) {
     fab = null;
   } else if (goalsTab === 'goals') {
     fab = { to: '/goals/new?from=goals', label: t('goals.newGoal'), icon: '🎯', tour: 'goals-list-fab-hint' };
@@ -71,13 +119,17 @@ export default function Navigation() {
     fab = { to: '/goals?tab=accounts&openAdd=1', label: t('accounts.addAccount'), icon: '🏦' };
   } else if (isGoalsArea) {
     fab = null;
+  } else if (location.pathname === '/policies') {
+    fab = { to: '/policies/new', label: t('policies.addPolicy'), icon: '🛡️' };
+  } else if (ACTION_FAB_PATHS.has(location.pathname) && fabAction) {
+    fab = { onClick: fabAction.onClick, label: fabAction.label, icon: fabAction.icon };
   } else if (location.pathname !== '/add-expense') {
     fab = { to: '/add-expense', label: t('nav.addExpense'), icon: '➕', tour: 'nav-add-expense' };
   }
 
   return (
     <>
-      {fab && (
+      {fab && (fab.to ? (
         <NavLink
           key={fab.to}
           to={fab.to}
@@ -88,7 +140,18 @@ export default function Navigation() {
           <span className="text-lg leading-none">{fab.icon}</span>
           {fab.label}
         </NavLink>
-      )}
+      ) : (
+        <button
+          type="button"
+          onClick={fab.onClick}
+          data-tour={fab.tour}
+          className="fixed right-4 z-40 flex items-center gap-2 pl-4 pr-5 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform"
+          style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)' }}
+        >
+          <span className="text-lg leading-none">{fab.icon}</span>
+          {fab.label}
+        </button>
+      ))}
       {/* pb-[env(safe-area-inset-bottom)] pushes the actual tap targets (the h-16 row below) up
           above the device's own gesture/home-indicator area on iOS, and Android's equivalent — the
           nav's real height used to stop exactly at the physical screen edge, right where an

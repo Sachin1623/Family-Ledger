@@ -98,8 +98,14 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo(`/health/glucose${params.toString() ? `?${params.toString()}` : ''}`);
   } else if (data.type === 'bp_reminder' || data.type === 'bp_logged') {
     navigateTo('/health/blood-pressure');
-  } else if (data.type === 'medicine_reminder' || data.type === 'medicine_logged' || data.type === 'medicine_missed') {
+  } else if (data.type === 'medicine_reminder') {
     navigateTo('/health/medicines');
+  } else if (data.type === 'medicine_logged' || data.type === 'medicine_missed' || data.type === 'medicine_incident_transferred') {
+    // ownerUid is whoever's medicine this was about — HealthMedicines.tsx's own ?forUid= effect
+    // decides whether that lands the tapper on the manage-for selector (they're a delegate) or
+    // the read-only viewing selector (they're just shared with), since a push recipient could be
+    // either depending on how they're connected to that owner.
+    navigateTo(data.ownerUid ? `/health/medicines?forUid=${data.ownerUid}` : '/health/medicines');
   } else if (data.type === 'account_shared') {
     navigateTo('/goals/accounts');
   } else if (data.type === 'goal_shared') {

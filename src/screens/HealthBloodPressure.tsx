@@ -12,6 +12,7 @@ import { shareOrDownloadFile } from '../lib/fileShare';
 import { toLocalDateString, todayLocalDateString, nowLocalTimeString, combineLocalDateAndTime } from '../lib/dateUtils';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { scheduleBpReminders } from '../lib/bpReminders';
+import { syncHealthDelegateInvites } from '../lib/healthDelegateInvites';
 import { useFriendships } from '../lib/useFriendships';
 import { useFamilies } from '../lib/useFamilies';
 import { WEEKDAY_LABELS } from '../lib/frequency';
@@ -112,10 +113,21 @@ export default function HealthBloodPressure() {
   const [delegatedToMeByFriendValue] = useCollection(
     user ? query(collection(db, 'bpDelegateSettings'), where('bp.friendUids', 'array-contains', user.uid)) : null,
   );
+  // A friend-based grant only actually works (per firestore.rules' isHealthDelegateAccepted) once
+  // the friend has accepted — see src/lib/healthDelegateInvites.ts.
+  const [myAcceptedBpInvitesValue] = useCollection(
+    user
+      ? query(collection(db, 'healthDelegateInvites'), where('friendUid', '==', user.uid), where('kind', '==', 'bp'), where('status', '==', 'accepted'))
+      : null,
+  );
+  const acceptedBpOwnerUids = useMemo(
+    () => new Set((myAcceptedBpInvitesValue?.docs || []).map((d) => d.data().ownerUid as string)),
+    [myAcceptedBpInvitesValue],
+  );
   const delegatorsForMe = useMemo(() => {
     const uids = new Set<string>();
     delegatedToMeByGroupValue?.docs.forEach((d) => uids.add(d.id));
-    delegatedToMeByFriendValue?.docs.forEach((d) => uids.add(d.id));
+    delegatedToMeByFriendValue?.docs.forEach((d) => { if (acceptedBpOwnerUids.has(d.id)) uids.add(d.id); });
     return Array.from(uids)
       .filter((uid) => uid !== user?.uid)
       .map((uid) => {
@@ -125,7 +137,7 @@ export default function HealthBloodPressure() {
         return { userId: uid, displayName: friend?.displayName || t('common.someone'), photoURL: friend?.photoURL || '' };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, allMembers, friendUsersByUid, user]);
+  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, acceptedBpOwnerUids, allMembers, friendUsersByUid, user]);
 
   const target: BpTarget = profile?.bpTargets || DEFAULT_BP_TARGET;
   const [shareSettingsSnap] = useDocument(user ? doc(db, 'bpShareSettings', user.uid) : null);
@@ -245,6 +257,10 @@ export default function HealthBloodPressure() {
     setSavingSettings(true);
     try {
       await setDoc(doc(db, 'bpDelegateSettings', user.uid), { userId: user.uid, bp: delegateForm, updatedAt: new Date().toISOString() });
+      await syncHealthDelegateInvites(
+        'bp', user.uid, profile?.displayName || user.displayName || 'Someone', profile?.photoURL || user.photoURL || '',
+        delegateSettings.friendUids, delegateForm.friendUids,
+      );
       setSettingsPanel(null);
     } catch (err) {
       console.error('Failed to save BP delegate settings:', err);
@@ -511,7 +527,7 @@ export default function HealthBloodPressure() {
       const html2canvas = html2canvasModule.default;
       const docPdf = new jsPDF();
       const brandColor: [number, number, number] = [15, 71, 97];
-      const webUrl = 'https://familyledger-backend-192700919713.us-central1.run.app';
+      const webUrl = 'https://familyledger.thirteenapps.com/';
       const androidUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 
       const pageWidth = docPdf.internal.pageSize.getWidth();
@@ -607,20 +623,27 @@ export default function HealthBloodPressure() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24">
+    // Same self-contained, two-region layout as HealthGlucose.tsx — both the Log Entry and
+    // Dashboard tabs get their own `overflow-y-auto` region (Log Entry used to be a hard
+    // `overflow-hidden` on the theory the form always fits one screen — real bug: once the
+    // on-screen keyboard shrinks the visible viewport, the form no longer fits, and with scrolling
+    // disabled the Save button became unreachable; see HealthGlucose.tsx's own comment on the same
+    // fix). Relies on AuthenticatedLayout's <main> carrying h-full (see App.tsx) — without that,
+    // h-full here would silently collapse to auto height.
+    <div className="flex flex-col h-full bg-surface overflow-hidden">
+      <div className="shrink-0 p-3 md:p-8 pb-1.5 max-w-xl mx-auto w-full space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-lg font-black text-primary leading-tight">{t('bp.tracker')}</h1>
-            <p className="text-[11px] text-text-muted leading-tight">{t('bp.trackerDesc')}</p>
+            <h1 className="text-base font-black text-primary leading-tight">{t('bp.tracker')}</h1>
+            {tab !== 'log' && <p className="text-[11px] text-text-muted leading-tight">{t('bp.trackerDesc')}</p>}
           </div>
           <button
             type="button"
             onClick={openSettingsMenu}
-            className="shrink-0 w-9 h-9 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
+            className="shrink-0 w-8 h-8 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
             title={t('health.settings')}
           >
-            <span className="material-symbols-outlined text-[18px]">settings</span>
+            <span className="material-symbols-outlined text-[16px]">settings</span>
           </button>
         </div>
 
@@ -628,21 +651,23 @@ export default function HealthBloodPressure() {
           <button
             type="button"
             onClick={() => setTab('log')}
-            className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', tab === 'log' ? 'bg-primary text-white' : 'text-text-muted')}
+            className={clsx('flex-1 py-1.5 rounded-lg text-xs font-bold transition-all', tab === 'log' ? 'bg-primary text-white' : 'text-text-muted')}
           >
             {t('health.logEntry')}
           </button>
           <button
             type="button"
             onClick={() => setTab('dashboard')}
-            className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted')}
+            className={clsx('flex-1 py-1.5 rounded-lg text-xs font-bold transition-all', tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted')}
           >
             {t('health.dashboard')}
           </button>
         </div>
+      </div>
 
-        {tab === 'log' && (
-          <form onSubmit={handleSubmit} className="space-y-2.5">
+      {tab === 'log' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
+          <form onSubmit={handleSubmit} className="space-y-1.5">
             {editingLog && (
               <div className="flex items-center justify-between gap-2 bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
                 <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
@@ -655,62 +680,75 @@ export default function HealthBloodPressure() {
               </div>
             )}
             {(editingLog || delegatorsForMe.length > 0) && (
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">
                   {editingLog ? t('health.assignTo') : t('health.enteringFor')}
                 </label>
-                <select
-                  value={enteringForUid}
-                  onChange={(e) => setEnteringForUid(e.target.value)}
-                  className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none"
-                >
-                  <option value="me">{t('health.myself')}</option>
+                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
                   {[
+                    { userId: 'me', displayName: t('health.myself'), photoURL: profile?.photoURL || user?.photoURL || '' },
                     ...delegatorsForMe,
                     ...(editingLog && editingLog.userId !== user?.uid && !delegatorsForMe.some((d) => d.userId === editingLog.userId)
                       ? [resolveSharer(editingLog.userId)]
                       : []),
-                  ].map((d) => (
-                    <option key={d.userId} value={d.userId}>{d.displayName}</option>
-                  ))}
-                </select>
+                  ].map((d) => {
+                    const isActive = d.userId === enteringForUid;
+                    return (
+                      <button
+                        key={d.userId}
+                        type="button"
+                        onClick={() => setEnteringForUid(d.userId)}
+                        className="flex flex-col items-center gap-0.5 shrink-0 w-12"
+                      >
+                        {d.photoURL ? (
+                          <img src={d.photoURL} alt="" className={clsx('w-9 h-9 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
+                        ) : (
+                          <div className={clsx('w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
+                            {d.displayName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span className={clsx('text-[9px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{d.displayName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-2">
+            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-2 space-y-1">
               <label className="text-[10px] text-text-muted font-bold uppercase tracking-wider">{t('bp.enterReading')}</label>
               <div className="flex items-center gap-2">
-                <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex-1 min-w-0 space-y-0.5">
                   <input
                     type="number"
                     inputMode="numeric"
                     value={systolicInput}
                     onChange={(e) => setSystolicInput(e.target.value)}
                     placeholder="120"
-                    className="w-full text-2xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-2 outline-none focus:ring-2 focus:ring-primary/20"
+                    className="w-full text-xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-1 outline-none focus:ring-2 focus:ring-primary/20"
                   />
                   <p className="text-[9px] font-bold text-text-muted text-center uppercase tracking-wider">{t('bp.systolic')}</p>
                 </div>
-                <span className="text-2xl font-black text-text-muted pb-4">/</span>
-                <div className="flex-1 min-w-0 space-y-1">
+                <span className="text-xl font-black text-text-muted pb-3">/</span>
+                <div className="flex-1 min-w-0 space-y-0.5">
                   <input
                     type="number"
                     inputMode="numeric"
                     value={diastolicInput}
                     onChange={(e) => setDiastolicInput(e.target.value)}
                     placeholder="80"
-                    className="w-full text-2xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-2 outline-none focus:ring-2 focus:ring-primary/20"
+                    className="w-full text-xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-1 outline-none focus:ring-2 focus:ring-primary/20"
                   />
                   <p className="text-[9px] font-bold text-text-muted text-center uppercase tracking-wider">{t('bp.diastolic')}</p>
                 </div>
-                <div className="w-16 shrink-0 space-y-1">
+                <div className="w-16 shrink-0 space-y-0.5">
                   <input
                     type="number"
                     inputMode="numeric"
                     value={pulseInput}
                     onChange={(e) => setPulseInput(e.target.value)}
                     placeholder="—"
-                    className="w-full text-sm font-bold text-primary bg-surface rounded-xl border border-border-subtle text-center py-2.5 outline-none focus:ring-2 focus:ring-primary/20"
+                    className="w-full text-sm font-bold text-primary bg-surface rounded-xl border border-border-subtle text-center py-1.5 outline-none focus:ring-2 focus:ring-primary/20"
                   />
                   <p className="text-[9px] font-bold text-text-muted text-center uppercase tracking-wider">{t('bp.pulse')}</p>
                 </div>
@@ -722,7 +760,7 @@ export default function HealthBloodPressure() {
               )}
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.dateAndTime')}</label>
               <div className="flex items-center gap-1.5">
                 <input
@@ -730,13 +768,13 @@ export default function HealthBloodPressure() {
                   value={loggedDate}
                   max={todayLocalDateString()}
                   onChange={(e) => setLoggedDate(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-1 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 <input
                   type="time"
                   value={loggedTime}
                   onChange={(e) => setLoggedTime(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-1 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
             </div>
@@ -745,7 +783,7 @@ export default function HealthBloodPressure() {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder={t('health.notesPlaceholder')}
-              rows={2}
+              rows={1}
               className="w-full bg-white p-2 rounded-xl border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none"
             />
 
@@ -757,23 +795,43 @@ export default function HealthBloodPressure() {
               {saving ? t('common.saving') : editingLog ? t('health.updateLogEntry') : t('health.saveLogEntry')}
             </button>
           </form>
-        )}
+        </div>
+      )}
 
-        {tab === 'dashboard' && (
+      {tab === 'dashboard' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
           <div className="space-y-6">
+            {/* Fixed while only the stats/chart/table below scroll — same pattern as
+                HealthGlucose.tsx's own dashboard header. */}
+            <div className="sticky top-0 z-20 bg-surface pb-3 space-y-3">
             {shareableMembers.length > 0 && (
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('health.viewingReportFor')}</label>
-                <select
-                  value={viewUid}
-                  onChange={(e) => setViewUid(e.target.value)}
-                  className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none shadow-sm"
-                >
-                  <option value="me">{t('health.myReport')}</option>
-                  {shareableMembers.map((m: any) => (
-                    <option key={m.userId} value={m.userId}>{m.displayName}</option>
-                  ))}
-                </select>
+                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+                  {[
+                    { userId: 'me', displayName: profile?.displayName || user?.displayName || t('health.myReport'), photoURL: profile?.photoURL || user?.photoURL || '' },
+                    ...shareableMembers,
+                  ].map((m: any) => {
+                    const isActive = m.userId === viewUid;
+                    return (
+                      <button
+                        key={m.userId}
+                        type="button"
+                        onClick={() => setViewUid(m.userId)}
+                        className="flex flex-col items-center gap-1 shrink-0 w-16"
+                      >
+                        {m.photoURL ? (
+                          <img src={m.photoURL} alt="" className={clsx('w-12 h-12 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
+                        ) : (
+                          <div className={clsx('w-12 h-12 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
+                            {m.displayName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span className={clsx('text-[10px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{m.userId === 'me' ? t('health.myReport') : m.displayName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -825,6 +883,7 @@ export default function HealthBloodPressure() {
                 <option value="inRange">{t('health.rangeInTarget')}</option>
                 <option value="outOfRange">{t('health.outOfRange')}</option>
               </select>
+            </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -936,8 +995,8 @@ export default function HealthBloodPressure() {
               )}
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      )}
 
       {showConfirm && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowConfirm(false)}>

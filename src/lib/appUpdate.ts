@@ -13,7 +13,11 @@ export function useAppUpdateAvailable() {
   const [myRevision, setMyRevision] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/build-info')
+    // no-store: a cached response here is what turned this into an infinite "update available"
+    // loop — hardReloadApp() genuinely fetches fresh JS, but if the browser served this GET from
+    // its HTTP cache instead of the network, myRevision stayed stuck on the old value forever, so
+    // the same mismatch (and the same reload prompt) kept reappearing after every reload.
+    fetch('/api/build-info', { cache: 'no-store' })
       .then((r) => r.json())
       .then((data) => setMyRevision(data?.revision || null))
       .catch(() => {});

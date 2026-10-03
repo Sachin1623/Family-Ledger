@@ -16,11 +16,26 @@ interface AdminStatus {
   isSuperAdmin: boolean;
 }
 
+// A prior account found for this uid's own verified email — either a genuine duplicate (signed
+// up once via Google, once via password) or a still-pending (not yet 30-day-purged) soft
+// deletion. Surfaced so Profile.tsx can show an explicit "link this account?" prompt — see this
+// file's own comment on mergeCandidates below for why this used to just merge silently and no
+// longer does.
+export interface MergeCandidate {
+  uid: string;
+  deletedAt?: string;
+  purgeAt?: string;
+  mode?: string;
+  displayName?: string | null;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   profile: any | null;
   admin: AdminStatus;
+  mergeCandidates: MergeCandidate[] | null;
+  dismissMergeCandidates: () => void;
 }
 
 const DEFAULT_ADMIN_STATUS: AdminStatus = { isAdmin: false, isPrimaryAdmin: false, isSuperAdmin: false };
@@ -30,6 +45,8 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   profile: null,
   admin: DEFAULT_ADMIN_STATUS,
+  mergeCandidates: null,
+  dismissMergeCandidates: () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -37,6 +54,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [adminStatus, setAdminStatus] = useState<AdminStatus>(DEFAULT_ADMIN_STATUS);
+  // null = not checked yet / nothing found; [] is never used (absence just stays null) so
+  // "haven't checked" and "checked, found nothing" aren't conflated into the same falsy state.
+  const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[] | null>(null);
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | undefined;
@@ -218,12 +238,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         authUser.getIdToken().then((idToken) => {
           const authHeader = { Authorization: `Bearer ${idToken}` };
 
-          // Best-effort: recover any prior account's data for this email (duplicate
-          // account from a different sign-in provider, or a recent self-deletion). Safe
-          // to call every sign-in — it's a no-op when there's nothing to merge.
-          fetch('/api/merge-account', { method: 'POST', headers: authHeader }).catch((mergeError) =>
-            console.error('merge-account request failed:', mergeError),
-          );
+          // Best-effort, read-only: is there a prior account for this email (duplicate from a
+          // different sign-in provider, or a not-yet-purged soft deletion)? Used to just POST
+          // /api/merge-account directly here and silently restore that data on every sign-in —
+          // which is exactly the bug a whole account-deletion rework fixed: "permanently
+          // delete... cannot be undone" was never true while this ran unconditionally behind
+          // the user's back. Now this only READS whether a candidate exists; Profile.tsx (and
+          // the explicit "we found a paused account" login-side prompt, for the disabled-uid
+          // case) decide whether to actually call /api/merge-account, only on confirmation.
+          fetch('/api/account/check-mergeable', { headers: authHeader })
+            .then((r) => r.json())
+            .then((result) => {
+              if (currentAuthUid === myUid) setMergeCandidates(result.mergeable ? result.candidates : null);
+            })
+            .catch((mergeError) => console.error('check-mergeable request failed:', mergeError));
 
           // Admin panel visibility (backend is the source of truth; this is only used to
           // decide whether to show the admin nav entry and gate the /admin routes).
@@ -275,6 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentAuthUid = null;
         setProfile(null);
         setAdminStatus(DEFAULT_ADMIN_STATUS);
+        setMergeCandidates(null);
         setLoading(false);
       }
     });
@@ -388,7 +417,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, profile, admin: adminStatus }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        profile,
+        admin: adminStatus,
+        mergeCandidates,
+        dismissMergeCandidates: () => setMergeCandidates(null),
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

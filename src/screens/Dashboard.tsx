@@ -856,7 +856,14 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             regardless of `tileState`, so nothing here ever shifts position on toggle — everything
             else in this card (action icons, budget, footer, "Latest Spend") appears/grows in step
             with tileState instead (see tileStateFor's header comment for what each state shows). */}
-        <div className="flex items-center justify-between gap-2 -mx-6 -mt-6 mb-1 px-6 pt-4 pb-3 rounded-t-2xl bg-gradient-to-r from-[#4ADE80]/15 to-[#3B82F6]/15 border-b border-border-subtle">
+        {/* Tapping anywhere in this header bar now also cycles the tile, same as the arrow button
+            below — the icon, "more" menu, and arrow buttons all call stopAnd(...) already (see its
+            own definition above), so their own taps stop propagation here and never double-fire
+            this handler on top of their own action. */}
+        <div
+          onClick={onToggleCollapse}
+          className="flex items-center justify-between gap-2 -mx-6 -mt-6 mb-1 px-6 pt-4 pb-3 rounded-t-2xl bg-gradient-to-r from-[#4ADE80]/15 to-[#3B82F6]/15 border-b border-border-subtle cursor-pointer"
+        >
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"

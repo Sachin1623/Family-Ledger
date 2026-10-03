@@ -1,4 +1,7 @@
-export type GlucoseMealType = 'breakfast' | 'lunch' | 'dinner';
+// 'random' is a spot-check not tied to any meal — no before/after concept applies to it (see
+// GlucoseLog.timing below), which is also why it's deliberately excluded from
+// GlucoseReminderSettings.meals — there's no fixed meal time to remind against.
+export type GlucoseMealType = 'breakfast' | 'lunch' | 'dinner' | 'random';
 export type GlucoseTiming = 'before' | 'after';
 
 export interface GlucoseLog {
@@ -8,7 +11,7 @@ export interface GlucoseLog {
   groupId: string | null; // computed from GlucoseShareSettings at write time, not user-picked per entry
   sharedFriendUids: string[]; // ditto — individual friends this entry is currently shared with
   mealType: GlucoseMealType;
-  timing: GlucoseTiming;
+  timing: GlucoseTiming | null; // null only for mealType === 'random'
   postMealHours: number | null;
   value: number;
   notes: string | null;
@@ -30,21 +33,23 @@ export function isGlucoseInRange(value: number, target: GlucoseTarget): boolean 
   return value >= target.min && value <= target.max;
 }
 
-export const POST_MEAL_HOUR_OPTIONS = [1, 2, 3, 4];
+export const POST_MEAL_HOUR_OPTIONS = [1, 1.5, 2, 2.5, 3, 3.5, 4];
 
-// The 6 fixed meal-window buckets the Dashboard tab trends and the PDF export both iterate over,
-// in a stable display order — every log belongs to exactly one of these.
-export const GLUCOSE_WINDOWS: { mealType: GlucoseMealType; timing: GlucoseTiming; key: string; labelKey: string; icon: string }[] = [
+// The fixed meal-window buckets the Dashboard tab trends and the PDF export both iterate over, in
+// a stable display order — every log belongs to exactly one of these. 'random' has no before/after
+// split (see GlucoseLog.timing), so it's a single window rather than a pair.
+export const GLUCOSE_WINDOWS: { mealType: GlucoseMealType; timing: GlucoseTiming | null; key: string; labelKey: string; icon: string }[] = [
   { mealType: 'breakfast', timing: 'before', key: 'breakfast_before', labelKey: 'health.beforeBreakfast', icon: '🌅' },
   { mealType: 'breakfast', timing: 'after', key: 'breakfast_after', labelKey: 'health.afterBreakfast', icon: '🍳' },
   { mealType: 'lunch', timing: 'before', key: 'lunch_before', labelKey: 'health.beforeLunch', icon: '🥗' },
   { mealType: 'lunch', timing: 'after', key: 'lunch_after', labelKey: 'health.afterLunch', icon: '🍱' },
   { mealType: 'dinner', timing: 'before', key: 'dinner_before', labelKey: 'health.beforeDinner', icon: '🌙' },
   { mealType: 'dinner', timing: 'after', key: 'dinner_after', labelKey: 'health.afterDinner', icon: '🍽️' },
+  { mealType: 'random', timing: null, key: 'random', labelKey: 'health.random', icon: '🎲' },
 ];
 
 export function glucoseWindowOf(log: Pick<GlucoseLog, 'mealType' | 'timing'>): string {
-  return `${log.mealType}_${log.timing}`;
+  return log.mealType === 'random' ? 'random' : `${log.mealType}_${log.timing}`;
 }
 
 // A target range per meal window (before/after breakfast/lunch/dinner), not one global band —
@@ -140,7 +145,7 @@ export type GlucoseReminderCadence = 'daily' | 'weekly';
 
 export interface GlucoseReminderSettings {
   enabled: boolean;
-  meals: GlucoseMealType[]; // which meals get a reminder at all
+  meals: Exclude<GlucoseMealType, 'random'>[]; // which meals get a reminder at all — 'random' has no fixed meal time to remind against
   cadence: GlucoseReminderCadence;
   weekdays: number[]; // 0=Sun..6=Sat, used only when cadence === 'weekly'
   breakfast: MealReminderTime;

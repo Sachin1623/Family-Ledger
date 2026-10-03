@@ -7,7 +7,6 @@ import { updatePassword } from 'firebase/auth';
 import { doc, updateDoc, deleteDoc, setDoc, collection, query, where, getDocs, writeBatch, arrayRemove } from 'firebase/firestore';
 import { useDocument } from 'react-firebase-hooks/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { Capacitor } from '@capacitor/core';
@@ -491,7 +490,7 @@ function ShopkeeperAccessSection() {
 }
 
 export default function Profile() {
-  const { user, profile, admin } = useAuth();
+  const { user, profile, admin, mergeCandidates, dismissMergeCandidates } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
   // Splits the long settings list into tabs (same tab-bar pattern as HealthMedicines.tsx) so the
@@ -604,8 +603,81 @@ export default function Profile() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [acceptedDeletion, setAcceptedDeletion] = useState(false);
+  // Which of the two choices (see DataDeletion.tsx-style copy in the modal below) is currently
+  // selected — defaults to the recommended, reversible one.
+  const [deleteMode, setDeleteMode] = useState<'soft' | 'hard'>('soft');
   const [isEditingName, setIsEditingName] = useState(false);
   const [newName, setNewName] = useState('');
+
+  // --- "Recover deleted account" — mergeCandidates (from AuthContext's read-only
+  // check-mergeable probe) is a prior account under a DIFFERENT uid tied to this same verified
+  // email: a genuine duplicate, or a soft-deleted one still inside its 30-day window. Shown as a
+  // standing banner (not a one-time popup) for the whole 30 days per the product decision this
+  // was built against — the user may not notice it the moment they sign back in. ---
+  const [mergeBusy, setMergeBusy] = useState<string | null>(null); // uid currently being acted on
+  const [mergeActionError, setMergeActionError] = useState<string | null>(null);
+  // A 'hard' delete (or a "delete permanently now" upgrade) sets purgeAt to the moment it was
+  // REQUESTED, not +30 days — the purge cron picks it up on its next run rather than instantly,
+  // so this may already be in the past by the time someone's looking at this banner. Showing
+  // "Scheduled to delete: <a time already gone by>" would read as broken, so that case gets its
+  // own "processing now" copy instead of a date — same handling as Login.tsx's recovery panel.
+  const mergeCandidatePurgeDate = mergeCandidates?.[0]?.purgeAt ? new Date(mergeCandidates[0].purgeAt) : null;
+  const mergeCandidatePurgeIsFuture = mergeCandidatePurgeDate ? mergeCandidatePurgeDate.getTime() > Date.now() : false;
+  const mergeCandidatePurgeFormatted = mergeCandidatePurgeDate
+    // Can't combine dateStyle/timeStyle with timeZoneName — Intl.DateTimeFormat throws
+    // (ECMA-402 forbids mixing the style shorthands with explicit component options), so this
+    // spells out each component instead of using the shorthand.
+    ? mergeCandidatePurgeDate.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+    : null;
+
+  const handleLinkMergeCandidate = async () => {
+    if (!user) return;
+    setMergeActionError(null);
+    setMergeBusy('link');
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/merge-account', { method: 'POST', headers: { Authorization: `Bearer ${idToken}` } });
+      const payload = await response.json();
+      if (!response.ok || !payload.merged) {
+        setMergeActionError(payload.error || payload.reason || 'Unable to link that account right now.');
+        return;
+      }
+      dismissMergeCandidates();
+      alert('Your previous account has been linked back in.');
+    } catch (error) {
+      console.error('Link merge candidate failed:', error);
+      setMergeActionError('Unable to link that account right now.');
+    } finally {
+      setMergeBusy(null);
+    }
+  };
+
+  const handlePurgeMergeCandidate = async (oldUid: string) => {
+    if (!user) return;
+    if (!window.confirm("This schedules that paused account and all its data for permanent deletion, processed shortly after (not instantly) — it can still be recovered up until then, the same way you got here. Continue?")) return;
+    setMergeActionError(null);
+    setMergeBusy(oldUid);
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/account/purge-old-now', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldUid }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setMergeActionError(payload.error || 'Unable to process that request right now.');
+        return;
+      }
+      dismissMergeCandidates();
+      alert("Got it — that account and its data will be permanently deleted shortly. We'll send a confirmation to its email once it's done.");
+    } catch (error) {
+      console.error('Purge merge candidate failed:', error);
+      setMergeActionError('Unable to process that request right now.');
+    } finally {
+      setMergeBusy(null);
+    }
+  };
 
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
@@ -941,82 +1013,50 @@ export default function Profile() {
     );
   };
 
+  // Delegates to /api/account/delete (server-side, Admin SDK) instead of a client-side Firestore
+  // batch — soft-delete needs to disable the Firebase Auth user and revoke its sessions, neither
+  // of which the client SDK can do for its own account. This also sidesteps the old
+  // `user.delete()` step's real-world failure mode (`auth/requires-recent-login`, extremely
+  // common since any session older than a few minutes hits it): that used to leave the account
+  // fully intact — profile docs gone, but the live Auth record (same uid) and every data
+  // collection untouched — so logging back in silently reconnected everything, with no warning
+  // the deletion hadn't actually happened. The server always disables the Auth user outright,
+  // which can't partially fail the same way.
   const handleDeleteAccount = async () => {
     if (!user || !acceptedDeletion) return;
     setIsDeleting(true);
-    const path = `users/${user.uid}`;
     try {
-      // 1. Transfer ownership of groups if user is owner
-      const membersQuery = query(collection(db, 'members'), where('userId', '==', user.uid));
-      const memberships = await getDocs(membersQuery);
-      
-      const batch = writeBatch(db);
-      
-      for (const memberDoc of memberships.docs) {
-        const memberData = memberDoc.data();
-        
-        if (memberData.role === 'owner') {
-          // Find other members in this group to transfer ownership to. Filters out the caller
-          // CLIENT-SIDE rather than adding a second `where('userId', '!=', ...)` clause — that
-          // combination needs a composite index (groupId + userId) that was never provisioned in
-          // this project, so this query has been silently throwing FAILED_PRECONDITION and
-          // aborting the whole delete for any account that actually owns a group with other real
-          // members in it (a single-member group never hit this path, which is why it went
-          // unnoticed) ever since this screen was first written. A group's member count is small
-          // enough that filtering here instead of relying on an index is cheap either way, and it
-          // sidesteps needing that index provisioned identically in every environment forever.
-          const othersQuery = query(collection(db, 'members'), where('groupId', '==', memberData.groupId));
-          const others = (await getDocs(othersQuery)).docs.filter((d) => d.data().userId !== user.uid);
-
-          if (others.length > 0) {
-            // Randomly select one of the other members
-            const randomIndex = Math.floor(Math.random() * others.length);
-            const newOwnerDoc = others[randomIndex];
-            batch.update(newOwnerDoc.ref, { role: 'owner' });
-          }
-        }
-        
-        // Remove user from the group membership
-        batch.delete(memberDoc.ref);
-      }
-      
-      // 2. Leave a tombstone so re-registering with this email within 30 days can
-      //    automatically recover this account's data (see /api/merge-account).
-      batch.set(doc(db, 'accountDeletions', user.uid), {
-        email: (user.email || '').trim().toLowerCase(),
-        deletedAt: new Date().toISOString(),
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: deleteMode }),
       });
-
-      // 3. Delete user private profile
-      batch.delete(doc(db, 'users', user.uid, 'private', 'info'));
-
-      // 4. Delete user public profile
-      batch.delete(doc(db, 'users', user.uid));
-      
-      await batch.commit();
-
-      // Decrement global user count
-      await updateGlobalStats({ users: -1 });
-
-      // 5. Try to delete the Auth account
-      // Note: This may fail if the user hasn't logged in recently (auth/requires-recent-login)
-      try {
-        await user.delete();
-        clearFieldCryptoCache();
-        navigate('/login');
-      } catch (authError: any) {
-        if (authError.code === 'auth/requires-recent-login') {
-          // If re-authentication is needed, we log them out and they can try again after logging in
-          alert('For security reasons, you must have logged in recently to delete your account. Please log in again and click delete.');
-          clearFieldCryptoCache();
-          await auth.signOut();
-          navigate('/login');
-        } else {
-          throw authError;
-        }
+      const payload = await response.json();
+      if (!response.ok) {
+        alert(payload.error || 'Unable to process account deletion right now.');
+        return;
       }
+      // Sign out (and navigate away) BEFORE showing any blocking dialog — the server has just
+      // disabled this account's Auth user, but every Firestore listener across the whole app
+      // (Dashboard, groups, everything AuthenticatedLayout mounted) is still live at this exact
+      // moment. A blocking `alert()` freezes the main thread, which gives React no chance to
+      // react to the sign-out and unmount those listeners before it resumes — and a listener
+      // whose credential gets invalidated out from under it mid-stream is a known trigger for
+      // the Firestore Web SDK's "INTERNAL ASSERTION FAILED: Unexpected state" crash (confirmed:
+      // this is exactly what happened before this fix). Routing the confirmation message through
+      // to Login via navigation state, instead of an inline alert(), means it never blocks the
+      // thread at all — unmounting and the message display can't race each other.
+      clearFieldCryptoCache();
+      await auth.signOut();
+      navigate('/login', {
+        state: deleteMode === 'hard'
+          ? { message: "Got it — your account and data will be permanently deleted shortly. We'll send a confirmation to your email once it's done." }
+          : undefined,
+      });
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
+      console.error('account/delete failed:', error);
+      alert('Unable to process account deletion right now.');
     } finally {
       setIsDeleting(false);
       setShowDeleteConfirm(false);
@@ -1826,11 +1866,52 @@ export default function Profile() {
           {exportError && <p className="text-[10px] font-bold text-error">{exportError}</p>}
 
           <button
-            onClick={() => setShowDeleteConfirm(true)}
+            onClick={() => { setDeleteMode('soft'); setShowDeleteConfirm(true); }}
             className="text-[11px] font-bold text-error/60 hover:text-error hover:underline transition-colors uppercase tracking-widest"
           >
             {t('profile.deleteAccountData')}
           </button>
+
+          {/* "Recover deleted account" — a prior account tied to this same verified email, found
+              via AuthContext's read-only check-mergeable probe on sign-in. Shown as a standing
+              block (not a one-time popup) for as long as the tombstone is still within its 30-day
+              window, so missing it on first login doesn't mean missing it for good. */}
+          {mergeCandidates && mergeCandidates.length > 0 && (
+            <div className="w-full max-w-xs bg-primary/5 border border-primary/15 rounded-2xl p-4 space-y-2.5 text-left mt-2">
+              <p className="text-xs font-black text-primary uppercase tracking-wider">Recover deleted account</p>
+              <p className="text-[11px] text-text-secondary leading-relaxed">
+                We found a paused account{mergeCandidates.length > 1 ? 's' : ''} tied to your email{mergeCandidates[0]?.displayName ? ` (${mergeCandidates[0].displayName})` : ''}. Link it back to get everything from it, or delete it for good.
+              </p>
+              {mergeCandidatePurgeDate && (
+                <p className="text-[11px] font-bold text-text-muted leading-snug flex items-start gap-1">
+                  <span className="material-symbols-outlined text-[14px] mt-0.5">schedule</span>
+                  {mergeCandidatePurgeIsFuture
+                    ? `Scheduled to delete: ${mergeCandidatePurgeFormatted}`
+                    : `Was scheduled to delete on ${mergeCandidatePurgeFormatted} — may complete any moment, link it back now if you still want to keep it`}
+                </p>
+              )}
+              {mergeActionError && <p className="text-[11px] font-bold text-error">{mergeActionError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleLinkMergeCandidate}
+                  disabled={mergeBusy !== null}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-primary disabled:opacity-50"
+                >
+                  {mergeBusy === 'link' ? '…' : 'Link it back'}
+                </button>
+                <button
+                  onClick={() => handlePurgeMergeCandidate(mergeCandidates[0].uid)}
+                  disabled={mergeBusy !== null}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold text-error bg-error/10 disabled:opacity-50"
+                >
+                  {mergeBusy === mergeCandidates[0]?.uid ? '…' : 'Delete it now'}
+                </button>
+              </div>
+              <button onClick={dismissMergeCandidates} className="w-full text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                Not now
+              </button>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1863,18 +1944,56 @@ export default function Profile() {
               <div className="w-16 h-16 bg-error/10 text-error rounded-full flex items-center justify-center mx-auto">
                 <span className="material-symbols-outlined text-3xl">warning</span>
               </div>
-              
+
               <div className="text-center space-y-2">
-                <h3 className="text-xl font-bold text-primary">Delete your data?</h3>
-                <p className="text-sm text-text-secondary leading-relaxed">
-                  This will permanently delete your account, your profile, and all your personal financial records. This action cannot be undone.
-                </p>
+                <h3 className="text-xl font-bold text-primary">Delete your account?</h3>
+                <p className="text-sm text-text-secondary leading-relaxed">Choose how you want this to work.</p>
+              </div>
+
+              <div className="space-y-2.5">
+                <button
+                  type="button"
+                  onClick={() => setDeleteMode('soft')}
+                  className={clsx(
+                    'w-full text-left p-4 rounded-2xl border-2 transition-colors',
+                    deleteMode === 'soft' ? 'border-primary bg-primary/5' : 'border-border-subtle bg-white',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={clsx('material-symbols-outlined text-[18px]', deleteMode === 'soft' ? 'text-primary' : 'text-text-muted')}>
+                      {deleteMode === 'soft' ? 'radio_button_checked' : 'radio_button_unchecked'}
+                    </span>
+                    <p className="text-sm font-bold text-primary">Pause for 30 days (recommended)</p>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed mt-1 pl-6">
+                    Your account is signed out everywhere and hidden right away. If you log back in with the same details within 30 days, you'll get everything back exactly as it was. After 30 days with no action, it's permanently deleted.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDeleteMode('hard')}
+                  className={clsx(
+                    'w-full text-left p-4 rounded-2xl border-2 transition-colors',
+                    deleteMode === 'hard' ? 'border-error bg-error/5' : 'border-border-subtle bg-white',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={clsx('material-symbols-outlined text-[18px]', deleteMode === 'hard' ? 'text-error' : 'text-text-muted')}>
+                      {deleteMode === 'hard' ? 'radio_button_checked' : 'radio_button_unchecked'}
+                    </span>
+                    <p className="text-sm font-bold text-error">Delete everything now</p>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed mt-1 pl-6">
+                    You're signed out everywhere right away, and the deletion is processed shortly after (not instantly) — your profile, health records, goals, and personal data are erased for good. Expenses, games, and reminders you've shared with others stay for their records, but your name on them is replaced with "Deleted User". You can still recover it via the same options shown when you try to log back in, right up until the deletion actually completes.
+                  </p>
+                </button>
               </div>
 
               <div className="flex items-start gap-3 p-4 bg-error/5 rounded-2xl border border-error/10">
                 <div className="pt-0.5">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     id="accept-deletion"
                     checked={acceptedDeletion}
                     onChange={(e) => setAcceptedDeletion(e.target.checked)}
@@ -1882,12 +2001,14 @@ export default function Profile() {
                   />
                 </div>
                 <label htmlFor="accept-deletion" className="text-xs text-error font-medium leading-tight cursor-pointer">
-                  I understand that this will permanently erase all my data and cannot be recovered.
+                  {deleteMode === 'soft'
+                    ? "I understand this signs me out everywhere right away, and I'll have 30 days to change my mind."
+                    : "I understand this signs me out everywhere right away and permanently erases all my data shortly after — I can still undo it before then if I change my mind."}
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <button 
+                <button
                   disabled={isDeleting}
                   onClick={() => {
                     setShowDeleteConfirm(false);
@@ -1897,15 +2018,17 @@ export default function Profile() {
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   disabled={isDeleting || !acceptedDeletion}
                   onClick={handleDeleteAccount}
                   className="py-3 px-4 rounded-xl font-bold text-white bg-error hover:bg-error/90 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isDeleting ? (
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : deleteMode === 'soft' ? (
+                    'Pause My Account'
                   ) : (
-                    'Confirm Delete'
+                    'Delete Everything Now'
                   )}
                 </button>
               </div>

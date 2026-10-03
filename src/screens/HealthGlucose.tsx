@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -13,6 +13,7 @@ import { shareOrDownloadFile } from '../lib/fileShare';
 import { toLocalDateString, todayLocalDateString, nowLocalTimeString, combineLocalDateAndTime } from '../lib/dateUtils';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { scheduleGlucoseReminders } from '../lib/healthReminders';
+import { syncHealthDelegateInvites } from '../lib/healthDelegateInvites';
 import { useFriendships } from '../lib/useFriendships';
 import { useFamilies } from '../lib/useFamilies';
 import { WEEKDAY_LABELS } from '../lib/frequency';
@@ -44,6 +45,16 @@ const MEAL_TYPES: { value: GlucoseMealType; icon: string; labelKey: string }[] =
   { value: 'breakfast', icon: '🍳', labelKey: 'health.breakfast' },
   { value: 'lunch', icon: '🥗', labelKey: 'health.lunch' },
   { value: 'dinner', icon: '🍽️', labelKey: 'health.dinner' },
+  { value: 'random', icon: '🎲', labelKey: 'health.random' },
+];
+
+// The Reminders panel's "which meals get a reminder" picker — deliberately its own list, not
+// MEAL_TYPES.filter(...), since 'random' has no fixed meal time to remind against (see
+// GlucoseReminderSettings.meals in health.ts, typed to exclude it entirely).
+const REMINDER_MEAL_TYPES: { value: 'breakfast' | 'lunch' | 'dinner'; icon: string; labelKey: string }[] = [
+  { value: 'breakfast', icon: '🍳', labelKey: 'health.breakfast' },
+  { value: 'lunch', icon: '🥗', labelKey: 'health.lunch' },
+  { value: 'dinner', icon: '🍽️', labelKey: 'health.dinner' },
 ];
 
 const DATE_PRESETS = ['all', '7d', '14d', '30d', 'custom'] as const;
@@ -71,6 +82,35 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+// jsPDF's addImage only accepts a raster format (PNG/JPEG), not SVG — the real logo.svg (the same
+// icon+wordmark Header.tsx uses) is rasterized at export time by drawing it onto an offscreen
+// canvas, rather than shipping a separately-maintained PNG copy of the same asset. Rendered at 4x
+// its natural 400x120 size so it stays crisp at the small size the PDF prints it at. Returns null
+// (caller falls back to the old hand-drawn "FamilyLedger" text) if the load/rasterize fails for
+// any reason — a missing logo on the PDF is a cosmetic problem, not one worth failing the export
+// over.
+async function loadLogoAsPngDataUrl(): Promise<string | null> {
+  try {
+    const img = new Image();
+    const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('logo image failed to load'));
+      img.src = '/logo.svg';
+    });
+    const scale = 4;
+    const canvas = document.createElement('canvas');
+    canvas.width = (loaded.naturalWidth || 400) * scale;
+    canvas.height = (loaded.naturalHeight || 120) * scale;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(loaded, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  } catch (err) {
+    console.error('Failed to load FamilyLedger logo for PDF export:', err);
+    return null;
+  }
 }
 
 export default function HealthGlucose() {
@@ -139,10 +179,21 @@ export default function HealthGlucose() {
   const [delegatedToMeByFriendValue] = useCollection(
     user ? query(collection(db, 'healthDelegateSettings'), where('glucose.friendUids', 'array-contains', user.uid)) : null,
   );
+  // A friend-based grant only actually works (per firestore.rules' isHealthDelegateAccepted) once
+  // the friend has accepted — see src/lib/healthDelegateInvites.ts.
+  const [myAcceptedGlucoseInvitesValue] = useCollection(
+    user
+      ? query(collection(db, 'healthDelegateInvites'), where('friendUid', '==', user.uid), where('kind', '==', 'glucose'), where('status', '==', 'accepted'))
+      : null,
+  );
+  const acceptedGlucoseOwnerUids = useMemo(
+    () => new Set((myAcceptedGlucoseInvitesValue?.docs || []).map((d) => d.data().ownerUid as string)),
+    [myAcceptedGlucoseInvitesValue],
+  );
   const delegatorsForMe = useMemo(() => {
     const uids = new Set<string>();
     delegatedToMeByGroupValue?.docs.forEach((d) => uids.add(d.id));
-    delegatedToMeByFriendValue?.docs.forEach((d) => uids.add(d.id));
+    delegatedToMeByFriendValue?.docs.forEach((d) => { if (acceptedGlucoseOwnerUids.has(d.id)) uids.add(d.id); });
     return Array.from(uids)
       .filter((uid) => uid !== user?.uid)
       .map((uid) => {
@@ -152,7 +203,7 @@ export default function HealthGlucose() {
         return { userId: uid, displayName: friend?.displayName || t('common.someone'), photoURL: friend?.photoURL || '' };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, allMembers, friendUsersByUid, user]);
+  }, [delegatedToMeByGroupValue, delegatedToMeByFriendValue, acceptedGlucoseOwnerUids, allMembers, friendUsersByUid, user]);
 
   // --- Settings: target ranges (per meal window), sharing, delegated entry, reminders ---
   const targets: GlucoseTargetMap = profile?.healthTargets?.glucose || defaultGlucoseTargetMap();
@@ -295,6 +346,10 @@ export default function HealthGlucose() {
         glucose: delegateForm,
         updatedAt: new Date().toISOString(),
       });
+      await syncHealthDelegateInvites(
+        'glucose', user.uid, profile?.displayName || user.displayName || 'Someone', profile?.photoURL || user.photoURL || '',
+        delegateSettings.friendUids, delegateForm.friendUids,
+      );
       setSettingsPanel(null);
     } catch (err) {
       console.error('Failed to save delegate settings:', err);
@@ -374,7 +429,7 @@ export default function HealthGlucose() {
   const handleEditStart = (log: GlucoseLog) => {
     setEditingLog(log);
     setMealType(log.mealType);
-    setTiming(log.timing);
+    setTiming(log.timing || 'before');
     setPostMealHours(log.postMealHours || 2);
     setValueInput(String(log.value));
     setNotes(log.notes || '');
@@ -412,14 +467,17 @@ export default function HealthGlucose() {
   }, [searchParams]);
 
   const parsedValue = parseInt(valueInput, 10);
-  const hasValidValue = !isNaN(parsedValue) && parsedValue > 0;
+  // A random (spot-check) reading has no meal/timing context to explain WHY it was taken — notes
+  // are the only place that context can live, so they're required for this meal type only.
+  const notesRequiredForRandom = mealType === 'random' && !notes.trim();
+  const hasValidValue = !isNaN(parsedValue) && parsedValue > 0 && !notesRequiredForRandom;
 
-  const windowLabel = (m: GlucoseMealType, tm: GlucoseTiming) => {
-    const w = GLUCOSE_WINDOWS.find((x) => x.mealType === m && x.timing === tm);
+  const windowLabel = (m: GlucoseMealType, tm: GlucoseTiming | null) => {
+    const w = GLUCOSE_WINDOWS.find((x) => x.key === glucoseWindowOf({ mealType: m, timing: tm }));
     return w ? t(w.labelKey) : '';
   };
 
-  const liveWindowTarget = targetForWindow(targets, `${mealType}_${timing}`);
+  const liveWindowTarget = targetForWindow(targets, glucoseWindowOf({ mealType, timing: mealType === 'random' ? null : timing }));
 
   // Tapping Save doesn't write immediately — it opens a summary to confirm or go back and
   // change, since a glucose reading is often typed in a hurry and a typo is easy to miss.
@@ -454,8 +512,8 @@ export default function HealthGlucose() {
         groupId: computedGroupId,
         sharedFriendUids: computedFriendUids,
         mealType,
-        timing,
-        postMealHours: timing === 'after' ? postMealHours : null,
+        timing: mealType === 'random' ? null : timing,
+        postMealHours: mealType !== 'random' && timing === 'after' ? postMealHours : null,
         value: parsedValue,
         notes: notes.trim() || null,
         loggedAt,
@@ -481,7 +539,7 @@ export default function HealthGlucose() {
             groupId: computedGroupId,
             action: 'glucose_logged',
             amount: parsedValue,
-            contextLabel: windowLabel(mealType, timing),
+            contextLabel: windowLabel(mealType, fields.timing),
             actorName,
           });
         }
@@ -492,7 +550,7 @@ export default function HealthGlucose() {
               fetch('/api/health/notify-glucose-shared', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ friendUids: computedFriendUids, value: parsedValue, contextLabel: windowLabel(mealType, timing), actorName }),
+                body: JSON.stringify({ friendUids: computedFriendUids, value: parsedValue, contextLabel: windowLabel(mealType, fields.timing), actorName }),
               }),
             )
             .catch((err) => console.error('notify-glucose-shared failed:', err));
@@ -523,8 +581,6 @@ export default function HealthGlucose() {
   const [filterMeal, setFilterMeal] = useState<'all' | GlucoseMealType>('all');
   const [filterTiming, setFilterTiming] = useState<'all' | GlucoseTiming>('all');
   const [filterRangeStatus, setFilterRangeStatus] = useState<'all' | 'inRange' | 'outOfRange'>('all');
-  // Collapsed by CSS height, not unmounted — chartRefs must stay measurable by html2canvas for
-  // PDF export even while a section is visually collapsed on screen.
   const [chartsCollapsed, setChartsCollapsed] = useState(false);
   const [tableCollapsed, setTableCollapsed] = useState(false);
 
@@ -605,7 +661,6 @@ export default function HealthGlucose() {
     (w) => (filterMeal === 'all' || w.mealType === filterMeal) && (filterTiming === 'all' || w.timing === filterTiming),
   );
 
-  const chartRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [exportingPdf, setExportingPdf] = useState(false);
 
   const handleClearHistory = () => {
@@ -621,33 +676,110 @@ export default function HealthGlucose() {
     }
     setExportingPdf(true);
     try {
-      // Lazy-loaded so these ~300KB+ libraries only ship to whoever actually exports a report.
-      // html2canvas-pro, not plain html2canvas — the original library throws
-      // "Attempting to parse an unsupported color function" the moment it walks past any element
-      // using a Tailwind v4 opacity modifier (bg-white/95, border-primary/20, ...), which Tailwind
-      // v4 compiles to color-mix()/oklab() under the hood. Those modifiers are all over this app's
-      // design system, so the export silently failed on every platform — this fork adds support
-      // for those modern CSS color functions and is a drop-in replacement (same API).
-      const [{ default: jsPDF }, autoTableModule, html2canvasModule] = await Promise.all([
+      // Lazy-loaded so this ~150KB+ library only ships to whoever actually exports a report.
+      // Trend charts are now drawn directly with jsPDF primitives (see drawTrendChart below)
+      // instead of html2canvas-capturing the on-screen Dashboard charts, so html2canvas-pro is no
+      // longer a dependency of this export at all.
+      const [{ default: jsPDF }, autoTableModule] = await Promise.all([
         import('jspdf'),
         import('jspdf-autotable'),
-        import('html2canvas-pro'),
       ]);
       const autoTable = autoTableModule.default;
-      const html2canvas = html2canvasModule.default;
       const docPdf = new jsPDF();
       const brandColor: [number, number, number] = [15, 71, 97];
-      const webUrl = 'https://familyledger-backend-192700919713.us-central1.run.app';
+      const beforeColor: [number, number, number] = [96, 165, 250]; // light blue — contrasts with brandColor for the "after" line
+      const webUrl = 'https://familyledger.thirteenapps.com/';
       const androidUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 
-      // FamilyLedger wordmark top-right, with a clickable "Get it on Google Play" icon+link
-      // directly below it — no iOS link yet, not published there; add it here once it is.
+      // Draws a small multi-series line chart directly with jsPDF primitives (gridlines, y-axis
+      // min/mid/max labels, one polyline+dots per series, a legend) — used below for each meal's
+      // combined before/after trend and for the random-reading trend. Series don't share a strict
+      // calendar x-axis (each one's own last-14-points are spaced evenly by index); this is a
+      // small inline chart, not a precision plot, so that simplification keeps the geometry simple
+      // without needing to date-bucket two independently-timed series onto one axis.
+      const drawTrendChart = (
+        x: number, y: number, width: number, height: number,
+        series: { label: string; color: [number, number, number]; points: { date: string; value: number }[] }[],
+      ) => {
+        const allPoints = series.flatMap((s) => s.points);
+        if (allPoints.length === 0) return;
+        const values = allPoints.map((p) => p.value);
+        const minV = Math.min(...values);
+        const maxV = Math.max(...values);
+        const padV = Math.max(5, (maxV - minV) * 0.15);
+        const yMin = Math.max(0, Math.floor(minV - padV));
+        const yMax = Math.ceil(maxV + padV);
+
+        const axisLabelW = 9;
+        const legendH = 5;
+        const plotX = x + axisLabelW;
+        const plotY = y;
+        const plotW = width - axisLabelW;
+        const plotH = height - legendH - 3;
+
+        docPdf.setDrawColor(225);
+        docPdf.setLineWidth(0.15);
+        [0, 0.5, 1].forEach((f) => docPdf.line(plotX, plotY + plotH * f, plotX + plotW, plotY + plotH * f));
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(5.5);
+        docPdf.setTextColor(150);
+        docPdf.text(String(yMax), x, plotY + 1.5);
+        docPdf.text(String(Math.round((yMax + yMin) / 2)), x, plotY + plotH / 2 + 1);
+        docPdf.text(String(yMin), x, plotY + plotH + 1);
+
+        series.forEach((s) => {
+          if (s.points.length === 0) return;
+          const n = s.points.length;
+          docPdf.setDrawColor(...s.color);
+          docPdf.setFillColor(...s.color);
+          docPdf.setLineWidth(0.4);
+          let prev: [number, number] | null = null;
+          s.points.forEach((p, i) => {
+            const px = plotX + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
+            const py = plotY + plotH - ((p.value - yMin) / (yMax - yMin || 1)) * plotH;
+            if (prev) docPdf.line(prev[0], prev[1], px, py);
+            docPdf.circle(px, py, 0.5, 'F');
+            prev = [px, py];
+          });
+        });
+        docPdf.setLineWidth(0.2);
+
+        let lx = plotX;
+        const ly = plotY + plotH + legendH + 1;
+        series.forEach((s) => {
+          docPdf.setFillColor(...s.color);
+          docPdf.rect(lx, ly - 2, 3, 2, 'F');
+          docPdf.setFont('helvetica', 'normal');
+          docPdf.setFontSize(6);
+          docPdf.setTextColor(90);
+          docPdf.text(s.label, lx + 4, ly);
+          lx += 4 + docPdf.getTextWidth(s.label) + 5;
+        });
+        docPdf.setTextColor(0);
+      };
+
+      // Real FamilyLedger logo (icon + wordmark), clickable through to the web app — top-right,
+      // with the clickable "Get it on Google Play" icon+link directly below it (no iOS link yet,
+      // not published there; add it here once it is).
       const pageWidth = docPdf.internal.pageSize.getWidth();
-      docPdf.setFontSize(13);
-      docPdf.setTextColor(...brandColor);
-      docPdf.setFont('helvetica', 'bold');
-      docPdf.text('FamilyLedger', pageWidth - 14, 14, { align: 'right' });
-      docPdf.setFont('helvetica', 'normal');
+      const logoDataUrl = await loadLogoAsPngDataUrl();
+      if (logoDataUrl) {
+        const logoW = 26;
+        const logoH = (120 / 400) * logoW;
+        const logoX = pageWidth - 14 - logoW;
+        const logoY = 8;
+        docPdf.addImage(logoDataUrl, 'PNG', logoX, logoY, logoW, logoH);
+        docPdf.link(logoX, logoY, logoW, logoH, { url: webUrl });
+      } else {
+        // Logo failed to load/rasterize — falls back to the plain text this always drew before.
+        docPdf.setFontSize(13);
+        docPdf.setTextColor(...brandColor);
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.text('FamilyLedger', pageWidth - 14, 14, { align: 'right' });
+        docPdf.setFont('helvetica', 'normal');
+        const wordmarkWidth = docPdf.getTextWidth('FamilyLedger');
+        docPdf.link(pageWidth - 14 - wordmarkWidth, 9, wordmarkWidth, 6, { url: webUrl });
+      }
 
       const badgeLabel = 'Get it on Google Play';
       const badgeY = 19;
@@ -666,41 +798,199 @@ export default function HealthGlucose() {
       docPdf.setTextColor(0);
       docPdf.text('Patient Blood Glucose Report', 14, 18);
       docPdf.setFontSize(9);
-      docPdf.setTextColor(120);
+      docPdf.setTextColor(80);
       const rangeLabel = rangeStart || rangeEnd ? `${rangeStart || 'earliest'} to ${rangeEnd || 'latest'}` : 'All time';
-      docPdf.text(`Patient: ${viewingName}`, 14, 24);
-      docPdf.text(`Generated via FamilyLedger Health Monitoring — ${new Date().toLocaleString()} — Period: ${rangeLabel}`, 14, 29);
+      const properCaseName = viewingName.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text(`Patient: ${properCaseName}`, 14, 24);
+      docPdf.text(`Report Date: ${new Date().toLocaleString()}   Period: ${rangeLabel}`, 14, 29);
+      docPdf.setFont('helvetica', 'normal');
       docPdf.setTextColor(0);
-      docPdf.setFontSize(10);
-      docPdf.text(`Overall average: ${average} mg/dL     Total readings: ${filteredLogs.length}`, 14, 37);
 
-      let y = 42;
-      docPdf.setFontSize(11);
-      docPdf.text('Meal Window Averages (target range per window)', 14, y);
-      y += 6;
-      docPdf.setFontSize(9);
-      visibleWindows.forEach((w) => {
-        const avg = windowAverage(w.key);
-        const wTarget = targetForWindow(viewedTargets, w.key);
-        docPdf.text(`${t(w.labelKey)}: ${avg != null ? avg + ' mg/dL' : 'No data'} (target ${wTarget.min}-${wTarget.max})`, 14, y);
-        y += 5;
+      // Four brand-colored stat cards (average, in-range %, total readings, estimated A1C) in
+      // place of the old single summary line — same visual pattern as the vaccination PDF's
+      // header cards, just monochrome-brand instead of copying a multi-color reference design.
+      const inRangeCount = filteredLogs.filter((l) => isGlucoseInRange(l.value, targetForWindow(viewedTargets, glucoseWindowOf(l)))).length;
+      const inRangePct = filteredLogs.length > 0 ? Math.round((inRangeCount / filteredLogs.length) * 100) : 0;
+      // ADAG formula (Nathan et al., Diabetes Care 2008) — an estimate from average glucose, not a
+      // substitute for a real lab HbA1c result; footnoted below, same as every other clinical
+      // approximation this app surfaces.
+      const estimatedA1c = ((average + 46.7) / 28.7).toFixed(1);
+      const statCards = [
+        { label: 'OVERALL AVERAGE', value: `${average}`, unit: 'mg/dL' },
+        { label: 'IN RANGE', value: `${inRangePct}`, unit: '%' },
+        { label: 'TOTAL READINGS', value: `${filteredLogs.length}`, unit: filteredLogs.length === 1 ? 'reading' : 'readings' },
+        { label: 'EST. A1C*', value: `~${estimatedA1c}`, unit: '%' },
+      ];
+      const cardY = 34;
+      const cardH = 22;
+      const cardGap = 3;
+      const cardW = (pageWidth - 28 - cardGap * 3) / statCards.length;
+      statCards.forEach((s, i) => {
+        const x = 14 + i * (cardW + cardGap);
+        docPdf.setDrawColor(...brandColor);
+        docPdf.setFillColor(248, 250, 252);
+        docPdf.roundedRect(x, cardY, cardW, cardH, 1.5, 1.5, 'FD');
+        docPdf.setFillColor(...brandColor);
+        docPdf.rect(x, cardY, cardW, 1.2, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(6.5);
+        docPdf.setTextColor(110);
+        docPdf.text(s.label, x + 3, cardY + 6.5);
+        // Unit sits on its own line below the value (not inline) — inline crowded the two
+        // together at this font size with no readable gap between them.
+        docPdf.setFontSize(14);
+        docPdf.setTextColor(...brandColor);
+        docPdf.text(s.value, x + 3, cardY + 14.5);
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(7);
+        docPdf.setTextColor(140);
+        docPdf.text(s.unit, x + 3, cardY + 19);
       });
-      y += 3;
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.setFontSize(6);
+      docPdf.setTextColor(150);
+      docPdf.text('*Estimated from average glucose (ADAG formula) — not a lab result; confirm with your doctor.', 14, cardY + cardH + 4);
+      docPdf.setTextColor(0);
 
-      autoTable(docPdf, {
-        startY: y,
-        head: [['Date & Time', 'Meal', 'Timing', 'Reading (mg/dL)']],
-        body: filteredLogs.map((l) => [
-          new Date(l.loggedAt).toLocaleString(),
-          t(`health.${l.mealType}`),
-          l.timing === 'before' ? t('health.beforeMeal') : `${t('health.afterMeal')} (${l.postMealHours}hr)`,
-          String(l.value),
-        ]),
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [15, 71, 97] },
+      let y = cardY + cardH + 9;
+
+      // Meal-window KPI cards — before/after average per meal (plus random/overall cards) — and,
+      // directly below each one in the SAME column, its trend chart. Built as one array of
+      // "columns" (card + matching chart series together) rather than two separately-built lists,
+      // so the two rows are guaranteed to line up by construction instead of by coincidence.
+      type WindowColumn = {
+        label: string;
+        card: { kind: 'split'; before: number | null; after: number | null } | { kind: 'single'; value: number };
+        chartSeries: { label: string; color: [number, number, number]; points: { date: string; value: number }[] }[];
+      };
+      const mealGroups: { key: 'breakfast' | 'lunch' | 'dinner' }[] = [{ key: 'breakfast' }, { key: 'lunch' }, { key: 'dinner' }];
+      const windowColumns: WindowColumn[] = mealGroups
+        .filter((m) => visibleWindows.some((w) => w.mealType === m.key))
+        .map((m) => ({
+          label: t(`health.${m.key}`),
+          card: { kind: 'split' as const, before: windowAverage(`${m.key}_before`), after: windowAverage(`${m.key}_after`) },
+          chartSeries: [
+            { label: 'Before', color: beforeColor, points: windowTrend(`${m.key}_before`) },
+            { label: 'After', color: brandColor, points: windowTrend(`${m.key}_after`) },
+          ],
+        }));
+      const randomAvg = windowAverage('random');
+      if (visibleWindows.some((w) => w.key === 'random') && randomAvg != null) {
+        windowColumns.push({
+          label: t('health.random'),
+          card: { kind: 'single', value: randomAvg },
+          chartSeries: [{ label: 'Random', color: brandColor, points: windowTrend('random') }],
+        });
+      }
+      const overallTrendPts = filteredLogs
+        .slice()
+        .sort((a, b) => a.loggedAt.localeCompare(b.loggedAt))
+        .slice(-14)
+        .map((l) => ({ date: new Date(l.loggedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), value: l.value }));
+      windowColumns.push({
+        label: 'Overall',
+        card: { kind: 'single', value: average },
+        chartSeries: [{ label: 'Overall', color: brandColor, points: overallTrendPts }],
       });
 
-      const finalY = (docPdf as any).lastAutoTable?.finalY || y;
+      if (windowColumns.length > 0) {
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(11);
+        docPdf.setTextColor(0);
+        docPdf.text('Meal Window Averages', 14, y);
+        y += 6;
+
+        const wCardH = 24;
+        const wCardGap = 3;
+        const wCardW = (pageWidth - 28 - wCardGap * (windowColumns.length - 1)) / windowColumns.length;
+        windowColumns.forEach((c, i) => {
+          const x = 14 + i * (wCardW + wCardGap);
+          docPdf.setDrawColor(220);
+          docPdf.setFillColor(252, 252, 253);
+          docPdf.roundedRect(x, y, wCardW, wCardH, 1.5, 1.5, 'FD');
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(6.5);
+          docPdf.setTextColor(...brandColor);
+          docPdf.text(c.label.toUpperCase(), x + 2.5, y + 5.5);
+          if (c.card.kind === 'split') {
+            const midX = x + wCardW / 2;
+            docPdf.setDrawColor(230);
+            docPdf.line(midX, y + 7, midX, y + wCardH - 2.5);
+            docPdf.setFont('helvetica', 'normal');
+            docPdf.setFontSize(6);
+            docPdf.setTextColor(140);
+            docPdf.text('BEFORE', x + 2.5, y + 11);
+            docPdf.text('AFTER', midX + 2.5, y + 11);
+            docPdf.setFont('helvetica', 'bold');
+            docPdf.setFontSize(11);
+            docPdf.setTextColor(0);
+            docPdf.text(c.card.before != null ? String(c.card.before) : '—', x + 2.5, y + 19);
+            docPdf.text(c.card.after != null ? String(c.card.after) : '—', midX + 2.5, y + 19);
+            docPdf.setFont('helvetica', 'normal');
+            docPdf.setFontSize(6);
+            docPdf.setTextColor(150);
+            docPdf.text('mg/dL', x + 2.5, y + wCardH - 2);
+            docPdf.text('mg/dL', midX + 2.5, y + wCardH - 2);
+          } else {
+            docPdf.setFont('helvetica', 'bold');
+            docPdf.setFontSize(15);
+            docPdf.setTextColor(...brandColor);
+            docPdf.text(String(c.card.value), x + 2.5, y + 17);
+            docPdf.setFont('helvetica', 'normal');
+            docPdf.setFontSize(6.5);
+            docPdf.setTextColor(150);
+            docPdf.text('mg/dL avg', x + 2.5, y + wCardH - 2.5);
+          }
+        });
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setTextColor(0);
+        y += wCardH + 4;
+
+        // Trend charts in the SAME row of columns, directly under their matching card — not
+        // stacked full-width one after another, so the whole "averages + trend" picture per meal
+        // reads as one visual unit instead of two separate sections.
+        const chartH = 30;
+        windowColumns.forEach((c, i) => {
+          if (c.chartSeries.every((s) => s.points.length < 2)) return; // nothing plottable in this column
+          const x = 14 + i * (wCardW + wCardGap);
+          drawTrendChart(x, y, wCardW, chartH, c.chartSeries);
+        });
+        y += chartH + 10;
+      }
+
+      // Readings table — split into one smaller table per meal type (rather than one combined
+      // table) so each section reads on its own, right after the KPI/chart columns above it.
+      const tableMealTypes: { mealType: GlucoseMealType; heading: string }[] = [
+        { mealType: 'breakfast', heading: t('health.breakfast') },
+        { mealType: 'lunch', heading: t('health.lunch') },
+        { mealType: 'dinner', heading: t('health.dinner') },
+        { mealType: 'random', heading: t('health.random') },
+      ];
+      tableMealTypes.forEach(({ mealType, heading }) => {
+        const rows = filteredLogs.filter((l) => l.mealType === mealType);
+        if (rows.length === 0) return; // skip a meal type with nothing logged rather than print an empty table
+        if (y + 16 > 280) { docPdf.addPage(); y = 18; }
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(10);
+        docPdf.setTextColor(0);
+        docPdf.text(`${heading} Readings`, 14, y);
+        autoTable(docPdf, {
+          startY: y + 3,
+          head: [['Date & Time', 'Timing', 'Reading (mg/dL)']],
+          body: rows.map((l) => [
+            new Date(l.loggedAt).toLocaleString(),
+            l.mealType === 'random' ? '—' : l.timing === 'before' ? t('health.beforeMeal') : `${t('health.afterMeal')} (${l.postMealHours}hr)`,
+            String(l.value),
+          ]),
+          styles: { fontSize: 8 },
+          headStyles: { fillColor: [15, 71, 97] },
+        });
+        y = (docPdf as any).lastAutoTable?.finalY + 8 || y + 20;
+      });
+      docPdf.setFont('helvetica', 'normal');
+
+      const finalY = y;
       const notesText = filteredLogs
         .filter((l) => l.notes)
         .map((l) => `${new Date(l.loggedAt).toLocaleDateString()}: ${l.notes}`)
@@ -709,37 +999,6 @@ export default function HealthGlucose() {
         docPdf.setFontSize(9);
         docPdf.text('Patient Notes / Symptoms:', 14, finalY + 10);
         docPdf.text(docPdf.splitTextToSize(notesText, 180), 14, finalY + 15);
-      }
-
-      // Charts, one per meal window with at least 2 points — captured from the already-rendered
-      // Dashboard tab charts via html2canvas, so this needs the user to have viewed the Dashboard
-      // tab in this session first (chartRefs only populate once each chart actually mounts).
-      const chartable = visibleWindows.filter((w) => windowTrend(w.key).length >= 2 && chartRefs.current.get(w.key));
-      if (chartable.length > 0) {
-        docPdf.addPage();
-        docPdf.setFontSize(13);
-        docPdf.setTextColor(0);
-        docPdf.text('Meal Trend Charts', 14, 18);
-        let cy = 28;
-        for (const w of chartable) {
-          const el = chartRefs.current.get(w.key)!;
-          // scale 1.5, not 2 — a native share writes this whole PDF as one base64 string across
-          // the JS↔native bridge, and 6 charts at scale 2 can produce a multi-MB payload that
-          // silently fails to cross that bridge on Android/iOS even though the identical blob
-          // downloads fine on web (no bridge involved there). Still plenty sharp for a report.
-          const canvas = await html2canvas(el, { scale: 1.5, backgroundColor: '#ffffff' });
-          const imgData = canvas.toDataURL('image/png');
-          const imgWidth = 110;
-          const imgHeight = (canvas.height / canvas.width) * imgWidth;
-          if (cy + imgHeight + 12 > 280) {
-            docPdf.addPage();
-            cy = 18;
-          }
-          docPdf.setFontSize(10);
-          docPdf.text(t(w.labelKey), 14, cy);
-          docPdf.addImage(imgData, 'PNG', 14, cy + 3, imgWidth, imgHeight);
-          cy += imgHeight + 14;
-        }
       }
 
       // Footer on every page — patient name (already in the header too, but a footer survives a
@@ -767,20 +1026,31 @@ export default function HealthGlucose() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24">
+    // h-full (not min-h-screen) + overflow-hidden: this page manages its own two regions instead
+    // of leaving everything to the app-wide scroll container (#route-scroll, see App.tsx) — the
+    // header+tabs never move, and both the Log Entry and Dashboard tabs get their own
+    // self-contained `overflow-y-auto` region. Log Entry used to be a hard, non-scrollable
+    // `overflow-hidden` on the theory that the form always fits in one screen — real-world bug:
+    // once the on-screen keyboard opens, `adjustResize`/`interactive-widget=resizes-content`
+    // correctly shrinks the visible viewport, the form no longer fits, and with scrolling disabled
+    // the Save button at the bottom became genuinely unreachable, not just off-screen-but-scrollable.
+    // h-full resolves correctly because AuthenticatedLayout's <main> now also carries h-full (see
+    // App.tsx) — without that this would silently collapse to auto height and go right back to
+    // relying on the outer page scroll.
+    <div className="flex flex-col h-full bg-surface overflow-hidden">
+      <div className="shrink-0 p-3 md:p-8 pb-1.5 max-w-xl mx-auto w-full space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-lg font-black text-primary leading-tight">{t('health.glucoseTracker')}</h1>
-            <p className="text-[11px] text-text-muted leading-tight">{t('health.glucoseTrackerDesc')}</p>
+            <h1 className="text-base font-black text-primary leading-tight">{t('health.glucoseTracker')}</h1>
+            {tab !== 'log' && <p className="text-[11px] text-text-muted leading-tight">{t('health.glucoseTrackerDesc')}</p>}
           </div>
           <button
             type="button"
             onClick={openSettingsMenu}
-            className="shrink-0 w-9 h-9 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
+            className="shrink-0 w-8 h-8 rounded-xl bg-white border border-border-subtle flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
             title={t('health.settings')}
           >
-            <span className="material-symbols-outlined text-[18px]">settings</span>
+            <span className="material-symbols-outlined text-[16px]">settings</span>
           </button>
         </div>
 
@@ -790,7 +1060,7 @@ export default function HealthGlucose() {
             type="button"
             onClick={() => setTab('log')}
             className={clsx(
-              'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
+              'flex-1 py-1.5 rounded-lg text-xs font-bold transition-all',
               tab === 'log' ? 'bg-primary text-white' : 'text-text-muted',
             )}
           >
@@ -800,16 +1070,18 @@ export default function HealthGlucose() {
             type="button"
             onClick={() => setTab('dashboard')}
             className={clsx(
-              'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
+              'flex-1 py-1.5 rounded-lg text-xs font-bold transition-all',
               tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted',
             )}
           >
             {t('health.dashboard')}
           </button>
         </div>
+      </div>
 
-        {tab === 'log' && (
-          <form onSubmit={handleSubmit} className="space-y-2.5">
+      {tab === 'log' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
+          <form onSubmit={handleSubmit} className="space-y-1.5">
             {editingLog && (
               <div className="flex items-center justify-between gap-2 bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
                 <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
@@ -822,89 +1094,109 @@ export default function HealthGlucose() {
               </div>
             )}
             {(editingLog || delegatorsForMe.length > 0) && (
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">
                   {editingLog ? t('health.assignTo') : t('health.enteringFor')}
                 </label>
-                <select
-                  value={enteringForUid}
-                  onChange={(e) => setEnteringForUid(e.target.value)}
-                  className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none"
-                >
-                  <option value="me">{t('health.myself')}</option>
+                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
                   {[
+                    { userId: 'me', displayName: t('health.myself'), photoURL: profile?.photoURL || user?.photoURL || '' },
                     ...delegatorsForMe,
                     // The entry's current owner might not (or no longer) be in delegatorsForMe —
                     // e.g. the delegate grant was revoked after this was logged — but must still
-                    // appear as the pre-selected option so the dropdown never shows a blank value.
+                    // appear as a selectable chip so editing never lands on a value with no chip.
                     ...(editingLog && editingLog.userId !== user?.uid && !delegatorsForMe.some((d) => d.userId === editingLog.userId)
                       ? [resolveSharer(editingLog.userId)]
                       : []),
-                  ].map((d) => (
-                    <option key={d.userId} value={d.userId}>{d.displayName}</option>
-                  ))}
-                </select>
+                  ].map((d) => {
+                    const isActive = d.userId === enteringForUid;
+                    return (
+                      <button
+                        key={d.userId}
+                        type="button"
+                        onClick={() => setEnteringForUid(d.userId)}
+                        className="flex flex-col items-center gap-0.5 shrink-0 w-12"
+                      >
+                        {d.photoURL ? (
+                          <img src={d.photoURL} alt="" className={clsx('w-9 h-9 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
+                        ) : (
+                          <div className={clsx('w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
+                            {d.displayName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span className={clsx('text-[9px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{d.displayName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.selectMealType')}</label>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-4 gap-1.5">
                 {MEAL_TYPES.map((m) => (
                   <button
                     key={m.value}
                     type="button"
-                    onClick={() => setMealType(m.value)}
+                    onClick={() => {
+                      setMealType(m.value);
+                      // Random has no before/after concept — clears any timing already picked so a
+                      // stale value never silently gets saved once the section below is hidden.
+                      if (m.value === 'random') setTiming('before');
+                    }}
                     className={clsx(
-                      'py-3.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all',
+                      'py-1.5 rounded-xl border text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 transition-all',
                       mealType === m.value ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
                     )}
                   >
-                    <span className="text-3xl">{m.icon}</span>
+                    <span className="text-lg leading-none">{m.icon}</span>
                     {t(m.labelKey)}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.testingTiming')}</label>
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setTiming('before')}
-                  className={clsx(
-                    'flex-1 py-2 rounded-xl text-xs font-bold border transition-all',
-                    timing === 'before' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {t('health.beforeMeal')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTiming('after')}
-                  className={clsx(
-                    'flex-1 py-2 rounded-xl text-xs font-bold border transition-all',
-                    timing === 'after' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {t('health.afterMeal')}
-                </button>
-                {timing === 'after' && (
-                  <select
-                    value={postMealHours}
-                    onChange={(e) => setPostMealHours(Number(e.target.value))}
-                    title={t('health.postMealDuration')}
-                    className="shrink-0 w-16 bg-white border border-border-subtle rounded-xl text-xs font-bold text-primary outline-none text-center"
+            {mealType !== 'random' && (
+              <div className="space-y-0.5">
+                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.testingTiming')}</label>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setTiming('before')}
+                    className={clsx(
+                      'flex-1 py-1.5 rounded-xl text-xs font-bold border transition-all',
+                      timing === 'before' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                    )}
                   >
-                    {POST_MEAL_HOUR_OPTIONS.map((hr) => (
-                      <option key={hr} value={hr}>+{hr}hr</option>
-                    ))}
-                  </select>
-                )}
+                    {t('health.beforeMeal')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTiming('after')}
+                    className={clsx(
+                      'flex-1 py-1.5 rounded-xl text-xs font-bold border transition-all',
+                      timing === 'after' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
+                    )}
+                  >
+                    {t('health.afterMeal')}
+                  </button>
+                  {timing === 'after' && (
+                    <select
+                      value={postMealHours}
+                      onChange={(e) => setPostMealHours(Number(e.target.value))}
+                      title={t('health.postMealDuration')}
+                      className="shrink-0 w-16 bg-white border border-border-subtle rounded-xl text-xs font-bold text-primary outline-none text-center"
+                    >
+                      {POST_MEAL_HOUR_OPTIONS.map((hr) => (
+                        <option key={hr} value={hr}>+{hr}hr</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-2.5 space-y-1.5">
+            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-1.5 space-y-0.5">
               <label className="text-[10px] text-text-muted font-bold uppercase tracking-wider">{t('health.enterGlucoseValue')}</label>
               <div className="flex items-center gap-2">
                 <input
@@ -913,7 +1205,7 @@ export default function HealthGlucose() {
                   value={valueInput}
                   onChange={(e) => setValueInput(e.target.value)}
                   placeholder="0"
-                  className="flex-1 min-w-0 text-2xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-2 outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 text-xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-1 outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 <div className="shrink-0 text-left space-y-0.5">
                   <div className="text-[11px] font-bold text-text-muted">mg/dL</div>
@@ -926,7 +1218,7 @@ export default function HealthGlucose() {
               </div>
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.dateAndTime')}</label>
               <div className="flex items-center gap-1.5">
                 <input
@@ -934,52 +1226,84 @@ export default function HealthGlucose() {
                   value={loggedDate}
                   max={todayLocalDateString()}
                   onChange={(e) => setLoggedDate(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-1 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 <input
                   type="time"
                   value={loggedTime}
                   onChange={(e) => setLoggedTime(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-2.5 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
+                  className="flex-1 min-w-0 bg-white p-1 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
             </div>
 
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={t('health.notesPlaceholder')}
-              rows={2}
-              className="w-full bg-white p-2 rounded-xl border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none"
-            />
+            <div className="space-y-0.5">
+              {mealType === 'random' && (
+                <label className="text-[10px] text-error px-1 font-bold uppercase tracking-wider">{t('health.notesRequiredForRandom')}</label>
+              )}
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder={t('health.notesPlaceholder')}
+                rows={1}
+                required={mealType === 'random'}
+                className={clsx(
+                  'w-full bg-white p-2 rounded-xl border text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none',
+                  notesRequiredForRandom ? 'border-error' : 'border-border-subtle',
+                )}
+              />
+            </div>
 
             <button
               type="submit"
               disabled={saving || !hasValidValue}
-              className="w-full py-2.5 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+              className="w-full py-2 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
             >
               {saving ? t('common.saving') : editingLog ? t('health.updateLogEntry') : t('health.saveLogEntry')}
             </button>
           </form>
-        )}
+        </div>
+      )}
 
-        {tab === 'dashboard' && (
+      {tab === 'dashboard' && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
           <div className="space-y-6">
+            {/* Fixed while only the stats/charts/table below scroll, so whose report this is and
+                the active filters stay visible the whole time (see BabyVaccinations.tsx's own
+                dashboard header for the same pattern). */}
+            <div className="sticky top-0 z-20 bg-surface pb-3 space-y-3">
             {/* Whose report — my own, or anyone who's shared readings with me (via a group,
-                friend, or family) — drives everything below, including the PDF download. */}
+                friend, or family) — drives everything below, including the PDF download. Same
+                avatar-chip picker as the "entering for" one above, so a selected person's icon is
+                always visible, not just their name in a closed dropdown. */}
             {shareableMembers.length > 0 && (
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('health.viewingReportFor')}</label>
-                <select
-                  value={viewUid}
-                  onChange={(e) => setViewUid(e.target.value)}
-                  className="w-full bg-white border border-border-subtle rounded-xl px-3 py-2.5 text-sm font-bold text-primary outline-none shadow-sm"
-                >
-                  <option value="me">{t('health.myReport')}</option>
-                  {shareableMembers.map((m: any) => (
-                    <option key={m.userId} value={m.userId}>{m.displayName}</option>
-                  ))}
-                </select>
+                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+                  {[
+                    { userId: 'me', displayName: profile?.displayName || user?.displayName || t('health.myReport'), photoURL: profile?.photoURL || user?.photoURL || '' },
+                    ...shareableMembers,
+                  ].map((m: any) => {
+                    const isActive = m.userId === viewUid;
+                    return (
+                      <button
+                        key={m.userId}
+                        type="button"
+                        onClick={() => setViewUid(m.userId)}
+                        className="flex flex-col items-center gap-1 shrink-0 w-16"
+                      >
+                        {m.photoURL ? (
+                          <img src={m.photoURL} alt="" className={clsx('w-12 h-12 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
+                        ) : (
+                          <div className={clsx('w-12 h-12 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
+                            {m.displayName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span className={clsx('text-[10px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{m.userId === 'me' ? t('health.myReport') : m.displayName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -1054,6 +1378,7 @@ export default function HealthGlucose() {
                 </select>
               </div>
             </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">
@@ -1104,9 +1429,6 @@ export default function HealthGlucose() {
                   return (
                     <div
                       key={w.key}
-                      ref={(el) => {
-                        if (el) chartRefs.current.set(w.key, el);
-                      }}
                       className="bg-surface rounded-xl border border-border-subtle p-3"
                     >
                       <div className="flex items-center justify-between mb-1">
@@ -1176,7 +1498,7 @@ export default function HealthGlucose() {
                         <div key={log.id} className="px-4 py-3 flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="text-xs font-bold truncate">
-                              {t(`health.${log.mealType}`)} · {log.timing === 'before' ? t('health.beforeMeal') : `${t('health.afterMeal')} (${log.postMealHours}hr)`}
+                              {t(`health.${log.mealType}`)}{log.mealType !== 'random' && ` · ${log.timing === 'before' ? t('health.beforeMeal') : `${t('health.afterMeal')} (${log.postMealHours}hr)`}`}
                             </p>
                             <p className="text-[10px] text-text-muted">{new Date(log.loggedAt).toLocaleString()}</p>
                             {log.notes && <p className="text-[10px] text-text-muted italic truncate mt-0.5">{log.notes}</p>}
@@ -1211,8 +1533,8 @@ export default function HealthGlucose() {
               )}
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      )}
 
       {showConfirm && (
         // Centered on every screen size (not a bottom sheet) — anchoring this to the bottom on
@@ -1236,7 +1558,7 @@ export default function HealthGlucose() {
               <div className="flex items-center gap-3">
                 <span className="text-3xl shrink-0">{MEAL_TYPES.find((m) => m.value === mealType)?.icon}</span>
                 <div className="min-w-0">
-                  <p className="text-sm font-bold truncate">{windowLabel(mealType, timing)}{timing === 'after' ? ` (+${postMealHours}hr)` : ''}</p>
+                  <p className="text-sm font-bold truncate">{windowLabel(mealType, mealType === 'random' ? null : timing)}{mealType !== 'random' && timing === 'after' ? ` (+${postMealHours}hr)` : ''}</p>
                   <p className="text-[11px] text-text-muted">{combineLocalDateAndTime(loggedDate, loggedTime).toLocaleString()}</p>
                 </div>
               </div>
@@ -1685,7 +2007,7 @@ export default function HealthGlucose() {
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('health.remindMeFor')}</label>
                   <div className="grid grid-cols-3 gap-1.5">
-                    {MEAL_TYPES.map((m) => {
+                    {REMINDER_MEAL_TYPES.map((m) => {
                       const selected = remindersForm.meals.includes(m.value);
                       return (
                         <button
@@ -1762,7 +2084,7 @@ export default function HealthGlucose() {
 
                 {remindersForm.meals.length > 0 && (
                   <div className="space-y-2">
-                    {MEAL_TYPES.filter((m) => remindersForm.meals.includes(m.value)).map((m) => (
+                    {REMINDER_MEAL_TYPES.filter((m) => remindersForm.meals.includes(m.value)).map((m) => (
                       <div key={m.value} className="flex items-center gap-2 bg-surface rounded-lg p-2 border border-border-subtle">
                         <span className="text-sm shrink-0">{m.icon}</span>
                         <span className="text-[11px] font-bold text-text-muted w-16 shrink-0">{t(m.labelKey)}</span>
