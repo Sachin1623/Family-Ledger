@@ -35,6 +35,7 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import DraggableCard from '../../components/DraggableCard';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
 // Card face. `hand` fills whatever grid cell it's put in (the hand is a 7-column grid, so cards
@@ -200,7 +201,6 @@ export default function SpadePledgeGame() {
   // Drag-to-play: the table is the drop target; draggingCard just lights it up while a card is held.
   const tableDropRef = useRef<HTMLDivElement>(null);
   const [draggingCard, setDraggingCard] = useState<string | null>(null);
-  const dragCardEls = useRef<Record<string, HTMLDivElement | null>>({});
   // True from the moment a card starts moving until just after release, so the click the browser
   // fires at the end of a drag is never mistaken for a tap-to-play.
   const cardWasDragged = useRef(false);
@@ -358,7 +358,7 @@ export default function SpadePledgeGame() {
     if (!window.confirm('Delete this table? This cannot be undone.')) return;
     try {
       await call('/api/spadePledge/delete', {});
-      navigate('/tools?category=games');
+      navigate('/games/spadePledge');
     } catch {
       // error already surfaced via `error` state
     }
@@ -856,32 +856,22 @@ export default function SpadePledgeGame() {
                   const isLast = idx === handSorted.length - 1;
                   return (
                     <div key={c} className={isLast ? 'shrink-0' : 'flex-1 min-w-0 max-w-[min(18vw,5rem)]'}>
-                      {/* A playable card can be tapped OR dragged onto the table. Dropped anywhere on
-                          or above the table plays it; released short of that it snaps back. */}
-                      <motion.div
-                        drag={isLegal && !busy}
-                        dragSnapToOrigin
-                        dragElastic={0.15}
-                        dragMomentum={false}
-                        whileDrag={{ scale: 1.12, zIndex: 60 }}
-                        onDragStart={() => { cardWasDragged.current = true; setDraggingCard(c); }}
-                        onDragEnd={(_, info) => {
-                          setDraggingCard(null);
-                          setTimeout(() => { cardWasDragged.current = false; }, 100);
-                          // Once a card has been dragged at all, only dropping it ON the table plays it —
-                          // however small the move, it never counts as a tap. The card itself has to be
-                          // on the table: at least a quarter
-                          // of its height overlapping the table's area, horizontally within it.
-                          const cardRect = dragCardEls.current[c]?.getBoundingClientRect();
+                      {/* A playable card can be tapped OR dragged onto the table. Once dragged at all, it
+                          only plays if the card itself is on the table: at least a quarter of its
+                          height over the table, its middle within the table's width. Otherwise it
+                          snaps back. The held card is drawn above the table (see DraggableCard). */}
+                      <DraggableCard
+                        enabled={isLegal && !busy}
+                        onTap={isLegal && !busy ? () => handlePlay(c) : undefined}
+                        draggedFlag={cardWasDragged}
+                        onDragState={(d) => setDraggingCard(d ? c : null)}
+                        onDrop={(cardRect) => {
                           const tableRect = tableDropRef.current?.getBoundingClientRect();
-                          if (!cardRect || !tableRect) return;
+                          if (!tableRect) return;
                           const overlapY = Math.min(cardRect.bottom, tableRect.bottom) - Math.max(cardRect.top, tableRect.top);
                           const centerX = (cardRect.left + cardRect.right) / 2;
                           if (overlapY >= cardRect.height * 0.25 && centerX >= tableRect.left && centerX <= tableRect.right) handlePlay(c);
                         }}
-                        onClick={() => { if (isLegal && !busy && !cardWasDragged.current) handlePlay(c); }}
-                        ref={(el) => { dragCardEls.current[c] = el; }}
-                        className="relative touch-none"
                       >
                         <CardChip
                           cardId={c}
@@ -889,7 +879,7 @@ export default function SpadePledgeGame() {
                           dim={isMyPlayTurn && !isLegal}
                           highlight={isLegal}
                         />
-                      </motion.div>
+                      </DraggableCard>
                     </div>
                   );
                 })}

@@ -114,9 +114,12 @@ export interface Rummy13DealPlayer {
   handCount: number;
   dropped: boolean;
   hasActedThisDeal: boolean;
+  // Set once a dropped player has come back to this deal (allowed once per deal) — see /api/rummy13/rejoin.
+  rejoined?: boolean;
 }
 
-export type Rummy13TurnPhase = 'draw' | 'discard';
+// 'showdown': someone declared validly and everyone else is arranging + showing their cards.
+export type Rummy13TurnPhase = 'draw' | 'discard' | 'showdown';
 export type Rummy13DealStatus = 'active' | 'finished' | 'void';
 
 export interface Rummy13Deal {
@@ -146,6 +149,13 @@ export interface Rummy13Deal {
     discardCardId?: string;
   }>;
   lastAction?: { type: string; byUid: string; at: string } | null;
+  showdown?: {
+    declarerUid: string;
+    declaredGroups: { cards: string[] }[];
+    discardCardId: string;
+    startedAt: string;
+    submitted: Record<string, { groups: { cards: string[] }[]; score: number; auto?: boolean }>;
+  } | null;
 }
 
 export const TURN_TIMEOUT_MS = 45_000;
@@ -222,4 +232,88 @@ export function computeRummy13HandPenalty(hand: string[], wildcardRanks: Rank[])
   }
 
   return { penalty: Math.min(bestPenalty, 80), protectedCardIds: bestProtected };
+}
+
+// The arrangement of `hand` with the fewest points, under the declaring rule: at least two valid
+// sequences with one of them pure, otherwise every card counts. Returns the groups to make (anything
+// not in them stays loose) and the points that arrangement scores, capped at 80. If no arrangement
+// can meet the rule, there's nothing worth grouping: no groups, full points.
+//
+// Exact search, not a heuristic: every valid group of 3-7 cards is listed once, then a bitmask DP over
+// "which cards are still unplaced" (plus how many sequences / whether a pure one exist so far) picks
+// the set of non-overlapping groups protecting the most card value.
+export function bestShowArrangement(hand: string[], wildcardRanks: Rank[]): { groups: string[][]; points: number } {
+  const n = hand.length;
+  const total = hand.reduce((sum, c) => sum + cardValue(c, wildcardRanks), 0);
+  const noArrangement = { groups: [] as string[][], points: Math.min(total, 80) };
+  if (n < 6 || n > 15) return noArrangement;
+
+  type Cand = { mask: number; value: number; isSeq: boolean; isPure: boolean };
+  const candsByLowest: Cand[][] = Array.from({ length: n }, () => []);
+  const picked: number[] = [];
+  const enumerate = (start: number) => {
+    if (picked.length >= 3) {
+      const cards = picked.map((i) => hand[i]);
+      if (isValidGroup(cards, wildcardRanks).valid) {
+        const isSeq = isValidSequence(cards, wildcardRanks).valid;
+        candsByLowest[picked[0]].push({
+          mask: picked.reduce((m, i) => m | (1 << i), 0),
+          value: cards.reduce((sum, c) => sum + cardValue(c, wildcardRanks), 0),
+          isSeq,
+          isPure: isSeq && isPureSequence(cards),
+        });
+      }
+    }
+    if (picked.length === 7) return;
+    for (let i = start; i < n; i++) {
+      picked.push(i);
+      enumerate(i + 1);
+      picked.pop();
+    }
+  };
+  enumerate(0);
+
+  const memo = new Map<number, { value: number; pick: Cand | null }>();
+  const solve = (mask: number, seqs: number, pure: number): number => {
+    if (mask === 0) return seqs >= 2 && pure ? 0 : -Infinity;
+    const key = mask * 6 + seqs * 2 + pure;
+    const hit = memo.get(key);
+    if (hit) return hit.value;
+    const low = 31 - Math.clz32(mask & -mask);
+    let best = solve(mask & ~(1 << low), seqs, pure); // leave this card loose
+    let pick: Cand | null = null;
+    for (const c of candsByLowest[low]) {
+      if ((c.mask & mask) !== c.mask) continue;
+      const v = c.value + solve(mask & ~c.mask, Math.min(2, seqs + (c.isSeq ? 1 : 0)), pure || c.isPure ? 1 : 0);
+      if (v > best) {
+        best = v;
+        pick = c;
+      }
+    }
+    memo.set(key, { value: best, pick });
+    return best;
+  };
+
+  const full = (1 << n) - 1;
+  const protectedValue = solve(full, 0, 0);
+  if (protectedValue === -Infinity) return noArrangement;
+
+  const groups: string[][] = [];
+  let mask = full;
+  let seqs = 0;
+  let pure = 0;
+  while (mask !== 0) {
+    const low = 31 - Math.clz32(mask & -mask);
+    const step = memo.get(mask * 6 + seqs * 2 + pure);
+    const pick = step?.pick ?? null;
+    if (!pick) {
+      mask &= ~(1 << low);
+      continue;
+    }
+    groups.push(hand.filter((_, i) => (pick.mask & (1 << i)) !== 0));
+    mask &= ~pick.mask;
+    seqs = Math.min(2, seqs + (pick.isSeq ? 1 : 0));
+    pure = pure || pick.isPure ? 1 : 0;
+  }
+  return { groups, points: Math.min(80, total - protectedValue) };
 }

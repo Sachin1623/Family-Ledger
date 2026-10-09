@@ -550,7 +550,7 @@ export default function RummyGame() {
     if (!window.confirm('Delete this game? This cannot be undone.')) return;
     try {
       await call('/api/rummy/delete', {});
-      navigate('/tools?category=games');
+      navigate('/games/rummy');
     } catch {
       // error already surfaced via `error` state
     }

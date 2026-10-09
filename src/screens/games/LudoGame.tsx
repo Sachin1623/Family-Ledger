@@ -808,7 +808,7 @@ export default function LudoGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete game.');
-      navigate('/tools?category=games');
+      navigate('/games/ludo');
     } catch (err: any) {
       console.error('Failed to delete Ludo game:', err);
       setError(err.message || 'Failed to delete game.');

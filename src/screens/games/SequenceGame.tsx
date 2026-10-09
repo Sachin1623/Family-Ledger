@@ -363,7 +363,7 @@ export default function SequenceGame() {
     if (!window.confirm('Delete this game? This cannot be undone.')) return;
     try {
       await call('/api/sequence/delete', {});
-      navigate('/tools?category=games');
+      navigate('/games/sequence');
     } catch {
       // error already surfaced via `error` state
     }

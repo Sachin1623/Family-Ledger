@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, updateDoc, collection, query, where } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, documentId } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -18,6 +18,8 @@ import {
   isValidGroup,
   sortHandForDisplay,
   computeRummy13HandPenalty,
+  cardValue,
+  bestShowArrangement,
   TURN_TIMEOUT_MS,
   TURN_WARNING_MS,
   type Rummy13Table,
@@ -34,7 +36,9 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import DraggableCard from '../../components/DraggableCard';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
+import { lockLandscape, unlockOrientation } from '../../lib/screenOrientation';
 
 type SelectionMode = 'none';
 
@@ -86,13 +90,19 @@ const CardChip: React.FC<{
   highlight?: boolean;
   faceDown?: boolean;
   onClick?: () => void;
-  size?: 'played' | 'group';
+  size?: 'table' | 'fan';
   wildcardRanks?: string[];
-}> = ({ cardId, selected, dim, highlight, faceDown, onClick, size, wildcardRanks }) => {
+}> = ({ cardId, selected, dim, highlight, faceDown, onClick, size = 'table', wildcardRanks }) => {
   const joker = isPrintedJoker(cardId);
   const { rank, suit } = parseCard(cardId);
   const red = !joker && SUIT_RED[suit];
-  const dims = size === 'played' ? 'w-[27px] h-9 text-[9px]' : size === 'group' ? 'w-[31px] h-[41px] text-[10px]' : 'w-9 h-12 text-[11px]';
+  // `table` = cards lying on the table (discard / wild); `fan` and `group` overlap in a row, so rank +
+  // suit sit in the top-left corner — the strip that stays visible under the next card.
+  const corner = size === 'fan';
+  const dims = size === 'fan'
+    ? 'w-[min(15vw,3.75rem)] landscape:w-[min(9vw,17vh,3.75rem)] aspect-[5/7] text-sm pl-1 pt-0.5'
+    : 'w-[min(14vw,3.75rem)] landscape:w-[min(14vh,3.25rem)] aspect-[5/7] text-sm';
+  const suitSize = 'text-xl';
   const isWild = !faceDown && !joker && !!wildcardRanks?.includes(rank as Rank);
   return (
     <div
@@ -100,83 +110,55 @@ const CardChip: React.FC<{
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
       onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
-      className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col items-center justify-center font-bold bg-white transition-all ${
-        onClick ? 'cursor-pointer' : ''
+      className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col ${corner && !faceDown ? 'items-start justify-start' : 'items-center justify-center'} font-bold bg-white transition-all ${
+        onClick ? 'cursor-pointer active:scale-95' : ''
       } ${
         highlight
-          ? 'border-warning ring-2 ring-warning/60 -translate-y-1 shadow-md'
+          ? 'border-warning ring-2 ring-warning/60 shadow-md'
           : selected
-          ? 'border-primary -translate-y-2 shadow-md'
+          ? 'border-primary ring-2 ring-primary/70 shadow-md'
           : 'border-border-subtle'
-      } ${dim ? 'opacity-40' : ''} ${faceDown ? 'bg-primary text-white' : joker ? 'text-warning' : red ? 'text-error' : 'text-on-surface'}`}
+      } ${dim ? 'opacity-40' : ''} ${faceDown ? 'bg-primary text-white border-white ring-1 ring-inset ring-white/50 [background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.14)_0_5px,transparent_5px_10px)]' : joker ? 'text-warning' : red ? 'text-error' : 'text-on-surface'}`}
     >
-      {isWild && (
+      {isWild && !corner && (
         <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-warning text-white flex items-center justify-center shadow">
           <span className="material-symbols-outlined text-[9px] leading-none">auto_awesome</span>
         </span>
       )}
       {faceDown ? (
-        <span className="material-symbols-outlined rotate-180 text-[18px]">style</span>
+        <span className="material-symbols-outlined rotate-180 text-[26px]">style</span>
       ) : joker ? (
-        <span className="text-base leading-none">🃏</span>
+        <span className={`${corner ? 'text-lg' : 'text-2xl'} leading-none`}>🃏</span>
       ) : (
         <>
-          <span>{rank}</span>
-          <span className="text-base leading-none">{SUIT_SYMBOL[suit]}</span>
+          <span className="leading-none">{rank}</span>
+          <span className={`${suitSize} leading-none`}>{SUIT_SYMBOL[suit]}</span>
+          {/* In an overlapped row the top-right corner is hidden under the next card, so the wild
+              marker sits in the visible left strip, just under the suit. */}
+          {isWild && corner && (
+            <span className="mt-0.5 w-4 h-4 rounded-full bg-warning text-white flex items-center justify-center shadow shrink-0">
+              <span className="material-symbols-outlined text-[11px] leading-none">auto_awesome</span>
+            </span>
+          )}
         </>
       )}
     </div>
   );
 };
 
-const GroupRow: React.FC<{
-  cardIds: string[];
-  valid?: boolean;
-  label?: string;
-  onRemove?: () => void;
-  onCardClick?: (id: string) => void;
-  selectedIds?: string[];
-  highlightId?: string | null;
-  onAddSelected?: () => void;
-  addSelectedCount?: number;
-  wildcardRanks?: string[];
-}> = ({ cardIds, valid, label, onRemove, onCardClick, selectedIds, highlightId, onAddSelected, addSelectedCount, wildcardRanks }) => {
-  return (
-    <div className={`relative p-1.5 rounded-lg border ${valid ? 'border-success bg-success/5' : 'border-border-subtle bg-surface'}`}>
-      {label && <span className="text-[10px] font-bold text-text-muted uppercase block mb-1">{label}</span>}
-      {onRemove && (
-        <button
-          onClick={onRemove}
-          className="absolute -top-1.5 -right-1.5 z-10 w-5 h-5 rounded-full bg-white border border-border-subtle shadow flex items-center justify-center text-text-muted"
-        >
-          <span className="material-symbols-outlined text-[13px] leading-none">close</span>
-        </button>
-      )}
-      {onAddSelected && (
-        <button
-          onClick={onAddSelected}
-          className="absolute -bottom-1.5 -right-1.5 z-10 flex items-center gap-0.5 h-5 min-w-[20px] px-1 rounded-full bg-primary text-white text-[10px] font-black shadow"
-        >
-          <span className="material-symbols-outlined text-[12px] leading-none">add</span>
-          {addSelectedCount ? addSelectedCount : ''}
-        </button>
-      )}
-      <div className="flex gap-1 overflow-x-auto">
-        {cardIds.map((c, idx) => (
-          <CardChip
-            key={`${c}-${idx}`}
-            cardId={c}
-            size="group"
-            selected={selectedIds?.includes(c)}
-            highlight={c === highlightId}
-            onClick={onCardClick ? () => onCardClick(c) : undefined}
-            wildcardRanks={wildcardRanks}
-          />
-        ))}
-      </div>
+// Read-only run of cards for the end-of-deal reveal: overlapped in one row, sized to the row's width.
+const GroupRow: React.FC<{ cardIds: string[]; valid?: boolean; label?: string; wildcardRanks?: string[] }> = ({ cardIds, valid, label, wildcardRanks }) => (
+  <div style={{ ['--cw' as string]: 'min(15vw,3.75rem)' }} className={`p-1.5 rounded-lg border ${valid ? 'border-success bg-success/5' : 'border-border-subtle bg-surface'}`}>
+    {label && <span className="text-[10px] font-bold text-text-muted uppercase block mb-1">{label}</span>}
+    <div className="flex pt-1">
+      {cardIds.map((c, idx) => (
+        <div key={`${c}-${idx}`} className={idx === cardIds.length - 1 ? 'shrink-0' : 'flex-1 min-w-0 max-w-[var(--cw)]'}>
+          <CardChip cardId={c} size="fan" wildcardRanks={wildcardRanks} />
+        </div>
+      ))}
     </div>
-  );
-};
+  </div>
+);
 
 const FORMAT_LABEL: Record<string, string> = { single: 'Single Deal', pool101: 'Pool 101', pool201: 'Pool 201' };
 
@@ -195,6 +177,22 @@ export default function Rummy13Game() {
 
   const voice = useGameVoice('rummy13Tables', tableId, table?.players || []);
 
+  // Current profile photos for everyone seated. The photo saved on the table when someone sat down
+  // can be empty (or out of date), so the live profile is looked up too — otherwise a seat falls
+  // back to a plain initial even though that player has a profile picture.
+  const humanUids = useMemo(() => (table?.players || []).filter((p) => !p.isBot).map((p) => p.uid), [table?.players]);
+  const [playerUsersValue] = useCollection(
+    humanUids.length > 0 ? query(collection(db, 'users'), where(documentId(), 'in', humanUids.slice(0, 30))) : null,
+  );
+  const photoByUid = useMemo(() => {
+    const m: Record<string, string> = {};
+    playerUsersValue?.docs.forEach((d) => {
+      const photo = (d.data() as any).photoURL;
+      if (photo) m[d.id] = photo;
+    });
+    return m;
+  }, [playerUsersValue]);
+
   const shownPointsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!tableId || !user || table?.status !== 'finished') return;
@@ -204,6 +202,14 @@ export default function Rummy13Game() {
   }, [tableId, user, table?.status]);
 
   useGameTurnPresence('rummy13', tableId);
+
+  // Played sideways by default: lock to landscape while a deal is in progress, release on the way out.
+  const tableIsActive = table?.status === 'active';
+  useEffect(() => {
+    if (!tableIsActive) return;
+    lockLandscape();
+    return () => { unlockOrientation(); };
+  }, [tableIsActive]);
 
   const floatingReactions = useReactionOverlay(table?.lastReaction);
   const dealEndedToast = useDealEndedToast(table?.lastDealSummary, table?.status);
@@ -253,6 +259,14 @@ export default function Rummy13Game() {
   const [handGroups, setHandGroups] = useState<string[][]>([]);
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
   const [lastDrawnCard, setLastDrawnCard] = useState<string | null>(null);
+  // Drag-to-discard: the felt table is the drop target; isDraggingCard lights it up while a card is held.
+  const tableDropRef = useRef<HTMLDivElement>(null);
+  const [isDraggingCard, setIsDraggingCard] = useState(false);
+  // True from the moment a card starts moving until just after release, so the click the browser
+  // fires at the end of a drag is never mistaken for a tap-to-select.
+  const cardWasDragged = useRef(false);
+  // "Turn your phone" prompt shown while held upright; the player can wave it away for this session.
+  const [portraitHintDismissed, setPortraitHintDismissed] = useState(false);
 
   const hydratedGroupsRef = useRef(false);
   useEffect(() => {
@@ -363,17 +377,13 @@ export default function Rummy13Game() {
   const me = myIndex >= 0 ? table.players[myIndex] : null;
   const isPlayer = !!me;
   const isPool = table.format !== 'single';
+  const avatarSrcFor = (uid: string, stored?: string) =>
+    photoByUid[uid] || stored || (uid === user.uid ? profile?.photoURL || user.photoURL || '' : '');
 
   const myDealIndex = deal?.players.findIndex((p) => p.uid === user.uid) ?? -1;
   const meInDeal = deal && myDealIndex >= 0 ? deal.players[myDealIndex] : null;
   const isMyTurn = deal?.status === 'active' && deal.players[deal.currentTurnSeatIndex]?.uid === user.uid;
   const wildcardRanks = withPrintedJoker(deal?.wildJokerRank ? [deal.wildJokerRank as Rank] : []);
-  const livePenaltyPreview = useMemo(() => {
-    if (!meInDeal || meInDeal.dropped || deal?.status !== 'active' || handSorted.length === 0) return null;
-    return computeRummy13HandPenalty(handSorted, wildcardRanks);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handSorted, deal?.wildJokerRank, meInDeal?.dropped, deal?.status]);
-
   const handleJoinTable = async () => {
     if (!user || isPlayer || table.players.length >= table.maxPlayers) return;
     setError(null);
@@ -449,6 +459,21 @@ export default function Rummy13Game() {
     await call('/api/rummy13/declare', { discardCardId: looseForDeclare[0], groups: handGroups }).catch(() => {});
   };
 
+  const handleRejoin = async () => {
+    await call('/api/rummy13/rejoin', {}).catch(() => {});
+  };
+
+  // Showdown (someone declared): arrange for the fewest points automatically, or send the arrangement
+  // currently on the table. The server scores what it's sent against the real hand.
+  const handleAutoArrange = () => {
+    const best = bestShowArrangement(handSorted, wildcardRanks);
+    setHandGroups(best.groups);
+    setSelectedForGroup([]);
+  };
+  const handleShow = async () => {
+    await call('/api/rummy13/show', { groups: handGroups.filter((g) => g.length > 0) }).catch(() => {});
+  };
+
   const handleDrop = async () => {
     const warning = isPool
       ? 'Drop out of this deal? It only ends this hand for you, not the whole table — you\'ll pick up a penalty for this deal.'
@@ -472,7 +497,7 @@ export default function Rummy13Game() {
     if (!window.confirm('Delete this table? This cannot be undone.')) return;
     try {
       await call('/api/rummy13/delete', {});
-      navigate('/tools?category=games');
+      navigate('/games/rummy13');
     } catch {
       // error already surfaced via `error` state
     }
@@ -504,6 +529,42 @@ export default function Rummy13Game() {
     setSelectedForGroup([]);
   };
 
+  // Drag-and-drop moves: into another group, or back out to the loose cards.
+  const moveCardToGroup = (c: string, groupIdx: number) => {
+    setHandGroups((gs) => {
+      if (gs[groupIdx]?.includes(c)) return gs;
+      return gs
+        .map((g, i) => (i === groupIdx ? [...g.filter((x) => x !== c), c] : g.filter((x) => x !== c)))
+        .filter((g) => g.length > 0);
+    });
+    setSelectedForGroup((sel) => sel.filter((x) => x !== c));
+  };
+  const moveCardToLoose = (c: string) => {
+    setHandGroups((gs) => gs.map((g) => g.filter((x) => x !== c)).filter((g) => g.length > 0));
+    setSelectedForGroup((sel) => sel.filter((x) => x !== c));
+  };
+  // Where did a dragged card land? On the table (at least a quarter of the card over it, middle
+  // within its width) it's discarded — only on your discard turn; otherwise whichever group or the
+  // loose-cards area sits under the card's centre; anywhere else it just snaps back.
+  const handleCardDrop = (c: string, rect: DOMRect) => {
+    const tableRect = tableDropRef.current?.getBoundingClientRect();
+    const cx = (rect.left + rect.right) / 2;
+    const cy = (rect.top + rect.bottom) / 2;
+    // Arranging cards (into / out of groups) is always allowed; only the discard needs your turn,
+    // and not while another request of yours is still in flight.
+    if (canDiscardNow && !busy && tableRect) {
+      const overlapY = Math.min(rect.bottom, tableRect.bottom) - Math.max(rect.top, tableRect.top);
+      if (overlapY >= rect.height * 0.25 && cx >= tableRect.left && cx <= tableRect.right) {
+        handleQuickDiscard(c);
+        return;
+      }
+    }
+    const under = document.elementsFromPoint(cx, cy).filter((e): e is HTMLElement => e instanceof HTMLElement);
+    const groupEl = under.find((e) => e.dataset.groupIdx !== undefined);
+    if (groupEl) { moveCardToGroup(c, Number(groupEl.dataset.groupIdx)); return; }
+    if (under.some((e) => e.dataset.looseArea !== undefined)) moveCardToLoose(c);
+  };
+
   const handleAddSelectedToGroup = (groupIdx: number) => {
     if (selectedForGroup.length === 0) return;
     setHandGroups((gs) => {
@@ -522,6 +583,24 @@ export default function Rummy13Game() {
   const visibleHandGroups = handGroups.map((g, idx) => ({ idx, cards: g })).filter((entry) => entry.cards.length > 0);
   const groupedCardIds = new Set(handGroups.flat());
   const handGridCards = handSorted.filter((c) => !groupedCardIds.has(c));
+
+  // Card points: per group, and the overall total if the hand were declared right now. Declaring
+  // needs at least two sequences with one of them pure; with that, valid groups count nothing and
+  // only invalid groups + ungrouped cards score — without it EVERY card counts, valid groups
+  // included. In the discard phase (14 cards) one ungrouped card is about to go out, so the
+  // costliest ungrouped card is left out. Capped at 80, like every other penalty here.
+  const pointsOf = (cards: string[]) => cards.reduce((sum, c) => sum + cardValue(c, wildcardRanks), 0);
+  const ownGroupCards = visibleHandGroups.map((g) => g.cards);
+  const declareStructureOk =
+    ownGroupCards.filter((g) => isValidSequence(g, wildcardRanks).valid).length >= 2 && ownGroupCards.some((g) => isPureSequence(g));
+  const declareCounted = declareStructureOk
+    ? [...handGridCards, ...ownGroupCards.filter((g) => !isValidGroup(g, wildcardRanks).valid).flat()]
+    : handSorted;
+  let declarePoints = pointsOf(declareCounted);
+  if (handSorted.length > 13 && handGridCards.length > 0) {
+    declarePoints -= Math.max(...handGridCards.map((c) => cardValue(c, wildcardRanks)));
+  }
+  declarePoints = Math.min(Math.max(declarePoints, 0), 80);
 
   // ---- Waiting room ----
   if (table.status === 'waiting') {
@@ -576,8 +655,8 @@ export default function Rummy13Game() {
             {table.players.map((p) => (
               <div key={p.uid} className="p-4 flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                  {p.isBot ? '🤖' : p.photoURL ? (
-                    <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  {p.isBot ? '🤖' : avatarSrcFor(p.uid, p.photoURL) ? (
+                    <img src={avatarSrcFor(p.uid, p.photoURL)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     p.displayName?.slice(0, 1) || '?'
                   )}
@@ -730,6 +809,25 @@ export default function Rummy13Game() {
                     ))}
                     {rev.discardCardId && <GroupRow cardIds={[rev.discardCardId]} label="Discarded to Win" wildcardRanks={revealWildcardRanks} />}
                   </div>
+                ) : (rev.groups || []).some((g) => g.cards.length > 0) ? (
+                  (() => {
+                    // The player's OWN grouping as they left it — each group marked valid/invalid —
+                    // with whatever they hadn't grouped shown separately.
+                    const inHand = new Set(rev.cards);
+                    const ownGroups = (rev.groups || []).map((g) => g.cards.filter((c) => inHand.has(c))).filter((g) => g.length > 0);
+                    const grouped = new Set(ownGroups.flat());
+                    const ungrouped = sortHandForDisplay(rev.cards.filter((c) => !grouped.has(c)));
+                    return (
+                      <div className="space-y-1.5">
+                        {ownGroups.map((g, i) => (
+                          <GroupRow key={i} cardIds={g} valid={isValidGroup(g, revealWildcardRanks).valid} label={`Group ${i + 1}`} wildcardRanks={revealWildcardRanks} />
+                        ))}
+                        {ungrouped.length > 0 && (
+                          <GroupRow cardIds={ungrouped} label={`Ungrouped (${ungrouped.length})`} wildcardRanks={revealWildcardRanks} />
+                        )}
+                      </div>
+                    );
+                  })()
                 ) : (
                   (() => {
                     const { penalty, protectedCardIds } = computeRummy13HandPenalty(rev.cards, revealWildcardRanks);
@@ -768,8 +866,24 @@ export default function Rummy13Game() {
   const canDrawStock = canAct && deal.turnPhase === 'draw';
   const canDiscardNow = canAct && deal.turnPhase === 'discard';
 
+  // Showdown: a valid declaration was made and everyone else is arranging + showing their cards.
+  const showdown = deal.turnPhase === 'showdown' ? deal.showdown || null : null;
+  const iAmDeclarer = !!showdown && showdown.declarerUid === user.uid;
+  const mySubmission = showdown?.submitted?.[user.uid] || null;
+  const needToShow = !!showdown && !iAmDeclarer && !meInDeal?.dropped && !mySubmission;
+  const declarerName = showdown ? (iAmDeclarer ? 'You' : table.players.find((tp) => tp.uid === showdown.declarerUid)?.displayName || 'Someone') : '';
+  const waitingOn = showdown
+    ? deal.players
+        .filter((p) => !p.dropped && p.uid !== showdown.declarerUid && !showdown.submitted?.[p.uid])
+        .map((p) => (p.uid === user.uid ? 'you' : table.players.find((tp) => tp.uid === p.uid)?.displayName || '…'))
+    : [];
+
   const turnStatusText = meInDeal?.dropped
-    ? 'You dropped this deal'
+    ? 'You are out of this deal'
+    : showdown
+    ? needToShow
+      ? `${declarerName} declared — arrange your cards and show them`
+      : `${declarerName} declared — waiting for ${waitingOn.join(', ') || 'everyone'}`
     : isMyTurn
     ? deal.turnPhase === 'draw'
       ? 'Your turn — draw'
@@ -848,20 +962,53 @@ export default function Rummy13Game() {
         </div>
       )}
 
-      <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
-        <div className="shrink-0">
-        <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
+      {/* Full-screen table (covers the app header and tab bar) — built for a phone held sideways:
+          header strip on top, the felt table and your hand on the left, the action buttons in a
+          column on the right. Held upright it simply stacks the same pieces. */}
+      <div className="fixed inset-0 z-[150] flex flex-col bg-surface overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+        {/* Only exists while the phone is held upright (the `portrait:` variant) — turning it
+            sideways makes it disappear on its own. */}
+        {!portraitHintDismissed && (
+          <div className="hidden portrait:flex absolute inset-0 z-[160] flex-col items-center justify-center gap-4 bg-primary/95 text-white text-center p-8">
+            <motion.span
+              className="material-symbols-outlined text-[72px] block"
+              animate={{ rotate: [0, 0, -90, -90, 0] }}
+              transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut', times: [0, 0.2, 0.5, 0.8, 1] }}
+            >
+              screen_rotation
+            </motion.span>
+            <div className="space-y-1">
+              <p className="text-lg font-black">Turn your phone sideways</p>
+              <p className="text-sm text-white/80">13-Card Rummy plays best in landscape — your whole hand fits in one row.</p>
+            </div>
+            <button
+              onClick={() => setPortraitHintDismissed(true)}
+              className="mt-2 px-4 py-2 rounded-xl border border-white/40 text-xs font-bold text-white/90"
+            >
+              Play in portrait anyway
+            </button>
+          </div>
+        )}
+        <header className="shrink-0 px-2 py-1 flex items-center gap-2 bg-white border-b border-border-subtle">
           <div className="flex flex-col leading-tight">
             <h1 className="font-black text-primary text-xs">13-Card Rummy</h1>
             <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{table.code} · {FORMAT_LABEL[table.format]}</span>
           </div>
           <ReactionButton onSend={handleSendReaction} />
-          <div className="flex items-center gap-1.5 ml-auto">
-            <button onClick={handleDrop} disabled={busy || meInDeal?.dropped} className="p-2 text-error shrink-0 disabled:opacity-30" aria-label="Drop">
-              <span className="material-symbols-outlined text-[22px] block">flag</span>
+          <p className={`flex-1 min-w-0 truncate text-center text-[11px] font-bold ${isMyTurn ? 'text-primary' : 'text-text-muted'}`}>
+            {turnStatusText}
+            {remainingSec !== null && (
+              <span className={`ml-2 text-[11px] font-black px-1.5 py-0.5 rounded-full ${timerWarning ? 'bg-error/10 text-error animate-pulse' : 'text-text-muted'}`}>
+                {remainingSec}s
+              </span>
+            )}
+          </p>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={handleDrop} disabled={busy || meInDeal?.dropped || !!showdown} className="p-1.5 text-error shrink-0 disabled:opacity-30" aria-label="Drop">
+              <span className="material-symbols-outlined text-[20px] block">flag</span>
             </button>
-            <button onClick={() => setShowExitMenu(true)} className="p-2 text-text-muted shrink-0" aria-label="Exit Game">
-              <span className="material-symbols-outlined text-[22px] block">logout</span>
+            <button onClick={() => setShowExitMenu(true)} className="p-1.5 text-text-muted shrink-0" aria-label="Exit Game">
+              <span className="material-symbols-outlined text-[20px] block">logout</span>
             </button>
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
             <VoiceChatButton voice={voice} />
@@ -869,192 +1016,328 @@ export default function Rummy13Game() {
           </div>
         </header>
 
-        <div className="p-2 max-w-xl mx-auto w-full space-y-2">
-          {isPool && (
-            <div className="flex items-center gap-1.5 overflow-x-auto bg-white rounded-xl border border-border-subtle p-1.5">
-              {table.players.map((p) => (
-                <div key={p.uid} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg shrink-0 ${p.eliminated ? 'opacity-40' : ''}`}>
-                  <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{p.uid === user.uid ? 'You' : p.displayName}</span>
-                  <span className="text-[10px] font-black text-primary whitespace-nowrap">{p.cumulativeScore}</span>
-                  {p.eliminated && <span className="text-[8px] font-bold text-error uppercase">out</span>}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="bg-white rounded-xl border border-border-subtle p-2 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <p className={`text-[11px] font-bold ${isMyTurn ? 'text-primary' : 'text-text-muted'}`}>{turnStatusText}</p>
-              {remainingSec !== null && (
-                <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-full ${timerWarning ? 'bg-error/10 text-error animate-pulse' : 'text-text-muted'}`}>
-                  {remainingSec}s
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              {deal.players.map((p, i) => (
-                <div
-                  key={p.uid}
-                  className={`flex items-center gap-1 px-1.5 py-1 rounded-lg border shrink-0 ${
-                    i === deal.currentTurnSeatIndex ? 'border-primary bg-primary/5' : 'border-border-subtle'
-                  } ${p.dropped ? 'opacity-40' : ''}`}
-                >
-                  <div className="relative w-5 h-5 shrink-0">
-                    <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-[9px] font-bold overflow-hidden">
-                      {(() => {
-                        const tp = table.players.find((tp) => tp.uid === p.uid);
-                        return tp?.photoURL ? (
-                          <img src={tp.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          tp?.displayName?.slice(0, 1) || '?'
-                        );
-                      })()}
+        <div className="flex-1 min-h-0 flex flex-col landscape:flex-row gap-2 p-2">
+          <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-2 [--cw:min(15vw,3.75rem)] landscape:[--cw:min(9vw,17vh,3.75rem)]">
+            {/* Felt table: wooden rim, green baize with a soft spotlight. Seats along the top (avatar,
+                name, score/hand size); the discard pile in the middle, the wild card bottom-left and
+                the draw deck bottom-right. */}
+            <div
+              ref={tableDropRef}
+              className={`relative flex-1 min-h-[9rem] flex flex-col rounded-[1.5rem] border-[5px] p-2 gap-1 overflow-hidden transition-all shadow-[inset_0_0_36px_rgba(0,0,0,0.5),0_6px_16px_rgba(0,0,0,0.25)] bg-[radial-gradient(ellipse_at_center,#1f7a5a_0%,#165c44_55%,#0e3f2f_100%)] ${
+                isDraggingCard && canDiscardNow ? 'border-amber-300 ring-4 ring-amber-300/40' : 'border-[#4a3322]'
+              }`}
+            >
+              <span aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center text-[9rem] leading-none text-white/[0.05] select-none">♠</span>
+              <div className="relative shrink-0 flex items-stretch justify-center gap-1.5 flex-wrap">
+                {deal.players.map((p, i) => {
+                  const tp = table.players.find((x) => x.uid === p.uid);
+                  const isTurn = !showdown && i === deal.currentTurnSeatIndex && !p.dropped;
+                  return (
+                    <div
+                      key={p.uid}
+                      className={`flex items-center gap-1.5 w-[min(30vw,8.5rem)] rounded-xl px-1.5 py-1 backdrop-blur-sm transition-colors ${
+                        isTurn ? 'bg-amber-300/15 ring-1 ring-amber-300/60' : 'bg-black/20'
+                      } ${p.dropped || tp?.eliminated ? 'opacity-45' : ''}`}
+                    >
+                      <div className={`relative w-8 h-8 shrink-0 rounded-full bg-emerald-950 flex items-center justify-center text-white text-xs font-bold ${isTurn ? 'ring-2 ring-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.85)]' : 'ring-1 ring-white/30'}`}>
+                        <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
+                          {tp?.isBot ? (
+                            <span className="text-base leading-none">🤖</span>
+                          ) : avatarSrcFor(p.uid, tp?.photoURL) ? (
+                            <img src={avatarSrcFor(p.uid, tp?.photoURL)} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            tp?.displayName?.slice(0, 1) || '?'
+                          )}
+                        </div>
+                        <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
+                      </div>
+                      <div className="flex flex-col min-w-0 leading-tight">
+                        <span className={`text-[10px] font-semibold truncate ${isTurn ? 'text-amber-200' : 'text-white'}`}>
+                          {p.uid === user.uid ? 'You' : tp?.displayName || '…'}
+                        </span>
+                        {isPool && tp && (
+                          <span className="text-[10px] font-black text-amber-300 whitespace-nowrap">
+                            {tp.cumulativeScore}{table.poolLimit ? <span className="text-white/50 font-bold">/{table.poolLimit}</span> : null}
+                          </span>
+                        )}
+                        <span className="text-[9px] whitespace-nowrap text-emerald-100/80">
+                          {p.dropped
+                            ? 'out'
+                            : tp?.eliminated
+                            ? 'eliminated'
+                            : showdown
+                            ? p.uid === showdown.declarerUid
+                              ? 'declared ✓'
+                              : showdown.submitted?.[p.uid]
+                              ? 'shown ✓'
+                              : 'arranging…'
+                            : `${p.handCount} cards`}
+                        </span>
+                      </div>
                     </div>
-                    <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
-                  </div>
-                  <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">
-                    {p.uid === user.uid ? 'You' : table.players.find((tp) => tp.uid === p.uid)?.displayName || '…'}
-                  </span>
-                  <span className="text-[9px] text-text-muted whitespace-nowrap">{p.dropped ? 'out' : p.handCount}</span>
+                  );
+                })}
+              </div>
+
+              <div className="relative flex-1 min-h-[6.5rem]">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                  <span className="text-[9px] font-bold text-emerald-100/70 uppercase tracking-widest">Discard</span>
+                  {topDiscard ? (
+                    <div className={`rounded-lg drop-shadow-[0_3px_5px_rgba(0,0,0,0.45)] ${canDrawDiscard ? 'ring-4 ring-amber-300/70 animate-pulse' : ''}`}>
+                      <CardChip cardId={topDiscard} dim={isMyTurn && deal.turnPhase === 'draw' && !canDrawDiscard} onClick={canDrawDiscard ? handleDrawDiscard : undefined} wildcardRanks={wildcardRanks} />
+                    </div>
+                  ) : (
+                    <div className="w-[min(14vw,3.75rem)] landscape:w-[min(14vh,3.25rem)] aspect-[5/7] rounded-lg border-2 border-dashed border-white/25 bg-black/10" />
+                  )}
                 </div>
-              ))}
+
+                {deal.wildJokerIndicatorCard && (
+                  <div className="absolute bottom-0 left-1 flex flex-col items-center gap-1">
+                    <span className="text-[9px] font-bold text-emerald-100/70 uppercase tracking-widest">Wild</span>
+                    <div className="drop-shadow-[0_3px_5px_rgba(0,0,0,0.45)]"><CardChip cardId={deal.wildJokerIndicatorCard} /></div>
+                  </div>
+                )}
+
+                <div className="absolute bottom-0 right-2 flex flex-col items-center gap-1">
+                  <span className="text-[9px] font-bold text-emerald-100/70 uppercase tracking-widest">Draw · {deal.stockCount}</span>
+                  {/* A small stacked deck: two card edges peek out behind the top card. */}
+                  <div className={`relative ${canDrawStock ? 'animate-pulse' : 'opacity-70'}`}>
+                    <div className="absolute inset-0 translate-x-1.5 translate-y-1.5 rounded-lg border-2 border-white/40 bg-[#0b2f45] shadow-md" />
+                    <div className="absolute inset-0 translate-x-[3px] translate-y-[3px] rounded-lg border-2 border-white/50 bg-[#0f4761] shadow-md" />
+                    <div className={`relative rounded-lg drop-shadow-[0_3px_5px_rgba(0,0,0,0.45)] ${canDrawStock ? 'ring-4 ring-amber-300/70' : ''}`}>
+                      <CardChip cardId="AS" faceDown onClick={canDrawStock && !busy ? handleDrawStock : undefined} />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 pt-1.5 border-t border-border-subtle overflow-x-auto">
-              {deal.wildJokerIndicatorCard && (
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-[9px] font-bold text-text-muted uppercase">Wild</span>
-                  <CardChip cardId={deal.wildJokerIndicatorCard} />
+            {/* The whole hand in ONE row: each group is a run of overlapping cards with a bar (and its
+                controls) underneath, followed by the loose cards, also overlapping. Every run shares the
+                row's width — overlap is whatever it takes to fit — so nothing wraps or scrolls sideways.
+                Drag a card onto another group to move it there, onto the loose cards / empty space to take
+                it out of its group, or onto the table to discard it. */}
+            <div
+              data-loose-area=""
+              className={`flex justify-center items-start gap-2 px-1 pt-1 min-h-[7.75rem] rounded-lg transition-colors ${isDraggingCard ? 'border border-dashed border-primary bg-primary/5' : 'border border-transparent'}`}
+            >
+              {visibleHandGroups.map(({ idx, cards }) => {
+                const n = cards.length;
+                const valid = isValidGroup(cards, wildcardRanks).valid;
+                return (
+                  <div
+                    key={`group-${idx}`}
+                    data-group-idx={idx}
+                    style={{ flex: `${Math.max(n - 1, 0)} 1 calc(var(--cw) + 0.25rem)`, minWidth: 0, maxWidth: `calc(var(--cw) * ${n} + 0.25rem)` }}
+                    className={`flex flex-col rounded-lg p-0.5 transition-colors ${isDraggingCard ? 'bg-primary/10 ring-1 ring-primary/40' : ''}`}
+                  >
+                    <div className="flex">
+                      {cards.map((c, i) => {
+                        const isLast = i === n - 1;
+                        const { selected, onClick } = getCardInteraction(c);
+                        return (
+                          <div key={`${c}-${i}`} className={isLast ? 'shrink-0' : 'flex-1 min-w-0 max-w-[var(--cw)]'}>
+                            <DraggableCard enabled={!meInDeal?.dropped} draggedFlag={cardWasDragged} onDragState={setIsDraggingCard} onDrop={(r) => handleCardDrop(c, r)}>
+                              <CardChip
+                                cardId={c}
+                                size="fan"
+                                selected={selected}
+                                highlight={c === lastDrawnCard}
+                                onClick={onClick ? () => { if (!cardWasDragged.current) onClick(); } : undefined}
+                                wildcardRanks={wildcardRanks}
+                              />
+                            </DraggableCard>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className={`mt-1 h-1 rounded-full ${valid ? 'bg-success' : 'bg-text-muted/40'}`} />
+                    <div className="flex items-center justify-center gap-1 mt-0.5">
+                      <span className={`text-[10px] font-black leading-none ${valid ? 'text-success' : 'text-text-muted'}`}>
+                        {pointsOf(cards)}<span className="text-[8px] font-bold"> pts</span>
+                      </span>
+                      {mode === 'none' && (
+                        <button
+                          onClick={() => setHandGroups((gs) => gs.filter((_, gi) => gi !== idx))}
+                          aria-label="Ungroup"
+                          className="w-5 h-5 rounded-full bg-white border border-border-subtle shadow-sm flex items-center justify-center text-text-muted"
+                        >
+                          <span className="material-symbols-outlined text-[13px] leading-none">close</span>
+                        </button>
+                      )}
+                      {mode === 'none' && !meInDeal?.dropped && selectedForGroup.length > 0 && (
+                        <button
+                          onClick={() => handleAddSelectedToGroup(idx)}
+                          aria-label="Add selected cards here"
+                          className="flex items-center gap-0.5 h-5 min-w-[20px] px-1 rounded-full bg-primary text-white text-[10px] font-black shadow-sm"
+                        >
+                          <span className="material-symbols-outlined text-[12px] leading-none">add</span>
+                          {selectedForGroup.length}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {handGridCards.length > 0 && (
+                <div
+                  style={{ flex: `${Math.max(handGridCards.length - 1, 0)} 1 var(--cw)`, minWidth: 0, maxWidth: `calc(var(--cw) * ${handGridCards.length})` }}
+                  className="flex flex-col"
+                >
+                  <div className="flex">
+                  {handGridCards.map((c, idx) => {
+                    const { selected, onClick } = getCardInteraction(c);
+                    const isLast = idx === handGridCards.length - 1;
+                    return (
+                      <div key={`${c}-${idx}`} className={isLast ? 'shrink-0' : 'flex-1 min-w-0 max-w-[var(--cw)]'}>
+                        <DraggableCard enabled={!meInDeal?.dropped} draggedFlag={cardWasDragged} onDragState={setIsDraggingCard} onDrop={(r) => handleCardDrop(c, r)}>
+                          <CardChip
+                            cardId={c}
+                            size="fan"
+                            selected={selected}
+                            highlight={c === lastDrawnCard}
+                            onClick={onClick ? () => { if (!cardWasDragged.current) onClick(); } : undefined}
+                            wildcardRanks={wildcardRanks}
+                          />
+                        </DraggableCard>
+                      </div>
+                    );
+                  })}
+                  </div>
+                  <div className="mt-1 h-1 rounded-full bg-text-muted/20" />
+                  <p className="mt-0.5 text-center text-[10px] font-black leading-none text-text-muted">
+                    {pointsOf(handGridCards)}<span className="text-[8px] font-bold"> pts</span>
+                  </p>
                 </div>
               )}
-              <div className="w-px self-stretch bg-border-subtle shrink-0" />
-              <div
-                className={`flex items-center gap-1.5 shrink-0 rounded-lg px-1.5 py-1 -my-1 transition-colors ${
-                  isMyTurn && !meInDeal?.dropped ? 'bg-sky-200 animate-pulse' : ''
-                }`}
-              >
-                <p className="text-[9px] font-bold text-text-muted uppercase leading-tight whitespace-nowrap">Discard</p>
-                {topDiscard ? (
-                  <CardChip cardId={topDiscard} dim={!canDrawDiscard} onClick={canDrawDiscard ? handleDrawDiscard : undefined} wildcardRanks={wildcardRanks} />
+            </div>
+
+          </div>
+
+          <aside className="landscape:w-40 landscape:shrink-0 flex flex-row landscape:flex-col flex-wrap items-center landscape:items-stretch gap-1.5 landscape:overflow-y-auto">
+            {error && <p className="text-xs font-bold text-error w-full">{error}</p>}
+
+            {showdown && (
+              <div className="w-full rounded-xl border border-amber-400/60 bg-amber-50 p-2 space-y-1.5">
+                <p className="text-[11px] font-black text-on-surface">{declarerName === 'You' ? 'You declared!' : `${declarerName} declared!`}</p>
+                {needToShow ? (
+                  <>
+                    <p className="text-[10px] text-text-muted leading-snug">
+                      Arrange your cards for the fewest points, then show them{remainingSec !== null ? ` — ${remainingSec}s left` : ''}.
+                    </p>
+                    <button
+                      onClick={handleAutoArrange}
+                      className="w-full py-1.5 rounded-lg bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">auto_fix_high</span>
+                      Auto-arrange (fewest points)
+                    </button>
+                    <button
+                      onClick={handleShow}
+                      disabled={busy}
+                      className="w-full py-2 rounded-lg bg-success text-white text-xs font-bold disabled:opacity-50"
+                    >
+                      {busy ? 'Showing…' : `Show my cards · ${declarePoints} pts`}
+                    </button>
+                  </>
+                ) : mySubmission ? (
+                  <p className="text-[10px] text-text-muted leading-snug">
+                    Your cards are shown — <span className="font-bold text-error">{mySubmission.score} pts</span>. Waiting for {waitingOn.join(', ') || 'everyone'}…
+                  </p>
+                ) : iAmDeclarer ? (
+                  <p className="text-[10px] text-text-muted leading-snug">Waiting for {waitingOn.join(', ') || 'everyone'} to show their cards…</p>
+                ) : null}
+              </div>
+            )}
+
+            {meInDeal?.dropped && (
+              <div className="w-full rounded-xl border border-success/40 bg-success/10 p-2 space-y-1.5">
+                {meInDeal.rejoined ? (
+                  <p className="text-[11px] font-bold text-text-muted">You've already rejoined this deal once, so you're sitting out the rest of it.</p>
                 ) : (
-                  <p className="text-[10px] text-text-muted italic whitespace-nowrap">Empty</p>
+                  <>
+                    <p className="text-[11px] font-bold text-on-surface">Want back in?</p>
+                    <p className="text-[10px] text-text-muted leading-snug">You keep your hand and rejoin the turn order. The drop penalty stays, and you can rejoin once per deal.</p>
+                    <button
+                      onClick={handleRejoin}
+                      disabled={busy}
+                      className="w-full py-2 bg-success text-white rounded-lg text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">login</span>
+                      {busy ? 'Rejoining…' : 'Rejoin this deal'}
+                    </button>
+                  </>
                 )}
               </div>
-              <button
-                onClick={canDrawStock ? handleDrawStock : undefined}
-                disabled={busy || !canDrawStock}
-                className={`ml-auto px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 disabled:opacity-40 ${
-                  canDrawStock ? 'bg-primary text-white' : 'bg-surface text-text-muted border border-border-subtle'
-                }`}
-              >
-                Draw {deal.stockCount}
-              </button>
-            </div>
+            )}
 
             {mode === 'none' && !meInDeal?.dropped && (
-              <div className="flex items-center gap-2 pt-1.5 border-t border-border-subtle">
+              <>
                 <button
                   onClick={handleGroupSelected}
                   disabled={selectedForGroup.length < 2}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:bg-text-muted"
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:bg-text-muted"
                 >
                   <span className="material-symbols-outlined text-[15px]">call_merge</span>
                   Make Group{selectedForGroup.length > 0 ? ` (${selectedForGroup.length})` : ''}
                 </button>
                 {selectedForGroup.length > 0 && (
-                  <button onClick={() => setSelectedForGroup([])} className="text-[11px] font-bold text-text-muted">
+                  <button onClick={() => setSelectedForGroup([])} className="text-[11px] font-bold text-text-muted py-1">
                     Clear Selection
                   </button>
                 )}
+                {selectedForGroup.length === 1 && canDiscardNow && (
+                  <button
+                    onClick={() => handleQuickDiscard(selectedForGroup[0])}
+                    disabled={busy}
+                    className="text-[11px] font-bold text-white bg-error px-2.5 py-1.5 rounded-lg disabled:opacity-50"
+                  >
+                    Discard This Card
+                  </button>
+                )}
+                {canUngroupSelected && (
+                  <button onClick={handleUngroupSelected} className="text-[11px] font-bold text-error py-1">
+                    Ungroup Selected
+                  </button>
+                )}
+              </>
+            )}
+
+            {isMyTurn && !meInDeal?.dropped && deal.turnPhase === 'discard' && mode === 'none' && (
+              <div className="flex flex-col gap-1 landscape:w-full">
+                <button
+                  onClick={handleDeclare}
+                  disabled={!declareEnabled || busy}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-30 ${declareLooksValid ? 'bg-success text-white' : 'bg-warning/20 text-warning'}`}
+                >
+                  Declare
+                </button>
+                {!declareEnabled ? (
+                  <span className="text-[10px] text-text-muted">{looseForDeclare.length} card(s) ungrouped — need exactly 1</span>
+                ) : !declareLooksValid ? (
+                  <span className="text-[10px] text-warning">grouping looks invalid — declaring costs 80 pts if wrong</span>
+                ) : null}
               </div>
             )}
-          </div>
 
-          {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-          {isMyTurn && !meInDeal?.dropped && deal.turnPhase === 'discard' && mode === 'none' && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                onClick={handleDeclare}
-                disabled={!declareEnabled || busy}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-30 ${declareLooksValid ? 'bg-success text-white' : 'bg-warning/20 text-warning'}`}
-              >
-                Declare
-              </button>
-              {!declareEnabled ? (
-                <span className="text-[10px] text-text-muted">{looseForDeclare.length} card(s) ungrouped — need exactly 1</span>
-              ) : !declareLooksValid ? (
-                <span className="text-[10px] text-warning">grouping looks invalid — declaring costs 80 pts if wrong</span>
-              ) : null}
-            </div>
-          )}
-
-          {livePenaltyPreview && (
-            <p className="text-[10px] font-bold px-1">
-              <span className="text-text-muted">If the hand ended now: </span>
-              <span className={livePenaltyPreview.penalty === 0 ? 'text-success' : 'text-error'}>
-                {livePenaltyPreview.penalty === 0 ? '0 pts (safe)' : `-${livePenaltyPreview.penalty} pts`}
-              </span>
-            </p>
-          )}
-
-          <div className="flex items-center justify-between px-1 gap-2 flex-wrap">
-            <p className="text-[10px] font-bold text-text-muted uppercase">Your Hand ({handSorted.length})</p>
-            {mode === 'none' &&
-              !meInDeal?.dropped &&
-              (selectedForGroup.length > 0 ? (
-                <div className="flex items-center gap-3 flex-wrap">
-                  {selectedForGroup.length === 1 && canDiscardNow && (
-                    <button
-                      onClick={() => handleQuickDiscard(selectedForGroup[0])}
-                      disabled={busy}
-                      className="text-[11px] font-bold text-white bg-error px-2.5 py-1 rounded-lg disabled:opacity-50"
-                    >
-                      Discard This Card
-                    </button>
-                  )}
-                  {canUngroupSelected && (
-                    <button onClick={handleUngroupSelected} className="text-[11px] font-bold text-error">
-                      Ungroup Selected
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[10px] text-text-muted italic">
-                  {canDiscardNow ? 'Tap a card to discard it, or select several to organize' : 'Tap cards to select, then tap + on a group to add them there'}
+            {!meInDeal?.dropped && handSorted.length > 0 && (!showdown || needToShow) && (
+              <div className="w-full rounded-lg border border-border-subtle bg-white p-1.5 text-[10px] leading-snug">
+                <p className="font-bold">
+                  <span className="text-text-muted">{showdown ? 'If you show now: ' : 'If you declare now: '}</span>
+                  <span className={declarePoints === 0 ? 'text-success' : 'text-error'}>{declarePoints} pts</span>
                 </p>
-              ))}
-          </div>
-        </div>
-        </div>
+                {!declareStructureOk && (
+                  <p className="text-text-muted mt-0.5">Needs 2 sequences with 1 pure — until then every card counts, even valid groups.</p>
+                )}
+              </div>
+            )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="p-2 max-w-xl mx-auto w-full pb-6 space-y-2">
-          <div className="grid grid-cols-2 gap-1.5">
-            {visibleHandGroups.map(({ idx, cards }) => (
-              <GroupRow
-                key={idx}
-                cardIds={cards}
-                valid={isValidGroup(cards, wildcardRanks).valid}
-                onRemove={mode === 'none' ? () => setHandGroups((gs) => gs.filter((_, i) => i !== idx)) : undefined}
-                onCardClick={(id) => getCardInteraction(id).onClick?.()}
-                selectedIds={cards.filter((id) => getCardInteraction(id).selected)}
-                highlightId={lastDrawnCard}
-                onAddSelected={mode === 'none' && !meInDeal?.dropped && selectedForGroup.length > 0 ? () => handleAddSelectedToGroup(idx) : undefined}
-                addSelectedCount={selectedForGroup.length}
-                wildcardRanks={wildcardRanks}
-              />
-            ))}
-          </div>
-
-          <div className="flex gap-1.5 flex-wrap">
-            {handGridCards.map((c, idx) => {
-              const { selected, onClick } = getCardInteraction(c);
-              return <CardChip key={`${c}-${idx}`} cardId={c} selected={selected} highlight={c === lastDrawnCard} onClick={onClick} wildcardRanks={wildcardRanks} />;
-            })}
-          </div>
-        </div>
+            <p className="text-[10px] text-text-muted italic landscape:mt-auto">
+              Your hand ({handSorted.length}) ·{' '}
+              {canDiscardNow ? 'drag a card onto the table to discard it, or into a group to organize' : 'drag cards between groups, or tap to select and group them'}
+            </p>
+          </aside>
         </div>
       </div>
     </div>

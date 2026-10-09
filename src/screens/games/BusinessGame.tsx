@@ -1461,7 +1461,7 @@ export default function BusinessGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete.');
-      navigate('/tools?category=games');
+      navigate('/games/business');
     } catch (err: any) {
       setError(err.message || 'Failed to delete game.');
     }

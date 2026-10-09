@@ -190,7 +190,7 @@ export default function ChessGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to delete game.');
-      navigate('/tools?category=games');
+      navigate('/games/chess');
     } catch (err: any) {
       console.error('Failed to delete Chess game:', err);
       setError(err.message || 'Failed to delete game.');

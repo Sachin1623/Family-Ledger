@@ -408,7 +408,7 @@ export default function SweepGame() {
     if (!window.confirm('Delete this game? This cannot be undone.')) return;
     try {
       await call('/api/sweep/delete', {});
-      navigate('/tools?category=games');
+      navigate('/games/sweep');
     } catch {
       // error already surfaced via `error` state
     }

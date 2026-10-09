@@ -7133,6 +7133,11 @@ async function startServer() {
 
   const RUMMY13_HAND_SIZE = 13;
   const RUMMY13_PRINTED_JOKER = 'JK';
+  // After a valid declaration the other players get this long to arrange their cards and show them.
+  // Run on the same clock the per-turn timeout uses (turnStartedAt + 45s): turnStartedAt is simply set
+  // 45s in the FUTURE for a 90s window, so the client's countdown and /timeout need no special case.
+  const RUMMY13_SHOWDOWN_MS = 90_000;
+  const RUMMY13_TURN_TIMEOUT_MS = 45_000;
 
   function buildRummy13Deck(deckCount: 1 | 2): string[] {
     const deck: string[] = [];
@@ -7676,6 +7681,30 @@ async function startServer() {
       groups.filter((g) => rummy13IsValidSequence(g, wildcardRanks)).length >= 2 &&
       groups.some((g) => rummy13IsValidSequence(g, wildcardRanks) && rummy13IsPureSequence(g));
 
+    // A VALID declaration starts a showdown: every other player gets a window to arrange their cards
+    // for the lowest score and show them (see /api/rummy13/show). Bots show instantly. Only when
+    // there's nobody human left to wait for does the deal end right here, as it always used to.
+    if (isValidShow) {
+      const others = activePlayers.filter((p: any) => p.uid !== uid);
+      const isBotUid = (u: string) => !!(table.players || []).find((tp: any) => tp.uid === u)?.isBot;
+      if (others.some((p: any) => !isBotUid(p.uid))) {
+        const submitted: Record<string, any> = {};
+        for (const p of others) {
+          if (!isBotUid(p.uid)) continue;
+          const botCards: string[] = handDataByUid.get(p.uid)?.cards || [];
+          submitted[p.uid] = { groups: [], score: computeRummy13HandPenalty(botCards, wildcardRanks).penalty, auto: true };
+        }
+        const nowIso = new Date().toISOString();
+        tx.update(dealRef, {
+          turnPhase: 'showdown',
+          turnStartedAt: new Date(Date.now() + RUMMY13_SHOWDOWN_MS - RUMMY13_TURN_TIMEOUT_MS).toISOString(),
+          showdown: { declarerUid: uid, declaredGroups: groups.map((g) => ({ cards: g })), discardCardId, startedAt: nowIso, submitted },
+          lastAction: { type: 'declare', byUid: uid, at: nowIso },
+        });
+        return { won: true, finished: false };
+      }
+    }
+
     const dealScores: Record<string, number> = {};
     const revealedHands: Record<string, any> = {};
     for (const p of activePlayers) {
@@ -7702,6 +7731,66 @@ async function startServer() {
     return { won: isValidShow, ...result };
   }
 
+  // Points for a hand arranged into `groups` (anything not in a group is loose). null if the groups
+  // aren't made of that hand's cards. Needs at least two valid sequences, one of them pure, for the
+  // valid groups to count as zero — without that EVERY card counts, valid groups included; either way
+  // invalid groups and loose cards count. Capped at 80.
+  function rummy13SubmitScore(hand: string[], groups: string[][], wildcardRanks: string[]): number | null {
+    const remaining = [...hand];
+    for (const g of groups) {
+      for (const c of g) {
+        const i = remaining.indexOf(c);
+        if (i === -1) return null;
+        remaining.splice(i, 1);
+      }
+    }
+    const valid = groups.filter((g) => g.length >= 3 && rummy13IsValidGroup(g, wildcardRanks));
+    const seqCount = valid.filter((g) => rummy13IsValidSequence(g, wildcardRanks)).length;
+    const hasPure = valid.some((g) => rummy13IsValidSequence(g, wildcardRanks) && rummy13IsPureSequence(g));
+    const counted = seqCount >= 2 && hasPure ? [...remaining, ...groups.filter((g) => !valid.includes(g)).flat()] : hand;
+    return Math.min(80, counted.reduce((sum, c) => sum + rummy13CardValue(c, wildcardRanks), 0));
+  }
+
+  // Ends a deal that's in its showdown: the declarer scores 0, everyone else scores their submitted
+  // arrangement — or, if they never submitted before the clock ran out, whatever grouping they had
+  // saved on their hand. Reads (all hands) must already have happened; writes happen in here.
+  async function rummy13FinishShowdown(tx: FirebaseFirestore.Transaction, db: Firestore, ctx: {
+    dealRef: FirebaseFirestore.DocumentReference; deal: any; tableRef: FirebaseFirestore.DocumentReference; table: any;
+    activePlayers: any[]; handDataByUid: Map<string, any>;
+  }): Promise<void> {
+    const { dealRef, deal, tableRef, table, activePlayers, handDataByUid } = ctx;
+    const sd = deal.showdown;
+    const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+    const dealScores: Record<string, number> = {};
+    const revealedHands: Record<string, any> = {};
+    for (const p of activePlayers) {
+      const cards: string[] = handDataByUid.get(p.uid)?.cards || [];
+      if (p.uid === sd.declarerUid) {
+        dealScores[p.uid] = 0;
+        revealedHands[p.uid] = { cards, declaredGroups: sd.declaredGroups, discardCardId: sd.discardCardId };
+        continue;
+      }
+      const sub = sd.submitted?.[p.uid];
+      if (sub) {
+        dealScores[p.uid] = sub.score;
+        revealedHands[p.uid] = { cards, groups: sub.groups || [] };
+      } else {
+        const saved: string[][] = (handDataByUid.get(p.uid)?.groups || []).map((g: any) => g.cards);
+        const score = rummy13SubmitScore(cards, saved, wildcardRanks);
+        dealScores[p.uid] = score ?? Math.min(80, cards.reduce((sum, c) => sum + rummy13CardValue(c, wildcardRanks), 0));
+        revealedHands[p.uid] = { cards, groups: score === null ? [] : saved.map((g) => ({ cards: g })) };
+      }
+    }
+    await resolveRummy13DealEnd(tx, db, {
+      tableRef, table, dealRef,
+      endedBy: 'declare',
+      winnerUid: sd.declarerUid,
+      dealScores,
+      invalidDeclareUid: null,
+      revealedHands,
+    });
+  }
+
   // No cron/background worker exists on Cloud Run — every endpoint that can leave the turn on a bot
   // seat calls this synchronously after its own transaction commits. Same read-a-plan-outside/
   // re-validate-inside discipline as drainRummyBotTurns (27-Hand Rummy) and drainSequenceBotTurns.
@@ -7717,6 +7806,7 @@ async function startServer() {
       if (!dealSnap.exists) break;
       const deal = dealSnap.data()!;
       if (deal.status !== 'active') break;
+      if (deal.turnPhase === 'showdown') break; // waiting on the players' arrangements, not a turn
 
       const players: any[] = deal.players || [];
       const seatIndex = deal.currentTurnSeatIndex;
@@ -8097,6 +8187,7 @@ async function startServer() {
         const myIndex = players.findIndex((p: any) => p.uid === decoded.uid);
         if (myIndex === -1) throw { status: 403, message: 'Not part of this deal.' };
         if (players[myIndex].dropped) throw { status: 400, message: 'Already dropped.' };
+        if (deal.turnPhase === 'showdown') throw { status: 400, message: 'A declaration has been made — show your cards instead.' };
 
         dealTableId = deal.tableId;
         const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
@@ -8159,6 +8250,105 @@ async function startServer() {
     }
   });
 
+  // During a showdown (someone declared validly): a player submits how they've arranged their cards.
+  // The score is computed here from the cards actually in their hand — see rummy13SubmitScore — never
+  // taken from the client. When the last waiting player submits, the deal ends right away.
+  app.post('/api/rummy13/show', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    const groups: string[][] = Array.isArray(req.body?.groups)
+      ? req.body.groups.filter((g: unknown) => Array.isArray(g) && g.every((c) => typeof c === 'string'))
+      : [];
+    if (!dealId) return res.status(400).json({ error: 'dealId is required.' });
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+      let dealTableId = '';
+      let score = 0;
+
+      await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active' || deal.turnPhase !== 'showdown' || !deal.showdown) throw { status: 400, message: 'Nobody has declared — there is nothing to show yet.' };
+        const sd = deal.showdown;
+        const players: any[] = deal.players || [];
+        const me = players.find((p: any) => p.uid === decoded.uid);
+        if (!me || me.dropped) throw { status: 403, message: 'You are not in this deal.' };
+        if (decoded.uid === sd.declarerUid) throw { status: 400, message: 'You made the declaration — the others are showing theirs.' };
+        if (sd.submitted?.[decoded.uid]) throw { status: 400, message: 'You have already shown your cards.' };
+
+        dealTableId = deal.tableId;
+        const tableRef = db.collection('rummy13Tables').doc(deal.tableId);
+        const activePlayers = players.filter((p: any) => !p.dropped);
+        const [tableSnap, ...handSnaps] = await Promise.all([tx.get(tableRef), ...activePlayers.map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid)))]);
+        if (!tableSnap.exists) throw { status: 404, message: 'Table not found.' };
+        const table = tableSnap.data()!;
+        const handDataByUid = new Map(activePlayers.map((p: any, i: number) => [p.uid, handSnaps[i].data() || {}]));
+
+        const wildcardRanks = [deal.wildJokerRank, RUMMY13_PRINTED_JOKER].filter(Boolean);
+        const myCards: string[] = handDataByUid.get(decoded.uid)?.cards || [];
+        const myScore = rummy13SubmitScore(myCards, groups, wildcardRanks);
+        if (myScore === null) throw { status: 400, message: 'Those groups don\'t match the cards in your hand.' };
+        score = myScore;
+
+        const submitted = { ...(sd.submitted || {}), [decoded.uid]: { groups: groups.map((g) => ({ cards: g })), score: myScore } };
+        const everyoneIn = activePlayers.filter((p: any) => p.uid !== sd.declarerUid).every((p: any) => submitted[p.uid]);
+        if (everyoneIn) {
+          await rummy13FinishShowdown(tx, db, { dealRef, deal: { ...deal, showdown: { ...sd, submitted } }, tableRef, table, activePlayers, handDataByUid });
+        } else {
+          tx.update(dealRef, { showdown: { ...sd, submitted } });
+        }
+      });
+
+      if (dealTableId) await drainRummy13BotTurns(db, dealTableId).catch((err) => console.error('drainRummy13BotTurns (show) failed:', err));
+      return res.json({ ok: true, score });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/show error:', error);
+      return res.status(500).json({ error: 'Unable to submit your cards.' });
+    }
+  });
+
+  // Lets a player who dropped out of the CURRENT deal (a manual drop, or a missed turn) come back
+  // to it while it's still being played — they get their own hand back and are in the turn order
+  // again. The drop's score penalty is deliberately NOT refunded, and it's allowed once per deal per
+  // player: otherwise drop-then-rejoin would be a free way to skip turns. If the deal already ended
+  // (everyone else dropped, someone declared) there's nothing to rejoin.
+  app.post('/api/rummy13/rejoin', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const dealId = String(req.body?.dealId || '');
+    if (!dealId) return res.status(400).json({ error: 'dealId is required.' });
+
+    try {
+      const dealRef = db.collection('rummy13Deals').doc(dealId);
+      await db.runTransaction(async (tx) => {
+        const dealSnap = await tx.get(dealRef);
+        if (!dealSnap.exists) throw { status: 404, message: 'Deal not found.' };
+        const deal = dealSnap.data()!;
+        if (deal.status !== 'active') throw { status: 400, message: 'This deal has already ended.' };
+        if (deal.turnPhase === 'showdown') throw { status: 400, message: 'A declaration has been made — you can\'t rejoin this deal now.' };
+        const players: any[] = deal.players || [];
+        const myIndex = players.findIndex((p: any) => p.uid === decoded.uid);
+        if (myIndex === -1) throw { status: 403, message: 'Not part of this deal.' };
+        if (!players[myIndex].dropped) throw { status: 400, message: 'You are still in this deal.' };
+        if (players[myIndex].rejoined) throw { status: 400, message: 'You have already rejoined this deal once.' };
+
+        const newPlayers = players.map((p: any, i: number) => (i === myIndex ? { ...p, dropped: false, rejoined: true } : p));
+        tx.update(dealRef, { players: newPlayers });
+      });
+      return res.json({ ok: true });
+    } catch (error: any) {
+      if (error?.status) return res.status(error.status).json({ error: error.message });
+      console.error('rummy13/rejoin error:', error);
+      return res.status(500).json({ error: 'Unable to rejoin.' });
+    }
+  });
+
   // Callable by ANY seated player's client, not just whoever's turn timed out — a disconnected
   // client won't call anything itself. Fully server-validated: `turnStartedAt` is the deal's own
   // authoritative clock, never anything the client supplies. Naturally idempotent under races —
@@ -8187,6 +8377,18 @@ async function startServer() {
 
         const elapsedMs = Date.now() - new Date(deal.turnStartedAt).getTime();
         if (elapsedMs < TURN_TIMEOUT_MS) throw { status: 400, message: 'Turn has not timed out yet.' };
+
+        if (deal.turnPhase === 'showdown') {
+          // Time's up for showing cards: close the deal using what's been submitted so far.
+          dealTableId = deal.tableId;
+          const sdTableRef = db.collection('rummy13Tables').doc(deal.tableId);
+          const sdActive = (deal.players || []).filter((p: any) => !p.dropped);
+          const [sdTableSnap, ...sdHandSnaps] = await Promise.all([tx.get(sdTableRef), ...sdActive.map((p: any) => tx.get(dealRef.collection('hands').doc(p.uid)))]);
+          if (!sdTableSnap.exists) throw { status: 404, message: 'Table not found.' };
+          const sdHandData = new Map<string, any>(sdActive.map((p: any, i: number) => [p.uid as string, sdHandSnaps[i].data() || {}] as [string, any]));
+          await rummy13FinishShowdown(tx, db, { dealRef, deal, tableRef: sdTableRef, table: sdTableSnap.data()!, activePlayers: sdActive, handDataByUid: sdHandData });
+          return { resolved: true };
+        }
 
         const players: any[] = deal.players || [];
         const myIndex = deal.currentTurnSeatIndex;
