@@ -49,8 +49,10 @@ const CardChip: React.FC<{ cardId: string; dim?: boolean; highlight?: boolean; o
   const isPile = size === 'pile';
   // `pile` is the just-won trick stacked under a seat: cards overlap, so rank + suit sit in the
   // top-left corner (the part that stays visible) instead of the centre.
+  // `hand` cards overlap in a single fanned row (see the hand block below), so — like `pile` —
+  // rank + suit live in the top-left corner, the strip that stays visible under the next card.
   const dims = isHand
-    ? 'w-full aspect-[5/7] text-base'
+    ? 'w-[min(18vw,5rem)] aspect-[5/7] text-base items-start justify-start pl-1.5 pt-1'
     : isPile
       ? 'w-[min(10vw,2.4rem)] aspect-[5/7] text-xs items-start justify-start pl-1 pt-0.5'
       : 'w-[min(14vw,3.75rem)] aspect-[5/7] text-sm';
@@ -60,7 +62,7 @@ const CardChip: React.FC<{ cardId: string; dim?: boolean; highlight?: boolean; o
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
       onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
-      className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col font-bold bg-white ${isPile ? '' : 'items-center justify-center'} transition-all ${
+      className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col font-bold bg-white ${isPile || isHand ? '' : 'items-center justify-center'} transition-all ${
         onClick ? 'cursor-pointer active:scale-95' : ''
       } ${highlight ? 'border-warning ring-2 ring-warning/60 -translate-y-1 shadow-md' : 'border-border-subtle'} ${
         dim ? 'opacity-30' : ''
@@ -85,6 +87,13 @@ const BAG_TIER_CLASS: Record<ReturnType<typeof bagTier>, string> = {
   safe: 'text-success',
   caution: 'text-warning font-bold',
   danger: 'text-error font-bold animate-pulse',
+};
+
+// Same tiers as BAG_TIER_CLASS, but legible on the dark green felt of the table.
+const BAG_TIER_FELT_CLASS: Record<ReturnType<typeof bagTier>, string> = {
+  safe: 'text-emerald-200/80',
+  caution: 'text-amber-300 font-bold',
+  danger: 'text-red-300 font-bold animate-pulse',
 };
 
 // "Swallow the value already present on mount, only fire on a genuinely NEW change" — same pattern
@@ -188,6 +197,13 @@ export default function SpadePledgeGame() {
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [addingBot, setAddingBot] = useState(false);
+  // Drag-to-play: the table is the drop target; draggingCard just lights it up while a card is held.
+  const tableDropRef = useRef<HTMLDivElement>(null);
+  const [draggingCard, setDraggingCard] = useState<string | null>(null);
+  const dragCardEls = useRef<Record<string, HTMLDivElement | null>>({});
+  // True from the moment a card starts moving until just after release, so the click the browser
+  // fires at the end of a drag is never mistaken for a tap-to-play.
+  const cardWasDragged = useRef(false);
 
   const call = async (path: string, body: Record<string, unknown>) => {
     if (!user) return;
@@ -732,13 +748,19 @@ export default function SpadePledgeGame() {
               </div>
             )}
 
-            {/* Table — each seat shows its avatar, name and bid/tricks next to the card it played. The
-                grid stretches to fill the screen height, so the table (and its cards) use the room
-                instead of sitting in a small fixed box. */}
-            <div className="flex-1 min-h-[250px] grid grid-cols-3 grid-rows-3 gap-1 bg-white rounded-2xl border border-border-subtle p-2 place-items-center">
-              <div className="col-start-2 row-start-2 flex flex-col items-center text-center leading-tight">
-                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Hand {deal.handNumber}</span>
-                {deal.spadesBroken && <span className="text-[10px] font-bold text-text-muted">♠ broken</span>}
+            {/* Table — a felt card table: wooden rim, green baize with a soft spotlight, each seat a
+                compact avatar + name/score plate next to the card it played. The grid stretches to
+                fill the screen height so the table (and its cards) use the room available. */}
+            <div
+              ref={tableDropRef}
+              className={`relative flex-1 min-h-[250px] grid grid-cols-3 grid-rows-3 gap-1 rounded-[1.75rem] border-[5px] p-2 place-items-center transition-all overflow-hidden shadow-[inset_0_0_36px_rgba(0,0,0,0.5),0_6px_16px_rgba(0,0,0,0.25)] bg-[radial-gradient(ellipse_at_center,#1f7a5a_0%,#165c44_55%,#0e3f2f_100%)] ${
+                draggingCard ? 'border-amber-300 ring-4 ring-amber-300/40' : 'border-[#4a3322]'
+              }`}
+            >
+              <span aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center text-[9rem] leading-none text-white/[0.05] select-none">♠</span>
+              <div className="relative col-start-2 row-start-2 flex flex-col items-center text-center leading-tight">
+                <span className="text-[10px] font-bold text-emerald-100/70 uppercase tracking-[0.2em]">Hand {deal.handNumber}</span>
+                {deal.spadesBroken && <span className="text-[10px] font-bold text-emerald-100/70">♠ broken</span>}
               </div>
               {deal.players.map((p) => {
                 const played = trickPlayBySeat.get(p.seatIndex);
@@ -749,10 +771,10 @@ export default function SpadePledgeGame() {
                 const grp = table.groups.find((g) => g.memberUids.includes(p.uid));
                 const info = deal.phase === 'bidding' ? (p.bid !== null ? `bid ${p.bid}` : '…') : `${p.tricksWon}/${p.bid ?? '?'}`;
                 return (
-                  <div key={p.uid} className={`flex flex-col items-center gap-0.5 ${RELATIVE_POSITION_CLASS[rel]}`}>
+                  <div key={p.uid} className={`relative flex flex-col items-center gap-0.5 ${RELATIVE_POSITION_CLASS[rel]}`}>
                     <div className={`flex items-center gap-1.5 ${rel === 3 ? 'flex-row-reverse' : ''}`}>
-                      <div className="flex flex-col items-center w-[min(15vw,3.75rem)]">
-                        <div className={`relative w-[min(11vw,2.75rem)] aspect-square rounded-full bg-primary flex items-center justify-center text-white text-sm font-bold ${isTurn ? 'ring-[3px] ring-warning ring-offset-1' : ''}`}>
+                      <div className={`flex flex-col items-center w-[min(15vw,3.75rem)] rounded-xl px-1 py-1 backdrop-blur-sm transition-colors ${isTurn ? 'bg-amber-300/15 ring-1 ring-amber-300/60' : 'bg-black/20'}`}>
+                        <div className={`relative w-[min(8.5vw,2rem)] aspect-square rounded-full bg-emerald-950 flex items-center justify-center text-white text-xs font-bold ${isTurn ? 'ring-2 ring-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.85)]' : 'ring-1 ring-white/30'}`}>
                           <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
                             {tp?.isBot ? '🤖' : tp?.photoURL ? (
                               <img src={tp.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -760,30 +782,32 @@ export default function SpadePledgeGame() {
                               nameFor(p.uid).slice(0, 1)
                             )}
                           </div>
-                          <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5" />
+                          <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
                         </div>
-                        <span className={`text-[10px] font-bold max-w-full truncate ${isTurn ? 'text-primary' : 'text-on-surface'}`}>{p.seatIndex === me?.seatIndex ? 'You' : nameFor(p.uid)}</span>
+                        <span className={`mt-0.5 text-[10px] font-semibold max-w-full truncate ${isTurn ? 'text-amber-200' : 'text-white'}`}>{p.seatIndex === me?.seatIndex ? 'You' : nameFor(p.uid)}</span>
                         {grp && (
-                          <span className="text-[10px] font-black text-primary whitespace-nowrap">
-                            {grp.cumulativeScore}<span className="text-text-muted font-bold">/{TARGET_SCORE}</span>
+                          <span className="text-[10px] font-black text-amber-300 whitespace-nowrap leading-tight">
+                            {grp.cumulativeScore}<span className="text-white/50 font-bold">/{TARGET_SCORE}</span>
                           </span>
                         )}
-                        {grp && <span className={`text-[9px] whitespace-nowrap ${BAG_TIER_CLASS[bagTier(grp.bags)]}`}>{grp.bags} bags</span>}
-                        <span className="text-[9px] font-bold text-text-muted whitespace-nowrap">{info}</span>
+                        <span className="text-[9px] whitespace-nowrap leading-tight text-emerald-100/80">
+                          {grp && <span className={BAG_TIER_FELT_CLASS[bagTier(grp.bags)]}>{grp.bags} bags</span>}
+                          {grp && ' · '}{info}
+                        </span>
                       </div>
                       {played ? (
-                        <motion.div layoutId={`sp-card-${dealId}-${played}`}>
+                        <motion.div layoutId={`sp-card-${dealId}-${played}`} className="drop-shadow-[0_3px_5px_rgba(0,0,0,0.45)]">
                           <CardChip cardId={played} size="played" />
                         </motion.div>
                       ) : (
-                        <div className="w-[min(14vw,3.75rem)] aspect-[5/7] rounded-lg border-2 border-dashed border-border-subtle/60" />
+                        <div className="w-[min(14vw,3.75rem)] aspect-[5/7] rounded-lg border-2 border-dashed border-white/25 bg-black/10" />
                       )}
                     </div>
                     {/* Tricks-won pile — the trick this seat most recently won shows its real cards
                         (visible to everyone, sliding in from wherever each card was played); older
                         tricks just contribute to the plain count. */}
                     {p.tricksWon > 0 && isLastTrickWinner && (
-                      <div className="flex -space-x-3">
+                      <div className="flex -space-x-3 drop-shadow-[0_2px_3px_rgba(0,0,0,0.4)]">
                         {lastTrick!.cards.map((play) => (
                           <motion.div key={play.cardId} layoutId={`sp-card-${dealId}-${play.cardId}`}>
                             <CardChip cardId={play.cardId} size="pile" />
@@ -823,17 +847,50 @@ export default function SpadePledgeGame() {
               <p className="text-[10px] font-bold text-text-muted uppercase px-1">
                 Your Hand ({handSorted.length}){isMyPlayTurn ? ' — tap a card to play it' : ''}
               </p>
-              <div className="grid grid-cols-7 gap-1 px-1">
-                {handSorted.map((c) => {
+              {/* One row, whatever the card count: every card but the last shares the row's leftover
+                  width (so they overlap as needed), the last one is shown in full; with few cards left
+                  the wrappers cap at one card width so they simply sit side by side. */}
+              <div className="flex justify-center px-1 pt-2">
+                {handSorted.map((c, idx) => {
                   const isLegal = isMyPlayTurn && myLegalCards.includes(c);
+                  const isLast = idx === handSorted.length - 1;
                   return (
-                    <CardChip
-                      key={c}
-                      cardId={c}
-                      size="hand"
-                      dim={isMyPlayTurn && !isLegal}
-                      onClick={isLegal && !busy ? () => handlePlay(c) : undefined}
-                    />
+                    <div key={c} className={isLast ? 'shrink-0' : 'flex-1 min-w-0 max-w-[min(18vw,5rem)]'}>
+                      {/* A playable card can be tapped OR dragged onto the table. Dropped anywhere on
+                          or above the table plays it; released short of that it snaps back. */}
+                      <motion.div
+                        drag={isLegal && !busy}
+                        dragSnapToOrigin
+                        dragElastic={0.15}
+                        dragMomentum={false}
+                        whileDrag={{ scale: 1.12, zIndex: 60 }}
+                        onDragStart={() => { cardWasDragged.current = true; setDraggingCard(c); }}
+                        onDragEnd={(_, info) => {
+                          setDraggingCard(null);
+                          setTimeout(() => { cardWasDragged.current = false; }, 100);
+                          // Once a card has been dragged at all, only dropping it ON the table plays it —
+                          // however small the move, it never counts as a tap. The card itself has to be
+                          // on the table: at least a quarter
+                          // of its height overlapping the table's area, horizontally within it.
+                          const cardRect = dragCardEls.current[c]?.getBoundingClientRect();
+                          const tableRect = tableDropRef.current?.getBoundingClientRect();
+                          if (!cardRect || !tableRect) return;
+                          const overlapY = Math.min(cardRect.bottom, tableRect.bottom) - Math.max(cardRect.top, tableRect.top);
+                          const centerX = (cardRect.left + cardRect.right) / 2;
+                          if (overlapY >= cardRect.height * 0.25 && centerX >= tableRect.left && centerX <= tableRect.right) handlePlay(c);
+                        }}
+                        onClick={() => { if (isLegal && !busy && !cardWasDragged.current) handlePlay(c); }}
+                        ref={(el) => { dragCardEls.current[c] = el; }}
+                        className="relative touch-none"
+                      >
+                        <CardChip
+                          cardId={c}
+                          size="hand"
+                          dim={isMyPlayTurn && !isLegal}
+                          highlight={isLegal}
+                        />
+                      </motion.div>
+                    </div>
                   );
                 })}
               </div>
