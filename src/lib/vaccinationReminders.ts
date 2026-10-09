@@ -101,31 +101,109 @@ export function groupDosesIntoVisits(doseList: VaccineDose[], profilesById: Map<
   return Array.from(byKey.values()).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 
+// Every native alarm / local-notification id a visit can ever own, derived purely from
+// (profileId, visitKey) — the same hashing scheduleVaccineReminders uses below. This is what lets a
+// visit's reminders be cancelled with certainty even when the stored "ids I armed last time" list
+// (localStorage) is missing, stale or was never written: an alarm armed for a visit that has since
+// been deleted would otherwise be unreachable and keep ringing on its own recurring schedule
+// (the native overdue alarm repeats every 3 days until something cancels that exact id).
+function idsForVisit(profileId: string, visitKey: string): { alarmIds: number[]; notifIds: number[] } {
+  const baseKey = `vax_${profileId}_${visitKey}`;
+  const alarmIds = ['_leave', '_dueday', '_overdue'].map((s) => hashId(`${baseKey}${s}`));
+  const notifIds: number[] = [];
+  [3, 2, 1].forEach((d) => {
+    notifIds.push(hashId(`${baseKey}_notice_${d}`), hashId(`${baseKey}_book_${d}`));
+  });
+  notifIds.push(hashId(`${baseKey}_leave`), hashId(`${baseKey}_dueday`));
+  for (let i = 0; i < 20; i++) notifIds.push(hashId(`${baseKey}_overdue_${i}`));
+  return { alarmIds, notifIds };
+}
+
+async function cancelIds(platform: string, alarmIds: number[], notifIds: number[]) {
+  if (platform === 'android') {
+    for (const id of new Set(alarmIds)) await cancelAlarm(id);
+  }
+  const uniqueNotif = Array.from(new Set(notifIds));
+  if (uniqueNotif.length > 0) {
+    await LocalNotifications.cancel({ notifications: uniqueNotif.map((id) => ({ id })) });
+  }
+}
+
+export interface KnownVisit {
+  profileId: string;
+  visitKey: string;
+}
+
+// scheduleVaccineReminders / cancelVaccineRemindersForVisit all touch ONE shared set of native
+// alarms and ONE shared id list in localStorage, but are called from several places at once
+// (GlobalVaccineReminderScheduler.tsx, BabyVaccinations.tsx, the delete handlers) — each run is a
+// multi-await "cancel everything, then re-arm" pass. Interleaved, a slower run holding OLDER data
+// could finish arming a since-deleted visit's alarm AFTER a newer run had already cancelled it and
+// recorded its (shorter) id list, leaving an armed alarm nothing tracks any more. Every call goes
+// through this one queue so passes can never overlap, and a pass superseded by a newer schedule
+// request is skipped outright (only the latest data matters).
+let queue: Promise<void> = Promise.resolve();
+let latestScheduleSeq = 0;
+
+function enqueue(job: () => Promise<void>): Promise<void> {
+  const run = queue.then(job);
+  queue = run.catch(() => {});
+  return run;
+}
+
 // Re-derives the full reminder set from scratch for every visit that still has a pending dose —
 // call whenever a caller's own doses or appointments change (add/edit/log/cancel), mirroring
 // scheduleMedicineReminders' own "cancel everything, reschedule from current state" contract.
-export async function scheduleVaccineReminders(
+// `knownVisits` should list EVERY (profile, visit) that exists in the data — including deleted and
+// fully-completed ones — so their derivable ids get cancelled even if they're missing from the
+// stored list.
+export function scheduleVaccineReminders(
   visitGroups: VisitGroup[],
   appointmentsById: Map<string, VaccineAppointment>,
+  knownVisits: KnownVisit[] = [],
+): Promise<void> {
+  const seq = ++latestScheduleSeq;
+  return enqueue(async () => {
+    if (seq !== latestScheduleSeq) return;
+    await runSchedule(visitGroups, appointmentsById, knownVisits);
+  });
+}
+
+// Surgical cancel for one visit (delete handlers) — unlike cancelling everything, this leaves every
+// other baby's/visit's alarms alone, and it works from the derived ids so it doesn't depend on the
+// stored list at all.
+export function cancelVaccineRemindersForVisit(profileId: string, visitKey: string): Promise<void> {
+  return enqueue(async () => {
+    if (!Capacitor.isNativePlatform()) return;
+    const platform = Capacitor.getPlatform();
+    if (platform !== 'android' && platform !== 'ios') return;
+    try {
+      const { alarmIds, notifIds } = idsForVisit(profileId, visitKey);
+      await cancelIds(platform, alarmIds, notifIds);
+    } catch (err) {
+      console.error('Failed to cancel vaccine reminders for visit:', err);
+    }
+  });
+}
+
+type AlarmJob =
+  | { kind: 'oneShot'; id: number; title: string; body: string; at: Date }
+  | { kind: 'recurring'; id: number; title: string; body: string; startDate: string };
+
+async function runSchedule(
+  visitGroups: VisitGroup[],
+  appointmentsById: Map<string, VaccineAppointment>,
+  knownVisits: KnownVisit[],
 ): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   const platform = Capacitor.getPlatform();
   if (platform !== 'android' && platform !== 'ios') return;
 
   try {
-    const previousAlarmIds = readIds(ANDROID_IDS_KEY);
-    const previousNotifIds = readIds(NOTIF_IDS_KEY);
-    if (platform === 'android') {
-      for (const id of previousAlarmIds) await cancelAlarm(id);
-    }
-    if (previousNotifIds.length > 0) {
-      await LocalNotifications.cancel({ notifications: previousNotifIds.map((id) => ({ id })) });
-    }
-
-    const alarmIds: number[] = [];
-    const notifications: any[] = [];
-    const now = new Date();
     const route = '/baby-vaccinations';
+    const now = new Date();
+    const alarmJobs: AlarmJob[] = [];
+    const notifications: any[] = [];
 
     const pending = visitGroups.filter((v) => v.doses.some((d) => d.status === 'pending'));
 
@@ -156,9 +234,7 @@ export async function scheduleVaccineReminders(
           const alarmAt = new Date(apptDateTime.getTime() - 2 * 3600000);
           if (alarmAt > now) {
             if (platform === 'android') {
-              const id = hashId(`${baseKey}_leave`);
-              alarmIds.push(id);
-              await scheduleOneShotAlarm(id, `Time to leave for ${label}`, `Appointment at ${appt.time}${appt.clinic ? ` — ${appt.clinic}` : ''}. Get ready to go.`, alarmAt, route);
+              alarmJobs.push({ kind: 'oneShot', id: hashId(`${baseKey}_leave`), title: `Time to leave for ${label}`, body: `Appointment at ${appt.time}${appt.clinic ? ` — ${appt.clinic}` : ''}. Get ready to go.`, at: alarmAt });
             } else {
               notifications.push({
                 id: hashId(`${baseKey}_leave`),
@@ -191,9 +267,7 @@ export async function scheduleVaccineReminders(
           dueAt.setHours(9, 0, 0, 0);
           if (dueAt > now) {
             if (platform === 'android') {
-              const id = hashId(`${baseKey}_dueday`);
-              alarmIds.push(id);
-              await scheduleOneShotAlarm(id, `${label} is due today`, doseNames, dueAt, route);
+              alarmJobs.push({ kind: 'oneShot', id: hashId(`${baseKey}_dueday`), title: `${label} is due today`, body: doseNames, at: dueAt });
             } else {
               notifications.push({
                 id: hashId(`${baseKey}_dueday`),
@@ -214,14 +288,7 @@ export async function scheduleVaccineReminders(
           overdueStart.setHours(10, 0, 0, 0);
           const overdueBody = `${doseNames}. Schedule an appointment.`;
           if (platform === 'android') {
-            const id = hashId(`${baseKey}_overdue`);
-            alarmIds.push(id);
-            await scheduleAlarm({
-              id, title: `${label} is overdue`, body: overdueBody,
-              hour: 10, minute: 0, weekdays: [],
-              intervalDays: 3, startDate: toLocalDateString(overdueStart),
-              route,
-            });
+            alarmJobs.push({ kind: 'recurring', id: hashId(`${baseKey}_overdue`), title: `${label} is overdue`, body: overdueBody, startDate: toLocalDateString(overdueStart) });
           } else {
             // iOS's LocalNotifications `every` cron only supports day/week/month/year, not an
             // arbitrary N-day interval — approximated with a bounded batch of one-shot occurrences,
@@ -243,26 +310,48 @@ export async function scheduleVaccineReminders(
       }
     }
 
+    // Cancel EVERYTHING that could be armed: what the last run recorded, plus every id derivable
+    // from any visit we know about (active, completed or deleted).
+    const previousAlarmIds = readIds(ANDROID_IDS_KEY);
+    const previousNotifIds = readIds(NOTIF_IDS_KEY);
+    const derivedAlarmIds: number[] = [];
+    const derivedNotifIds: number[] = [];
+    const seen = new Set<string>();
+    [...visitGroups.map((v) => ({ profileId: v.profileId, visitKey: v.visitKey })), ...knownVisits].forEach((v) => {
+      const k = `${v.profileId}_${v.visitKey}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      const ids = idsForVisit(v.profileId, v.visitKey);
+      derivedAlarmIds.push(...ids.alarmIds);
+      derivedNotifIds.push(...ids.notifIds);
+    });
+    await cancelIds(platform, [...previousAlarmIds, ...derivedAlarmIds], [...previousNotifIds, ...derivedNotifIds]);
+
+    // Write-ahead: record what's ABOUT to be armed before arming any of it. Previously the list was
+    // only saved after every alarm had been scheduled, so a failure part-way (or the app being
+    // killed mid-pass) left real native alarms that no stored list mentioned — unreachable by any
+    // later cancel and ringing forever.
+    const desiredAlarmIds = alarmJobs.map((j) => j.id);
+    const desiredNotifIds = notifications.map((n) => n.id);
+    localStorage.setItem(ANDROID_IDS_KEY, JSON.stringify(desiredAlarmIds));
+    localStorage.setItem(NOTIF_IDS_KEY, JSON.stringify(desiredNotifIds));
+
+    for (const job of alarmJobs) {
+      if (job.kind === 'oneShot') {
+        await scheduleOneShotAlarm(job.id, job.title, job.body, job.at, route);
+      } else {
+        await scheduleAlarm({
+          id: job.id, title: job.title, body: job.body,
+          hour: 10, minute: 0, weekdays: [],
+          intervalDays: 3, startDate: job.startDate,
+          route,
+        });
+      }
+    }
     if (notifications.length > 0) {
       await LocalNotifications.schedule({ notifications });
     }
-    localStorage.setItem(ANDROID_IDS_KEY, JSON.stringify(alarmIds));
-    localStorage.setItem(NOTIF_IDS_KEY, JSON.stringify(notifications.map((n) => n.id)));
   } catch (err) {
     console.error('Failed to schedule vaccine reminders:', err);
-  }
-}
-
-export async function cancelVaccineReminders(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
-  try {
-    const alarmIds = readIds(ANDROID_IDS_KEY);
-    for (const id of alarmIds) await cancelAlarm(id);
-    const notifIds = readIds(NOTIF_IDS_KEY);
-    if (notifIds.length > 0) await LocalNotifications.cancel({ notifications: notifIds.map((id) => ({ id })) });
-    localStorage.removeItem(ANDROID_IDS_KEY);
-    localStorage.removeItem(NOTIF_IDS_KEY);
-  } catch (err) {
-    console.error('Failed to cancel vaccine reminders:', err);
   }
 }

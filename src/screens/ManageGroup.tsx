@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, updateDoc, deleteDoc, addDoc, getDoc, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
+import CategoryIconPicker from '../components/CategoryIconPicker';
 import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
@@ -2067,13 +2068,7 @@ export default function ManageGroup() {
                     {getAllGroupCategories(group, 'expense').map((cat) => renderCategoryRow(cat, 'expense'))}
                   </div>
                   <div className="flex items-center gap-1.5 pt-1">
-                    <input
-                      value={newExpenseCatIcon}
-                      onChange={(e) => setNewExpenseCatIcon(e.target.value)}
-                      maxLength={4}
-                      className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
-                      placeholder="🏷️"
-                    />
+                    <CategoryIconPicker value={newExpenseCatIcon} onChange={setNewExpenseCatIcon} />
                     <input
                       value={newExpenseCatName}
                       onChange={(e) => setNewExpenseCatName(e.target.value)}
@@ -2092,13 +2087,7 @@ export default function ManageGroup() {
                     {getAllGroupCategories(group, 'income').map((cat) => renderCategoryRow(cat, 'income'))}
                   </div>
                   <div className="flex items-center gap-1.5 pt-1">
-                    <input
-                      value={newIncomeCatIcon}
-                      onChange={(e) => setNewIncomeCatIcon(e.target.value)}
-                      maxLength={4}
-                      className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
-                      placeholder="🏷️"
-                    />
+                    <CategoryIconPicker value={newIncomeCatIcon} onChange={setNewIncomeCatIcon} />
                     <input
                       value={newIncomeCatName}
                       onChange={(e) => setNewIncomeCatName(e.target.value)}

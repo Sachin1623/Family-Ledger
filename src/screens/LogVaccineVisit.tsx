@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { VaccineDose, VaccineDoseGroup, VaccineBrandCatalogEntry, VaccineAppointment, vaccineAppointmentId, appointmentSummaryText } from '../lib/vaccinations';
-import { cancelVaccineReminders } from '../lib/vaccinationReminders';
+import { cancelVaccineRemindersForVisit } from '../lib/vaccinationReminders';
 import { getParentPath } from '../lib/navigationParents';
 import ImageAttachments from '../components/ImageAttachments';
 import VaccineAppointmentModal from '../components/VaccineAppointmentModal';
@@ -502,10 +502,10 @@ export default function LogVaccineVisit() {
       const batch = writeBatch(db);
       doses.forEach((d) => batch.update(doc(db, 'vaccineDoses', d.id), { deletedAt: now, loggedBy: user.uid, updatedAt: now }));
       await batch.commit();
-      // Cancels this visit's native alarm right here, immediately — don't rely solely on
-      // BabyVaccinations.tsx's reactive reconcile noticing the change after we navigate away and
-      // it (re)mounts, which left a real window for a stale alarm to still fire.
-      await cancelVaccineReminders();
+      // Cancels this visit's native alarms right here, immediately, by their derived ids (only
+      // this visit's — other babies'/visits' alarms are left alone) rather than waiting on the
+      // reactive reconcile in GlobalVaccineReminderScheduler.tsx to notice.
+      if (profileId && visitKey) await cancelVaccineRemindersForVisit(profileId, visitKey);
       navigate('/baby-vaccinations');
     } catch (err) {
       console.error('Failed to delete visit:', err);

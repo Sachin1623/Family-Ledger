@@ -9,6 +9,7 @@ import { updateGlobalStats } from '../services/statsService';
 import { fireWrite } from '../lib/offlineWrite';
 import { resizeImageFile } from '../lib/imageUtils';
 
+import CategoryIconPicker from '../components/CategoryIconPicker';
 import { CURRENCY_SYMBOLS, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CustomCategory, makeCustomCategoryId, currencyForCountry, getCurrencySymbol } from '../lib/constants';
 import { GROUP_ICONS } from '../lib/groupIcons';
 import { useLanguage } from '../context/LanguageContext';
@@ -480,13 +481,7 @@ export default function CreateGroup() {
                     ))}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <input
-                      value={newExpenseCatIcon}
-                      onChange={(e) => setNewExpenseCatIcon(e.target.value)}
-                      maxLength={4}
-                      className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
-                      placeholder="🏷️"
-                    />
+                    <CategoryIconPicker value={newExpenseCatIcon} onChange={setNewExpenseCatIcon} />
                     <input
                       value={newExpenseCatName}
                       onChange={(e) => setNewExpenseCatName(e.target.value)}
@@ -529,13 +524,7 @@ export default function CreateGroup() {
                         ))}
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <input
-                          value={newIncomeCatIcon}
-                          onChange={(e) => setNewIncomeCatIcon(e.target.value)}
-                          maxLength={4}
-                          className="w-10 h-8 text-center rounded-lg border border-border-subtle text-sm shrink-0"
-                          placeholder="🏷️"
-                        />
+                        <CategoryIconPicker value={newIncomeCatIcon} onChange={setNewIncomeCatIcon} />
                         <input
                           value={newIncomeCatName}
                           onChange={(e) => setNewIncomeCatName(e.target.value)}

@@ -566,10 +566,12 @@ export default function HealthBloodPressure() {
         37,
       );
 
+      // Report rows run oldest -> newest by full date AND time (the on-screen list stays newest-first).
+      const pdfLogs = filteredLogs.slice().sort((a, b) => new Date(a.loggedAt).getTime() - new Date(b.loggedAt).getTime());
       autoTable(docPdf, {
         startY: 44,
         head: [['Date & Time', 'Systolic', 'Diastolic', 'Pulse']],
-        body: filteredLogs.map((l) => [
+        body: pdfLogs.map((l) => [
           new Date(l.loggedAt).toLocaleString(),
           String(l.systolic),
           String(l.diastolic),
@@ -580,7 +582,7 @@ export default function HealthBloodPressure() {
       });
 
       const finalY = (docPdf as any).lastAutoTable?.finalY || 44;
-      const notesText = filteredLogs
+      const notesText = pdfLogs
         .filter((l) => l.notes)
         .map((l) => `${new Date(l.loggedAt).toLocaleDateString()}: ${l.notes}`)
         .join('   |   ');

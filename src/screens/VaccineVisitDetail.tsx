@@ -7,7 +7,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { VaccineDose, VaccineDoseGroup } from '../lib/vaccinations';
-import { cancelVaccineReminders } from '../lib/vaccinationReminders';
+import { cancelVaccineRemindersForVisit } from '../lib/vaccinationReminders';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 
@@ -212,7 +212,7 @@ export default function VaccineVisitDetail() {
       // This screen only ever shows fully-resolved visits (no pending doses), so there's normally
       // no active alarm to cancel — kept anyway for the same reason as LogVaccineVisit.tsx's own
       // delete handler, so nothing here depends on a reactive effect noticing the change in time.
-      await cancelVaccineReminders();
+      if (profileId && visitKey) await cancelVaccineRemindersForVisit(profileId, visitKey);
       navigate('/baby-vaccinations');
     } catch (err) {
       console.error('Failed to delete visit:', err);

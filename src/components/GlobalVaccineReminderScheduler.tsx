@@ -21,7 +21,7 @@ import { VaccineDose, VaccineAppointment } from '../lib/vaccinations';
 // use, so all three can never again disagree on which babies are in scope.
 export default function GlobalVaccineReminderScheduler() {
   const { user } = useAuth();
-  const { profiles } = useVaccineCaregivers(user?.uid);
+  const { profiles, loaded: profilesLoaded } = useVaccineCaregivers(user?.uid);
   const profileIds = useMemo(() => profiles.map((p) => p.id), [profiles]);
 
   const [dosesValue] = useCollection(
@@ -44,12 +44,27 @@ export default function GlobalVaccineReminderScheduler() {
     return m;
   }, [appointmentsValue]);
 
+  // Every (profile, visit) present in the data — deleted and completed ones included — so their
+  // alarms get cancelled by derived id even if the stored list of armed ids is missing them.
+  const knownVisits = useMemo(() => {
+    const seen = new Map<string, { profileId: string; visitKey: string }>();
+    (dosesValue?.docs || []).forEach((d) => {
+      const data = d.data() as any;
+      seen.set(`${data.profileId}_${data.visitKey}`, { profileId: data.profileId, visitKey: data.visitKey });
+    });
+    return Array.from(seen.values());
+  }, [dosesValue]);
+
+  const dataReady = profilesLoaded && (profileIds.length === 0 || (dosesValue !== undefined && appointmentsValue !== undefined));
+
   useEffect(() => {
-    if (!user) return;
-    scheduleVaccineReminders(visits, appointmentsById);
+    if (!user || !dataReady) return;
+    scheduleVaccineReminders(visits, appointmentsById, knownVisits);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     user?.uid,
+    dataReady,
+    knownVisits.length,
     JSON.stringify(visits.map((v) => [v.profileId, v.visitKey, v.dueDate, v.reminderPrefs, v.doses.map((d) => [d.id, d.status])])),
     JSON.stringify(Array.from(appointmentsById.values()).map((a: VaccineAppointment) => [a.id, a.booked, a.date, a.time, a.walkIn])),
   ]);

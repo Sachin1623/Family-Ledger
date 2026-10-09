@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { todayLocalDateString } from '../lib/dateUtils';
 import { BabyProfile, VaccineDose, VaccineDoseGroup, VaccineAppointment, vaccineAppointmentId, appointmentSummaryText, ageLabel, DEFAULT_REMINDER_PREFS, COUNTRIES, DEFAULT_COUNTRY, TEMPLATE_META } from '../lib/vaccinations';
-import { scheduleVaccineReminders, cancelVaccineReminders, groupDosesIntoVisits, VisitGroup } from '../lib/vaccinationReminders';
+import { cancelVaccineRemindersForVisit, VisitGroup } from '../lib/vaccinationReminders';
 import { usePageFabAction } from '../context/FabActionContext';
 import { shareOrDownloadFile } from '../lib/fileShare';
 import ImageLightbox from '../components/ImageLightbox';
@@ -133,38 +133,10 @@ export default function BabyVaccinations() {
   const upcomingVisits = visits.filter((v) => v.doses.some((d) => d.status === 'pending') && v.dueDate >= today);
   const historyVisits = visits.filter((v) => v.doses.every((d) => d.status !== 'pending'));
 
-  // Reconcile native reminders across EVERY profile in `profiles` (own + caregiver-accessible),
-  // not just whichever one is "active" in this screen right now — scheduleVaccineReminders does a
-  // "cancel everything, reschedule from current state" pass over a single shared set of alarm/
-  // notification ids (see its own header comment), so reconciling with only the active profile's
-  // visits would silently cancel every OTHER profile's already-armed alarms the moment this effect
-  // ran. Mirrors HealthMedicines.tsx's own belt-and-suspenders call, which likewise always passes
-  // its FULL own+delegate medicine set rather than whatever's currently selected in that screen's
-  // UI. GlobalVaccineReminderScheduler.tsx (mounted at the app root) does this same full reconcile
-  // on every session regardless of which screen is open; this call just keeps things in sync
-  // immediately while this screen happens to be open too.
-  const profileIds = useMemo(() => profiles.map((p) => p.id), [profiles]);
-  const [allDosesValue] = useCollection(
-    profileIds.length > 0 ? query(collection(db, 'vaccineDoses'), where('profileId', 'in', profileIds.slice(0, 30))) : null,
-  );
-  const [allAppointmentsValue] = useCollection(
-    profileIds.length > 0 ? query(collection(db, 'vaccineAppointments'), where('profileId', 'in', profileIds.slice(0, 30))) : null,
-  );
-  const profilesById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
-  const allVisits = useMemo(() => {
-    const liveDoses = (allDosesValue?.docs || [])
-      .map((d) => ({ id: d.id, ...(d.data() as any) }) as VaccineDose)
-      .filter((d) => !d.deletedAt);
-    return groupDosesIntoVisits(liveDoses, profilesById);
-  }, [allDosesValue, profilesById]);
-  const allAppointmentsById = useMemo(() => {
-    const m = new Map<string, VaccineAppointment>();
-    (allAppointmentsValue?.docs || []).forEach((d) => m.set(d.id, { id: d.id, ...(d.data() as any) }));
-    return m;
-  }, [allAppointmentsValue]);
-  useEffect(() => {
-    scheduleVaccineReminders(allVisits, allAppointmentsById);
-  }, [allVisits, allAppointmentsById]);
+  // Native reminders are reconciled app-wide by GlobalVaccineReminderScheduler.tsx (mounted at the
+  // app root, covering every profile the user owns or is a caregiver for) — this screen used to
+  // run its own second reconcile against the same shared alarm set, which could race the global
+  // one and re-arm alarms for a visit that had just been deleted.
 
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
@@ -190,7 +162,7 @@ export default function BabyVaccinations() {
       // Belt-and-suspenders alongside the reactive reconcile effect above — cancels this visit's
       // native alarm immediately rather than waiting on a re-render to notice it's gone, so a
       // stale alarm can't ring for a visit that's already been removed.
-      await cancelVaccineReminders();
+      await cancelVaccineRemindersForVisit(v.profileId, v.visitKey);
     } catch (err) {
       console.error('Failed to permanently delete visit:', err);
       alert(t('babyVax.saveVisitFailed'));

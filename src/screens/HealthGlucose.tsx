@@ -918,10 +918,17 @@ export default function HealthGlucose() {
             docPdf.setDrawColor(230);
             docPdf.line(midX, y + 7, midX, y + wCardH - 2.5);
             docPdf.setFont('helvetica', 'normal');
-            docPdf.setFontSize(6);
+            // "BEFORE MEAL"/"AFTER MEAL" — shrunk just enough to fit the half-tile width.
+            const halfW = wCardW / 2 - 4;
+            let labelSize = 6;
+            docPdf.setFontSize(labelSize);
+            while (labelSize > 4 && docPdf.getTextWidth('BEFORE MEAL') > halfW) {
+              labelSize -= 0.25;
+              docPdf.setFontSize(labelSize);
+            }
             docPdf.setTextColor(140);
-            docPdf.text('BEFORE', x + 2.5, y + 11);
-            docPdf.text('AFTER', midX + 2.5, y + 11);
+            docPdf.text('BEFORE MEAL', x + 2.5, y + 11);
+            docPdf.text('AFTER MEAL', midX + 2.5, y + 11);
             docPdf.setFont('helvetica', 'bold');
             docPdf.setFontSize(11);
             docPdf.setTextColor(0);
@@ -967,8 +974,10 @@ export default function HealthGlucose() {
         { mealType: 'dinner', heading: t('health.dinner') },
         { mealType: 'random', heading: t('health.random') },
       ];
+      // Report rows run oldest -> newest by full date AND time (the on-screen list stays newest-first).
+      const pdfLogs = filteredLogs.slice().sort((a, b) => new Date(a.loggedAt).getTime() - new Date(b.loggedAt).getTime());
       tableMealTypes.forEach(({ mealType, heading }) => {
-        const rows = filteredLogs.filter((l) => l.mealType === mealType);
+        const rows = pdfLogs.filter((l) => l.mealType === mealType);
         if (rows.length === 0) return; // skip a meal type with nothing logged rather than print an empty table
         if (y + 16 > 280) { docPdf.addPage(); y = 18; }
         docPdf.setFont('helvetica', 'bold');
@@ -985,13 +994,20 @@ export default function HealthGlucose() {
           ]),
           styles: { fontSize: 8 },
           headStyles: { fillColor: [15, 71, 97] },
+          // Row text takes the same color as that reading's line in the trend chart above
+          // (before = light blue, after/random = brand color) so table and chart read as one.
+          didParseCell: (data: any) => {
+            if (data.section !== 'body') return;
+            const row = rows[data.row.index];
+            data.cell.styles.textColor = row?.mealType !== 'random' && row?.timing === 'before' ? beforeColor : brandColor;
+          },
         });
         y = (docPdf as any).lastAutoTable?.finalY + 8 || y + 20;
       });
       docPdf.setFont('helvetica', 'normal');
 
       const finalY = y;
-      const notesText = filteredLogs
+      const notesText = pdfLogs
         .filter((l) => l.notes)
         .map((l) => `${new Date(l.loggedAt).toLocaleDateString()}: ${l.notes}`)
         .join('   |   ');

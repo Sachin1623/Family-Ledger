@@ -19,6 +19,7 @@ import {
   MAX_BID,
   TURN_TIMEOUT_MS,
   TURN_WARNING_MS,
+  TARGET_SCORE,
   BAG_PENALTY_THRESHOLD,
   BAG_PENALTY,
   type SpadePledgeTable,
@@ -36,26 +37,37 @@ import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
-const CardChip: React.FC<{ cardId: string; dim?: boolean; highlight?: boolean; onClick?: () => void; size?: 'played' }> = ({
-  cardId, dim, highlight, onClick, size,
+// Card face. `hand` fills whatever grid cell it's put in (the hand is a 7-column grid, so cards
+// scale with the screen instead of staying a fixed tiny size); `played` is the card sitting on the
+// table, sized off the viewport width (capped) so it stays proportionate on phones and tablets.
+const CardChip: React.FC<{ cardId: string; dim?: boolean; highlight?: boolean; onClick?: () => void; size?: 'played' | 'hand' | 'pile' }> = ({
+  cardId, dim, highlight, onClick, size = 'played',
 }) => {
   const { rank, suit } = parseCard(cardId);
   const red = SUIT_RED[suit];
-  const dims = size === 'played' ? 'w-9 h-12 text-[11px]' : 'w-9 h-12 text-[11px]';
+  const isHand = size === 'hand';
+  const isPile = size === 'pile';
+  // `pile` is the just-won trick stacked under a seat: cards overlap, so rank + suit sit in the
+  // top-left corner (the part that stays visible) instead of the centre.
+  const dims = isHand
+    ? 'w-full aspect-[5/7] text-base'
+    : isPile
+      ? 'w-[min(10vw,2.4rem)] aspect-[5/7] text-xs items-start justify-start pl-1 pt-0.5'
+      : 'w-[min(14vw,3.75rem)] aspect-[5/7] text-sm';
   return (
     <div
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
       onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
-      className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col items-center justify-center font-bold bg-white transition-all ${
-        onClick ? 'cursor-pointer' : ''
+      className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col font-bold bg-white ${isPile ? '' : 'items-center justify-center'} transition-all ${
+        onClick ? 'cursor-pointer active:scale-95' : ''
       } ${highlight ? 'border-warning ring-2 ring-warning/60 -translate-y-1 shadow-md' : 'border-border-subtle'} ${
         dim ? 'opacity-30' : ''
       } ${red ? 'text-error' : 'text-on-surface'}`}
     >
-      <span>{rank}</span>
-      <span className="text-base leading-none">{SUIT_SYMBOL[suit]}</span>
+      <span className="leading-none">{rank}</span>
+      <span className={`${isHand ? 'text-2xl' : isPile ? 'text-base' : 'text-xl'} leading-none`}>{SUIT_SYMBOL[suit]}</span>
     </div>
   );
 };
@@ -678,15 +690,6 @@ export default function SpadePledgeGame() {
           </header>
 
           <div className="p-2 max-w-xl mx-auto w-full space-y-2">
-            <div className="flex items-center gap-1.5 overflow-x-auto bg-white rounded-xl border border-border-subtle p-1.5">
-              {table.groups.map((g) => (
-                <div key={g.groupIndex} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg shrink-0 ${g.groupIndex === (me ? teamForSeat(table.format, me.seatIndex) : -1) ? 'bg-primary/10' : ''}`}>
-                  <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{g.memberUids.map((uid) => nameFor(uid)).join(' & ')}</span>
-                  <span className="text-[10px] font-black text-primary whitespace-nowrap">{g.cumulativeScore}</span>
-                  <span className={`text-[8px] whitespace-nowrap ${BAG_TIER_CLASS[bagTier(g.bags)]}`}>{g.bags} bags</span>
-                </div>
-              ))}
-            </div>
             {table.groups.some((g) => g.bags >= 5) && (
               <p className="text-[10px] font-bold text-warning px-1 flex items-center gap-1">
                 <span className="material-symbols-outlined text-[13px]">warning</span>
@@ -706,42 +709,12 @@ export default function SpadePledgeGame() {
                   )}
                 </div>
               </div>
-
-              <div className="flex items-center gap-1.5 overflow-x-auto">
-                {deal.players.map((p) => (
-                  <div
-                    key={p.uid}
-                    className={`flex items-center gap-1 px-1.5 py-1 rounded-lg border shrink-0 ${
-                      p.seatIndex === deal.currentTurnSeatIndex ? 'border-primary bg-primary/5' : 'border-border-subtle'
-                    }`}
-                  >
-                    <div className="relative w-5 h-5 shrink-0">
-                      <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-[9px] font-bold overflow-hidden">
-                        {(() => {
-                          const tp = table.players.find((tp) => tp.uid === p.uid);
-                          if (tp?.isBot) return '🤖';
-                          return tp?.photoURL ? (
-                            <img src={tp.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            nameFor(p.uid).slice(0, 1)
-                          );
-                        })()}
-                      </div>
-                      <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
-                    </div>
-                    <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{nameFor(p.uid)}</span>
-                    <span className="text-[9px] text-text-muted whitespace-nowrap">
-                      {deal.phase === 'bidding' ? (p.bid !== null ? `bid ${p.bid}` : '…') : `${p.tricksWon}/${p.bid ?? '?'}`}
-                    </span>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <div className="p-2 max-w-xl mx-auto w-full pb-6 space-y-3">
+          <div className="p-2 max-w-xl mx-auto w-full pb-4 min-h-full flex flex-col gap-3">
             {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
 
             {me?.isBot && (
@@ -759,41 +732,64 @@ export default function SpadePledgeGame() {
               </div>
             )}
 
-            {/* Trick area */}
-            <div className="grid grid-cols-3 grid-rows-3 gap-1.5 bg-white rounded-2xl border border-border-subtle p-3 aspect-square max-w-[280px] mx-auto place-items-center">
+            {/* Table — each seat shows its avatar, name and bid/tricks next to the card it played. The
+                grid stretches to fill the screen height, so the table (and its cards) use the room
+                instead of sitting in a small fixed box. */}
+            <div className="flex-1 min-h-[250px] grid grid-cols-3 grid-rows-3 gap-1 bg-white rounded-2xl border border-border-subtle p-2 place-items-center">
+              <div className="col-start-2 row-start-2 flex flex-col items-center text-center leading-tight">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Hand {deal.handNumber}</span>
+                {deal.spadesBroken && <span className="text-[10px] font-bold text-text-muted">♠ broken</span>}
+              </div>
               {deal.players.map((p) => {
                 const played = trickPlayBySeat.get(p.seatIndex);
                 const isLastTrickWinner = lastTrick && lastTrick.winnerSeatIndex === p.seatIndex;
+                const rel = relSeatOf(p.seatIndex);
+                const tp = table.players.find((x) => x.uid === p.uid);
+                const isTurn = p.seatIndex === deal.currentTurnSeatIndex;
+                const grp = table.groups.find((g) => g.memberUids.includes(p.uid));
+                const info = deal.phase === 'bidding' ? (p.bid !== null ? `bid ${p.bid}` : '…') : `${p.tricksWon}/${p.bid ?? '?'}`;
                 return (
-                  <div key={p.uid} className={`flex flex-col items-center gap-1 ${RELATIVE_POSITION_CLASS[relSeatOf(p.seatIndex)]}`}>
-                    <span className="text-[9px] font-bold text-text-muted whitespace-nowrap">{p.seatIndex === me?.seatIndex ? 'You' : nameFor(p.uid)}</span>
-                    <div className="relative w-9 h-12">
+                  <div key={p.uid} className={`flex flex-col items-center gap-0.5 ${RELATIVE_POSITION_CLASS[rel]}`}>
+                    <div className={`flex items-center gap-1.5 ${rel === 3 ? 'flex-row-reverse' : ''}`}>
+                      <div className="flex flex-col items-center w-[min(15vw,3.75rem)]">
+                        <div className={`relative w-[min(11vw,2.75rem)] aspect-square rounded-full bg-primary flex items-center justify-center text-white text-sm font-bold ${isTurn ? 'ring-[3px] ring-warning ring-offset-1' : ''}`}>
+                          <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
+                            {tp?.isBot ? '🤖' : tp?.photoURL ? (
+                              <img src={tp.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              nameFor(p.uid).slice(0, 1)
+                            )}
+                          </div>
+                          <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5" />
+                        </div>
+                        <span className={`text-[10px] font-bold max-w-full truncate ${isTurn ? 'text-primary' : 'text-on-surface'}`}>{p.seatIndex === me?.seatIndex ? 'You' : nameFor(p.uid)}</span>
+                        {grp && (
+                          <span className="text-[10px] font-black text-primary whitespace-nowrap">
+                            {grp.cumulativeScore}<span className="text-text-muted font-bold">/{TARGET_SCORE}</span>
+                          </span>
+                        )}
+                        {grp && <span className={`text-[9px] whitespace-nowrap ${BAG_TIER_CLASS[bagTier(grp.bags)]}`}>{grp.bags} bags</span>}
+                        <span className="text-[9px] font-bold text-text-muted whitespace-nowrap">{info}</span>
+                      </div>
                       {played ? (
-                        <motion.div layoutId={`sp-card-${dealId}-${played}`} className="absolute inset-0">
+                        <motion.div layoutId={`sp-card-${dealId}-${played}`}>
                           <CardChip cardId={played} size="played" />
                         </motion.div>
                       ) : (
-                        <div className="w-9 h-12 rounded-lg border-2 border-dashed border-border-subtle/60" />
+                        <div className="w-[min(14vw,3.75rem)] aspect-[5/7] rounded-lg border-2 border-dashed border-border-subtle/60" />
                       )}
                     </div>
                     {/* Tricks-won pile — the trick this seat most recently won shows its real cards
                         (visible to everyone, sliding in from wherever each card was played); older
                         tricks just contribute to the plain count. */}
-                    {p.tricksWon > 0 && (
-                      isLastTrickWinner ? (
-                        <div className="flex -space-x-5">
-                          {lastTrick!.cards.map((play) => (
-                            <motion.div key={play.cardId} layoutId={`sp-card-${dealId}-${play.cardId}`} className="scale-[0.55] origin-top">
-                              <CardChip cardId={play.cardId} size="played" />
-                            </motion.div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-0.5">
-                          <span className="material-symbols-outlined text-[13px] text-text-muted">style</span>
-                          <span className="text-[9px] font-bold text-text-muted">{p.tricksWon}</span>
-                        </div>
-                      )
+                    {p.tricksWon > 0 && isLastTrickWinner && (
+                      <div className="flex -space-x-3">
+                        {lastTrick!.cards.map((play) => (
+                          <motion.div key={play.cardId} layoutId={`sp-card-${dealId}-${play.cardId}`}>
+                            <CardChip cardId={play.cardId} size="pile" />
+                          </motion.div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 );
@@ -812,7 +808,7 @@ export default function SpadePledgeGame() {
                         key={n}
                         onClick={() => handleBid(n)}
                         disabled={busy}
-                        className="py-2 rounded-lg text-xs font-black bg-primary/10 text-primary disabled:opacity-40"
+                        className="py-3 rounded-lg text-sm font-black bg-primary/10 text-primary disabled:opacity-40 active:scale-95"
                       >
                         {n}
                       </button>
@@ -827,13 +823,14 @@ export default function SpadePledgeGame() {
               <p className="text-[10px] font-bold text-text-muted uppercase px-1">
                 Your Hand ({handSorted.length}){isMyPlayTurn ? ' — tap a card to play it' : ''}
               </p>
-              <div className="flex gap-1.5 flex-wrap px-1">
+              <div className="grid grid-cols-7 gap-1 px-1">
                 {handSorted.map((c) => {
                   const isLegal = isMyPlayTurn && myLegalCards.includes(c);
                   return (
                     <CardChip
                       key={c}
                       cardId={c}
+                      size="hand"
                       dim={isMyPlayTurn && !isLegal}
                       onClick={isLegal && !busy ? () => handlePlay(c) : undefined}
                     />

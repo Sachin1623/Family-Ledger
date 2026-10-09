@@ -31,5 +31,13 @@ export function useVaccineCaregivers(uid: string | undefined) {
     return Array.from(byId.values()).filter((p) => !p.deletedAt);
   }, [ownProfilesValue, caregiverProfilesValue]);
 
-  return { profiles };
+  // False until every query this derivation depends on has produced its first result — a caller
+  // that acts on `profiles` (e.g. re-arming alarms) must not treat the empty first render as
+  // "this user has no babies".
+  const loaded =
+    ownProfilesValue !== undefined
+    && myCaregiverInvitesValue !== undefined
+    && (caregiverProfileIds.length === 0 || caregiverProfilesValue !== undefined);
+
+  return { profiles, loaded };
 }

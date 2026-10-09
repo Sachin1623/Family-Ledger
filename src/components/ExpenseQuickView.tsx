@@ -1,7 +1,10 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { EXPENSE_CATEGORIES } from '../lib/constants';
+import { doc } from 'firebase/firestore';
+import { useDocument } from 'react-firebase-hooks/firestore';
+import { db } from '../lib/firebase';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryNameOverride, getCategoryIcon } from '../lib/constants';
 import Comments from './Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { useAuth } from '../context/AuthContext';
@@ -41,7 +44,18 @@ export default function ExpenseQuickView({
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
-  const category = CATEGORIES.find((c) => c.id === expense.category);
+  const isIncome = expense.type === 'income';
+  const category = (isIncome ? INCOME_CATEGORIES : CATEGORIES).find((c) => c.id === expense.category);
+  // A custom category (or a renamed built-in) only exists in its group's own settings — the
+  // built-in lists above can't resolve it, which used to leave the raw "custom_xxxx" id on screen
+  // instead of the category's name.
+  const [groupValue] = useDocument(doc(db, 'groups', groupId));
+  const groupCategorySettings = groupValue?.data() as any;
+  const categoryName =
+    getCategoryNameOverride(groupCategorySettings, expense.category)
+    || (category ? t(`${isIncome ? 'income' : 'category'}.${category.id}`) : null)
+    || t('common.uncategorized');
+  const categoryIcon = category?.icon || getCategoryIcon(groupCategorySettings, expense.category, isIncome ? 'income' : 'expense');
   const [lightboxSrc, setLightboxSrc] = React.useState<string | null>(null);
 
   return (
@@ -97,8 +111,8 @@ export default function ExpenseQuickView({
               <div className="bg-surface p-3 rounded-xl border border-border-subtle">
                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('common.category')}</p>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-base">{category?.icon || '🧾'}</span>
-                  <span className="text-sm font-bold text-primary">{category ? t(`category.${category.id}`) : expense.category}</span>
+                  <span className="text-base">{categoryIcon === '❓' ? '🧾' : categoryIcon}</span>
+                  <span className="text-sm font-bold text-primary break-words min-w-0">{categoryName}</span>
                 </div>
               </div>
               <div className="bg-surface p-3 rounded-xl border border-border-subtle">

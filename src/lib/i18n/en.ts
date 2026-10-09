@@ -80,6 +80,8 @@ const en = {
   'common.paidBy': 'Paid by',
   'common.me': 'Me',
   'common.unknown': 'Unknown',
+  'common.uncategorized': 'Uncategorized',
+  'category.chooseIcon': 'Choose an icon',
   'common.someone': 'Someone',
   'common.clear': 'Clear',
   'common.export': 'Export',

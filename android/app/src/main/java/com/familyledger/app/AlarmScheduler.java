@@ -86,6 +86,12 @@ class AlarmScheduler {
         PendingIntent pi = PendingIntent.getBroadcast(context, id, intent, flags);
         if (am != null) am.cancel(pi);
         pi.cancel();
+        // A snoozed alarm re-fires through its own PendingIntent (see snoozeOnce — request code
+        // 1_000_000_000 + id), which the cancel above never touched: snoozing an alarm and then
+        // deleting/ending whatever it was for left that one-shot armed and ringing anyway.
+        PendingIntent snoozePi = PendingIntent.getBroadcast(context, 1_000_000_000 + id, intent, flags);
+        if (am != null) am.cancel(snoozePi);
+        snoozePi.cancel();
         removePersisted(context, id);
     }
 
