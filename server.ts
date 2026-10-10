@@ -4507,6 +4507,179 @@ async function startServer() {
     }
   });
 
+  // ---- Product analytics: goals, accounts, every health tool, and splits — totals, today / this
+  // week vs the one before, a 30-day daily series and a 12-week weekly series for each. One call
+  // gathers everything (the Analytics tabs all read from it) and is cached for 5 minutes, since it
+  // reads whole collections. Days are UTC calendar days; "week" = a rolling 7 days, not Mon-Sun.
+  let productStatsCache: { at: number; data: any } | null = null;
+
+  app.get('/api/admin/analytics/product', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const db = adminDb;
+    try {
+      if (!req.query.refresh && productStatsCache && Date.now() - productStatsCache.at < 5 * 60 * 1000) {
+        return res.json(productStatsCache.data);
+      }
+
+      const DAY = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const ymd = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      const DAILY_DAYS = 30;
+      const WEEKS = 12;
+      const allDays = Array.from({ length: WEEKS * 7 }, (_, i) => ymd(now - (WEEKS * 7 - 1 - i) * DAY)); // oldest -> today
+      const last = allDays.length;
+      const since30 = ymd(now - 29 * DAY);
+
+      type Ev = { date: string; value?: number };
+      const dateOf = (v: unknown): string | null => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+      const eventsOf = (docs: FirebaseFirestore.QueryDocumentSnapshot[], field: string, weight?: (d: any) => number): Ev[] => {
+        const out: Ev[] = [];
+        docs.forEach((d) => {
+          const data = d.data();
+          const date = dateOf(data[field]);
+          if (date) out.push({ date, value: weight ? weight(data) : 1 });
+        });
+        return out;
+      };
+      const distinct = (docs: FirebaseFirestore.QueryDocumentSnapshot[], field: string) =>
+        new Set(docs.map((d) => d.data()[field]).filter((v) => typeof v === 'string' && v)).size;
+
+      const metric = (events: Ev[], total: number, uniqueUsers: number | null = null) => {
+        const perDay = new Map<string, number>();
+        for (const e of events) perDay.set(e.date, (perDay.get(e.date) || 0) + (e.value ?? 1));
+        const val = (d: string) => perDay.get(d) || 0;
+        const sum = (ds: string[]) => ds.reduce((acc, d) => acc + val(d), 0);
+        return {
+          total,
+          uniqueUsers,
+          today: val(allDays[last - 1]),
+          yesterday: val(allDays[last - 2]),
+          last7: sum(allDays.slice(last - 7)),
+          prev7: sum(allDays.slice(last - 14, last - 7)),
+          daily: allDays.slice(-DAILY_DAYS).map((d) => ({ date: d, value: val(d) })),
+          weekly: Array.from({ length: WEEKS }, (_, w) => {
+            const slice = allDays.slice(last - (WEEKS - w) * 7, last - (WEEKS - w - 1) * 7);
+            return { label: slice[0].slice(5), value: sum(slice) };
+          }),
+        };
+      };
+
+      const [goalsSnap, acctSnap, bpSnap, glSnap, medSnap, medLogSnap, incSnap, babySnap, doseSnap, delegSnap, caregSnap, expSnap, groupSnap] = await Promise.all([
+        db.collection('goals').select('userId', 'status', 'createdAt', 'completedAt', 'groupId').get(),
+        db.collection('financialAccounts').select('userId', 'type', 'archived', 'createdAt').get(),
+        db.collection('bloodPressureLogs').select('userId', 'createdAt').get(),
+        db.collection('glucoseLogs').select('userId', 'createdAt').get(),
+        db.collection('medicines').select('userId', 'createdAt', 'active', 'remindersEnabled').get(),
+        db.collection('medicineLogs').select('userId', 'createdAt', 'status').get(),
+        db.collection('medicalIncidents').select('userId', 'createdAt').get(),
+        db.collection('babyProfiles').select('ownerUid', 'createdAt').get(),
+        db.collection('vaccineDoses').select('ownerUid', 'status', 'givenDate').get(),
+        db.collection('healthDelegateInvites').select('kind', 'status', 'createdAt').get(),
+        db.collection('babyCaregiverInvites').select('status', 'createdAt').get(),
+        db.collection('expenses').select('createdAt', 'amount', 'splitInfo', 'groupId', 'paidBy').get(),
+        db.collection('groups').select('splitEnabled').get(),
+      ]);
+
+      // ---- Goals & accounts ----
+      const goalDocs = goalsSnap.docs;
+      const completedGoalDocs = goalDocs.filter((d) => d.data().status === 'completed');
+      const accountTypes = new Map<string, number>();
+      acctSnap.docs.forEach((d) => {
+        const t = String(d.data().type || 'other');
+        accountTypes.set(t, (accountTypes.get(t) || 0) + 1);
+      });
+      const goalsAccounts = {
+        goals: {
+          created: metric(eventsOf(goalDocs, 'createdAt'), goalDocs.length, distinct(goalDocs, 'userId')),
+          completed: metric(eventsOf(completedGoalDocs, 'completedAt'), completedGoalDocs.length),
+          active: goalDocs.length - completedGoalDocs.length,
+          shared: goalDocs.filter((d) => !!d.data().groupId).length,
+        },
+        accounts: {
+          created: metric(eventsOf(acctSnap.docs, 'createdAt'), acctSnap.size, distinct(acctSnap.docs, 'userId')),
+          archived: acctSnap.docs.filter((d) => d.data().archived === true).length,
+          byType: Array.from(accountTypes.entries()).map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
+        },
+      };
+
+      // ---- Health tools ----
+      const logStatus = new Map<string, number>();
+      medLogSnap.docs.forEach((d) => {
+        const st = String(d.data().status || 'unknown');
+        logStatus.set(st, (logStatus.get(st) || 0) + 1);
+      });
+      const givenDoses = doseSnap.docs.filter((d) => d.data().status === 'given');
+      const delegDocs = [...delegSnap.docs, ...caregSnap.docs];
+      const health = {
+        bp: metric(eventsOf(bpSnap.docs, 'createdAt'), bpSnap.size, distinct(bpSnap.docs, 'userId')),
+        glucose: metric(eventsOf(glSnap.docs, 'createdAt'), glSnap.size, distinct(glSnap.docs, 'userId')),
+        medicines: {
+          ...metric(eventsOf(medSnap.docs, 'createdAt'), medSnap.size, distinct(medSnap.docs, 'userId')),
+          active: medSnap.docs.filter((d) => d.data().active === true).length,
+          remindersOn: medSnap.docs.filter((d) => d.data().active === true && d.data().remindersEnabled === true).length,
+        },
+        medicineLogs: {
+          ...metric(eventsOf(medLogSnap.docs, 'createdAt'), medLogSnap.size, distinct(medLogSnap.docs, 'userId')),
+          byStatus: Array.from(logStatus.entries()).map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count),
+        },
+        incidents: metric(eventsOf(incSnap.docs, 'createdAt'), incSnap.size, distinct(incSnap.docs, 'userId')),
+        babies: metric(eventsOf(babySnap.docs, 'createdAt'), babySnap.size, distinct(babySnap.docs, 'ownerUid')),
+        vaccinesGiven: {
+          ...metric(eventsOf(givenDoses, 'givenDate'), givenDoses.length, distinct(givenDoses, 'ownerUid')),
+          totalDoses: doseSnap.size,
+        },
+        delegations: {
+          ...metric(eventsOf(delegDocs, 'createdAt'), delegDocs.length),
+          accepted: delegDocs.filter((d) => d.data().status === 'accepted').length,
+          pending: delegDocs.filter((d) => d.data().status === 'pending').length,
+        },
+      };
+
+      // ---- Splits: expenses divided between people ----
+      const splitDocs = expSnap.docs.filter((d) => (d.data().splitInfo?.splits || []).length > 0);
+      const participants = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
+        const data = d.data();
+        const ids = new Set<string>((data.splitInfo?.splits || []).map((sp: any) => sp.userId).filter(Boolean));
+        if (data.paidBy) ids.add(data.paidBy);
+        return ids;
+      };
+      const allParticipants = new Set<string>();
+      const recentParticipants = new Set<string>();
+      const activeGroups = new Set<string>();
+      let totalAmount = 0;
+      let participantTotal = 0;
+      splitDocs.forEach((d) => {
+        const data = d.data();
+        const ids = participants(d);
+        ids.forEach((id) => allParticipants.add(id));
+        participantTotal += ids.size;
+        totalAmount += Number(data.amount) || 0;
+        const date = dateOf(data.createdAt);
+        if (date && date >= since30) {
+          ids.forEach((id) => recentParticipants.add(id));
+          if (data.groupId) activeGroups.add(data.groupId);
+        }
+      });
+      const splits = {
+        expenses: metric(eventsOf(splitDocs, 'createdAt'), splitDocs.length),
+        amount: metric(eventsOf(splitDocs, 'createdAt', (d) => Number(d.amount) || 0), Math.round(totalAmount)),
+        enabledGroups: groupSnap.docs.filter((d) => d.data().splitEnabled === true).length,
+        activeGroups30: activeGroups.size,
+        participantsAll: allParticipants.size,
+        participants30: recentParticipants.size,
+        avgParticipants: splitDocs.length > 0 ? Math.round((participantTotal / splitDocs.length) * 10) / 10 : 0,
+      };
+
+      const data = { generatedAt: new Date().toISOString(), goalsAccounts, health, splits };
+      productStatsCache = { at: Date.now(), data };
+      return res.json(data);
+    } catch (error) {
+      console.error('admin/analytics/product error:', error);
+      return res.status(500).json({ error: 'Unable to load product analytics.' });
+    }
+  });
+
   // Test builds (APK/AAB) kept in a PRIVATE Cloud Storage bucket — no public access, no signed links
   // handed out. The only way to get a file is through this endpoint, which checks the caller is an
   // app admin first, and streams it straight through.
