@@ -35,6 +35,18 @@ interface ProductStats {
     goals: { created: Metric; completed: Metric; active: number; shared: number };
     accounts: { created: Metric; archived: number; byType: { type: string; count: number }[] };
   };
+  finance: {
+    expenseReminders: Metric & { active: number; autoCreated: number; oneTime: number };
+    loanContacts: Metric;
+    loanEntries: Metric & { amountRecorded: number };
+    policies: Metric & { byType: { label: string; count: number }[]; shared: number };
+    recurring: Metric & { active: number };
+  };
+  productivity: {
+    todos: Metric & { done: number; open: number; withReminder: number };
+    sharedReminders: Metric & { active: number; needAck: number };
+    shoppingLists: Metric & { shared: number };
+  };
   health: {
     bp: Metric;
     glucose: Metric;
@@ -140,7 +152,7 @@ function Chips({ items }: { items: { label: string; value: number }[] }) {
 }
 
 export default function AdminAnalytics() {
-  const [tab, setTab] = useState<'summary' | 'goals' | 'health' | 'splits' | 'usage'>('summary');
+  const [tab, setTab] = useState<'summary' | 'goals' | 'finance' | 'productivity' | 'health' | 'splits' | 'usage'>('summary');
   const [product, setProduct] = useState<ProductStats | null>(null);
   const [productLoading, setProductLoading] = useState(true);
   const [topGroups, setTopGroups] = useState<TopEntry[]>([]);
@@ -192,6 +204,8 @@ export default function AdminAnalytics() {
   const TABS = [
     ['summary', 'Summary'],
     ['goals', 'Goals & Accounts'],
+    ['finance', 'Finance Tools'],
+    ['productivity', 'Productivity'],
     ['health', 'Health'],
     ['splits', 'Splits'],
     ['usage', 'Usage & Games'],
@@ -203,6 +217,14 @@ export default function AdminAnalytics() {
         { group: 'Goals & Accounts', label: 'Goals created', m: product.goalsAccounts.goals.created },
         { group: 'Goals & Accounts', label: 'Goals completed', m: product.goalsAccounts.goals.completed },
         { group: 'Goals & Accounts', label: 'Accounts added', m: product.goalsAccounts.accounts.created },
+        { group: 'Finance Tools', label: 'Expense reminders', m: product.finance.expenseReminders },
+        { group: 'Finance Tools', label: 'Loan contacts', m: product.finance.loanContacts },
+        { group: 'Finance Tools', label: 'Loan entries', m: product.finance.loanEntries },
+        { group: 'Finance Tools', label: 'Insurance policies', m: product.finance.policies },
+        { group: 'Finance Tools', label: 'Recurring expenses', m: product.finance.recurring },
+        { group: 'Productivity', label: 'To-dos', m: product.productivity.todos },
+        { group: 'Productivity', label: 'Shared reminders', m: product.productivity.sharedReminders },
+        { group: 'Productivity', label: 'Shopping lists', m: product.productivity.shoppingLists },
         { group: 'Health', label: 'BP readings', m: product.health.bp },
         { group: 'Health', label: 'Glucose readings', m: product.health.glucose },
         { group: 'Health', label: 'Medicines added', m: product.health.medicines },
@@ -268,7 +290,7 @@ export default function AdminAnalytics() {
             </div>
           </section>
 
-          {(['Goals & Accounts', 'Health', 'Splits'] as const).map((group) => (
+          {(['Goals & Accounts', 'Finance Tools', 'Productivity', 'Health', 'Splits'] as const).map((group) => (
             <section key={group} className="bg-white rounded-2xl border border-border-subtle p-5">
               <h2 className="text-lg font-bold text-primary mb-3">{group}</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -319,6 +341,79 @@ export default function AdminAnalytics() {
             metric={product.goalsAccounts.accounts.created}
             color="#7C3AED"
             extra={<Chips items={product.goalsAccounts.accounts.byType.map((t) => ({ label: t.type.replace('_', ' '), value: t.count }))} />}
+          />
+        </div>
+      )}
+
+      {/* ---------------- Finance tools ---------------- */}
+      {tab === 'finance' && product && (
+        <div className="space-y-6">
+          <section className="bg-white rounded-2xl border border-border-subtle p-5">
+            <h2 className="text-lg font-bold text-primary mb-3">Overview</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatTile label="Expense reminders" value={fmt(product.finance.expenseReminders.total)} sub={`${fmt(product.finance.expenseReminders.active)} active`} />
+              <StatTile label="Loan contacts" value={fmt(product.finance.loanContacts.total)} sub={`${fmt(product.finance.loanContacts.uniqueUsers || 0)} users`} />
+              <StatTile label="Insurance policies" value={fmt(product.finance.policies.total)} sub={`${fmt(product.finance.policies.uniqueUsers || 0)} users`} />
+              <StatTile label="Recurring expenses" value={fmt(product.finance.recurring.total)} sub={`${fmt(product.finance.recurring.active)} active`} />
+            </div>
+            <p className="text-[11px] text-text-muted mt-3">The calculators (basic and financial) run entirely on the phone, so there's nothing stored to count for them.</p>
+          </section>
+          <TrendCard
+            title="Expense reminders created"
+            metric={product.finance.expenseReminders}
+            note="Reminders people set up themselves — the automatic one the app creates for every user is counted separately below."
+            extra={<Chips items={[{ label: 'Active', value: product.finance.expenseReminders.active }, { label: 'Automatic (not counted above)', value: product.finance.expenseReminders.autoCreated }, { label: 'One-time', value: product.finance.expenseReminders.oneTime }]} />}
+          />
+          <TrendCard title="Personal loan contacts added" metric={product.finance.loanContacts} color="#7C3AED" />
+          <TrendCard
+            title="Personal loan entries"
+            metric={product.finance.loanEntries}
+            color="#16A34A"
+            note="Money given or taken, recorded against a contact."
+            extra={<Chips items={[{ label: 'Amount recorded (face value)', value: product.finance.loanEntries.amountRecorded }]} />}
+          />
+          <TrendCard
+            title="Insurance policies added"
+            metric={product.finance.policies}
+            color="#0891B2"
+            extra={<Chips items={[...product.finance.policies.byType.map((t) => ({ label: t.label, value: t.count })), { label: 'Shared', value: product.finance.policies.shared }]} />}
+          />
+          <TrendCard
+            title="Recurring expenses set up"
+            metric={product.finance.recurring}
+            color="#F59E0B"
+            extra={<Chips items={[{ label: 'Active', value: product.finance.recurring.active }]} />}
+          />
+        </div>
+      )}
+
+      {/* ---------------- Productivity tools ---------------- */}
+      {tab === 'productivity' && product && (
+        <div className="space-y-6">
+          <section className="bg-white rounded-2xl border border-border-subtle p-5">
+            <h2 className="text-lg font-bold text-primary mb-3">Overview</h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <StatTile label="To-dos" value={fmt(product.productivity.todos.total)} sub={`${fmt(product.productivity.todos.done)} done · ${fmt(product.productivity.todos.open)} open`} />
+              <StatTile label="Shared reminders" value={fmt(product.productivity.sharedReminders.total)} sub={`${fmt(product.productivity.sharedReminders.active)} active`} />
+              <StatTile label="Shopping lists" value={fmt(product.productivity.shoppingLists.total)} sub={`${fmt(product.productivity.shoppingLists.shared)} shared`} />
+            </div>
+          </section>
+          <TrendCard
+            title="To-dos created"
+            metric={product.productivity.todos}
+            extra={<Chips items={[{ label: 'Done', value: product.productivity.todos.done }, { label: 'Open', value: product.productivity.todos.open }, { label: 'With a reminder', value: product.productivity.todos.withReminder }]} />}
+          />
+          <TrendCard
+            title="Shared reminders created"
+            metric={product.productivity.sharedReminders}
+            color="#F59E0B"
+            extra={<Chips items={[{ label: 'Active', value: product.productivity.sharedReminders.active }, { label: 'Need acknowledgement', value: product.productivity.sharedReminders.needAck }]} />}
+          />
+          <TrendCard
+            title="Shopping lists created"
+            metric={product.productivity.shoppingLists}
+            color="#16A34A"
+            extra={<Chips items={[{ label: 'Shared with a group', value: product.productivity.shoppingLists.shared }]} />}
           />
         </div>
       )}

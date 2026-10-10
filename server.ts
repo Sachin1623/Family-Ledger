@@ -4565,7 +4565,7 @@ async function startServer() {
         };
       };
 
-      const [goalsSnap, acctSnap, bpSnap, glSnap, medSnap, medLogSnap, incSnap, babySnap, doseSnap, delegSnap, caregSnap, expSnap, groupSnap] = await Promise.all([
+      const [goalsSnap, acctSnap, bpSnap, glSnap, medSnap, medLogSnap, incSnap, babySnap, doseSnap, delegSnap, caregSnap, expSnap, groupSnap, expRemSnap, loanSnap, loanEntrySnap, policySnap, recurSnap, todoSnap, sharedRemSnap, shopSnap] = await Promise.all([
         db.collection('goals').select('userId', 'status', 'createdAt', 'completedAt', 'groupId').get(),
         db.collection('financialAccounts').select('userId', 'type', 'archived', 'createdAt').get(),
         db.collection('bloodPressureLogs').select('userId', 'createdAt').get(),
@@ -4579,6 +4579,14 @@ async function startServer() {
         db.collection('babyCaregiverInvites').select('status', 'createdAt').get(),
         db.collection('expenses').select('createdAt', 'amount', 'splitInfo', 'groupId', 'paidBy').get(),
         db.collection('groups').select('splitEnabled').get(),
+        db.collection('expenseReminders').select('userId', 'createdAt', 'active', 'oneTime', 'systemReminderKind').get(),
+        db.collection('loanContacts').select('ownerId', 'createdAt').get(),
+        db.collectionGroup('entries').select('amount', 'createdAt').get(),
+        db.collection('policies').select('userId', 'createdAt', 'type', 'status', 'groupId').get(),
+        db.collection('recurringExpenses').select('userId', 'createdAt', 'active').get(),
+        db.collection('todos').select('userId', 'createdAt', 'done', 'status', 'reminderAt').get(),
+        db.collection('sharedReminders').select('createdBy', 'createdAt', 'active', 'requireAck').get(),
+        db.collection('shoppingLists').select('userId', 'createdAt', 'groupId').get(),
       ]);
 
       // ---- Goals & accounts ----
@@ -4671,7 +4679,69 @@ async function startServer() {
         avgParticipants: splitDocs.length > 0 ? Math.round((participantTotal / splitDocs.length) * 10) / 10 : 0,
       };
 
-      const data = { generatedAt: new Date().toISOString(), goalsAccounts, health, splits };
+      // ---- Finance tools (Tools -> Finance, plus recurring expenses) ----
+      const countBy = (docs: FirebaseFirestore.QueryDocumentSnapshot[], keyOf: (d: any) => string) => {
+        const m = new Map<string, number>();
+        docs.forEach((d) => {
+          const k = keyOf(d.data());
+          m.set(k, (m.get(k) || 0) + 1);
+        });
+        return Array.from(m.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+      };
+      // Loan entries live in a subcollection under each contact; the collection-group query can in
+      // principle also match another collection's "entries", so only count ones under loanContacts.
+      const loanEntryDocs = loanEntrySnap.docs.filter((d) => d.ref.path.startsWith('loanContacts/'));
+      const loanAmount = loanEntryDocs.reduce((sum, d) => sum + (Number(d.data().amount) || 0), 0);
+      const finance = {
+        // Only reminders a person set up themselves count as tool use — the app creates one
+        // automatic reminder for nearly every user, which would otherwise drown out the real numbers
+        // (it's reported separately as autoCreated).
+        expenseReminders: (() => {
+          const own = expRemSnap.docs.filter((d) => !d.data().systemReminderKind);
+          return {
+            ...metric(eventsOf(own, 'createdAt'), own.length, distinct(own, 'userId')),
+            active: own.filter((d) => d.data().active === true).length,
+            autoCreated: expRemSnap.size - own.length,
+            oneTime: own.filter((d) => d.data().oneTime === true).length,
+          };
+        })(),
+        loanContacts: metric(eventsOf(loanSnap.docs, 'createdAt'), loanSnap.size, distinct(loanSnap.docs, 'ownerId')),
+        loanEntries: {
+          ...metric(eventsOf(loanEntryDocs, 'createdAt'), loanEntryDocs.length),
+          amountRecorded: Math.round(loanAmount),
+        },
+        policies: {
+          ...metric(eventsOf(policySnap.docs, 'createdAt'), policySnap.size, distinct(policySnap.docs, 'userId')),
+          byType: countBy(policySnap.docs, (d) => String(d.type || 'other')),
+          shared: policySnap.docs.filter((d) => !!d.data().groupId).length,
+        },
+        recurring: {
+          ...metric(eventsOf(recurSnap.docs, 'createdAt'), recurSnap.size, distinct(recurSnap.docs, 'userId')),
+          active: recurSnap.docs.filter((d) => d.data().active === true).length,
+        },
+      };
+
+      // ---- Productivity tools (Tools -> Productivity) ----
+      const doneTodos = todoSnap.docs.filter((d) => d.data().done === true || d.data().status === 'done').length;
+      const productivity = {
+        todos: {
+          ...metric(eventsOf(todoSnap.docs, 'createdAt'), todoSnap.size, distinct(todoSnap.docs, 'userId')),
+          done: doneTodos,
+          open: todoSnap.size - doneTodos,
+          withReminder: todoSnap.docs.filter((d) => !!d.data().reminderAt).length,
+        },
+        sharedReminders: {
+          ...metric(eventsOf(sharedRemSnap.docs, 'createdAt'), sharedRemSnap.size, distinct(sharedRemSnap.docs, 'createdBy')),
+          active: sharedRemSnap.docs.filter((d) => d.data().active === true).length,
+          needAck: sharedRemSnap.docs.filter((d) => d.data().requireAck === true).length,
+        },
+        shoppingLists: {
+          ...metric(eventsOf(shopSnap.docs, 'createdAt'), shopSnap.size, distinct(shopSnap.docs, 'userId')),
+          shared: shopSnap.docs.filter((d) => !!d.data().groupId).length,
+        },
+      };
+
+      const data = { generatedAt: new Date().toISOString(), goalsAccounts, finance, productivity, health, splits };
       productStatsCache = { at: Date.now(), data };
       return res.json(data);
     } catch (error) {
