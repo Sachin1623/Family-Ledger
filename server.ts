@@ -4507,6 +4507,57 @@ async function startServer() {
     }
   });
 
+  // Test builds (APK/AAB) kept in a PRIVATE Cloud Storage bucket — no public access, no signed links
+  // handed out. The only way to get a file is through this endpoint, which checks the caller is an
+  // app admin first, and streams it straight through.
+  const ADMIN_BUILDS_BUCKET = 'familyledgerta-admin-builds';
+  const ADMIN_BUILDS_PREFIX = 'builds/';
+
+  app.get('/api/admin/builds', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded) return;
+    try {
+      const [files] = await admin.storage().bucket(ADMIN_BUILDS_BUCKET).getFiles({ prefix: ADMIN_BUILDS_PREFIX });
+      const builds = files
+        .filter((f) => f.name !== ADMIN_BUILDS_PREFIX && !f.name.endsWith('/'))
+        .map((f) => ({
+          name: f.name.slice(ADMIN_BUILDS_PREFIX.length),
+          sizeBytes: Number(f.metadata.size || 0),
+          updatedAt: (f.metadata.updated as string) || null,
+        }))
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      return res.json({ builds });
+    } catch (error) {
+      console.error('admin/builds list error:', error);
+      return res.status(500).json({ error: 'Unable to list builds.' });
+    }
+  });
+
+  app.get('/api/admin/builds/download', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded) return;
+    const name = String(req.query.name || '');
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) return res.status(400).json({ error: 'Invalid file name.' });
+    try {
+      const file = admin.storage().bucket(ADMIN_BUILDS_BUCKET).file(`${ADMIN_BUILDS_PREFIX}${name}`);
+      const [exists] = await file.exists();
+      if (!exists) return res.status(404).json({ error: 'Build not found.' });
+      res.setHeader('Content-Type', name.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      file.createReadStream()
+        .on('error', (err) => {
+          console.error('admin/builds download stream error:', err);
+          if (!res.headersSent) res.status(500).json({ error: 'Unable to read the build.' });
+          else res.destroy();
+        })
+        .pipe(res);
+    } catch (error) {
+      console.error('admin/builds download error:', error);
+      if (!res.headersSent) return res.status(500).json({ error: 'Unable to download the build.' });
+    }
+  });
+
   app.get('/api/admin/admins', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;

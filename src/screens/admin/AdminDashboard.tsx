@@ -105,6 +105,7 @@ export default function AdminDashboard() {
 
   const announcementTiles: Tile[] = [
     { to: '/admin/app-version', icon: 'system_update', label: 'App Version', description: 'Set release notes and force-update prompt' },
+    { to: '/admin/builds', icon: 'android', label: 'App Builds', description: 'Download test APKs and release bundles (admins only)' },
     { to: '/admin/broadcast', icon: 'campaign', label: 'Broadcast Message', description: 'Send a push + in-app announcement to every user' },
   ];
 

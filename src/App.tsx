@@ -117,6 +117,7 @@ import AdminGrowth from './screens/admin/AdminGrowth';
 import AdminManageAdmins from './screens/admin/AdminManageAdmins';
 import AdminFeedback from './screens/admin/AdminFeedback';
 import AdminAppVersion from './screens/admin/AdminAppVersion';
+import AdminBuilds from './screens/admin/AdminBuilds';
 import AdminBroadcast from './screens/admin/AdminBroadcast';
 import AdminChatReports from './screens/admin/AdminChatReports';
 import UpdatePrompt from './components/UpdatePrompt';
@@ -464,6 +465,7 @@ export default function App() {
               <Route path="/admin/manage-admins" element={<AdminRoute><AdminManageAdmins /></AdminRoute>} />
               <Route path="/admin/feedback" element={<AdminRoute><AdminFeedback /></AdminRoute>} />
               <Route path="/admin/app-version" element={<AdminRoute><AdminAppVersion /></AdminRoute>} />
+              <Route path="/admin/builds" element={<AdminRoute><AdminBuilds /></AdminRoute>} />
               <Route path="/admin/broadcast" element={<AdminRoute><AdminBroadcast /></AdminRoute>} />
               <Route path="/admin/shopkeeper-requests" element={<AdminRoute><AdminShopkeeperRequests /></AdminRoute>} />
               <Route path="/admin/chat-reports" element={<AdminRoute><AdminChatReports /></AdminRoute>} />
