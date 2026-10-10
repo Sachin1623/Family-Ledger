@@ -22,6 +22,12 @@ export interface AlarmClockSchedule {
   intervalDays?: number;
   startDate?: string; // yyyy-mm-dd — required when intervalDays is set; the anchor day for the interval count
   route?: string; // where the ringing screen's "Open FamilyLedger" button deep-links to (e.g. /health/medicines) — see AlarmActivity.openApp()
+  // Which feature owns this alarm ("medicine" / "vaccine"). The phone only lets an alarm ring while
+  // the feature's latest approved list (setApprovedAlarmIds) still contains it.
+  feature?: string;
+  // Last day (yyyy-mm-dd) this alarm may ring; the phone itself silences and removes it after that,
+  // even if the app is never opened again.
+  endDate?: string;
 }
 
 // State of whatever takeover alarm is ringing RIGHT NOW (foreground service up). `ringing: false`
@@ -38,6 +44,7 @@ interface AlarmClockNativePlugin {
   schedule(opts: AlarmClockSchedule): Promise<void>;
   cancel(opts: { id: number }): Promise<void>;
   cancelAll(): Promise<void>;
+  setApprovedAlarms(opts: { feature: string; ids: number[] }): Promise<void>;
   checkBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
   requestBatteryOptimizationExemption(): Promise<{ granted: boolean }>;
   // Currently-ringing controls — so the app can show its own Snooze/Dismiss the whole time an
@@ -70,6 +77,54 @@ export async function cancelAlarm(id: number) {
     await native.cancel({ id });
   } catch (err) {
     console.error('Failed to cancel alarm:', err);
+  }
+}
+
+// A medicine/vaccine alarm that was armed but then lost track of (the app's list of "ids I armed" is
+// kept in localStorage, and overlapping reconcile passes or an app kill mid-pass could leave an armed
+// alarm no list mentions) can't be cancelled by id — and it keeps ringing on its own schedule,
+// which is how a medicine that no longer has an afternoon dose still rang in the afternoon. The
+// NATIVE side, though, remembers every alarm it was ever given, so wiping all of them once is
+// enough to get rid of every such orphan; both reminder features then re-arm exactly what they
+// should have, from current data. Memoised, and awaited by both features at the start of every
+// pass, so it always finishes BEFORE either one arms anything (it can never wipe fresh alarms).
+const SANITIZED_KEY = 'familyledger_alarm_clock_sanitized_v1';
+let sanitizing: Promise<void> | null = null;
+export function ensureAlarmClockSanitized(): Promise<void> {
+  if (!isSupported()) return Promise.resolve();
+  try {
+    if (localStorage.getItem(SANITIZED_KEY)) return Promise.resolve();
+  } catch {
+    // localStorage unavailable — fall through and just do it for this session.
+  }
+  if (!sanitizing) {
+    sanitizing = (async () => {
+      try {
+        await native.cancelAll();
+        try {
+          localStorage.removeItem('familyledger_medicine_reminder_ids');
+          localStorage.removeItem('familyledger_vaccine_alarm_ids');
+          localStorage.setItem(SANITIZED_KEY, '1');
+        } catch {
+          // Not persisted — it'll simply run once more next launch.
+        }
+      } catch (err) {
+        console.error('Failed to sanitize alarm clock:', err);
+        sanitizing = null; // let a later pass try again
+      }
+    })();
+  }
+  return sanitizing;
+}
+
+// Tell the phone which alarms of a feature are CURRENTLY supposed to ring; any other alarm of that
+// feature stops ringing immediately, whatever armed it. Call BEFORE arming the new set.
+export async function setApprovedAlarmIds(feature: string, ids: number[]) {
+  if (!isSupported()) return;
+  try {
+    await native.setApprovedAlarms({ feature, ids });
+  } catch (err) {
+    console.error('Failed to set approved alarms:', err);
   }
 }
 

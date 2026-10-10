@@ -2,7 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Medicine, MedicineDoseTime, isMedicineDueOn, medicineEndDateStr } from './medicines';
 import { toLocalDateString } from './dateUtils';
-import { scheduleAlarm, cancelAlarm } from './alarmClock';
+import { scheduleAlarm, cancelAlarm, ensureAlarmClockSanitized, setApprovedAlarmIds } from './alarmClock';
 
 // Medicine reminders should ring like a real alarm clock, not a plain notification a dose could be
 // missed on — but "how" splits hard by platform, since Android and iOS allow fundamentally
@@ -97,21 +97,31 @@ function ownerPrefix(med: Medicine, currentUid?: string, ownerNames?: Record<str
   return name ? `${name}: ` : '';
 }
 
-export async function scheduleMedicineReminders(medicines: Medicine[], currentUid?: string, ownerNames?: Record<string, string>) {
+// Several places call scheduleMedicineReminders (the app-root scheduler, Medicine Reminders, the
+// Alarms hub) and each call is a multi-await "cancel what I armed last time, then arm what's due now"
+// pass over ONE shared set of native alarms and ONE stored id list. Overlapping passes could leave an
+// alarm armed that no list mentioned any more — it then rang forever, long after its medicine was
+// edited or deleted. So every call goes through this queue (passes never overlap), and a pass that a
+// newer call has already superseded is skipped outright — only the latest data matters.
+let queue: Promise<void> = Promise.resolve();
+let latestSeq = 0;
+
+export function scheduleMedicineReminders(medicines: Medicine[], currentUid?: string, ownerNames?: Record<string, string>): Promise<void> {
+  const seq = ++latestSeq;
+  const run = queue.then(async () => {
+    if (seq !== latestSeq) return;
+    await runSchedule(medicines, currentUid, ownerNames);
+  });
+  queue = run.catch(() => {});
+  return run;
+}
+
+async function runSchedule(medicines: Medicine[], currentUid?: string, ownerNames?: Record<string, string>) {
   if (!Capacitor.isNativePlatform()) return; // no native alarms on web
   const platform = Capacitor.getPlatform();
+  if (platform !== 'android' && platform !== 'ios') return;
   try {
-    const previousIds = readScheduledIds();
-    if (platform === 'android') {
-      // Cancel by id, not a blanket cancel-all — AlarmClock is a shared native plugin, and a
-      // future second feature built on it should never have its alarms wiped out by a medicine
-      // list change.
-      for (const id of previousIds) await cancelAlarm(id);
-    } else if (platform === 'ios') {
-      await cancelIosIds(previousIds);
-    } else {
-      return;
-    }
+    await ensureAlarmClockSanitized();
 
     // A native recurring alarm (Android AlarmClock, iOS's cron-style `on`/`every` trigger) has no
     // built-in expiry — scheduleAlarm() below just means "ring every day/N days/these weekdays",
@@ -227,6 +237,9 @@ export async function scheduleMedicineReminders(medicines: Medicine[], currentUi
       }
     }
 
+    // Work out every Android alarm first (pure), so the full set of ids that are ABOUT to be armed is
+    // known before anything is cancelled or armed.
+    const androidPlans: Parameters<typeof scheduleAlarm>[0][] = [];
     if (platform === 'android') {
       for (const group of androidGroups.values()) {
         // Sorted so the id (and therefore whether this group is treated as "already scheduled" vs
@@ -238,7 +251,7 @@ export async function scheduleMedicineReminders(medicines: Medicine[], currentUi
         const body = group.items
           .map((it) => `${ownerPrefix(it.med, currentUid, ownerNames)}${it.med.name}${it.med.dosage ? ` (${it.med.dosage})` : ''} — ${it.slot.label}`)
           .join('; ');
-        await scheduleAlarm({
+        androidPlans.push({
           id,
           title: group.items.length > 1 ? `Medicine reminder (${group.items.length} due)` : 'Medicine reminder',
           body,
@@ -248,15 +261,36 @@ export async function scheduleMedicineReminders(medicines: Medicine[], currentUi
           intervalDays: group.intervalDays,
           startDate: group.startDate,
           route: '/health/medicines',
+          feature: 'medicine',
+          // The phone silences this alarm itself once every medicine in it has finished its course
+          // (a group is only open-ended if one of its medicines is).
+          endDate: group.items.every((it) => !!medicineEndDateStr(it.med))
+            ? group.items.map((it) => medicineEndDateStr(it.med)!).sort().slice(-1)[0]
+            : '',
         });
       }
     }
 
+    // Cancel what the last pass armed (by id, not a blanket cancel-all — AlarmClock is shared with the
+    // vaccine reminders)...
+    const previousIds = readScheduledIds();
+    if (platform === 'android') {
+      for (const id of previousIds) await cancelAlarm(id);
+    } else {
+      await cancelIosIds(previousIds);
+    }
+
+    // ...record what is ABOUT to be armed BEFORE arming any of it. This list used to be saved only
+    // after every alarm had been scheduled, so a failure part-way (or the app being killed mid-pass)
+    // left real alarms that no stored list mentioned — impossible to cancel later.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(scheduledIds));
+    // ...and tell the phone this is now the ONLY set of medicine alarms allowed to ring.
+    if (platform === 'android') await setApprovedAlarmIds('medicine', scheduledIds);
+
+    for (const plan of androidPlans) await scheduleAlarm(plan);
     if (platform === 'ios' && iosNotifications.length > 0) {
       await LocalNotifications.schedule({ notifications: iosNotifications });
     }
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(scheduledIds));
   } catch (err) {
     console.error('Failed to schedule medicine reminders:', err);
   }

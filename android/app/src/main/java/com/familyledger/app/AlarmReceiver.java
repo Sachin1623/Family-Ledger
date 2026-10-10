@@ -44,6 +44,14 @@ public class AlarmReceiver extends BroadcastReceiver {
         String startDate = intent.getStringExtra(EXTRA_START_DATE);
         String route = intent.getStringExtra(EXTRA_ROUTE);
 
+        // Ring only what the app currently wants (see AlarmScheduler.shouldRing): an alarm that was
+        // cancelled/replaced since it was armed, that the app no longer lists, or that is past its
+        // end date, is removed here and makes no sound — and, being removed, never re-arms either.
+        if (!AlarmScheduler.shouldRing(context, id)) {
+            AlarmScheduler.cancel(context, id);
+            return;
+        }
+
         // Re-arm the NEXT occurrence FIRST, before attempting to ring this one — deliberately
         // unconditional and ahead of the startForegroundService() call below. That call can throw
         // on some OEM builds (background-execution restrictions vary by manufacturer beyond what

@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { scheduleAlarm, cancelAlarm } from './alarmClock';
+import { scheduleAlarm, cancelAlarm, ensureAlarmClockSanitized, setApprovedAlarmIds } from './alarmClock';
 import { VaccineDose, VaccineAppointment, ReminderPrefs, BabyProfile, DEFAULT_REMINDER_PREFS, vaccineAppointmentId } from './vaccinations';
 import { toLocalDateString, parseLocalDate, combineLocalDateAndTime } from './dateUtils';
 
@@ -65,6 +65,8 @@ async function scheduleOneShotAlarm(id: number, title: string, body: string, at:
     intervalDays: ONE_SHOT_INTERVAL_DAYS,
     startDate: toLocalDateString(at),
     route,
+    feature: 'vaccine',
+    endDate: toLocalDateString(at), // a one-shot: it may only ring on its own day
   });
 }
 
@@ -200,6 +202,7 @@ async function runSchedule(
   if (platform !== 'android' && platform !== 'ios') return;
 
   try {
+    await ensureAlarmClockSanitized();
     const route = '/baby-vaccinations';
     const now = new Date();
     const alarmJobs: AlarmJob[] = [];
@@ -335,6 +338,8 @@ async function runSchedule(
     const desiredNotifIds = notifications.map((n) => n.id);
     localStorage.setItem(ANDROID_IDS_KEY, JSON.stringify(desiredAlarmIds));
     localStorage.setItem(NOTIF_IDS_KEY, JSON.stringify(desiredNotifIds));
+    // The phone may ring ONLY these vaccine alarms from now on — set before arming any of them.
+    if (platform === 'android') await setApprovedAlarmIds('vaccine', desiredAlarmIds);
 
     for (const job of alarmJobs) {
       if (job.kind === 'oneShot') {
@@ -345,6 +350,7 @@ async function runSchedule(
           hour: 10, minute: 0, weekdays: [],
           intervalDays: 3, startDate: job.startDate,
           route,
+          feature: 'vaccine',
         });
       }
     }

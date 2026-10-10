@@ -130,7 +130,9 @@ public class AlarmClockPlugin extends Plugin {
             return;
         }
 
-        AlarmScheduler.schedule(getContext(), id, title, body, hour, minute, csv.toString(), intervalDays, startDate, route);
+        String feature = call.getString("feature", "");
+        String endDate = call.getString("endDate", "");
+        AlarmScheduler.schedule(getContext(), id, title, body, hour, minute, csv.toString(), intervalDays, startDate, route, feature, endDate);
         call.resolve();
     }
 
@@ -142,6 +144,29 @@ public class AlarmClockPlugin extends Plugin {
             return;
         }
         AlarmScheduler.cancel(getContext(), id);
+        call.resolve();
+    }
+
+    // The app's current list of alarm ids that should ring for one feature (e.g. "medicine",
+    // "vaccine"); anything registered for that feature but not in the list stops ringing at once.
+    @PluginMethod
+    public void setApprovedAlarms(PluginCall call) {
+        String feature = call.getString("feature", "");
+        JSArray idsArr = call.getArray("ids");
+        if (feature == null || feature.isEmpty()) {
+            call.reject("feature is required");
+            return;
+        }
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        try {
+            if (idsArr != null) {
+                for (int i = 0; i < idsArr.length(); i++) ids.add(String.valueOf(idsArr.getInt(i)));
+            }
+        } catch (JSONException e) {
+            call.reject("Invalid ids array", e);
+            return;
+        }
+        AlarmScheduler.setApproved(getContext(), feature, ids);
         call.resolve();
     }
 

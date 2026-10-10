@@ -35,6 +35,7 @@ import androidx.core.app.NotificationCompat;
 public class AlarmRingingService extends Service {
     static final String CHANNEL_ID = "familyledger_alarms";
     static final String ACTION_STOP = "com.familyledger.app.ACTION_STOP_ALARM";
+    static final String ACTION_SNOOZE = "com.familyledger.app.ACTION_SNOOZE_ALARM";
 
     private MediaPlayer mediaPlayer;
     private Vibrator vibrator;
@@ -54,6 +55,13 @@ public class AlarmRingingService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            stopRinging();
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        // "Snooze" straight from the notification: re-fire once in 10 minutes, then stop this ring.
+        if (intent != null && ACTION_SNOOZE.equals(intent.getAction())) {
+            AlarmScheduler.snoozeOnce(this, currentId, currentTitle, currentBody, currentRoute, 10);
             stopRinging();
             stopSelf();
             return START_NOT_STICKY;
@@ -105,13 +113,29 @@ public class AlarmRingingService extends Service {
         tapIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent tapPendingIntent = PendingIntent.getActivity(this, -id, tapIntent, piFlags);
 
+        // Dismiss / Snooze right on the notification, so a ringing alarm can be dealt with from the
+        // heads-up banner or the shade without opening anything.
+        int actionFlags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
+        Intent stopIntent = new Intent(this, AlarmRingingService.class).setAction(ACTION_STOP);
+        Intent snoozeIntent = new Intent(this, AlarmRingingService.class).setAction(ACTION_SNOOZE);
+        PendingIntent stopAction = PendingIntent.getService(this, 3_000_000 + (id & 0xFFFFF), stopIntent, actionFlags);
+        PendingIntent snoozeAction = PendingIntent.getService(this, 4_000_000 + (id & 0xFFFFF), snoozeIntent, actionFlags);
+
+        // The full text (which medicine, for whom, at what time) shows expanded, not cut to one line,
+        // and on the lock screen too — that is what the alarm is FOR.
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(getApplicationInfo().icon)
             .setContentTitle(title)
             .setContentText(body)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body).setSummaryText("Tap to open"))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setWhen(System.currentTimeMillis())
+            .setShowWhen(true)
             .setContentIntent(tapPendingIntent)
+            .addAction(0, "Dismiss", stopAction)
+            .addAction(0, "Snooze 10 min", snoozeAction)
             .setOngoing(true)
             .setAutoCancel(false);
 

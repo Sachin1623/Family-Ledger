@@ -34,14 +34,15 @@ import { useMedicineDelegators } from '../lib/useMedicineDelegators';
 // that gap the same way it already closed it for the user's own medicines.
 export default function GlobalMedicineReminderScheduler() {
   const { user } = useAuth();
-  const { medicines, ownerNames } = useMedicineDelegators(user?.uid);
+  const { medicines, ownerNames, loaded } = useMedicineDelegators(user?.uid);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !loaded) return;
     scheduleMedicineReminders(medicines, user.uid, ownerNames);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     user?.uid,
+    loaded,
     JSON.stringify(medicines.map((m) => [m.id, m.userId, m.active, m.remindersEnabled, m.times, m.weekdays, m.intervalDays, m.startDate, m.durationMode, m.endDate, m.dayCount])),
     ownerNames,
   ]);

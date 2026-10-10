@@ -1,13 +1,17 @@
 package com.familyledger.app;
 
 import android.app.Activity;
-import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.Gravity;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import android.widget.TextView;
 
 /**
@@ -35,18 +39,18 @@ public class AlarmActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true);
             setTurnScreenOn(true);
-            KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-            if (km != null) km.requestDismissKeyguard(this, null);
         } else {
             getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                     | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                    | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             );
         }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         setContentView(R.layout.activity_alarm);
+        // A compact card at the top of whatever is on screen — the window is only as tall as the card.
+        getWindow().setGravity(Gravity.TOP);
+        getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         bind(getIntent());
 
         findViewById(R.id.alarmDismissButton).setOnClickListener(v -> {
@@ -77,7 +81,10 @@ public class AlarmActivity extends Activity {
         String body = intent.getStringExtra(AlarmReceiver.EXTRA_BODY);
         route = intent.getStringExtra(AlarmReceiver.EXTRA_ROUTE);
         ((TextView) findViewById(R.id.alarmTitle)).setText(title != null ? title : "Reminder");
-        ((TextView) findViewById(R.id.alarmBody)).setText(body != null ? body : "");
+        // One line per item ("A — Morning; B — Evening" reads as two lines), so it is clear at a
+        // glance exactly which medicine(s) / what is ringing.
+        ((TextView) findViewById(R.id.alarmBody)).setText(body != null ? body.replace("; ", "\n") : "");
+        ((TextView) findViewById(R.id.alarmTime)).setText(new SimpleDateFormat("h:mm a", Locale.getDefault()).format(new Date()));
         if (intent.getBooleanExtra(EXTRA_STOP_ON_OPEN, false)) {
             stopRingingService();
         }
@@ -96,7 +103,7 @@ public class AlarmActivity extends Activity {
     private void snooze() {
         stopRingingService();
         String title = ((TextView) findViewById(R.id.alarmTitle)).getText().toString();
-        String body = ((TextView) findViewById(R.id.alarmBody)).getText().toString();
+        String body = ((TextView) findViewById(R.id.alarmBody)).getText().toString().replace("\n", "; ");
         AlarmScheduler.snoozeOnce(this, alarmId, title, body, route, 10);
     }
 

@@ -70,5 +70,16 @@ export function useMedicineDelegators(uid: string | undefined) {
     return () => { cancelled = true; };
   }, [delegatorUids]);
 
-  return { delegatorUids, medicines, ownerNames };
+  // False until every query the medicine list depends on has produced a first result — acting on the
+  // empty first render (e.g. re-arming alarms from "no medicines") would wipe alarms that are fine.
+  const loaded =
+    !!uid
+    && membershipsValue !== undefined
+    && (groupIds.length === 0 || delegatedToMeByGroupValue !== undefined)
+    && delegatedToMeByFriendValue !== undefined
+    && myAcceptedMedicineInvitesValue !== undefined
+    && myMedicinesValue !== undefined
+    && (delegatorUids.length === 0 || delegatedMedicinesValue !== undefined);
+
+  return { delegatorUids, medicines, ownerNames, loaded };
 }

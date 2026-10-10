@@ -11,6 +11,9 @@ import java.util.Calendar;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -27,8 +30,8 @@ class AlarmScheduler {
     private static final String PREFS = "familyledger_alarm_clock";
     private static final String KEY_IDS = "ids";
 
-    static void schedule(Context context, int id, String title, String body, int hour, int minute, String weekdaysCsv, int intervalDays, String startDate, String route) {
-        persist(context, id, title, body, hour, minute, weekdaysCsv, intervalDays, startDate, route);
+    static void schedule(Context context, int id, String title, String body, int hour, int minute, String weekdaysCsv, int intervalDays, String startDate, String route, String feature, String endDate) {
+        persist(context, id, title, body, hour, minute, weekdaysCsv, intervalDays, startDate, route, feature, endDate);
         scheduleNext(context, id, title, body, hour, minute, weekdaysCsv, intervalDays, startDate, route);
     }
 
@@ -79,6 +82,57 @@ class AlarmScheduler {
         am.setAlarmClock(new AlarmManager.AlarmClockInfo(trigger, showIntent), pi);
     }
 
+    // ---- "Only ring what the app currently wants" ----------------------------------------------
+    // Every alarm is registered here (persist) when it's scheduled and unregistered when it's
+    // cancelled, and a fired alarm is checked against that registry — plus the per-feature
+    // "approved" list the app pushes whenever it recomputes what should be ringing, plus the
+    // alarm's own end date — BEFORE it makes any sound. So an alarm the app has since cancelled,
+    // replaced, or let expire can never ring, even if a stray PendingIntent for it is still armed
+    // (that is exactly how a medicine with no afternoon dose rang at 4pm).
+    private static final String KEY_APPROVED_PREFIX = "approved_";
+    private static final String KEY_APPROVED_INIT_PREFIX = "approved_init_";
+
+    static JSONObject persistedAlarm(Context context, int id) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String json = prefs.getString("alarm_" + id, null);
+        if (json == null) return null;
+        try {
+            return new JSONObject(json);
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    static boolean shouldRing(Context context, int id) {
+        JSONObject alarm = persistedAlarm(context, id);
+        if (alarm == null) return false; // not registered (cancelled/replaced) — must not ring
+
+        String endDate = alarm.optString("endDate", "");
+        if (!endDate.isEmpty()) {
+            String today = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+            if (today.compareTo(endDate) > 0) return false; // past its last day
+        }
+
+        String feature = alarm.optString("feature", "");
+        if (!feature.isEmpty()) {
+            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            if (prefs.getBoolean(KEY_APPROVED_INIT_PREFIX + feature, false)) {
+                Set<String> approved = prefs.getStringSet(KEY_APPROVED_PREFIX + feature, new HashSet<>());
+                if (!approved.contains(String.valueOf(id))) return false; // app no longer wants this one
+            }
+        }
+        return true;
+    }
+
+    /** The app's current list of ids that should ring for one feature (replaces the previous list). */
+    static void setApproved(Context context, String feature, Set<String> ids) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit()
+            .putStringSet(KEY_APPROVED_PREFIX + feature, new HashSet<>(ids))
+            .putBoolean(KEY_APPROVED_INIT_PREFIX + feature, true)
+            .apply();
+    }
+
     static void cancel(Context context, int id) {
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         Intent intent = new Intent(context, AlarmReceiver.class);
@@ -104,6 +158,10 @@ class AlarmScheduler {
         for (int id : getAllIds(context)) {
             String json = prefs.getString("alarm_" + id, null);
             if (json == null) continue;
+            if (!shouldRing(context, id)) {
+                removePersisted(context, id);
+                continue;
+            }
             try {
                 JSONObject obj = new JSONObject(json);
                 scheduleNext(
@@ -150,7 +208,7 @@ class AlarmScheduler {
         return PendingIntent.getActivity(context, 2_000_000_000 + id, intent, flags);
     }
 
-    private static void persist(Context context, int id, String title, String body, int hour, int minute, String weekdaysCsv, int intervalDays, String startDate, String route) {
+    private static void persist(Context context, int id, String title, String body, int hour, int minute, String weekdaysCsv, int intervalDays, String startDate, String route, String feature, String endDate) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         try {
             JSONObject obj = new JSONObject();
@@ -162,6 +220,8 @@ class AlarmScheduler {
             obj.put("intervalDays", intervalDays);
             obj.put("startDate", startDate == null ? "" : startDate);
             obj.put("route", route == null ? "" : route);
+            obj.put("feature", feature == null ? "" : feature);
+            obj.put("endDate", endDate == null ? "" : endDate);
             Set<String> ids = new HashSet<>(prefs.getStringSet(KEY_IDS, new HashSet<>()));
             ids.add(String.valueOf(id));
             prefs.edit().putString("alarm_" + id, obj.toString()).putStringSet(KEY_IDS, ids).apply();
