@@ -2020,6 +2020,111 @@ async function getUserTimezone(db: Firestore, uid: string | undefined | null): P
   }
 }
 
+// ---- Cron performance helpers (used only by the /api/cron/send-reminders processors) ----
+// The backend (us-central1) and Firestore (asia-southeast1) are far apart, so every round trip is
+// ~230 ms. The processors below therefore (a) query only what is DUE instead of reading whole
+// collections, (b) run independent items concurrently, and (c) share one per-run cache for user
+// timezones / push-token docs so the same user is never fetched twice in a run.
+
+// Runs `fn` over `items` with at most `limit` in flight. Errors must be handled inside `fn`.
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const idx = next++;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
+
+const CRON_CONCURRENCY = 10;
+
+interface CronCtx {
+  tz(uid: string | undefined | null): Promise<string | null>;
+  tokens(uids: string[], prefField: string): Promise<string[]>;
+  // Loads many users' docs in one batched round trip (db.getAll) so later tz()/tokens() calls hit cache.
+  prefetch(uids: Array<string | undefined | null>, what: 'tz' | 'private'): Promise<void>;
+}
+
+function makeCronCtx(db: Firestore): CronCtx {
+  const tzCache = new Map<string, Promise<string | null>>();
+  const privCache = new Map<string, Promise<FirebaseFirestore.DocumentData | null>>();
+  const tzRef = (uid: string) => db.collection('users').doc(uid);
+  const privRef = (uid: string) => db.collection('users').doc(uid).collection('private').doc('info');
+
+  const tz = (uid: string | undefined | null) => {
+    if (!uid) return Promise.resolve(null);
+    let p = tzCache.get(uid);
+    if (!p) {
+      p = getUserTimezone(db, uid);
+      tzCache.set(uid, p);
+    }
+    return p;
+  };
+  const priv = (uid: string) => {
+    let p = privCache.get(uid);
+    if (!p) {
+      p = privRef(uid).get().then((s) => (s.exists ? s.data()! : null));
+      privCache.set(uid, p);
+    }
+    return p;
+  };
+
+  return {
+    tz,
+    async tokens(uids, prefField) {
+      const docs = await Promise.all(Array.from(new Set(uids)).map((uid) => priv(uid)));
+      const out: string[] = [];
+      docs.forEach((data) => {
+        if (!data || data[prefField] === false) return;
+        if (Array.isArray(data.fcmTokens)) out.push(...data.fcmTokens);
+      });
+      return Array.from(new Set(out));
+    },
+    async prefetch(uids, what) {
+      const cache = what === 'tz' ? tzCache : privCache;
+      const wanted = Array.from(new Set(uids.filter((u): u is string => !!u && !cache.has(u))));
+      for (let i = 0; i < wanted.length; i += 300) {
+        const chunk = wanted.slice(i, i + 300);
+        const all = db.getAll(...chunk.map((uid) => (what === 'tz' ? tzRef(uid) : privRef(uid))));
+        chunk.forEach((uid, idx) => {
+          if (what === 'tz') {
+            tzCache.set(uid, all.then((s) => (s[idx].exists ? s[idx].data()!.timezone || null : null)).catch(() => null));
+          } else {
+            // If the batched read fails, fall back to a direct read for this user (and never leave a
+            // rejected promise sitting unobserved in the cache).
+            privCache.set(uid, all.then((s) => (s[idx].exists ? s[idx].data()! : null)).catch(() => privRef(uid).get().then((s) => (s.exists ? s.data()! : null))));
+          }
+        });
+        await all.catch(() => undefined);
+      }
+    },
+  };
+}
+
+// Fetches only the docs that are due. Tries the efficient composite query (equality + range) first;
+// if that index isn't built yet it falls back to a range-only query (single-field indexes are
+// automatic) and applies the equality filter in memory, so behaviour is identical either way.
+async function queryDue(
+  db: Firestore,
+  collection: string,
+  eq: { field: string; value: unknown } | null,
+  rangeField: string,
+  upTo: string,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  const col = db.collection(collection);
+  try {
+    const q = eq ? col.where(eq.field, '==', eq.value).where(rangeField, '<=', upTo) : col.where(rangeField, '<=', upTo);
+    return (await q.get()).docs;
+  } catch (err: any) {
+    if (!eq || (err?.code !== 9 && !/index/i.test(String(err?.message)))) throw err;
+    console.warn(`queryDue: composite index missing for ${collection}(${eq.field},${rangeField}); using fallback`);
+    const snap = await col.where(rangeField, '<=', upTo).get();
+    return snap.docs.filter((d) => d.data()[eq.field] === eq.value);
+  }
+}
+
 // Processes due recurring expenses: creates the expense (auto-splitting equally if the
 // group has splitEnabled, matching the Add Expense form's default), notifies the group,
 // and advances nextRunDate to the following occurrence.
@@ -2028,26 +2133,28 @@ async function getUserTimezone(db: Firestore, uid: string | undefined | null): P
 // (see /api/recurring-confirm/:id/{accept,decline} and RecurringApprovals.tsx). The schedule
 // still advances immediately regardless of how/whether the user responds, so a slow response
 // doesn't push every future occurrence back.
-async function processRecurringExpenses(db: Firestore): Promise<number> {
+async function processRecurringExpenses(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
-  const snap = await db.collection('recurringExpenses').where('active', '==', true).get();
+  const dueDocs = await queryDue(db, 'recurringExpenses', { field: 'active', value: true }, 'nextRunDate', now.toISOString());
   let processed = 0;
+  await ctx.prefetch(dueDocs.map((d) => d.data().userId), 'private');
+  await ctx.prefetch(dueDocs.filter((d) => !d.data().timezone).map((d) => d.data().userId), 'tz');
 
-  for (const ruleDoc of snap.docs) {
+  await mapLimit(dueDocs, CRON_CONCURRENCY, async (ruleDoc) => {
     const rule = ruleDoc.data();
-    if (new Date(rule.nextRunDate) > now) continue;
+    if (new Date(rule.nextRunDate) > now) return;
 
     try {
       const groupRef = db.collection('groups').doc(rule.groupId);
       const groupSnap = await groupRef.get();
       if (!groupSnap.exists) {
         await ruleDoc.ref.update({ active: false });
-        continue;
+        return;
       }
       const groupData = groupSnap.data()!;
       const amount = rule.amount;
       const description = rule.description || `Recurring: ${rule.category}`;
-      const ruleTimeZone = rule.timezone || (await getUserTimezone(db, rule.userId)) || 'UTC';
+      const ruleTimeZone = rule.timezone || (await ctx.tz(rule.userId)) || 'UTC';
       const todayIso = todayDateStringInTimeZone(ruleTimeZone);
 
       const isIncome = rule.type === 'income';
@@ -2077,7 +2184,7 @@ async function processRecurringExpenses(db: Firestore): Promise<number> {
       // committed and any live listener on pendingRecurringExpenses will already see it. See
       // processRecurringReminderNudges below for the repeating follow-up, which re-queries the
       // collection itself rather than assuming anything about what's already on screen.
-      const tokens = await collectPushTokens(db, [rule.userId], 'notificationsEnabled');
+      const tokens = await ctx.tokens([rule.userId], 'notificationsEnabled');
       await sendPush(
         tokens,
         isIncome ? `Confirm recurring income` : `Confirm recurring expense`,
@@ -2108,7 +2215,7 @@ async function processRecurringExpenses(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processRecurringExpenses failed for rule ${ruleDoc.id}:`, err);
     }
-  }
+  });
 
   return processed;
 }
@@ -2120,7 +2227,7 @@ async function processRecurringExpenses(db: Firestore): Promise<number> {
 // durably sitting in that collection right now — the fix for these notifications firing before
 // the confirmation screen actually has anything to show. One push per user per cycle (not one per
 // item) so someone with several pending items gets a single combined nudge, not a burst.
-async function processRecurringReminderNudges(db: Firestore): Promise<number> {
+async function processRecurringReminderNudges(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
   const now = Date.now();
   const snap = await db.collection('pendingRecurringExpenses').where('status', '==', 'pending').get();
@@ -2134,15 +2241,17 @@ async function processRecurringReminderNudges(db: Firestore): Promise<number> {
   });
 
   let nudged = 0;
-  for (const [userId, items] of byUser) {
+  const dueUsers = Array.from(byUser.entries()).filter(([, items]) => {
     // Gate on the STALEST item in this user's pending set, so a newly-added item doesn't get its
     // own separate 3-hour clock — everything due for this user gets nudged together, on the
     // original item's schedule.
     const stalestAt = Math.min(...items.map((it) => new Date(it.lastReminderAt).getTime()));
-    if (now - stalestAt < THREE_HOURS_MS) continue;
-
+    return now - stalestAt >= THREE_HOURS_MS;
+  });
+  await ctx.prefetch(dueUsers.map(([uid]) => uid), 'private');
+  await mapLimit(dueUsers, CRON_CONCURRENCY, async ([userId, items]) => {
     try {
-      const tokens = await collectPushTokens(db, [userId], 'notificationsEnabled');
+      const tokens = await ctx.tokens([userId], 'notificationsEnabled');
       const title = items.length === 1 ? 'Confirm recurring expense' : `${items.length} recurring expenses need confirming`;
       const body =
         items.length === 1
@@ -2160,7 +2269,7 @@ async function processRecurringReminderNudges(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processRecurringReminderNudges failed for user ${userId}:`, err);
     }
-  }
+  });
 
   return nudged;
 }
@@ -2168,17 +2277,19 @@ async function processRecurringReminderNudges(db: Firestore): Promise<number> {
 // Processes due expense reminders: sends a push (never creates an expense) carrying whatever
 // group/category/amount was preset, then advances nextRunDate — or, for a one-time reminder
 // (oneTime: true), just deactivates it instead, since it isn't meant to recur.
-async function processExpenseReminders(db: Firestore): Promise<number> {
+async function processExpenseReminders(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
-  const snap = await db.collection('expenseReminders').where('active', '==', true).get();
+  const dueDocs = await queryDue(db, 'expenseReminders', { field: 'active', value: true }, 'nextRunDate', now.toISOString());
   let sentCount = 0;
+  await ctx.prefetch(dueDocs.map((d) => d.data().userId), 'private');
+  await ctx.prefetch(dueDocs.filter((d) => !d.data().timezone && !d.data().oneTime).map((d) => d.data().userId), 'tz');
 
-  for (const reminderDoc of snap.docs) {
+  await mapLimit(dueDocs, CRON_CONCURRENCY, async (reminderDoc) => {
     const reminder = reminderDoc.data();
-    if (new Date(reminder.nextRunDate) > now) continue;
+    if (new Date(reminder.nextRunDate) > now) return;
 
     try {
-      const tokens = await collectPushTokens(db, [reminder.userId], 'notificationsEnabled');
+      const tokens = await ctx.tokens([reminder.userId], 'notificationsEnabled');
       const data: Record<string, string> = { type: 'expense_reminder' };
       if (reminder.presetGroupId) data.groupId = reminder.presetGroupId;
       if (reminder.presetCategory) data.category = reminder.presetCategory;
@@ -2203,14 +2314,14 @@ async function processExpenseReminders(db: Firestore): Promise<number> {
         // instead of silently marking it done when nothing reached the user.
         if (sent > 0) await reminderDoc.ref.update({ active: false });
       } else {
-        const reminderTimeZone = reminder.timezone || (await getUserTimezone(db, reminder.userId)) || 'UTC';
+        const reminderTimeZone = reminder.timezone || (await ctx.tz(reminder.userId)) || 'UTC';
         const nextRunDate = fakeLocalToRealIso(nextOccurrenceAfter(reminder as FrequencyConfig, nowInTimeZone(reminderTimeZone)), reminderTimeZone);
         await reminderDoc.ref.update({ nextRunDate });
       }
     } catch (err) {
       console.error(`processExpenseReminders failed for reminder ${reminderDoc.id}:`, err);
     }
-  }
+  });
 
   return sentCount;
 }
@@ -2280,19 +2391,21 @@ async function processPolicyRenewalReminders(db: Firestore): Promise<number> {
 // server delivery is only needed here because it's the only thing that can reach a device other
 // than the one that set the reminder. Marks reminderSent so it doesn't fire again; editing the
 // to-do's reminder time clears that flag (ToDoList.tsx), letting it fire again.
-async function processTodoReminders(db: Firestore): Promise<number> {
+async function processTodoReminders(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
-  const snap = await db.collection('todos').where('done', '==', false).get();
+  const candidates = await queryDue(db, 'todos', { field: 'done', value: false }, 'reminderAt', now.toISOString());
+  const dueDocs = candidates.filter((d) => {
+    const t = d.data();
+    return !!t.groupId && !!t.reminderAt && !t.reminderSent && new Date(t.reminderAt) <= now;
+  });
   let sentCount = 0;
+  await ctx.prefetch(dueDocs.map((d) => d.data().userId), 'private');
 
-  for (const todoDoc of snap.docs) {
+  await mapLimit(dueDocs, CRON_CONCURRENCY, async (todoDoc) => {
     const todo = todoDoc.data();
-    if (!todo.groupId) continue;
-    if (!todo.reminderAt || todo.reminderSent) continue;
-    if (new Date(todo.reminderAt) > now) continue;
 
     try {
-      const tokens = await collectPushTokens(db, [todo.userId], 'notificationsEnabled');
+      const tokens = await ctx.tokens([todo.userId], 'notificationsEnabled');
       const sent = await sendPush(tokens, 'To-Do reminder', todo.text, { type: 'todo_reminder', todoId: todoDoc.id });
       await logFeedActivity(db, {
         userId: todo.userId, type: 'todo_reminder', description: todo.text,
@@ -2308,7 +2421,7 @@ async function processTodoReminders(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processTodoReminders failed for todo ${todoDoc.id}:`, err);
     }
-  }
+  });
 
   return sentCount;
 }
@@ -2323,18 +2436,20 @@ async function processTodoReminders(db: Firestore): Promise<number> {
 // recurring expenses, this deliberately sends no push: a daily/weekly habit would otherwise spam
 // a notification every single occurrence, when the point of a habit tracker is a passive visual,
 // not a nag. `recurringActive` lets the owner pause a habit without losing its schedule/history.
-async function processRecurringTodos(db: Firestore): Promise<number> {
+async function processRecurringTodos(db: Firestore, habitDocs: FirebaseFirestore.QueryDocumentSnapshot[], ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
-  const snap = await db.collection('todos').where('recurring', '==', true).get();
+  const dueDocs = habitDocs.filter((d) => {
+    const t = d.data();
+    return t.recurringActive !== false && !!t.nextRunDate && new Date(t.nextRunDate) <= now;
+  });
   let processed = 0;
+  await ctx.prefetch(dueDocs.filter((d) => !d.data().timezone).map((d) => d.data().userId), 'tz');
 
-  for (const todoDoc of snap.docs) {
+  await mapLimit(dueDocs, CRON_CONCURRENCY, async (todoDoc) => {
     const todo = todoDoc.data();
-    if (todo.recurringActive === false) continue;
-    if (!todo.nextRunDate || new Date(todo.nextRunDate) > now) continue;
 
     try {
-      const timeZone = todo.timezone || (await getUserTimezone(db, todo.userId)) || 'UTC';
+      const timeZone = todo.timezone || (await ctx.tz(todo.userId)) || 'UTC';
       const dueDateKey = dateStringInTimeZone(new Date(todo.nextRunDate), timeZone);
       const nextRunDate = fakeLocalToRealIso(nextOccurrenceAfter(todo as FrequencyConfig, nowInTimeZone(timeZone)), timeZone);
 
@@ -2352,7 +2467,7 @@ async function processRecurringTodos(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processRecurringTodos failed for todo ${todoDoc.id}:`, err);
     }
-  }
+  });
 
   return processed;
 }
@@ -2364,22 +2479,24 @@ async function processRecurringTodos(db: Firestore): Promise<number> {
 // conditions — "occurrence about to become due" vs "occurrence now due" — briefly overlap in the
 // last few minutes before nextRunDate, hence the `nextRunDate > now` guard, so a slow cron tick
 // can't send the advance reminder AND the (silent) reset in the same run for one occurrence).
-async function processHabitReminders(db: Firestore): Promise<number> {
+async function processHabitReminders(db: Firestore, habitDocs: FirebaseFirestore.QueryDocumentSnapshot[], ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
-  const snap = await db.collection('todos').where('recurring', '==', true).get();
-  let sentCount = 0;
-
-  for (const todoDoc of snap.docs) {
-    const todo = todoDoc.data();
-    if (todo.recurringActive === false) continue;
-    if (!todo.reminderOffsetMinutes || !todo.nextRunDate || todo.habitReminderSent) continue;
+  const dueDocs = habitDocs.filter((d) => {
+    const todo = d.data();
+    if (todo.recurringActive === false) return false;
+    if (!todo.reminderOffsetMinutes || !todo.nextRunDate || todo.habitReminderSent) return false;
     const dueAt = new Date(todo.nextRunDate);
-    if (dueAt <= now) continue; // already due — processRecurringTodos owns this occurrence now
-    const triggerAt = new Date(dueAt.getTime() - todo.reminderOffsetMinutes * 60000);
-    if (triggerAt > now) continue;
+    if (dueAt <= now) return false; // already due — processRecurringTodos owns this occurrence now
+    return new Date(dueAt.getTime() - todo.reminderOffsetMinutes * 60000) <= now;
+  });
+  let sentCount = 0;
+  await ctx.prefetch(dueDocs.map((d) => d.data().userId), 'private');
+
+  await mapLimit(dueDocs, CRON_CONCURRENCY, async (todoDoc) => {
+    const todo = todoDoc.data();
 
     try {
-      const tokens = await collectPushTokens(db, [todo.userId], 'notificationsEnabled');
+      const tokens = await ctx.tokens([todo.userId], 'notificationsEnabled');
       const sent = await sendPush(tokens, 'Habit reminder', todo.text, { type: 'todo_reminder', todoId: todoDoc.id });
       if (sent > 0) {
         sentCount++;
@@ -2390,7 +2507,7 @@ async function processHabitReminders(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processHabitReminders failed for todo ${todoDoc.id}:`, err);
     }
-  }
+  });
 
   return sentCount;
 }
@@ -2412,19 +2529,29 @@ async function processHabitReminders(db: Firestore): Promise<number> {
 const MEDICINE_MISSED_GRACE_MINUTES = 45;
 const MEDICINE_MISSED_STALE_MINUTES = MEDICINE_MISSED_GRACE_MINUTES + 180;
 
-async function processMissedMedicineDoses(db: Firestore): Promise<number> {
+async function processMissedMedicineDoses(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   let sentCount = 0;
   const snap = await db.collection('medicines').where('active', '==', true).get();
+  const medDocs = snap.docs.filter((d) => Array.isArray(d.data().times) && d.data().times.length > 0);
+  // One batched read for every owner's timezone, instead of one round trip per medicine.
+  await ctx.prefetch(medDocs.map((d) => d.data().userId), 'tz');
+  // Delegate lookups only happen for a medicine that actually has a slot inside the alert window,
+  // and each owner is resolved at most once per run.
+  const delegateCache = new Map<string, Promise<string[]>>();
+  const delegatesOf = (ownerUid: string) => {
+    let p = delegateCache.get(ownerUid);
+    if (!p) {
+      p = resolveMedicineDelegateUids(db, ownerUid);
+      delegateCache.set(ownerUid, p);
+    }
+    return p;
+  };
 
-  for (const medDoc of snap.docs) {
+  await mapLimit(medDocs, CRON_CONCURRENCY, async (medDoc) => {
     const med = medDoc.data();
-    if (!Array.isArray(med.times) || med.times.length === 0) continue;
-    const delegateUids = await resolveMedicineDelegateUids(db, med.userId);
-    const hasNotifyTarget = !!med.groupId || (Array.isArray(med.sharedFriendUids) && med.sharedFriendUids.length > 0) || delegateUids.length > 0;
-    if (!hasNotifyTarget) continue;
 
     try {
-      const tz = (await getUserTimezone(db, med.userId)) || 'UTC';
+      const tz = (await ctx.tz(med.userId)) || 'UTC';
       const nowLocal = nowInTimeZone(tz);
       const pad = (n: number) => String(n).padStart(2, '0');
       const dateStr = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth() + 1)}-${pad(nowLocal.getDate())}`;
@@ -2432,14 +2559,14 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
       // Inline mirror of isMedicineDueOn (src/lib/medicines.ts) — duplicated deliberately, same
       // reasoning as every other client/server logic split in this file (see rummy.ts's header
       // comment): server.ts and the client bundle don't share a module graph.
-      if (dateStr < med.startDate) continue;
-      if (med.durationMode === 'endDate' && med.endDate && dateStr > med.endDate) continue;
+      if (dateStr < med.startDate) return;
+      if (med.durationMode === 'endDate' && med.endDate && dateStr > med.endDate) return;
       if (med.durationMode === 'dayCount' && med.dayCount) {
         const [y, mo, d] = String(med.startDate).split('-').map(Number);
         const end = new Date(y, mo - 1, d);
         end.setDate(end.getDate() + med.dayCount - 1);
         const endStr = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`;
-        if (dateStr > endStr) continue;
+        if (dateStr > endStr) return;
       }
       // intervalDays (e.g. "alternate days" = 2) takes priority over weekdays when set — same
       // mutual-exclusivity rule as isMedicineDueOn's own intervalDays comment in medicines.ts.
@@ -2448,12 +2575,12 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
         const start = new Date(sy, sm - 1, sd);
         const today = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate());
         const daysSince = Math.round((today.getTime() - start.getTime()) / 86400000);
-        if (daysSince < 0 || daysSince % med.intervalDays !== 0) continue;
+        if (daysSince < 0 || daysSince % med.intervalDays !== 0) return;
       } else {
         const weekdays: number[] = Array.isArray(med.weekdays) ? med.weekdays : [];
         if (weekdays.length > 0 && weekdays.length < 7) {
           const weekday = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate()).getDay();
-          if (!weekdays.includes(weekday)) continue;
+          if (!weekdays.includes(weekday)) return;
         }
       }
 
@@ -2464,6 +2591,10 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
         const [h, mi] = String(slot.time).split(':').map(Number);
         const minutesLate = nowMinutesOfDay - (h * 60 + mi);
         if (minutesLate < MEDICINE_MISSED_GRACE_MINUTES || minutesLate > MEDICINE_MISSED_STALE_MINUTES) continue;
+
+        const delegateUids = await delegatesOf(med.userId);
+        const hasNotifyTarget = !!med.groupId || (Array.isArray(med.sharedFriendUids) && med.sharedFriendUids.length > 0) || delegateUids.length > 0;
+        if (!hasNotifyTarget) return;
 
         const logId = `${med.userId}_${medDoc.id}_${slot.id}_${dateStr}`;
         const alertId = `${medDoc.id}_${slot.id}_${dateStr}`;
@@ -2484,7 +2615,7 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
 
         const recipients = Array.from(notifyUids);
         const contextLabel = `${med.name} — ${slot.label}`;
-        const tokens = await collectPushTokens(db, recipients, 'notificationsEnabled');
+        const tokens = await ctx.tokens(recipients, 'notificationsEnabled');
         const sent = await sendPush(
           tokens,
           'Missed medicine dose',
@@ -2509,7 +2640,7 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processMissedMedicineDoses failed for medicine ${medDoc.id}:`, err);
     }
-  }
+  });
 
   return sentCount;
 }
@@ -2521,13 +2652,31 @@ async function processMissedMedicineDoses(db: Firestore): Promise<number> {
 // groups with no budget history at all (first month ever) get nudged, since everyone else's
 // budget just carried forward automatically. Any member can set it, so all members are
 // notified — matches the app's "any member can act on the group" pattern (same as inviting).
-async function processBudgetReminders(db: Firestore): Promise<number> {
+async function processBudgetReminders(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const realNow = new Date(); // a true instant — only for elapsed-time math below, never calendar math
   const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
   let remindersSent = 0;
 
   const groupsSnap = await db.collection('groups').get();
+  // Fast path for the (overwhelmingly common) "budget already set this month" case: read every
+  // creator's timezone and every group's current-month budget doc in a couple of batched round
+  // trips, and only fall into the per-group slow path below for groups that really need work.
+  await ctx.prefetch(groupsSnap.docs.map((d) => d.data().createdBy), 'tz');
+  const monthKeyOf = new Map<string, string>();
   for (const groupDoc of groupsSnap.docs) {
+    const groupTimeZone = (await ctx.tz(groupDoc.data().createdBy)) || 'UTC';
+    monthKeyOf.set(groupDoc.id, todayDateStringInTimeZone(groupTimeZone).slice(0, 7));
+  }
+  const needsWork: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  for (let i = 0; i < groupsSnap.docs.length; i += 300) {
+    const chunk = groupsSnap.docs.slice(i, i + 300);
+    const budgetSnaps = await db.getAll(...chunk.map((g) => db.collection('groupBudgets').doc(`${g.id}_${monthKeyOf.get(g.id)}`)));
+    chunk.forEach((g, idx) => {
+      if (!budgetSnaps[idx].exists) needsWork.push(g);
+    });
+  }
+
+  await mapLimit(needsWork, CRON_CONCURRENCY, async (groupDoc) => {
     const groupId = groupDoc.id;
     const groupData = groupDoc.data();
 
@@ -2536,10 +2685,7 @@ async function processBudgetReminders(db: Firestore): Promise<number> {
       // there's no single objectively-correct zone if members are scattered across timezones —
       // the group creator's zone is the most reasonable single choice, falling back to UTC for
       // groups from before per-user timezone capture existed.
-      const groupTimeZone = (await getUserTimezone(db, groupData.createdBy)) || 'UTC';
-      const monthKey = todayDateStringInTimeZone(groupTimeZone).slice(0, 7);
-      const budgetSnap = await db.collection('groupBudgets').doc(`${groupId}_${monthKey}`).get();
-      if (budgetSnap.exists) continue; // Already set for this month — nothing to nudge.
+      const monthKey = monthKeyOf.get(groupId)!;
 
       // No doc for this month yet — before nudging, check whether an earlier month's budget
       // should just carry forward. Filtering by `groupId` only (no `orderBy`) avoids needing a
@@ -2560,20 +2706,20 @@ async function processBudgetReminders(db: Firestore): Promise<number> {
           createdAt: new Date().toISOString(),
           carriedForward: true,
         });
-        continue; // Budget continued automatically — no "please set a budget" nudge needed.
+        return; // Budget continued automatically — no "please set a budget" nudge needed.
       }
 
       const lastReminderMonth = groupData.lastBudgetReminderMonth;
       const lastReminderAt = groupData.lastBudgetReminderAt ? new Date(groupData.lastBudgetReminderAt).getTime() : 0;
       const isNewMonth = lastReminderMonth !== monthKey;
       const dueForWeeklyNudge = realNow.getTime() - lastReminderAt >= ONE_WEEK;
-      if (!isNewMonth && !dueForWeeklyNudge) continue;
+      if (!isNewMonth && !dueForWeeklyNudge) return;
 
       const membersSnap = await db.collection('members').where('groupId', '==', groupId).get();
       const memberUids = membersSnap.docs.map((d) => d.data().userId);
-      if (memberUids.length === 0) continue;
+      if (memberUids.length === 0) return;
 
-      const tokens = await collectPushTokens(db, memberUids, 'notificationsEnabled');
+      const tokens = await ctx.tokens(memberUids, 'notificationsEnabled');
       const budgetBody = isNewMonth
         ? `A new month has started — set a spending budget for "${groupData.name}".`
         : `Still no budget set for "${groupData.name}" this month.`;
@@ -2598,7 +2744,7 @@ async function processBudgetReminders(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processBudgetReminders failed for group ${groupId}:`, err);
     }
-  }
+  });
 
   return remindersSent;
 }
@@ -2615,17 +2761,28 @@ function advanceInstallmentDueDate(current: Date, frequency: 'weekly' | 'monthly
   return next;
 }
 
-async function processLoanReminders(db: Firestore): Promise<number> {
+async function processLoanReminders(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
-  const snap = await db.collection('loanContacts').get();
+  const nowIso = now.toISOString();
+  // A contact can be due for any of three independent reasons; fetch each (range-only, so only the
+  // automatic single-field indexes are needed), merge by doc id, then run the original checks.
+  const [ownerDue, counterpartyDue, installmentDue] = await Promise.all([
+    queryDue(db, 'loanContacts', null, 'ownerReminderAt', nowIso),
+    queryDue(db, 'loanContacts', null, 'counterpartyReminderAt', nowIso),
+    queryDue(db, 'loanContacts', null, 'installmentPlan.nextDueDate', nowIso),
+  ]);
+  const merged = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  [...ownerDue, ...counterpartyDue, ...installmentDue].forEach((d) => merged.set(d.id, d));
+  const contacts = Array.from(merged.values());
   let sentCount = 0;
+  await ctx.prefetch(contacts.flatMap((d) => [d.data().ownerId, d.data().counterpartyUserId]), 'private');
 
-  for (const contactDoc of snap.docs) {
+  await mapLimit(contacts, CRON_CONCURRENCY, async (contactDoc) => {
     const contact = contactDoc.data();
     try {
       // Owner's own reminder about this contact.
       if (contact.ownerReminderAt && !contact.ownerReminderSent && new Date(contact.ownerReminderAt) <= now) {
-        const tokens = await collectPushTokens(db, [contact.ownerId], 'notificationsEnabled');
+        const tokens = await ctx.tokens([contact.ownerId], 'notificationsEnabled');
         const body = `You set a reminder to check in on your loan record with ${contact.name}.`;
         const sent = await sendPush(tokens, `${contact.name}: Reminder`, body, { type: 'loan_reminder', contactId: contactDoc.id });
         await logFeedActivity(db, {
@@ -2640,7 +2797,7 @@ async function processLoanReminders(db: Firestore): Promise<number> {
 
       // Linked counterparty's own reminder, if they have one set.
       if (contact.counterpartyUserId && contact.counterpartyReminderAt && !contact.counterpartyReminderSent && new Date(contact.counterpartyReminderAt) <= now) {
-        const tokens = await collectPushTokens(db, [contact.counterpartyUserId], 'notificationsEnabled');
+        const tokens = await ctx.tokens([contact.counterpartyUserId], 'notificationsEnabled');
         const body = `You set a reminder about your loan record with ${contact.name}.`;
         const sent = await sendPush(tokens, `${contact.name}: Reminder`, body, { type: 'loan_reminder', contactId: contactDoc.id });
         await logFeedActivity(db, {
@@ -2663,7 +2820,7 @@ async function processLoanReminders(db: Firestore): Promise<number> {
         // balance < 0: the owner owes the contact, so the owner is the debtor.
         const debtorUid = balance > 0 ? contact.counterpartyUserId : balance < 0 ? contact.ownerId : null;
         if (debtorUid) {
-          const tokens = await collectPushTokens(db, [debtorUid], 'notificationsEnabled');
+          const tokens = await ctx.tokens([debtorUid], 'notificationsEnabled');
           const installmentBody = `Your ${plan.frequency} installment of ${plan.amount} is due.`;
           const sent = await sendPush(tokens, `${contact.name}: Installment due`, installmentBody, { type: 'loan_installment_due', contactId: contactDoc.id });
           await logFeedActivity(db, {
@@ -2682,7 +2839,7 @@ async function processLoanReminders(db: Firestore): Promise<number> {
     } catch (err) {
       console.error(`processLoanReminders failed for contact ${contactDoc.id}:`, err);
     }
-  }
+  });
 
   return sentCount;
 }
@@ -14535,19 +14692,57 @@ async function startServer() {
     const db = adminDb;
 
     try {
-      const recurringExpensesProcessed = await processRecurringExpenses(db);
-      const recurringRemindersNudged = await processRecurringReminderNudges(db);
-      const expenseRemindersSent = await processExpenseReminders(db);
-      const budgetRemindersSent = await processBudgetReminders(db);
-      const todoRemindersSent = await processTodoReminders(db);
-      const recurringTodosProcessed = await processRecurringTodos(db);
-      const habitRemindersSent = await processHabitReminders(db);
-      const loanRemindersSent = await processLoanReminders(db);
-      const scheduledBroadcastsSent = await processScheduledBroadcasts(db);
-      const missedMedicineDosesAlerted = await processMissedMedicineDoses(db);
+      const ctx = makeCronCtx(db);
+      const startedAt = Date.now();
+      const timings: Record<string, number> = {};
+      const failed: string[] = [];
+      // Each job is independent (own collections, own idempotency flags), so they all run at the
+      // same time; one failing no longer stops the others — it is logged and retried next tick.
+      const run = async <T,>(name: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
+        const t0 = Date.now();
+        try {
+          return await fn();
+        } catch (err) {
+          failed.push(name);
+          console.error(`cron/send-reminders job ${name} failed:`, err);
+          return fallback;
+        } finally {
+          timings[name] = Date.now() - t0;
+        }
+      };
+
+      // Tiering: budget nudges are monthly/weekly, so hourly is plenty (the first 15-minute tick of
+      // each hour). `?all=1` forces every job, for manual runs.
+      const runSlowTier = req.query.all === '1' || new Date().getUTCMinutes() < 15;
+
+      // Recurring to-dos and habit reminders read the same set of docs — fetched once, only the
+      // ones that could be due (nextRunDate within the largest "remind me before" offset, 1 day).
+      const habitDocsPromise = queryDue(
+        db, 'todos', { field: 'recurring', value: true }, 'nextRunDate',
+        new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
+      );
+
+      const [
+        recurringExpensesProcessed, recurringRemindersNudged, expenseRemindersSent, budgetRemindersSent,
+        todoRemindersSent, recurringTodosProcessed, habitRemindersSent, loanRemindersSent,
+        scheduledBroadcastsSent, missedMedicineDosesAlerted,
+      ] = await Promise.all([
+        run('recurringExpenses', () => processRecurringExpenses(db, ctx), 0),
+        run('recurringNudges', () => processRecurringReminderNudges(db, ctx), 0),
+        run('expenseReminders', () => processExpenseReminders(db, ctx), 0),
+        runSlowTier ? run('budgets', () => processBudgetReminders(db, ctx), 0) : Promise.resolve(0),
+        run('todoReminders', () => processTodoReminders(db, ctx), 0),
+        run('recurringTodos', async () => processRecurringTodos(db, await habitDocsPromise, ctx), 0),
+        run('habitReminders', async () => processHabitReminders(db, await habitDocsPromise, ctx), 0),
+        run('loans', () => processLoanReminders(db, ctx), 0),
+        run('broadcasts', () => processScheduledBroadcasts(db), 0),
+        run('missedMedicine', () => processMissedMedicineDoses(db, ctx), 0),
+      ]);
+      console.log(`cron/send-reminders done in ${Date.now() - startedAt}ms`, JSON.stringify({ timings, failed, slowTier: runSlowTier }));
 
       return res.json({
-        ok: true,
+        ok: failed.length === 0,
+        failed,
         recurringExpensesProcessed,
         recurringRemindersNudged,
         expenseRemindersSent,
