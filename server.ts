@@ -2911,6 +2911,15 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+  // www.familyledger.thirteenapps.com is mapped to this same service only so it can forward people
+  // to the real address (over https too — a DNS-level redirect can't, as it has no certificate).
+  app.use((req, res, next) => {
+    if ((req.headers.host || '').toLowerCase().split(':')[0] === 'www.familyledger.thirteenapps.com') {
+      return res.redirect(301, `https://familyledger.thirteenapps.com${req.originalUrl}`);
+    }
+    next();
+  });
+
   // Use JSON and urlencoded body parsers. Default express.json() limit is 100kb, which is too
   // small for /api/admin/broadcast's resized-image data URIs (up to 3 images, base64-encoded —
   // every other image upload in this app writes straight to Firestore from the client, bypassing
