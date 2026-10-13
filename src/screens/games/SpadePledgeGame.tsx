@@ -36,6 +36,7 @@ import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
 import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import DraggableCard from '../../components/DraggableCard';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
@@ -520,18 +521,13 @@ export default function SpadePledgeGame() {
     const iWon = !!winnerGroup && winnerGroup.memberUids.includes(user.uid);
     const runnerUp = standings.find((g) => g.groupIndex !== table.winnerTeam);
     const winShare = iWon && winnerGroup
-      ? {
-          card: {
-            gameName: 'Spade Pledge',
-            winnerLabel: groupLabel(winnerGroup),
-            standings: standings.map((g) => ({ name: groupLabel(g), score: g.cumulativeScore, isWinner: g.groupIndex === table.winnerTeam })),
-            detail: `Won in ${(table.dealHistory || []).length} hands · first to 300`,
-          },
-          caption: `🏆 I just won Spade Pledge on FamilyLedger — ${winnerGroup.cumulativeScore} pts${runnerUp ? ` vs ${runnerUp.cumulativeScore}` : ''}! Think you can beat me? 😎
-
-📲 Install FamilyLedger free on Android: https://play.google.com/store/apps/details?id=com.familyledger.app
-🌐 Or use it on the web: https://familyledger.thirteenapps.com`,
-        }
+      ? buildWinShare({
+          gameName: 'Spade Pledge',
+          winnerLabel: groupLabel(winnerGroup),
+          standings: standings.map((g) => ({ name: groupLabel(g), score: g.cumulativeScore, isWinner: g.groupIndex === table.winnerTeam })),
+          detail: `Won in ${(table.dealHistory || []).length} hands · first to 300`,
+          scoreLine: `${winnerGroup.cumulativeScore} pts${runnerUp ? ` vs ${runnerUp.cumulativeScore}` : ''}`,
+        })
       : null;
 
     return (

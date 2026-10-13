@@ -26,6 +26,8 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
 type SelectionMode = 'none' | 'meld543';
@@ -756,6 +758,16 @@ export default function RummyGame() {
   if (game.status === 'finished') {
     const winner = game.players.find((p) => p.uid === game.winnerUid);
     const revealWildcardRanks = [game.wildcardRank1, game.wildcardRank2].filter(Boolean) as Rank[];
+    const winShare = winner && winner.uid === user.uid
+      ? buildWinShare({
+          gameName: '27-Hand Rummy',
+          winnerLabel: winner.displayName,
+          standings: [...game.players]
+            .sort((a, b) => Number(b.uid === game.winnerUid) - Number(a.uid === game.winnerUid))
+            .map((p) => ({ name: p.displayName, label: p.uid === game.winnerUid ? 'Winner' : p.dropped ? 'Dropped' : undefined, isWinner: p.uid === game.winnerUid })),
+          detail: `${game.players.length}-player table`,
+        })
+      : null;
     return (
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
@@ -772,6 +784,7 @@ export default function RummyGame() {
             <ReactionButton onSend={handleSendReaction} />
           </div>
           {error && <p className="relative text-xs font-bold text-error mt-1">{error}</p>}
+          {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} className="relative mt-3" />}
           <div className="relative flex items-center gap-2 mt-3">
             {isPlayer && (
               <button

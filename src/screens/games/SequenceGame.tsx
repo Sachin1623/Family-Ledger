@@ -7,6 +7,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useFriendships } from '../../lib/useFriendships';
 import { showGamePointsIfAny } from '../../lib/pointsApi';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import {
   parseCard,
   SUIT_SYMBOL,
@@ -538,6 +540,20 @@ export default function SequenceGame() {
     game.winnerSide != null
       ? game.players.filter((p) => sideForSeat(p.seatIndex, game.playerCount) === game.winnerSide).map((p) => p.displayName).join(' & ')
       : '';
+  const winShare = isFinished && me && game.winnerSide != null && sideForSeat(me.seatIndex, game.playerCount) === game.winnerSide
+    ? buildWinShare({
+        gameName: 'Sequence',
+        winnerLabel: winnerNames,
+        standings: Array.from(new Set(game.players.map((p) => sideForSeat(p.seatIndex, game.playerCount))))
+          .sort((a, b) => Number(b === game.winnerSide) - Number(a === game.winnerSide))
+          .map((side) => ({
+            name: game.players.filter((p) => sideForSeat(p.seatIndex, game.playerCount) === side).map((p) => p.displayName).join(' & '),
+            label: side === game.winnerSide ? `${needed} sequences` : undefined,
+            isWinner: side === game.winnerSide,
+          })),
+        detail: isTeamPlay ? 'Team game' : `${game.playerCount}-player game`,
+      })
+    : null;
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
@@ -730,6 +746,7 @@ export default function SequenceGame() {
             <h1 className="relative text-xl font-black text-primary">{winnerText}</h1>
             {winnerNames && <p className="text-sm text-text-muted">{winnerNames}</p>}
             {error && <p className="text-xs font-bold text-error">{error}</p>}
+            {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} />}
             <div className="flex flex-col gap-2 pt-1">
               {isPlayer && (
                 <button

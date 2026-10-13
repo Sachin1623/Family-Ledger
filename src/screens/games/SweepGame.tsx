@@ -31,6 +31,8 @@ import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 
 const TEAM_COLOR = ['#2563EB', '#DC2626'];
 
@@ -606,6 +608,19 @@ export default function SweepGame() {
   if (game.status === 'finished') {
     const winnerText = game.winnerTeam != null ? `${TEAM_LABEL[game.winnerTeam]} wins the match!` : 'Match over';
     const capturedByTeam = game.capturedByTeam || { team0: [], team1: [] };
+    const teamNames = (t: number) => game.players.filter((p) => p.team === t).map((p) => p.displayName).join(' & ');
+    const winShare = game.winnerTeam != null && me && me.team === game.winnerTeam
+      ? buildWinShare({
+          gameName: 'Sweep',
+          winnerLabel: teamNames(game.winnerTeam),
+          standings: [game.winnerTeam, game.winnerTeam === 0 ? 1 : 0].map((t) => ({
+            name: teamNames(t),
+            label: `${sumPoints(t === 0 ? capturedByTeam.team0 : capturedByTeam.team1)} pts`,
+            isWinner: t === game.winnerTeam,
+          })),
+          detail: `Final net score ${Math.abs(game.netScore)} pts`,
+        })
+      : null;
     return (
       <div className="flex flex-col min-h-screen bg-surface">
         <div className="relative shrink-0 bg-primary/5 border-b border-border-subtle px-4 py-4 text-center overflow-hidden">
@@ -614,6 +629,7 @@ export default function SweepGame() {
           <h1 className="relative text-lg font-black text-primary mt-1">{winnerText}</h1>
           <p className="relative text-sm text-text-muted">Final net score: {Math.abs(game.netScore)} pts</p>
           {error && <p className="relative text-xs font-bold text-error mt-1">{error}</p>}
+          {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} className="relative mt-3" />}
         </div>
 
         {/* Final captured piles — the match's actual result stays visible, not just a text

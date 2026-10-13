@@ -4,7 +4,10 @@
 
 export interface WinCardStanding {
   name: string;
-  score: number;
+  // Higher-is-better numeric score — drawn as a bar plus the number. Leave it out for games without
+  // one (or where lower is better) and give `label` instead, which is simply shown on the right.
+  score?: number;
+  label?: string;
   isWinner: boolean;
 }
 
@@ -215,7 +218,7 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
 
   // ---- Standings panel ----
   const rows = opts.standings.slice(0, 4);
-  const rowH = 88;
+  const rowH = rows.length <= 2 ? 124 : rows.length === 3 ? 104 : 88; // fewer rows → roomier rows, so the card never looks half empty
   const panelX = 90;
   const panelW = W - 180;
   const panelY = 725;
@@ -229,13 +232,13 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
   ctx.stroke();
   ctx.restore();
 
-  const maxScore = Math.max(1, ...rows.map((r) => r.score));
+  const maxScore = Math.max(1, ...rows.map((r) => r.score ?? 0));
   const medals = ['🥇', '🥈', '🥉', '🎖️'];
   const unit = opts.scoreUnit ?? 'pts';
   rows.forEach((row, i) => {
-    const y = panelY + 20 + i * rowH;
+    const y = panelY + 20 + i * rowH + (rowH - 88) / 2;
     if (row.isWinner) {
-      roundRectPath(ctx, panelX + 14, y + 4, panelW - 28, rowH - 8, 26);
+      roundRectPath(ctx, panelX + 14, y + 4, panelW - 28, 80, 26);
       const hl = ctx.createLinearGradient(panelX, 0, panelX + panelW, 0);
       hl.addColorStop(0, 'rgba(255, 201, 60, 0.38)');
       hl.addColorStop(1, 'rgba(255, 201, 60, 0.12)');
@@ -248,26 +251,33 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
     ctx.fillText(medals[i] ?? '🎖️', panelX + 34, y + 58);
 
     ctx.fillStyle = row.isWinner ? '#FFE58A' : '#FFFFFF';
-    const rowName = fitText(ctx, row.name, 360, 38, row.isWinner ? '800' : '600');
+    const rowName = fitText(ctx, row.name, row.score !== undefined ? 360 : 560, 38, row.isWinner ? '800' : '600');
     ctx.fillText(rowName, panelX + 110, y + 56);
 
-    // score bar
-    const barX = panelX + 500;
-    const barW = 170;
-    roundRectPath(ctx, barX, y + 34, barW, 14, 7);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
-    ctx.fill();
-    roundRectPath(ctx, barX, y + 34, Math.max(14, (barW * Math.max(0, row.score)) / maxScore), 14, 7);
-    ctx.fillStyle = row.isWinner ? '#FFC93C' : 'rgba(255, 255, 255, 0.55)';
-    ctx.fill();
+    if (row.score !== undefined) {
+      // score bar
+      const barX = panelX + 500;
+      const barW = 170;
+      roundRectPath(ctx, barX, y + 34, barW, 14, 7);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.fill();
+      roundRectPath(ctx, barX, y + 34, Math.max(14, (barW * Math.max(0, row.score)) / maxScore), 14, 7);
+      ctx.fillStyle = row.isWinner ? '#FFC93C' : 'rgba(255, 255, 255, 0.55)';
+      ctx.fill();
 
-    ctx.textAlign = 'right';
-    ctx.fillStyle = row.isWinner ? '#FFE58A' : '#FFFFFF';
-    ctx.font = `800 40px ${FONT}`;
-    ctx.fillText(`${row.score}`, panelX + panelW - 100, y + 56);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.font = `600 24px ${FONT}`;
-    ctx.fillText(unit, panelX + panelW - 38, y + 56);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = row.isWinner ? '#FFE58A' : '#FFFFFF';
+      ctx.font = `800 40px ${FONT}`;
+      ctx.fillText(`${row.score}`, panelX + panelW - 100, y + 56);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.font = `600 24px ${FONT}`;
+      ctx.fillText(unit, panelX + panelW - 38, y + 56);
+    } else if (row.label) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = row.isWinner ? '#FFE58A' : 'rgba(255, 255, 255, 0.8)';
+      ctx.font = `700 32px ${FONT}`;
+      ctx.fillText(fitText(ctx, row.label, 300, 32, '700', 22), panelX + panelW - 38, y + 54);
+    }
   });
   ctx.textAlign = 'center';
 
@@ -295,4 +305,20 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not create the image.'))), 'image/png');
   });
+}
+
+// Everything a game's win screen needs for its "Share my win" button: the card plus the ready-made
+// post text (with the install links, since an image itself can't be tapped).
+export function buildWinShare(opts: WinCardOptions & { scoreLine?: string }): { card: WinCardOptions; caption: string } {
+  const { scoreLine, ...card } = opts;
+  return {
+    card,
+    caption:
+      `🏆 I just won ${opts.gameName} on FamilyLedger${scoreLine ? ` — ${scoreLine}` : ''}! Think you can beat me? 😎
+
+` +
+      `📲 Install FamilyLedger free on Android: https://play.google.com/store/apps/details?id=com.familyledger.app
+` +
+      `🌐 Or use it on the web: https://familyledger.thirteenapps.com`,
+  };
 }

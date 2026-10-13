@@ -36,6 +36,8 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import DraggableCard from '../../components/DraggableCard';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 import { lockLandscape, unlockOrientation } from '../../lib/screenOrientation';
@@ -734,6 +736,14 @@ export default function Rummy13Game() {
     const revealed = deal?.revealedHands;
     const revealWildcardRanks = withPrintedJoker(deal?.wildJokerRank ? [deal.wildJokerRank as Rank] : []);
     const standings = [...table.players].sort((a, b) => a.cumulativeScore - b.cumulativeScore);
+    const winShare = winner && winner.uid === user.uid
+      ? buildWinShare({
+          gameName: '13-Card Rummy',
+          winnerLabel: winner.displayName,
+          standings: standings.map((p) => ({ name: p.displayName, label: `${p.cumulativeScore} pts`, isWinner: p.uid === table.winnerUid })),
+          detail: `${table.players.length}-player table`,
+        })
+      : null;
 
     return (
       <div className="flex flex-col min-h-screen bg-surface">
@@ -746,6 +756,7 @@ export default function Rummy13Game() {
             <ReactionButton onSend={handleSendReaction} />
           </div>
           {error && <p className="relative text-xs font-bold text-error mt-1">{error}</p>}
+          {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} className="relative mt-3" />}
           <div className="relative flex items-center gap-2 mt-3">
             {isPlayer && (
               <button

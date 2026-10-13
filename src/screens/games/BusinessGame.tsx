@@ -48,6 +48,8 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import { BUSINESS_HELP } from '../../lib/gameHelp';
 import { ReactionButton, ReactionOverlay, useReactionOverlay } from '../../components/GameReactions';
 import { useGameTurnPresence, notifyGameTurnClient } from '../../lib/gameTurnPresence';
@@ -1616,6 +1618,15 @@ export default function BusinessGame() {
   if (game.status === 'finished') {
     const winner = game.players.find((p) => p.uid === game.winnerUid);
     const finalStandings = [...game.players].sort((a, b) => b.cash - a.cash);
+    const winShare = winner && winner.uid === user.uid
+      ? buildWinShare({
+          gameName: 'Business',
+          winnerLabel: winner.displayName,
+          standings: finalStandings.map((p) => ({ name: p.displayName, label: p.bankrupt ? 'Bankrupt' : `₹${p.cash.toLocaleString()}`, isWinner: p.uid === game.winnerUid })),
+          detail: `Last player standing of ${game.players.length}`,
+          scoreLine: `₹${winner.cash.toLocaleString()} in the bank`,
+        })
+      : null;
     return (
       <div className="flex flex-col min-h-screen bg-surface">
         <ReactionOverlay reactions={floatingReactions} />
@@ -1629,6 +1640,7 @@ export default function BusinessGame() {
             <ReactionButton onSend={handleSendReaction} />
           </div>
           {error && <p className="relative text-xs font-bold text-error mt-1">{error}</p>}
+          {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} className="relative mt-3" />}
         </div>
 
         {/* Final standings — the match's actual result, not just a text banner. */}

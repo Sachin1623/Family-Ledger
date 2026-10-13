@@ -26,6 +26,8 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import { useGameTurnPresence, notifyGameTurnClient } from '../../lib/gameTurnPresence';
 
 const LIGHT_SQUARE = '#F0D9B5';
@@ -475,6 +477,20 @@ export default function ChessGame() {
               {game.resultReason === 'ended_early' ? 'flag' : game.result === 'draw' ? 'handshake' : 'emoji_events'}
             </span>
             <p className="relative text-lg font-black text-primary">{resultText}</p>
+            {(() => {
+              if (!isPlayer || !game.result || game.result === 'draw' || game.resultReason === 'ended_early' || game.result !== myColor) return null;
+              const opponent = players.find((p) => p.color !== myColor);
+              const share = buildWinShare({
+                gameName: 'Chess',
+                winnerLabel: myPlayer?.displayName || 'Player',
+                standings: [
+                  { name: myPlayer?.displayName || 'Player', label: game.resultReason === 'resignation' ? 'Opponent resigned' : 'Checkmate', isWinner: true },
+                  { name: opponent?.displayName || 'Opponent', isWinner: false },
+                ],
+                detail: game.resultReason === 'resignation' ? 'Won by resignation' : 'Won by checkmate',
+              });
+              return <ShareWinButton card={share.card} caption={share.caption} className="relative" />;
+            })()}
             {isPlayer && (
               <button
                 onClick={() => (game.rematchGameId ? navigate(`/games/chess/${game.rematchGameId}`) : handlePlayAgain())}

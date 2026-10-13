@@ -31,6 +31,8 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import { LUDO_HELP } from '../../lib/gameHelp';
 import { ReactionButton, ReactionOverlay, useReactionOverlay } from '../../components/GameReactions';
 import DiceFace from '../../components/DiceFace';
@@ -1009,6 +1011,20 @@ export default function LudoGame() {
                   : `${players.find((p) => p.uid === game.winnerUid)?.displayName || 'Someone'} won!`
                 : `Game ended early${game.endedByName ? ` by ${game.endedByName}` : ''}.`}
             </p>
+            {(() => {
+              const winnerUids: string[] = game.winnerUid ? (game.winningTeam || [game.winnerUid]) : [];
+              if (!user || !winnerUids.includes(user.uid)) return null;
+              const nameOf = (uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Player';
+              const share = buildWinShare({
+                gameName: 'Ludo',
+                winnerLabel: winnerUids.map(nameOf).join(' & '),
+                standings: [...players]
+                  .sort((a, b) => Number(winnerUids.includes(b.uid)) - Number(winnerUids.includes(a.uid)))
+                  .map((p) => ({ name: p.displayName, label: winnerUids.includes(p.uid) ? 'First home' : undefined, isWinner: winnerUids.includes(p.uid) })),
+                detail: `${players.length}-player game${game.winningTeam ? ' · team win' : ''}`,
+              });
+              return <ShareWinButton card={share.card} caption={share.caption} className="relative" />;
+            })()}
             <button onClick={() => navigate('/tools?category=games')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
               Back to Games
             </button>

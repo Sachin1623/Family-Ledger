@@ -22,6 +22,8 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { VoiceChatButton, useGameVoice } from '../../components/GameVoiceChat';
 import { SCRAMBLE_HELP } from '../../lib/gameHelp';
@@ -704,6 +706,20 @@ export default function ScrambleMultiplayerGame() {
               <p className="relative text-2xl font-black text-primary">
                 {players.find((p) => p.uid === game.winnerUid)?.displayName || '—'}
               </p>
+              {(() => {
+                const winnerPlayer = players.find((p) => p.uid === game.winnerUid);
+                if (!user || !winnerPlayer || winnerPlayer.uid !== user.uid) return null;
+                const top = progressByUid[winnerPlayer.uid]?.score ?? 0;
+                const second = ranked.find((p) => p.uid !== winnerPlayer.uid);
+                const share = buildWinShare({
+                  gameName: 'Word Scramble',
+                  winnerLabel: winnerPlayer.displayName,
+                  standings: ranked.map((p) => ({ name: p.displayName, score: progressByUid[p.uid]?.score ?? 0, isWinner: p.uid === game.winnerUid })),
+                  detail: `${progressByUid[winnerPlayer.uid]?.solvedCount ?? 0}/${game.totalWords} words solved`,
+                  scoreLine: `${top} pts${second ? ` vs ${progressByUid[second.uid]?.score ?? 0}` : ''}`,
+                });
+                return <ShareWinButton card={share.card} caption={share.caption} className="relative pt-2" />;
+              })()}
             </div>
             <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
               {ranked.map((p, idx) => {
