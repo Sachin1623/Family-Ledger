@@ -1,3 +1,4 @@
+import { isIosApp } from '../lib/platform';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, documentId, query, where, writeBatch } from 'firebase/firestore';
@@ -218,18 +219,21 @@ export default function BabyVaccinations() {
         docPdf.setFont('helvetica', 'bold');
         docPdf.text('FamilyLedger', pageWidth - marginX, 14, { align: 'right' });
         docPdf.setFont('helvetica', 'normal');
-        const badgeLabel = 'Get it on Google Play';
-        const badgeY = 19;
-        docPdf.setFontSize(8);
-        const badgeTextWidth = docPdf.getTextWidth(badgeLabel);
-        const iconSize = 3;
-        const iconGap = 1.5;
-        const badgeWidth = iconSize + iconGap + badgeTextWidth;
-        const badgeStartX = pageWidth - marginX - badgeWidth;
-        docPdf.setFillColor(...brandColor);
-        docPdf.triangle(badgeStartX, badgeY - iconSize / 2, badgeStartX, badgeY + iconSize / 2, badgeStartX + iconSize, badgeY, 'F');
-        docPdf.text(badgeLabel, badgeStartX + iconSize + iconGap, badgeY + 1.3);
-        docPdf.link(badgeStartX - 1, badgeY - 3, badgeWidth + 2, 6, { url: androidUrl });
+        // The Google Play badge is skipped on the iPhone app (App Store guideline 2.3.10).
+        if (!isIosApp()) {
+          const badgeLabel = 'Get it on Google Play';
+          const badgeY = 19;
+          docPdf.setFontSize(8);
+          const badgeTextWidth = docPdf.getTextWidth(badgeLabel);
+          const iconSize = 3;
+          const iconGap = 1.5;
+          const badgeWidth = iconSize + iconGap + badgeTextWidth;
+          const badgeStartX = pageWidth - marginX - badgeWidth;
+          docPdf.setFillColor(...brandColor);
+          docPdf.triangle(badgeStartX, badgeY - iconSize / 2, badgeStartX, badgeY + iconSize / 2, badgeStartX + iconSize, badgeY, 'F');
+          docPdf.text(badgeLabel, badgeStartX + iconSize + iconGap, badgeY + 1.3);
+          docPdf.link(badgeStartX - 1, badgeY - 3, badgeWidth + 2, 6, { url: androidUrl });
+        }
       };
 
       drawHeader();
@@ -369,7 +373,7 @@ export default function BabyVaccinations() {
         docPdf.setPage(i);
         docPdf.setFontSize(7);
         docPdf.setTextColor(150);
-        docPdf.text(`${activeProfile.name} · FamilyLedger — Web: ${webUrl}  ·  Android: ${androidUrl}`, marginX, footerY);
+        docPdf.text(`${activeProfile.name} · FamilyLedger — Web: ${webUrl}${isIosApp() ? '' : `  ·  Android: ${androidUrl}`}`, marginX, footerY);
       }
 
       const pdfBlob = docPdf.output('blob') as Blob;

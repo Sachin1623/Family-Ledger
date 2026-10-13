@@ -1,3 +1,4 @@
+import { isIosApp } from '../lib/platform';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -537,18 +538,21 @@ export default function HealthBloodPressure() {
       docPdf.text('FamilyLedger', pageWidth - 14, 14, { align: 'right' });
       docPdf.setFont('helvetica', 'normal');
 
-      const badgeLabel = 'Get it on Google Play';
-      const badgeY = 19;
-      docPdf.setFontSize(8);
-      const badgeTextWidth = docPdf.getTextWidth(badgeLabel);
-      const iconSize = 3;
-      const iconGap = 1.5;
-      const badgeWidth = iconSize + iconGap + badgeTextWidth;
-      const badgeStartX = pageWidth - 14 - badgeWidth;
-      docPdf.setFillColor(...brandColor);
-      docPdf.triangle(badgeStartX, badgeY - iconSize / 2, badgeStartX, badgeY + iconSize / 2, badgeStartX + iconSize, badgeY, 'F');
-      docPdf.text(badgeLabel, badgeStartX + iconSize + iconGap, badgeY + 1.3);
-      docPdf.link(badgeStartX - 1, badgeY - 3, badgeWidth + 2, 6, { url: androidUrl });
+      // The Google Play badge is skipped on the iPhone app (App Store guideline 2.3.10).
+      if (!isIosApp()) {
+        const badgeLabel = 'Get it on Google Play';
+        const badgeY = 19;
+        docPdf.setFontSize(8);
+        const badgeTextWidth = docPdf.getTextWidth(badgeLabel);
+        const iconSize = 3;
+        const iconGap = 1.5;
+        const badgeWidth = iconSize + iconGap + badgeTextWidth;
+        const badgeStartX = pageWidth - 14 - badgeWidth;
+        docPdf.setFillColor(...brandColor);
+        docPdf.triangle(badgeStartX, badgeY - iconSize / 2, badgeStartX, badgeY + iconSize / 2, badgeStartX + iconSize, badgeY, 'F');
+        docPdf.text(badgeLabel, badgeStartX + iconSize + iconGap, badgeY + 1.3);
+        docPdf.link(badgeStartX - 1, badgeY - 3, badgeWidth + 2, 6, { url: androidUrl });
+      }
 
       docPdf.setFontSize(16);
       docPdf.setTextColor(0);
@@ -609,7 +613,7 @@ export default function HealthBloodPressure() {
         docPdf.setPage(i);
         docPdf.setFontSize(7);
         docPdf.setTextColor(150);
-        docPdf.text(`${viewingName} · FamilyLedger — Web: ${webUrl}  ·  Android: ${androidUrl}`, 14, 291);
+        docPdf.text(`${viewingName} · FamilyLedger — Web: ${webUrl}${isIosApp() ? '' : `  ·  Android: ${androidUrl}`}`, 14, 291);
       }
 
       const pdfBlob = docPdf.output('blob') as Blob;

@@ -1,5 +1,5 @@
 import { logGrowthEvent } from './growthEvents';
-import { isIosApp } from './cardCanvas';
+import { isIosApp } from './platform';
 
 // Shared between Profile.tsx's "Spread the Word" card (which also tries an OS-share-sheet image
 // attempt first, via its own shareViaOsSheetWithBanner — that part stays Profile-only, since it

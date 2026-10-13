@@ -4,7 +4,11 @@
 import { auth, db } from './firebase';
 import { addDoc, collection } from 'firebase/firestore';
 
-const PLAY_STORE_LINK = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+import { isIosApp } from './platform';
+
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+// iPhone app: the website link instead of Google Play (see platform.ts).
+const appInstallLink = () => (isIosApp() ? 'https://familyledger.thirteenapps.com' : PLAY_STORE_URL);
 
 export type ShopActivityType =
   | 'sale_created' | 'sale_updated' | 'cost_set' | 'customer_created'
@@ -75,11 +79,11 @@ export function buildSaleMessage(params: {
 }): string {
   const { shopName, sellerName, itemName, quantity, price, currencySymbol } = params;
   const itemLine = quantity && quantity > 1 ? `${itemName} × ${quantity}` : itemName;
-  return `🛍️ ${shopName}\nSold by: ${sellerName}\nItem: ${itemLine}\nPrice: ${currencySymbol}${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}\n\nThanks for shopping with us!\n\nGet FamilyLedger: ${PLAY_STORE_LINK}`;
+  return `🛍️ ${shopName}\nSold by: ${sellerName}\nItem: ${itemLine}\nPrice: ${currencySymbol}${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}\n\nThanks for shopping with us!\n\nGet FamilyLedger: ${appInstallLink()}`;
 }
 
 export function buildPromoMessage(params: { shopName: string; itemName: string; message: string }): string {
-  return `🛍️ ${params.shopName}\n\nNew arrival: ${params.itemName}\n${params.message}\n\nGet FamilyLedger: ${PLAY_STORE_LINK}`;
+  return `🛍️ ${params.shopName}\n\nNew arrival: ${params.itemName}\n${params.message}\n\nGet FamilyLedger: ${appInstallLink()}`;
 }
 
 // wa.me can't attach an image via URL params — only the Web Share API's `files` support can
