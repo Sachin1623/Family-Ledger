@@ -33,7 +33,7 @@ export function blobToBase64(blob: Blob): Promise<string> {
 // for them at all, throwing immediately; without this fallback that's the exact "nothing happens"
 // silent failure this whole native path was supposed to fix. Once a build that actually bundles
 // these plugins is installed, the native branch succeeds and this fallback is simply never reached.
-export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType: string) {
+export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType: string, text?: string) {
   if (Capacitor.isNativePlatform()) {
     // An install can report isNativePlatform() === true while genuinely lacking one of these two
     // plugins natively (predates them being added, see the fallback note below for why this
@@ -48,7 +48,7 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
       const base64Data = await blobToBase64(blob);
       console.log(`shareOrDownloadFile: writing ${filename} (${(base64Data.length / 1024).toFixed(0)}KB base64)`);
       const written = await Filesystem.writeFile({ path: filename, data: base64Data, directory: Directory.Cache });
-      await Share.share({ title: filename, url: written.uri });
+      await Share.share({ title: filename, ...(text ? { text } : {}), url: written.uri });
       return;
     } catch (err: any) {
       // Share.share rejects with a message (no `name`) when the user dismisses the native sheet —
@@ -72,7 +72,7 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
     const nav = navigator as any;
     const file = new File([blob], filename, { type: mimeType });
     if (nav.share && nav.canShare?.({ files: [file] })) {
-      await nav.share({ files: [file] });
+      await nav.share({ files: [file], ...(text ? { text } : {}) });
       return;
     }
   } catch (err) {

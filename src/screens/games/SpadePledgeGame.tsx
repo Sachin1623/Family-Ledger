@@ -35,6 +35,7 @@ import InvitePicker from '../../components/InvitePicker';
 import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import Fireworks from '../../components/Fireworks';
+import ShareWinButton from '../../components/ShareWinButton';
 import DraggableCard from '../../components/DraggableCard';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
@@ -513,6 +514,25 @@ export default function SpadePledgeGame() {
     const winnerGroup = table.groups.find((g) => g.groupIndex === table.winnerTeam);
     const winnerNames = winnerGroup ? winnerGroup.memberUids.map((uid) => nameFor(uid)).join(' & ') : null;
     const standings = [...table.groups].sort((a, b) => b.cumulativeScore - a.cumulativeScore);
+    // Real names (never "You") for the shareable brag card, since it's posted for other people to read.
+    const realName = (uid: string) => table.players.find((p) => p.uid === uid)?.displayName || 'Player';
+    const groupLabel = (g: { memberUids: string[] }) => g.memberUids.map(realName).join(' & ');
+    const iWon = !!winnerGroup && winnerGroup.memberUids.includes(user.uid);
+    const runnerUp = standings.find((g) => g.groupIndex !== table.winnerTeam);
+    const winShare = iWon && winnerGroup
+      ? {
+          card: {
+            gameName: 'Spade Pledge',
+            winnerLabel: groupLabel(winnerGroup),
+            standings: standings.map((g) => ({ name: groupLabel(g), score: g.cumulativeScore, isWinner: g.groupIndex === table.winnerTeam })),
+            detail: `Won in ${(table.dealHistory || []).length} hands · first to 300`,
+          },
+          caption: `🏆 I just won Spade Pledge on FamilyLedger — ${winnerGroup.cumulativeScore} pts${runnerUp ? ` vs ${runnerUp.cumulativeScore}` : ''}! Think you can beat me? 😎
+
+📲 Install FamilyLedger free on Android: https://play.google.com/store/apps/details?id=com.familyledger.app
+🌐 Or use it on the web: https://familyledger.thirteenapps.com`,
+        }
+      : null;
 
     return (
       <div className="flex flex-col min-h-screen bg-surface">
@@ -525,6 +545,7 @@ export default function SpadePledgeGame() {
             <ReactionButton onSend={handleSendReaction} />
           </div>
           {error && <p className="relative text-xs font-bold text-error mt-1">{error}</p>}
+          {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} className="relative mt-3" />}
           <div className="relative flex items-center gap-2 mt-3">
             {isPlayer && (
               <button
@@ -546,7 +567,8 @@ export default function SpadePledgeGame() {
           </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Extra bottom padding: the app's fixed bottom nav bar would otherwise cover the last (oldest) hand. */}
+        <main className="flex-1 overflow-y-auto p-4 pb-32 space-y-4">
           <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-1.5">
             <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Final Standings</p>
             {standings.map((g) => (
@@ -570,6 +592,22 @@ export default function SpadePledgeGame() {
                     {h.nilResults[uid] ? ` — Nil ${h.nilResults[uid]}` : ''}
                   </p>
                 ))}
+                {/* Points each side gained or lost this hand, and the running total after it. */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {table.groups.map((g) => {
+                    const delta = h.groupScoreDelta?.[g.groupIndex] ?? 0;
+                    const total = h.netScoreAfter?.[g.groupIndex];
+                    return (
+                      <span
+                        key={g.groupIndex}
+                        className={`px-2 py-0.5 rounded-full text-[11px] font-black ${delta > 0 ? 'bg-success/15 text-success' : delta < 0 ? 'bg-error/10 text-error' : 'bg-surface text-text-muted'}`}
+                      >
+                        {g.memberUids.map(nameFor).join(' & ')}: {delta > 0 ? `+${delta}` : delta}
+                        {total !== undefined ? ` (${total})` : ''}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
             ))}
           </div>
