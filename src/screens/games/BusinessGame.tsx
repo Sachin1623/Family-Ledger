@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { doc, updateDoc, getDoc, collection, query, where } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, collection, query, where, documentId } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -427,6 +427,52 @@ function squareIcon(square: (typeof BOARD)[number]): string | null {
 
 const PLAYER_COLORS = ['#DC2626', '#2563EB', '#16A34A', '#F59E0B', '#7C3AED', '#DB2777'];
 
+// ---- Design A: city art + building graphics for the premium 3D table ----
+// One landmark per city (emoji for now) and a one-line subtitle shown on its property sheet.
+const CITY_ART: Record<string, { emoji: string; sub: string }> = {
+  Faridabad: { emoji: '🏭', sub: 'Industrial hub' }, Meerut: { emoji: '🏏', sub: 'Sports town' },
+  Nashik: { emoji: '🍇', sub: 'Vineyard country' }, Rajkot: { emoji: '🕌', sub: 'Royal city' },
+  Jaipur: { emoji: '🏰', sub: 'Hawa Mahal' }, Lucknow: { emoji: '🕌', sub: 'Bara Imambara' },
+  Kanpur: { emoji: '🏭', sub: 'Mills & leather' }, Nagpur: { emoji: '🍊', sub: 'Orange city' },
+  Pune: { emoji: '🏯', sub: 'Shaniwar Wada' }, Ahm: { emoji: '🏛️', sub: 'Sabarmati' },
+  Surat: { emoji: '💎', sub: 'Diamond city' }, Kolkata: { emoji: '🌉', sub: 'Howrah Bridge' },
+  Chennai: { emoji: '🛕', sub: 'Marina & temples' }, Gurgaon: { emoji: '🏢', sub: 'Cyber city' },
+  Bengaluru: { emoji: '💻', sub: 'Tech capital' }, Delhi: { emoji: '🏛️', sub: 'India Gate' },
+  Mumbai: { emoji: '🌆', sub: 'Gateway of India' },
+};
+
+const SPECIAL_EMOJI: Record<string, string> = {
+  go: '🏁', jail: '⛓️', free_parking: '🅿️', go_to_jail: '🚔', tax: '🧾', chance: '❓', community: '🧰', railway: '🚆',
+};
+const squareEmoji = (sq: (typeof BOARD)[number]): string => {
+  if (sq.type === 'utility') return sq.name.startsWith('Elec') ? '⚡' : '💧';
+  if (sq.type === 'property') return CITY_ART[sq.name]?.emoji || '🏙️';
+  return SPECIAL_EMOJI[sq.type] || '';
+};
+
+const HouseIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 20 20" className="shrink-0">
+    <polygon points="2,10 10,2 18,10" fill="#b91c1c" />
+    <rect x="4" y="10" width="12" height="8" fill="#f8fafc" stroke="#475569" strokeWidth="1" />
+    <rect x="8" y="12" width="4" height="6" fill="#92400e" />
+  </svg>
+);
+const HotelIcon: React.FC<{ size?: number }> = ({ size = 22 }) => (
+  <svg width={size} height={size * 1.25} viewBox="0 0 20 25" className="shrink-0">
+    <rect x="3" y="4" width="14" height="19" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" />
+    <rect x="1" y="2" width="18" height="3" fill="#7f1d1d" />
+    {[0, 1, 2, 3].map((i) => (
+      <React.Fragment key={i}>
+        <rect x="5" y={7 + i * 4} width="3" height="2.4" fill="#fde68a" />
+        <rect x="12" y={7 + i * 4} width="3" height="2.4" fill="#fde68a" />
+      </React.Fragment>
+    ))}
+    <polygon points="10,-1 11,1 9,1" fill="#fbbf24" />
+  </svg>
+);
+const Buildings: React.FC<{ houses: number; hotel: boolean; size: number }> = ({ houses, hotel, size }) =>
+  hotel ? <HotelIcon size={size} /> : <>{Array.from({ length: houses }).map((_, i) => <HouseIcon key={i} size={size} />)}</>;
+
 export default function BusinessGame() {
   const { gameId } = useParams();
   const navigate = useNavigate();
@@ -699,7 +745,8 @@ export default function BusinessGame() {
     const timer = setTimeout(() => {
       const g = latestBusinessGameRef.current;
       if (!g || !g.pendingTrade || g.pendingTrade.id !== tradeId) return;
-      updateDoc(doc(db, 'businessGames', gameId), { pendingTrade: null }).catch((err) => console.error('bot decline trade failed:', err));
+      const proposer = g.players.find((p) => p.uid === g.pendingTrade!.fromUid)?.displayName || 'Player';
+      updateDoc(doc(db, 'businessGames', gameId), { pendingTrade: null, lastAction: { text: `${target.displayName} declined ${proposer}'s trade offer.`, at: new Date().toISOString() } }).catch((err) => console.error('bot decline trade failed:', err));
     }, 500);
     return () => clearTimeout(timer);
   }, [game?.pendingTrade?.id, game?.status, gameId]);
@@ -738,6 +785,37 @@ export default function BusinessGame() {
     }, 500);
     return () => clearTimeout(timer);
   }, [game?.auction?.propertyIndex, game?.auction?.currentBid, game?.auction?.currentBidderUid, game?.auction?.passedUids?.join(','), game?.status, gameId]);
+
+  // Pop a clear banner whenever a trade is settled (accepted / declined / cancelled), for everyone at the table.
+  const [tradeToast, setTradeToast] = useState<string | null>(null);
+  const seenTradeAt = useRef<string | null>(null);
+  const tradeAt = game?.lastAction?.at;
+  const tradeText = game?.lastAction?.text;
+  useEffect(() => {
+    if (!tradeAt || !tradeText) return;
+    if (seenTradeAt.current === null) { seenTradeAt.current = tradeAt; return; } // first load: don't replay an old one
+    if (seenTradeAt.current === tradeAt) return;
+    seenTradeAt.current = tradeAt;
+    if (!/trade/i.test(tradeText)) return;
+    setTradeToast(tradeText);
+    const t = setTimeout(() => setTradeToast(null), 4500);
+    return () => clearTimeout(t);
+  }, [tradeAt, tradeText]);
+
+  // Current profile photos for everyone seated (the photo saved on the game when someone sat down can be
+  // empty or out of date).
+  const humanUids = useMemo(() => (game?.players || []).filter((p) => !p.isBot).map((p) => p.uid), [game?.players]);
+  const [playerUsersValue] = useCollection(
+    humanUids.length > 0 ? query(collection(db, 'users'), where(documentId(), 'in', humanUids.slice(0, 30))) : null,
+  );
+  const photoByUid = useMemo(() => {
+    const m: Record<string, string> = {};
+    playerUsersValue?.docs.forEach((d) => {
+      const photo = (d.data() as any).photoURL;
+      if (photo) m[d.id] = photo;
+    });
+    return m;
+  }, [playerUsersValue]);
 
   if (loading) return <div className="p-8 text-center text-text-muted">Loading…</div>;
   if (!game || !user) return <div className="p-8 text-center text-text-muted">Game not found.</div>;
@@ -1237,22 +1315,22 @@ export default function BusinessGame() {
 
   const handleCancelTrade = async () => {
     setBusy(true);
-    await updateDoc(gameRef(), { pendingTrade: null }).catch(() => {});
+    await updateDoc(gameRef(), { pendingTrade: null, lastAction: { text: `${me?.displayName || 'Player'} cancelled the trade offer.`, at: new Date().toISOString() } }).catch(() => {});
     setBusy(false);
   };
 
   const handleRespondTrade = async (accept: boolean) => {
     if (!game.pendingTrade) return;
     const trade = game.pendingTrade;
-    if (!accept) {
-      await updateDoc(gameRef(), { pendingTrade: null }).catch(() => {});
-      return;
-    }
     const fromPlayer = players.find((p) => p.uid === trade.fromUid);
     const toPlayer = players.find((p) => p.uid === trade.toUid);
+    if (!accept) {
+      await updateDoc(gameRef(), { pendingTrade: null, lastAction: { text: `${toPlayer?.displayName || 'Player'} declined ${fromPlayer?.displayName || 'Player'}'s trade offer.`, at: new Date().toISOString() } }).catch(() => {});
+      return;
+    }
     if (!fromPlayer || !toPlayer || fromPlayer.cash < trade.offerCash || toPlayer.cash < trade.requestCash) {
       setError('One side no longer has enough cash for this trade.');
-      await updateDoc(gameRef(), { pendingTrade: null }).catch(() => {});
+      await updateDoc(gameRef(), { pendingTrade: null, lastAction: { text: 'Trade called off — one side no longer has enough cash.', at: new Date().toISOString() } }).catch(() => {});
       return;
     }
     setBusy(true);
@@ -1268,7 +1346,7 @@ export default function BusinessGame() {
         players: newPlayers,
         properties: newProperties,
         pendingTrade: null,
-        lastAction: { text: `${fromPlayer.displayName} and ${toPlayer.displayName} completed a trade.`, at: new Date().toISOString() },
+        lastAction: { text: `${toPlayer.displayName} accepted ${fromPlayer.displayName}'s trade offer — trade completed!`, at: new Date().toISOString() },
       });
     } finally {
       setBusy(false);
@@ -1726,23 +1804,55 @@ export default function BusinessGame() {
     }
   }
 
+  // ---- Design A: the premium 3D table ----
+  const photoFor = (pl: BusinessPlayer) => photoByUid[pl.uid] || pl.photoURL || (pl.uid === user.uid ? profile?.photoURL || user.photoURL || '' : '');
+  const showDock = isMyTurn && game.turnPhase === 'action' && !canBuy && !debt && !game.pendingCard && !game.auction && !game.pendingTrade;
+  const TILT = 28;
+  const detailOpen = detailIndex != null;
+
+  const renderTile = (square: (typeof BOARD)[number], idx: number) => {
+    const [row, col] = SQUARE_COORDS[idx];
+    const state = properties[idx];
+    const ownerColor = state?.ownerUid ? playerColor(state.ownerUid, players) : undefined;
+    const emoji = squareEmoji(square);
+    const isProp = square.type === 'property';
+    const ownable = isOwnable(square);
+    const special = !ownable && !isProp;
+    const band = isProp ? COLOR_GROUPS_LIGHT[square.group] : square.type === 'railway' || square.type === 'utility' ? '#cbd5e1' : undefined;
+    return (
+      <div
+        key={idx}
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailIndex(idx)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailIndex(idx); } }}
+        style={{ gridRow: row + 1, gridColumn: col + 1, ...(ownerColor ? { boxShadow: `inset 0 0 0 2px ${ownerColor}` } : {}) }}
+        className={clsx('relative overflow-hidden rounded-[3px] cursor-pointer text-slate-800 text-center', special ? 'bg-[#ffe9b0] flex flex-col items-center justify-center' : 'bg-[#f7f3e8]', state?.mortgaged && 'opacity-55')}
+      >
+        {special ? (
+          <>
+            <span className="leading-none" style={{ fontSize: 'min(4.6vw, 20px)' }}>{emoji}</span>
+            <span className="font-extrabold leading-none mt-0.5 px-px" style={{ fontSize: 'min(1.9vw, 8.5px)' }}>{square.name.replace('Go To Jail','To Jail').replace('Free Parking','Parking').replace('Community Chest','Chest')}</span>
+          </>
+        ) : (
+          <>
+            <div className="absolute inset-x-0 top-0 h-[28%] flex items-center justify-center gap-px" style={{ backgroundColor: band }}>
+              {state && isProp && (state.houses > 0 || state.hotel) && <Buildings houses={state.houses} hotel={state.hotel} size={state.hotel ? 11 : 9} />}
+            </div>
+            <div className="absolute inset-x-0 top-[28%] bottom-[30%] flex items-center justify-center bg-gradient-to-b from-sky-100 to-[#f7f3e8]" style={{ fontSize: 'min(4vw, 17px)' }}>
+              {state?.mortgaged ? '🔒' : emoji}
+            </div>
+            <span className="absolute inset-x-0 bottom-[2px] font-black leading-none tracking-tight" style={{ fontSize: 'min(1.9vw, 8.5px)' }}>{square.name}</span>
+            
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
-      <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-        <h1 className="font-black text-primary text-xs">Business</h1>
-        <ReactionButton onSend={handleSendReaction} />
-        <div className="flex items-center gap-1.5 ml-auto">
-          {isPlayer && game.status === 'active' && (
-            <button onClick={handleEndGame} className="p-2 text-error shrink-0" aria-label="Leave game">
-              <span className="material-symbols-outlined text-[22px] block">logout</span>
-            </button>
-          )}
-          <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-          <VoiceChatButton voice={voice} />
-          <HelpButton onClick={() => setShowHelp(true)} />
-        </div>
-      </header>
       {showHelp && <GameHelpModal content={BUSINESS_HELP} onClose={() => setShowHelp(false)} />}
       {showChat && user && (
         <ChatPanel
@@ -1758,310 +1868,284 @@ export default function BusinessGame() {
         />
       )}
 
-      <main className="flex-1 p-2 max-w-xl mx-auto w-full space-y-2 pb-24">
-        {/* Players status strip */}
-        <div className="bg-white rounded-xl border border-border-subtle p-2 flex items-center gap-1.5 overflow-x-auto">
-          {players.map((p, i) => (
-            <div
-              key={p.uid}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border shrink-0 ${
-                i === game.currentTurnSeatIndex ? 'border-primary bg-primary/5' : 'border-border-subtle'
-              } ${p.bankrupt ? 'opacity-30' : ''}`}
-            >
-              <PawnToken color={playerColor(p.uid, players)} size={16} />
-              <PresenceDot uid={p.uid} className="w-1.5 h-1.5" />
-              <span className="text-[10px] font-bold text-on-surface whitespace-nowrap">{p.isBot && '🤖 '}{p.uid === user.uid ? 'You' : p.displayName}</span>
-              <span className="text-[10px] text-text-muted whitespace-nowrap">{p.bankrupt ? 'out' : formatMoney(p.cash)}</span>
-              {p.inJail && <span className="material-symbols-outlined text-[12px] text-warning">lock</span>}
-            </div>
-          ))}
+      {tradeToast && (
+        <div className="fixed top-16 inset-x-0 z-[220] flex justify-center px-4 pointer-events-none">
+          <div className={clsx('max-w-sm w-full text-center px-4 py-3 rounded-2xl text-sm font-black shadow-2xl border-2', /accepted|completed/i.test(tradeToast) ? 'bg-green-600 border-green-300 text-white' : 'bg-red-700 border-red-300 text-white')}>
+            {/accepted|completed/i.test(tradeToast) ? '🤝 ' : '🚫 '}{tradeToast}
+          </div>
         </div>
+      )}
 
-        {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
+      {/* Full-screen table (covers the app header and tab bar): dark backdrop, a tilted wooden board with
+          city art on every tile, player cards on top, and the dice / actions dock underneath. */}
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_30%,#1f4f7b_0%,#0e2f4d_50%,#06182a_100%)]">
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-50 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
 
-        {/* Turn indicator — plain text, not a heavy colored block, so it doesn't visually compete
-            with the Roll Dice button below for "which of these do I tap" attention. */}
-        <div className="flex items-center gap-1.5 px-1">
-          {isMyTurn && !me?.bankrupt && <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />}
-          <p className="text-xs font-bold text-text-muted">
-            {me?.bankrupt
-              ? 'You are out of the game.'
-              : isMyTurn
-              ? me?.inJail
-                ? 'Your turn — you are in Jail'
-                : game.turnPhase === 'roll'
-                ? mustRollAgain
-                  ? 'Doubles! Roll again'
-                  : 'Your turn to roll'
-                : mustRollAgain
-                ? 'Doubles! Finish up, then roll again'
-                : 'Your turn — buy/build/mortgage, then End Turn'
-              : `${players[game.currentTurnSeatIndex]?.displayName || '…'}'s turn`}
-          </p>
-        </div>
+        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
+          <button onClick={() => navigate('/games/business')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          </button>
+          <div className="leading-tight">
+            <h1 className="text-[15px] font-black">Business</h1>
+            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">ROOM {game.code}</span>
+          </div>
+          <ReactionButton onSend={handleSendReaction} />
+          <div className="flex-1" />
+          <div className="flex items-center gap-1">
+            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
+            <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            {isPlayer && game.status === 'active' && (
+              <button onClick={handleEndGame} className="p-1.5 text-red-300 shrink-0" aria-label="Leave game">
+                <span className="material-symbols-outlined text-[22px] block">logout</span>
+              </button>
+            )}
+          </div>
+        </header>
 
-        {/* Board */}
-        <div className="bg-white rounded-xl border border-border-subtle p-1.5 shadow-sm">
-          <div className="grid gap-0 relative" style={{ gridTemplateColumns: 'repeat(9, 1fr)', gridTemplateRows: 'repeat(9, 1fr)', aspectRatio: '1 / 1' }}>
-            {/* Center panel — tap the dice to roll (no separate button), current-square rent,
-                last action, and the pot, using the space better than a mostly-empty middle. */}
-            <div style={{ gridRow: '2 / 9', gridColumn: '2 / 9' }} className="relative flex flex-col items-center justify-center gap-2 bg-surface rounded-lg p-2">
-              {isMyTurn && game.turnPhase === 'action' && !canBuy && !debt && !game.pendingCard && !game.auction && !game.pendingTrade && (
-                <button
-                  onClick={handleEndTurn}
-                  disabled={busy}
-                  className="absolute top-1.5 right-1.5 px-2.5 py-1 rounded-full text-[10px] font-black text-white uppercase tracking-wide animate-pulse disabled:opacity-50"
-                  style={{
-                    background: '#0a0a0a',
-                    boxShadow: '0 0 0 2px rgba(0,0,0,0.15), 0 0 10px 3px rgba(0,0,0,0.65), 0 0 20px 6px rgba(0,0,0,0.35)',
-                  }}
-                >
-                  {mustRollAgain ? 'Roll Again' : 'End Turn'}
-                </button>
-              )}
-              {isMyTurn && game.turnPhase === 'action' && !canBuy && !debt && !game.pendingCard && !game.auction && !game.pendingTrade && (
-                <button
-                  onClick={() => setShowBuild((v) => !v)}
-                  className="absolute bottom-1.5 left-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide bg-white border border-border-subtle text-primary shadow-sm"
-                >
-                  {showBuild ? 'Hide' : 'Manage'}
-                </button>
-              )}
-              {!game.pendingTrade && !game.auction && !canBuy && me && !me.bankrupt && !showTrade && (
-                <button
-                  onClick={() => setShowTrade(true)}
-                  className="absolute bottom-1.5 right-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide bg-white border border-border-subtle text-primary shadow-sm"
-                >
-                  Trade
-                </button>
-              )}
-
-              {/* Buy/auction decision — pinned to the same bottom-right corner as the Trade
-                  button above (mutually exclusive with it, never both visible at once) instead
-                  of a full-width card pushed below the board. */}
-              {canBuy && !debt && (
-                <div className="absolute bottom-1.5 right-1.5 w-[68%] max-w-[230px] bg-white rounded-xl border border-border-subtle p-2 shadow-lg space-y-1.5 z-20">
-                  <p className="text-[11px] font-bold text-on-surface leading-tight">
-                    Buy {currentSquare.name} for {formatMoney((currentSquare as PropertySquare | RailwaySquare | UtilitySquare).price)}?
-                  </p>
-                  <div className="flex gap-1.5">
-                    <button onClick={handleBuyProperty} disabled={busy} className="flex-1 py-1.5 bg-primary text-white font-bold rounded-lg text-[11px] disabled:opacity-50">
-                      Buy
-                    </button>
-                    <button onClick={handleStartAuction} disabled={busy} className="px-2.5 py-1.5 bg-surface border border-border-subtle rounded-lg text-[11px] font-bold">
-                      Auction
-                    </button>
+        {/* player cards */}
+        <div className="relative shrink-0 flex flex-wrap items-center justify-center gap-1.5 px-2 pt-2">
+          {players.map((p, i) => {
+            const active = i === game.currentTurnSeatIndex && !p.bankrupt;
+            const color = playerColor(p.uid, players);
+            const photo = photoFor(p);
+            return (
+              <div
+                key={p.uid}
+                className={clsx('flex items-center gap-2 h-[3.1rem] rounded-full p-1 pr-3 border-2 backdrop-blur-sm', players.length > 2 ? 'w-[calc(50%-0.2rem)]' : 'min-w-[9.5rem]', active ? 'bg-black/55' : 'bg-black/35 border-white/15', p.bankrupt && 'opacity-35')}
+                style={active ? { borderColor: color, boxShadow: `0 0 0 2px #fff, 0 0 18px ${color}` } : undefined}
+              >
+                <div className="relative w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-sm font-black bg-slate-700" style={{ border: `3px solid ${color}` }}>
+                  <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
+                    {p.isBot ? <span className="text-lg leading-none">🤖</span> : photo ? <img src={photo} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
                   </div>
+                  {active && <span className="absolute -inset-1.5 rounded-full border-[3px] border-transparent border-t-white border-r-white animate-spin" style={{ animationDuration: '2.4s' }} />}
+                  <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
                 </div>
-              )}
+                <div className="min-w-0 leading-tight">
+                  <p className="text-[11px] font-extrabold truncate flex items-center gap-1">
+                    {p.uid === user.uid ? 'You' : p.displayName}
+                    {p.inJail && <span className="material-symbols-outlined text-[12px] text-amber-300">lock</span>}
+                  </p>
+                  <p className="text-[13px] font-black text-amber-200">{p.bankrupt ? 'out' : formatMoney(p.cash)}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
-              {game.auction && (() => {
-                const auction = game.auction;
-                const auctionSquare = BOARD[auction.propertyIndex];
-                const bidder = auction.currentBidderUid ? players.find((p) => p.uid === auction.currentBidderUid) : null;
-                const iPassed = !!me && auction.passedUids.includes(me.uid);
-                const canAct = !!me && !me.bankrupt && !iPassed && auction.currentBidderUid !== me.uid;
-                const minBid = auction.currentBid + 1;
+        {/* turn banner */}
+        <div className="relative shrink-0 flex justify-center pt-1.5">
+          <span
+            className="px-4 py-1 rounded-full text-[11px] font-black tracking-wide"
+            style={{ background: turnPlayer ? playerColor(turnPlayer.uid, players) : '#475569', boxShadow: `0 0 18px ${turnPlayer ? playerColor(turnPlayer.uid, players) : '#475569'}99` }}
+          >
+            {me?.bankrupt
+              ? 'YOU ARE OUT'
+              : isMyTurn
+              ? me?.inJail ? 'YOUR TURN · IN JAIL' : game.turnPhase === 'roll' ? (mustRollAgain ? 'DOUBLES! ROLL AGAIN' : 'YOUR TURN · ROLL') : 'YOUR TURN'
+              : `${(turnPlayer?.displayName || '').toUpperCase()}'S TURN`}
+          </span>
+        </div>
+
+        {/* the tilted board */}
+        <div className="relative shrink-0 mx-auto w-full mt-1" style={{ maxWidth: 'min(100%, 32rem)', aspectRatio: '1 / 0.92', perspective: '1800px' }}>
+          <div className="absolute left-[7%] right-[7%] top-0" style={{ aspectRatio: '1 / 1', transform: `rotateX(${TILT}deg)`, transformOrigin: '50% 40%', transformStyle: 'preserve-3d' }}>
+            <div className="absolute -inset-2 rounded-2xl bg-gradient-to-br from-[#92602d] to-[#5a3a18] shadow-[0_30px_40px_rgba(0,0,0,0.6),inset_0_2px_0_rgba(255,255,255,0.3)]" />
+            <div className="absolute inset-0 rounded-md overflow-hidden bg-[radial-gradient(ellipse_at_center,#1b6b52,#0e3f2f)]">
+              <div className="absolute inset-0 grid gap-px p-px" style={{ gridTemplateColumns: 'repeat(9, 1fr)', gridTemplateRows: 'repeat(9, 1fr)' }}>
+                {/* centre: the logo medallion and the Free Parking pot */}
+                <div style={{ gridRow: '2 / 9', gridColumn: '2 / 9' }} className="flex flex-col items-center justify-center gap-2">
+                  <span className="px-5 py-1.5 rounded-full bg-gradient-to-b from-amber-200 to-amber-500 text-amber-900 font-black tracking-[0.12em] text-[18px] shadow-[0_5px_0_#b45309,0_10px_16px_rgba(0,0,0,0.4)]">BUSINESS</span>
+                  {game.houseRules.freeParkingJackpot && (
+                    <span className="flex items-center gap-1 bg-black/30 text-amber-200 px-3 py-1 rounded-full text-[11px] font-black">🅿️ {formatMoney(game.freeParkingPot)}</span>
+                  )}
+                </div>
+                {BOARD.map((square, idx) => renderTile(square, idx))}
+              </div>
+            </div>
+
+            {/* pawns stand up out of the tilted board; each slides from tile to tile */}
+            <div className="absolute inset-0 pointer-events-none" style={{ transformStyle: 'preserve-3d' }}>
+              {players.filter((p) => !p.bankrupt).map((p, i, arr) => {
+                const pos = displayPositions[p.uid] ?? p.position;
+                const [row, col] = SQUARE_COORDS[pos];
+                const sharing = arr.filter((o) => (displayPositions[o.uid] ?? o.position) === pos);
+                const shareIdx = sharing.findIndex((o) => o.uid === p.uid);
+                const offsetX = sharing.length > 1 ? (shareIdx % 2) * 10 - 5 : 0;
+                const offsetY = sharing.length > 1 ? Math.floor(shareIdx / 2) * 6 - 3 : 0;
                 return (
-                  <div className="absolute bottom-1.5 right-1.5 w-[75%] max-w-[260px] bg-white rounded-xl border-2 border-primary p-2 shadow-lg space-y-1.5 z-20">
-                    <p className="text-[11px] font-bold text-primary leading-tight">Auction: {auctionSquare.name}</p>
-                    <p className="text-[10px] text-text-muted">
-                      Bid: <span className="font-bold text-on-surface">{formatMoney(auction.currentBid)}</span>
-                      {bidder && <> by {bidder.displayName}</>}
-                    </p>
-                    {canAct ? (
-                      <div className="flex gap-1">
-                        <input
-                          type="number"
-                          value={bidAmount}
-                          onChange={(e) => setBidAmount(e.target.value)}
-                          placeholder={`${minBid}+`}
-                          min={minBid}
-                          className="w-0 flex-1 bg-surface p-1.5 rounded-lg border border-border-subtle text-[11px] outline-none"
-                        />
-                        <button onClick={handleBid} disabled={busy || !bidAmount} className="px-2 py-1.5 bg-primary text-white font-bold rounded-lg text-[10px] disabled:opacity-50">
-                          Bid
-                        </button>
-                        <button onClick={handlePassAuction} disabled={busy} className="px-2 py-1.5 bg-surface border border-border-subtle rounded-lg text-[10px] font-bold">
-                          Pass
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-[10px] italic text-text-muted">{iPassed ? "You've passed." : "You're the top bidder."}</p>
-                    )}
+                  <div
+                    key={p.uid}
+                    className="absolute transition-[left,top] duration-[220ms] ease-in-out"
+                    style={{
+                      left: `calc(${((col + 0.5) / 9) * 100}% + ${offsetX}px)`,
+                      top: `calc(${((row + 0.62) / 9) * 100}% + ${offsetY}px)`,
+                      transform: `translate(-50%, -100%) rotateX(-${TILT}deg)`,
+                      transformOrigin: '50% 100%',
+                      zIndex: 10,
+                    }}
+                  >
+                    <PawnToken color={playerColor(p.uid, players)} size={30} />
                   </div>
                 );
-              })()}
-
-              {/* Card reveal — shown to EVERY player at the table (driven off `game.pendingCard`,
-                  synced via Firestore), not just whoever drew it, since the whole point of a
-                  Chance/Community Chest draw is that it's public. Only the drawer gets the
-                  "Continue" button; everyone else just reads the outcome and waits. */}
-              {pendingCardInfo && (
-                <div className="w-[92%] max-w-[240px] bg-primary/10 border border-primary/30 rounded-xl p-2.5 space-y-1.5 text-center z-20">
-                  <p className="text-[10px] font-bold text-primary uppercase tracking-wider">
-                    {pendingCardInfo.deck === 'chance' ? 'Chance' : 'Community Chest'}
-                  </p>
-                  <p className="text-xs font-bold text-on-surface leading-snug">{pendingCardInfo.text}</p>
-                  {isMyTurn ? (
-                    <button onClick={handleAcknowledgeCard} className="w-full py-1.5 bg-primary text-white font-bold rounded-lg text-xs">
-                      Continue
-                    </button>
-                  ) : (
-                    <p className="text-[10px] italic text-text-muted">Waiting for {turnPlayer?.displayName}…</p>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-col items-center gap-1.5">
-                <div className="flex items-center gap-3">
-                  <DiceFace value={game.lastRoll?.[0] ?? null} spinning={rolling} size={44} />
-                  <DiceFace value={game.lastRoll?.[1] ?? null} spinning={rolling} size={44} />
-                </div>
-                {/* Matches Ludo's pattern: the dice stay neutral, this button carries whoever's
-                    turn it is and is the actual roll trigger, not tapping the dice themselves. */}
-                <button
-                  type="button"
-                  onClick={canRollNow ? handleRoll : undefined}
-                  disabled={!canRollNow}
-                  className={`w-24 py-1.5 rounded-lg text-[10px] font-black text-white uppercase tracking-wide transition-all shadow-sm ${canRollNow ? 'active:scale-95 cursor-pointer animate-pulse' : 'opacity-50 cursor-default'}`}
-                  style={{ backgroundColor: turnPlayer ? playerColor(turnPlayer.uid, players) : '#9CA3AF' }}
-                >
-                  {rolling ? '…' : 'Roll'}
-                </button>
-              </div>
-
-              {turnSquareRentLabel && (
-                <div className="flex items-center gap-1 bg-primary/10 text-primary px-2.5 py-1 rounded-full">
-                  <span className="material-symbols-outlined text-[13px]">payments</span>
-                  <span className="text-[11px] font-bold">{turnSquareRentLabel}</span>
-                </div>
-              )}
-
-              {game.lastAction && (
-                <p className="text-sm font-bold text-on-surface text-center px-3 py-1.5 bg-white rounded-xl shadow-sm max-w-[90%] border border-border-subtle">
-                  {game.lastAction.text}
-                </p>
-              )}
-
-              {game.houseRules.freeParkingJackpot && (
-                <div className="flex items-center gap-1 bg-warning/10 text-warning px-2.5 py-1 rounded-full">
-                  <span className="material-symbols-outlined text-[14px]">local_parking</span>
-                  <span className="text-[11px] font-bold">{formatMoney(game.freeParkingPot)}</span>
-                </div>
-              )}
+              })}
             </div>
-
-            {BOARD.map((square, idx) => {
-              const [row, col] = SQUARE_COORDS[idx];
-              const state = properties[idx];
-              const tileBg = square.type === 'property' ? COLOR_GROUPS_LIGHT[square.group] : undefined;
-              const icon = squareIcon(square);
-              const isCardSquare = square.type === 'chance' || square.type === 'community';
-              const ownerColor = state?.ownerUid ? playerColor(state.ownerUid, players) : undefined;
-              return (
-                <div
-                  key={idx}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setDetailIndex(idx)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailIndex(idx); } }}
-                  style={{
-                    gridRow: row + 1,
-                    gridColumn: col + 1,
-                    backgroundColor: tileBg,
-                    ...(ownerColor ? { borderColor: ownerColor, borderWidth: 2 } : {}),
-                  }}
-                  className="border border-border-subtle flex flex-col items-center justify-center gap-0.5 p-0.5 relative overflow-hidden cursor-pointer"
-                >
-                  {icon && (
-                    <span
-                      className="material-symbols-outlined text-on-surface/70 leading-none"
-                      style={{ fontSize: isCardSquare ? '16px' : '9px' }}
-                    >
-                      {icon}
-                    </span>
-                  )}
-                  <p className={`font-bold text-center leading-tight text-on-surface line-clamp-2 ${isCardSquare ? 'text-[5px]' : 'text-[6.5px]'}`}>
-                    {square.name}
-                  </p>
-                  {isOwnable(square) && (
-                    <p className="text-[5px] text-text-muted leading-none">
-                      {state?.mortgaged ? 'Mortgaged' : formatMoney(square.price)}
-                    </p>
-                  )}
-                  {state && (state.houses > 0 || state.hotel) && (
-                    <span className="absolute top-0.5 right-0.5 flex items-center gap-0.5 bg-white/90 rounded px-0.5">
-                      <span className="material-symbols-outlined text-primary" style={{ fontSize: '7px' }}>
-                        {state.hotel ? 'hotel' : 'home'}
-                      </span>
-                      {!state.hotel && <span className="text-[5px] font-black text-primary">{state.houses}</span>}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Token overlay — absolutely positioned on top of the grid (not inside individual
-                tile cells) so each token is one continuous DOM element that CSS can smoothly
-                slide between tiles, instead of unmounting/remounting into a new cell every hop. */}
-            {players.filter((p) => !p.bankrupt).map((p, i, arr) => {
-              const pos = displayPositions[p.uid] ?? p.position;
-              const [row, col] = SQUARE_COORDS[pos];
-              const sharing = arr.filter((o) => (displayPositions[o.uid] ?? o.position) === pos);
-              const shareIdx = sharing.findIndex((o) => o.uid === p.uid);
-              const offsetX = sharing.length > 1 ? (shareIdx % 2) * 11 - 5.5 : 0;
-              const offsetY = sharing.length > 1 ? Math.floor(shareIdx / 2) * 11 - 5.5 : 0;
-              return (
-                <div
-                  key={p.uid}
-                  className="absolute pointer-events-none transition-[left,top] duration-[220ms] ease-in-out"
-                  style={{
-                    left: `calc(${((col + 0.5) / 9) * 100}% + ${offsetX}px)`,
-                    top: `calc(${((row + 0.5) / 9) * 100}% + ${offsetY}px)`,
-                    transform: 'translate(-50%, -50%)',
-                    zIndex: 10,
-                  }}
-                >
-                  <PawnToken color={playerColor(p.uid, players)} size={18} />
-                </div>
-              );
-            })}
           </div>
         </div>
 
+        {/* dock: everything you do on your turn */}
+        <div className="relative flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-2">
+          {error && <p className="text-xs font-bold text-red-300 px-1">{error}</p>}
+
+          {game.lastAction && (
+            <div className="mx-auto max-w-[26rem] text-center px-3 py-1.5 rounded-xl bg-slate-900/80 border border-amber-400/70 text-[12px] font-bold">
+              {game.lastAction.text}
+            </div>
+          )}
+
+          {turnSquareRentLabel && (
+            <div className="mx-auto flex w-fit items-center gap-1 bg-white/10 text-amber-100 px-3 py-1 rounded-full">
+              <span className="material-symbols-outlined text-[14px]">payments</span>
+              <span className="text-[11px] font-bold">{turnSquareRentLabel}</span>
+            </div>
+          )}
+
+          {/* dice + roll */}
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex items-center gap-4 -rotate-3">
+              <DiceFace value={game.lastRoll?.[0] ?? null} spinning={rolling} size={52} />
+              <DiceFace value={game.lastRoll?.[1] ?? null} spinning={rolling} size={52} />
+            </div>
+            <button
+              type="button"
+              onClick={canRollNow ? handleRoll : undefined}
+              disabled={!canRollNow}
+              className={clsx(
+                'px-12 py-2 rounded-full text-sm font-black tracking-wide transition-all',
+                canRollNow
+                  ? 'bg-gradient-to-b from-green-400 to-green-700 shadow-[0_5px_0_#0f5f2e,0_9px_16px_rgba(0,0,0,0.4)] active:translate-y-[3px] active:shadow-[0_2px_0_#0f5f2e] animate-pulse'
+                  : 'bg-gradient-to-b from-slate-500 to-slate-600 shadow-[0_5px_0_#334155] opacity-70',
+              )}
+            >
+              {rolling ? '…' : 'ROLL'}
+            </button>
+          </div>
+
+          {/* buy / auction decision */}
+          {canBuy && !debt && (
+            <div className="mx-auto max-w-[22rem] rounded-2xl bg-slate-900/92 border-2 border-white/20 p-3 space-y-2 shadow-xl">
+              <div className="flex items-center gap-3">
+                <div className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl bg-gradient-to-b from-orange-200 to-amber-100">{squareEmoji(currentSquare)}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black truncate">{currentSquare.name}</p>
+                  <p className="text-[10px] text-white/70">{currentSquare.type === 'property' ? CITY_ART[currentSquare.name]?.sub : currentSquare.type === 'railway' ? 'Railway' : 'Utility'}</p>
+                </div>
+                <p className="text-base font-black text-amber-200">{formatMoney((currentSquare as PropertySquare | RailwaySquare | UtilitySquare).price)}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleBuyProperty} disabled={busy} className="flex-1 py-2.5 rounded-xl bg-gradient-to-b from-green-400 to-green-700 font-black text-sm shadow-[0_4px_0_#0f5f2e] disabled:opacity-50">Buy</button>
+                <button onClick={handleStartAuction} disabled={busy} className="px-5 py-2.5 rounded-xl bg-white/12 border border-white/25 font-bold text-sm">Auction</button>
+              </div>
+            </div>
+          )}
+
+          {game.auction && (() => {
+            const auction = game.auction;
+            const auctionSquare = BOARD[auction.propertyIndex];
+            const bidder = auction.currentBidderUid ? players.find((p) => p.uid === auction.currentBidderUid) : null;
+            const iPassed = !!me && auction.passedUids.includes(me.uid);
+            const canAct = !!me && !me.bankrupt && !iPassed && auction.currentBidderUid !== me.uid;
+            const minBid = auction.currentBid + 1;
+            return (
+              <div className="mx-auto max-w-[22rem] rounded-2xl bg-slate-900/92 border-2 border-amber-400 p-3 space-y-2 shadow-xl">
+                <p className="text-sm font-black text-amber-200">🔨 Auction: {auctionSquare.name}</p>
+                <p className="text-[11px] text-white/80">
+                  Current bid <span className="font-black text-white">{formatMoney(auction.currentBid)}</span>
+                  {bidder && <> by {bidder.displayName}</>}
+                </p>
+                {canAct ? (
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      value={bidAmount}
+                      onChange={(e) => setBidAmount(e.target.value)}
+                      placeholder={`${minBid}+`}
+                      min={minBid}
+                      className="w-0 flex-1 bg-white text-slate-900 p-2 rounded-xl text-sm outline-none"
+                    />
+                    <button onClick={handleBid} disabled={busy || !bidAmount} className="px-4 py-2 rounded-xl bg-gradient-to-b from-green-400 to-green-700 font-black text-sm disabled:opacity-50">Bid</button>
+                    <button onClick={handlePassAuction} disabled={busy} className="px-4 py-2 rounded-xl bg-white/12 border border-white/25 font-bold text-sm">Pass</button>
+                  </div>
+                ) : (
+                  <p className="text-[11px] italic text-white/70">{iPassed ? "You've passed." : "You're the top bidder."}</p>
+                )}
+              </div>
+            );
+          })()}
+
+          {pendingCardInfo && (
+            <div className="mx-auto max-w-[22rem] rounded-2xl bg-gradient-to-b from-amber-100 to-amber-200 text-slate-900 border-2 border-amber-400 p-3 space-y-2 text-center shadow-xl">
+              <p className="text-[10px] font-black uppercase tracking-widest text-amber-800">{pendingCardInfo.deck === 'chance' ? '❓ Chance' : '🧰 Community Chest'}</p>
+              <p className="text-sm font-extrabold leading-snug">{pendingCardInfo.text}</p>
+              {isMyTurn ? (
+                <button onClick={handleAcknowledgeCard} className="w-full py-2 rounded-xl bg-slate-900 text-white font-black text-sm">Continue</button>
+              ) : (
+                <p className="text-[11px] italic text-slate-600">Waiting for {turnPlayer?.displayName}…</p>
+              )}
+            </div>
+          )}
+
+          {/* end turn / manage / trade */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {showDock && (
+              <button onClick={handleEndTurn} disabled={busy} className="px-5 py-2 rounded-full text-xs font-black bg-gradient-to-b from-amber-300 to-amber-500 text-amber-950 shadow-[0_4px_0_#b45309] animate-pulse disabled:opacity-50">
+                {mustRollAgain ? 'Roll Again' : 'End Turn'}
+              </button>
+            )}
+            {showDock && (
+              <button onClick={() => setShowBuild((v) => !v)} className="px-4 py-2 rounded-full text-xs font-black bg-white/14 border border-white/30">
+                🏘️ {showBuild ? 'Hide' : 'My properties'}
+              </button>
+            )}
+            {!game.pendingTrade && !game.auction && !canBuy && me && !me.bankrupt && !showTrade && (
+              <button onClick={() => setShowTrade(true)} className="px-4 py-2 rounded-full text-xs font-black bg-white/14 border border-white/30">🤝 Trade</button>
+            )}
+          </div>
+
+          <div className="text-white space-y-2 max-w-[26rem] mx-auto">
         {/* Debt / raise-cash panel — blocks everything else until resolved */}
         {debt && me && (
           <div className="bg-error/5 border border-error/40 rounded-xl p-3 space-y-2">
-            <p className="text-sm font-bold text-error">
+            <p className="text-sm font-bold text-red-300">
               You owe {formatMoney(debt.amount)} ({debt.reason}) but only have {formatMoney(me.cash)}.
             </p>
-            <p className="text-[11px] text-text-muted">Sell houses or mortgage properties to raise the difference, then pay.</p>
+            <p className="text-[11px] text-white/60">Sell houses or mortgage properties to raise the difference, then pay.</p>
             <div className="space-y-1">
               {myProperties.map(({ state, square }) => (
-                <div key={square.index} className="flex items-center justify-between bg-white rounded-lg p-2 border border-border-subtle">
+                <div key={square.index} className="flex items-center justify-between bg-slate-900/80 rounded-xl p-2 border border-white/15">
                   <span className="text-xs font-bold">{square.name}</span>
                   <div className="flex gap-1">
                     {square.type === 'property' && (state.houses > 0 || state.hotel) && (
-                      <button onClick={() => handleDebtSellHouse(square.index)} className="text-[10px] font-bold px-2 py-1 bg-warning/10 text-warning rounded-lg">
+                      <button onClick={() => handleDebtSellHouse(square.index)} className="text-[10px] font-bold px-2 py-1 bg-amber-500/25 text-amber-200 border border-amber-400/50 rounded-lg">
                         Sell {state.hotel ? 'Hotel' : 'House'}
                       </button>
                     )}
                     {!state.mortgaged && state.houses === 0 && !state.hotel && (
-                      <button onClick={() => handleDebtMortgage(square.index)} className="text-[10px] font-bold px-2 py-1 bg-primary/10 text-primary rounded-lg">
+                      <button onClick={() => handleDebtMortgage(square.index)} className="text-[10px] font-bold px-2 py-1 bg-white/12 text-white border border-white/30 rounded-lg">
                         Mortgage (+{formatMoney((square as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue)})
                       </button>
                     )}
                   </div>
                 </div>
               ))}
-              {myProperties.length === 0 && <p className="text-[11px] text-text-muted italic">No properties left to raise cash from.</p>}
+              {myProperties.length === 0 && <p className="text-[11px] text-white/60 italic">No properties left to raise cash from.</p>}
             </div>
             <div className="flex gap-2">
-              <button onClick={handlePayDebt} disabled={me.cash < debt.amount || busy} className="flex-1 py-2 bg-primary text-white font-bold rounded-lg text-sm disabled:opacity-40">
+              <button onClick={handlePayDebt} disabled={me.cash < debt.amount || busy} className="flex-1 py-2 bg-gradient-to-b from-green-400 to-green-700 shadow-[0_3px_0_#0f5f2e] text-white font-bold rounded-lg text-sm disabled:opacity-40">
                 Pay {formatMoney(debt.amount)}
               </button>
-              <button onClick={handleDeclareBankruptcy} disabled={busy} className="px-3 py-2 bg-error text-white font-bold rounded-lg text-xs">
+              <button onClick={handleDeclareBankruptcy} disabled={busy} className="px-3 py-2 bg-red-600 text-white font-bold rounded-lg text-xs">
                 Declare Bankruptcy
               </button>
             </div>
@@ -2071,23 +2155,19 @@ export default function BusinessGame() {
         {/* Jail actions */}
         {isMyTurn && !debt && !game.pendingCard && me?.inJail && game.turnPhase === 'roll' && (
           <div className="flex flex-wrap gap-1.5">
-            <button onClick={() => handleJailAction('pay')} disabled={rolling} className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-50">
+            <button onClick={() => handleJailAction('pay')} disabled={rolling} className="px-3 py-1.5 bg-gradient-to-b from-green-400 to-green-700 shadow-[0_3px_0_#0f5f2e] text-white rounded-lg text-xs font-bold disabled:opacity-50">
               Pay {formatMoney(JAIL_BAIL)} Bail
             </button>
             {me.getOutOfJailCards > 0 && (
-              <button onClick={() => handleJailAction('card')} disabled={rolling} className="px-3 py-1.5 bg-white border border-border-subtle rounded-lg text-xs font-bold disabled:opacity-50">
+              <button onClick={() => handleJailAction('card')} disabled={rolling} className="px-3 py-1.5 bg-white/12 border border-white/30 text-white rounded-lg text-xs font-bold disabled:opacity-50">
                 Use Get Out of Jail Card ({me.getOutOfJailCards})
               </button>
             )}
-            <button onClick={() => handleJailAction('roll')} disabled={rolling} className="px-3 py-1.5 bg-white border border-border-subtle rounded-lg text-xs font-bold disabled:opacity-50">
+            <button onClick={() => handleJailAction('roll')} disabled={rolling} className="px-3 py-1.5 bg-white/12 border border-white/30 text-white rounded-lg text-xs font-bold disabled:opacity-50">
               {rolling ? 'Rolling…' : `Roll for Doubles (${me.jailTurns}/${MAX_JAIL_TURNS})`}
             </button>
           </div>
         )}
-
-        {/* Rolling now happens by tapping the dice in the center panel above — no separate
-            button, and the buy/auction decision is now pinned to that same panel's
-            bottom-right corner rather than a card down here. */}
 
         {/* Pending trade — proposer sees Cancel, the other side sees Accept/Reject, everyone else sees a status line */}
         {game.pendingTrade && (() => {
@@ -2100,24 +2180,24 @@ export default function BusinessGame() {
             return parts.length ? parts.join(', ') : 'nothing';
           };
           return (
-            <div className="bg-white rounded-xl border-2 border-primary p-3 space-y-2">
-              <p className="text-sm font-bold text-primary">Trade Offer</p>
-              <p className="text-xs text-on-surface">
+            <div className="bg-slate-900/90 rounded-2xl border-2 border-amber-400 p-3 space-y-2">
+              <p className="text-sm font-black text-amber-200">Trade Offer</p>
+              <p className="text-xs text-white">
                 <span className="font-bold">{fromP?.displayName}</span> offers {describe(trade.offerProperties, trade.offerCash)}
                 {' '}for <span className="font-bold">{toP?.displayName}</span>'s {describe(trade.requestProperties, trade.requestCash)}
               </p>
               {me?.uid === trade.toUid && (
                 <div className="flex gap-2">
-                  <button onClick={() => handleRespondTrade(true)} disabled={busy} className="flex-1 py-2 bg-primary text-white font-bold rounded-lg text-sm disabled:opacity-50">
+                  <button onClick={() => handleRespondTrade(true)} disabled={busy} className="flex-1 py-2 bg-gradient-to-b from-green-400 to-green-700 shadow-[0_3px_0_#0f5f2e] text-white font-bold rounded-lg text-sm disabled:opacity-50">
                     Accept
                   </button>
-                  <button onClick={() => handleRespondTrade(false)} disabled={busy} className="flex-1 py-2 bg-white border border-border-subtle rounded-lg text-sm font-bold">
+                  <button onClick={() => handleRespondTrade(false)} disabled={busy} className="flex-1 py-2 bg-white/12 border border-white/30 text-white rounded-lg text-sm font-bold">
                     Reject
                   </button>
                 </div>
               )}
               {me?.uid === trade.fromUid && (
-                <button onClick={handleCancelTrade} disabled={busy} className="w-full py-2 bg-white border border-border-subtle rounded-lg text-sm font-bold">
+                <button onClick={handleCancelTrade} disabled={busy} className="w-full py-2 bg-white/12 border border-white/30 text-white rounded-lg text-sm font-bold">
                   Cancel Offer
                 </button>
               )}
@@ -2141,10 +2221,11 @@ export default function BusinessGame() {
             setTradeRequestCash('');
           };
           return (
-            <div className="bg-white rounded-xl border border-border-subtle p-3 space-y-2">
+            <div className="fixed inset-0 z-[210] bg-black/60 flex items-end justify-center" onClick={closeTradeBuilder}>
+            <div className="bg-slate-900 text-white rounded-t-3xl border-t border-white/20 p-4 space-y-2 w-full max-w-xl max-h-[85dvh] overflow-y-auto overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between">
-                <p className="text-sm font-bold text-on-surface">Propose a Trade</p>
-                <button onClick={closeTradeBuilder} className="text-text-muted">
+                <p className="text-sm font-bold text-white">Propose a Trade</p>
+                <button onClick={closeTradeBuilder} className="text-white/60">
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
               </div>
@@ -2153,7 +2234,7 @@ export default function BusinessGame() {
                   <button
                     key={p.uid}
                     onClick={() => { setTradeTarget(p.uid); setTradeOfferProps([]); setTradeRequestProps([]); }}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${tradeTarget === p.uid ? 'bg-primary text-white border-primary' : 'bg-white border-border-subtle'}`}
+                    className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${tradeTarget === p.uid ? 'bg-amber-400 text-amber-950 border-amber-400' : 'bg-white/10 border-white/25 text-white'}`}
                   >
                     {p.displayName}
                   </button>
@@ -2162,13 +2243,13 @@ export default function BusinessGame() {
               {tradeTarget && (
                 <>
                   <div>
-                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">You Give</p>
+                    <p className="text-[10px] font-bold text-white/60 uppercase tracking-wider mb-1">You Give</p>
                     <div className="flex flex-wrap gap-1">
                       {myProperties.map(({ square }) => (
                         <button
                           key={square.index}
                           onClick={() => setTradeOfferProps((l) => toggleIn(l, square.index))}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${tradeOfferProps.includes(square.index) ? 'bg-primary/10 border-primary text-primary' : 'bg-white border-border-subtle'}`}
+                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${tradeOfferProps.includes(square.index) ? 'bg-amber-400/25 border-amber-400 text-amber-100' : 'bg-white/10 border-white/25 text-white'}`}
                         >
                           {square.name}
                         </button>
@@ -2179,17 +2260,17 @@ export default function BusinessGame() {
                       value={tradeOfferCash}
                       onChange={(e) => setTradeOfferCash(e.target.value)}
                       placeholder="Cash to add"
-                      className="mt-1.5 w-full bg-surface p-2 rounded-lg border border-border-subtle text-xs outline-none"
+                      className="mt-1.5 w-full bg-white text-slate-900 p-2 rounded-xl text-xs outline-none"
                     />
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">You Get</p>
+                    <p className="text-[10px] font-bold text-white/60 uppercase tracking-wider mb-1">You Get</p>
                     <div className="flex flex-wrap gap-1">
                       {targetProperties.map(({ square }) => (
                         <button
                           key={square.index}
                           onClick={() => setTradeRequestProps((l) => toggleIn(l, square.index))}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${tradeRequestProps.includes(square.index) ? 'bg-primary/10 border-primary text-primary' : 'bg-white border-border-subtle'}`}
+                          className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${tradeRequestProps.includes(square.index) ? 'bg-amber-400/25 border-amber-400 text-amber-100' : 'bg-white/10 border-white/25 text-white'}`}
                         >
                           {square.name}
                         </button>
@@ -2200,19 +2281,20 @@ export default function BusinessGame() {
                       value={tradeRequestCash}
                       onChange={(e) => setTradeRequestCash(e.target.value)}
                       placeholder="Cash to request"
-                      className="mt-1.5 w-full bg-surface p-2 rounded-lg border border-border-subtle text-xs outline-none"
+                      className="mt-1.5 w-full bg-white text-slate-900 p-2 rounded-xl text-xs outline-none"
                     />
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={handleProposeTrade} disabled={busy} className="flex-1 py-2 bg-primary text-white font-bold rounded-lg text-sm disabled:opacity-50">
+                    <button onClick={handleProposeTrade} disabled={busy} className="flex-1 py-2 bg-gradient-to-b from-green-400 to-green-700 shadow-[0_3px_0_#0f5f2e] text-white font-bold rounded-lg text-sm disabled:opacity-50">
                       Send Offer
                     </button>
-                    <button onClick={closeTradeBuilder} className="px-4 py-2 bg-white border border-border-subtle rounded-lg text-sm font-bold">
+                    <button onClick={closeTradeBuilder} className="px-4 py-2 bg-white/12 border border-white/30 text-white rounded-lg text-sm font-bold">
                       Cancel
                     </button>
                   </div>
                 </>
               )}
+            </div>
             </div>
           );
         })()}
@@ -2220,39 +2302,45 @@ export default function BusinessGame() {
         {/* Manage Properties is triggered from the corner button pinned to the dice area above,
             not a button down here — this just renders the expanded list once toggled on. */}
         {isMyTurn && game.turnPhase === 'action' && !canBuy && !debt && !game.pendingCard && !game.auction && !game.pendingTrade && showBuild && (
-              <div className="space-y-1">
-                {myProperties.length === 0 && <p className="text-xs text-text-muted italic px-1">You don't own any properties yet.</p>}
+              <div className="space-y-1.5 text-white">
+                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-white/60 px-1">My properties</p>
+                {myProperties.length === 0 && <p className="text-xs text-white/60 italic px-1">You don't own any properties yet.</p>}
                 {myProperties.map(({ state, square }) => {
                   const isProp = square.type === 'property';
                   const build = isProp ? canBuildOnProperty(square, properties) : { canBuild: false, isHotel: false };
                   const canBuildHere = isProp && build.canBuild && canBuildOnGroup((square as PropertySquare).group, me!.uid, properties);
+                  const swatch = isProp ? COLOR_GROUPS_LIGHT[(square as PropertySquare).group] : '#cbd5e1';
+                  const btn = 'text-[11px] font-black px-3 py-1.5 rounded-full';
                   return (
-                    <div key={square.index} className="bg-white rounded-lg border border-border-subtle p-2 flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold truncate">{square.name}</p>
-                        <p className="text-[10px] text-text-muted">
-                          {state.mortgaged ? 'Mortgaged' : isProp ? `${state.hotel ? 'Hotel' : `${state.houses} house(s)`}` : 'Owned'}
-                        </p>
+                    <div key={square.index} className="rounded-2xl bg-slate-900/80 border border-white/15 p-2 flex items-center gap-2.5">
+                      <button onClick={() => setDetailIndex(square.index)} className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl shrink-0 border-t-[5px]" style={{ borderColor: swatch, background: 'linear-gradient(180deg,#e0f2fe,#f7f3e8)' }}>
+                        {state.mortgaged ? '🔒' : squareEmoji(square)}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] font-black truncate">{square.name}</p>
+                        <div className="text-[10px] text-white/65 flex items-center gap-1 h-4">
+                          {state.mortgaged ? 'Mortgaged' : isProp && (state.houses > 0 || state.hotel) ? <Buildings houses={state.houses} hotel={state.hotel} size={state.hotel ? 12 : 11} /> : isProp ? 'No houses' : 'Owned'}
+                        </div>
                       </div>
-                      <div className="flex gap-1 shrink-0 flex-wrap justify-end">
+                      <div className="flex gap-1 shrink-0 flex-wrap justify-end max-w-[55%]">
                         {isProp && canBuildHere && (
-                          <button onClick={() => handleBuild(square as PropertySquare)} disabled={busy} className="text-[10px] font-bold px-2 py-1 bg-success/10 text-success rounded-lg">
-                            Build {build.isHotel ? 'Hotel' : 'House'} ({formatMoney((square as PropertySquare).houseCost)})
+                          <button onClick={() => handleBuild(square as PropertySquare)} disabled={busy} className={clsx(btn, 'bg-gradient-to-b from-green-400 to-green-700 shadow-[0_3px_0_#0f5f2e] disabled:opacity-50')}>
+                            Build {build.isHotel ? 'Hotel' : 'House'} · {formatMoney((square as PropertySquare).houseCost)}
                           </button>
                         )}
                         {isProp && (state.houses > 0 || state.hotel) && (
-                          <button onClick={() => handleSellHouse(square as PropertySquare)} disabled={busy} className="text-[10px] font-bold px-2 py-1 bg-warning/10 text-warning rounded-lg">
+                          <button onClick={() => handleSellHouse(square as PropertySquare)} disabled={busy} className={clsx(btn, 'bg-amber-500/25 text-amber-200 border border-amber-400/50 disabled:opacity-50')}>
                             Sell {state.hotel ? 'Hotel' : 'House'}
                           </button>
                         )}
                         {!state.mortgaged && state.houses === 0 && !state.hotel && (
-                          <button onClick={() => handleMortgage(square.index)} disabled={busy} className="text-[10px] font-bold px-2 py-1 bg-primary/10 text-primary rounded-lg">
-                            Mortgage (+{formatMoney((square as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue)})
+                          <button onClick={() => handleMortgage(square.index)} disabled={busy} className={clsx(btn, 'bg-white/12 border border-white/30 disabled:opacity-50')}>
+                            Mortgage +{formatMoney((square as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue)}
                           </button>
                         )}
                         {state.mortgaged && (
-                          <button onClick={() => handleUnmortgage(square.index)} disabled={busy} className="text-[10px] font-bold px-2 py-1 bg-primary/10 text-primary rounded-lg">
-                            Unmortgage ({formatMoney(Math.round((square as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue * (1 + UNMORTGAGE_INTEREST)))})
+                          <button onClick={() => handleUnmortgage(square.index)} disabled={busy} className={clsx(btn, 'bg-white/12 border border-white/30 disabled:opacity-50')}>
+                            Unmortgage {formatMoney(Math.round((square as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue * (1 + UNMORTGAGE_INTEREST)))}
                           </button>
                         )}
                       </div>
@@ -2261,50 +2349,84 @@ export default function BusinessGame() {
                 })}
               </div>
         )}
-      </main>
+          </div>
+        </div>
+      </div>
 
-      {/* Property detail sheet — tap any tile to see its full rates/rent/build/mortgage info,
-          same as flipping over a physical property card. */}
-      {detailIndex != null && (() => {
-        const detailSquare = BOARD[detailIndex];
-        const detailState = properties[detailIndex];
+      {/* Property sheet — tap any tile: its city picture, rent ladder with the current building stage
+          highlighted, and (on your turn) build / sell / mortgage. */}
+      {detailOpen && (() => {
+        const detailSquare = BOARD[detailIndex!];
+        const detailState = properties[detailIndex!];
         const ownerName = detailState?.ownerUid ? players.find((p) => p.uid === detailState.ownerUid)?.displayName : null;
         const isMine = !!me && detailState?.ownerUid === me.uid;
         const canManageNow = isMyTurn && game.turnPhase === 'action' && !canBuy && !debt && !game.pendingCard && !game.auction && !game.pendingTrade;
         const isProp = detailSquare.type === 'property';
         const build = isProp ? canBuildOnProperty(detailSquare as PropertySquare, properties) : { canBuild: false, isHotel: false };
         const canBuildHere = isMine && isProp && build.canBuild && canBuildOnGroup((detailSquare as PropertySquare).group, me!.uid, properties);
+        const art = isProp ? CITY_ART[detailSquare.name] : null;
+        const stage = detailState?.hotel ? 5 : detailState?.houses || 0;
+        const fullSet = isProp && detailState?.ownerUid ? ownsFullGroup((detailSquare as PropertySquare).group, detailState.ownerUid, properties) : false;
+        const base = isProp ? (detailSquare as PropertySquare).baseRent : 0;
+        const ladder = isProp
+          ? [
+              { label: fullSet ? 'Full set' : 'Land', amount: fullSet && game.houseRules.doubleRentFullSet ? base * 2 : base, h: 0, hotel: false },
+              { label: '1 house', amount: base * RENT_HOUSE_MULTIPLIERS[1], h: 1, hotel: false },
+              { label: '2 houses', amount: base * RENT_HOUSE_MULTIPLIERS[2], h: 2, hotel: false },
+              { label: '3 houses', amount: base * RENT_HOUSE_MULTIPLIERS[3], h: 3, hotel: false },
+              { label: '4 houses', amount: base * RENT_HOUSE_MULTIPLIERS[4], h: 4, hotel: false },
+              { label: 'Hotel', amount: base * RENT_HOTEL_MULTIPLIER, h: 0, hotel: true },
+            ]
+          : [];
         return (
-          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setDetailIndex(null)}>
-            <div className="bg-white rounded-2xl w-full max-w-xl p-4 space-y-2 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-black text-primary">{detailSquare.name}</h2>
-                <button onClick={() => setDetailIndex(null)} className="text-text-muted">
+          <div className="fixed inset-0 z-[200] bg-black/60 flex items-end sm:items-center justify-center" onClick={() => setDetailIndex(null)}>
+            <div className="bg-white text-on-surface rounded-t-3xl sm:rounded-3xl w-full max-w-xl p-4 space-y-3 max-h-[88vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3">
+                <div className="w-28 h-[4.5rem] rounded-xl relative overflow-hidden flex items-end justify-center shrink-0" style={{ background: `linear-gradient(180deg, ${isProp ? COLOR_GROUPS_LIGHT[(detailSquare as PropertySquare).group] : '#94a3b8'}, #fff7ed)` }}>
+                  <div className="absolute bottom-0 inset-x-0 h-8 flex items-end gap-0.5 px-1 opacity-50">
+                    {[10, 18, 12, 26, 16, 22, 12].map((x, i) => <i key={i} className="flex-1 bg-amber-900 rounded-t-sm" style={{ height: x }} />)}
+                  </div>
+                  <span className="relative text-[2.6rem] leading-none mb-0.5 drop-shadow">{squareEmoji(detailSquare)}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-lg font-black text-primary leading-tight">{detailSquare.name}</h2>
+                  {art && <p className="text-[11px] text-text-muted">{art.sub}</p>}
+                  {ownerName ? (
+                    <p className="text-xs font-bold text-primary mt-1">
+                      Owned by {ownerName}{detailState?.mortgaged ? ' — mortgaged' : ''}
+                    </p>
+                  ) : isOwnable(detailSquare) ? (
+                    <p className="text-xs text-text-muted mt-1">Unowned</p>
+                  ) : null}
+                </div>
+                <button onClick={() => setDetailIndex(null)} className="text-text-muted shrink-0">
                   <span className="material-symbols-outlined">close</span>
                 </button>
               </div>
 
-              {ownerName && (
-                <p className="text-xs font-bold text-primary">
-                  Owned by {ownerName}{detailState?.mortgaged ? ' — mortgaged' : ''}
-                  {detailState && (detailState.houses > 0 || detailState.hotel) ? ` — ${detailState.hotel ? 'hotel' : `${detailState.houses} house(s)`}` : ''}
-                </p>
-              )}
-
-              {detailSquare.type === 'property' && (
-                <div>
-                  <DetailRow label="Price" value={formatMoney(detailSquare.price)} />
-                  <DetailRow label="Rent" value={formatMoney(detailSquare.baseRent)} />
-                  <DetailRow label="Rent (owns full color set)" value={formatMoney(detailSquare.baseRent * 2)} />
-                  <DetailRow label="Rent with 1 house" value={formatMoney(detailSquare.baseRent * RENT_HOUSE_MULTIPLIERS[1])} />
-                  <DetailRow label="Rent with 2 houses" value={formatMoney(detailSquare.baseRent * RENT_HOUSE_MULTIPLIERS[2])} />
-                  <DetailRow label="Rent with 3 houses" value={formatMoney(detailSquare.baseRent * RENT_HOUSE_MULTIPLIERS[3])} />
-                  <DetailRow label="Rent with 4 houses" value={formatMoney(detailSquare.baseRent * RENT_HOUSE_MULTIPLIERS[4])} />
-                  <DetailRow label="Rent with hotel" value={formatMoney(detailSquare.baseRent * RENT_HOTEL_MULTIPLIER)} />
-                  <DetailRow label="House / hotel cost" value={formatMoney(detailSquare.houseCost)} />
-                  <DetailRow label="Mortgage value" value={formatMoney(detailSquare.mortgageValue)} />
-                  <DetailRow label="Release (unmortgage) cost" value={formatMoney(Math.round(detailSquare.mortgageValue * (1 + UNMORTGAGE_INTEREST)))} />
-                </div>
+              {isProp && (
+                <>
+                  <div className="grid grid-cols-6 gap-1">
+                    {ladder.map((st, i) => {
+                      const on = (st.hotel ? stage === 5 : !st.hotel && stage === st.h && stage !== 5) && !!detailState?.ownerUid;
+                      return (
+                        <div key={i} className={clsx('rounded-xl py-1.5 px-0.5 text-center border-2', on ? 'bg-success/15 border-success' : 'bg-surface border-transparent')}>
+                          <div className="h-6 flex items-end justify-center gap-px">
+                            {st.hotel ? <HotelIcon size={15} /> : st.h > 0 ? <Buildings houses={st.h} hotel={false} size={st.h > 2 ? 9 : 12} /> : <span className="text-text-muted text-xs">—</span>}
+                          </div>
+                          <p className="text-[10px] font-black text-amber-700 mt-0.5">{formatMoney(st.amount)}</p>
+                          <p className="text-[7.5px] text-text-muted leading-tight">{st.label}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div>
+                    <DetailRow label="Price" value={formatMoney((detailSquare as PropertySquare).price)} />
+                    <DetailRow label="House / hotel cost" value={formatMoney((detailSquare as PropertySquare).houseCost)} />
+                    <DetailRow label="Mortgage value" value={formatMoney((detailSquare as PropertySquare).mortgageValue)} />
+                    <DetailRow label="Release (unmortgage) cost" value={formatMoney(Math.round((detailSquare as PropertySquare).mortgageValue * (1 + UNMORTGAGE_INTEREST)))} />
+                  </div>
+                </>
               )}
 
               {detailSquare.type === 'railway' && (
@@ -2330,9 +2452,7 @@ export default function BusinessGame() {
 
               {detailSquare.type === 'tax' && <DetailRow label="Amount" value={formatMoney(INCOME_TAX)} />}
               {detailSquare.type === 'go' && (
-                <p className="text-sm text-text-muted">
-                  Pass GO and collect {formatMoney(SALARY)} salary — double if you land exactly on it and that house rule is on.
-                </p>
+                <p className="text-sm text-text-muted">Pass GO and collect {formatMoney(SALARY)} salary — double if you land exactly on it and that house rule is on.</p>
               )}
               {detailSquare.type === 'jail' && <p className="text-sm text-text-muted">Just visiting — no penalty unless you're sent here.</p>}
               {detailSquare.type === 'free_parking' && (
@@ -2346,47 +2466,37 @@ export default function BusinessGame() {
               )}
 
               {isMine && isOwnable(detailSquare) && (
-                <div className="pt-2 mt-2 border-t border-border-subtle space-y-1.5">
+                <div className="pt-2 border-t border-border-subtle space-y-1.5">
                   <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Manage</p>
                   {!canManageNow && <p className="text-xs text-text-muted italic">Available on your turn, after rolling.</p>}
                   {canManageNow && (
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="space-y-1.5">
                       {canBuildHere && (
                         <button
                           onClick={() => handleBuild(detailSquare as PropertySquare)}
                           disabled={busy}
-                          className="text-xs font-bold px-3 py-1.5 bg-success/10 text-success rounded-lg disabled:opacity-50"
+                          className="w-full py-3 rounded-2xl bg-gradient-to-b from-green-400 to-green-700 text-white font-black text-sm shadow-[0_4px_0_#0f5f2e] disabled:opacity-50"
                         >
-                          Build {build.isHotel ? 'Hotel' : 'House'} ({formatMoney((detailSquare as PropertySquare).houseCost)})
+                          🏠 Build {build.isHotel ? 'a hotel' : `house ${stage + 1}`} — {formatMoney((detailSquare as PropertySquare).houseCost)}
                         </button>
                       )}
-                      {isProp && detailState && (detailState.houses > 0 || detailState.hotel) && (
-                        <button
-                          onClick={() => handleSellHouse(detailSquare as PropertySquare)}
-                          disabled={busy}
-                          className="text-xs font-bold px-3 py-1.5 bg-warning/10 text-warning rounded-lg disabled:opacity-50"
-                        >
-                          Sell {detailState.hotel ? 'Hotel' : 'House'}
-                        </button>
-                      )}
-                      {detailState && !detailState.mortgaged && detailState.houses === 0 && !detailState.hotel && (
-                        <button
-                          onClick={() => handleMortgage(detailIndex)}
-                          disabled={busy}
-                          className="text-xs font-bold px-3 py-1.5 bg-primary/10 text-primary rounded-lg disabled:opacity-50"
-                        >
-                          Mortgage (+{formatMoney((detailSquare as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue)})
-                        </button>
-                      )}
-                      {detailState?.mortgaged && (
-                        <button
-                          onClick={() => handleUnmortgage(detailIndex)}
-                          disabled={busy}
-                          className="text-xs font-bold px-3 py-1.5 bg-primary/10 text-primary rounded-lg disabled:opacity-50"
-                        >
-                          Unmortgage ({formatMoney(Math.round((detailSquare as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue * (1 + UNMORTGAGE_INTEREST)))})
-                        </button>
-                      )}
+                      <div className="flex flex-wrap gap-1.5">
+                        {isProp && detailState && (detailState.houses > 0 || detailState.hotel) && (
+                          <button onClick={() => handleSellHouse(detailSquare as PropertySquare)} disabled={busy} className="text-xs font-bold px-3 py-2 bg-warning/10 text-warning rounded-xl disabled:opacity-50">
+                            Sell {detailState.hotel ? 'hotel' : 'house'}
+                          </button>
+                        )}
+                        {detailState && !detailState.mortgaged && detailState.houses === 0 && !detailState.hotel && (
+                          <button onClick={() => handleMortgage(detailIndex!)} disabled={busy} className="text-xs font-bold px-3 py-2 bg-primary/10 text-primary rounded-xl disabled:opacity-50">
+                            Mortgage (+{formatMoney((detailSquare as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue)})
+                          </button>
+                        )}
+                        {detailState?.mortgaged && (
+                          <button onClick={() => handleUnmortgage(detailIndex!)} disabled={busy} className="text-xs font-bold px-3 py-2 bg-primary/10 text-primary rounded-xl disabled:opacity-50">
+                            Unmortgage ({formatMoney(Math.round((detailSquare as PropertySquare | RailwaySquare | UtilitySquare).mortgageValue * (1 + UNMORTGAGE_INTEREST)))})
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

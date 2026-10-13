@@ -2,6 +2,7 @@
 // rummy hand laid out in its groups, or the Ludo board with the winner's tokens home.
 import { FONT, EMOJI_FONT, roundRectPath, fitText } from './cardCanvas';
 import { parseCard, SUIT_SYMBOL, SUIT_RED } from './rummy';
+import { parseCard as seqParseCard, SUIT_SYMBOL as SEQ_SYMBOL, SUIT_RED as SEQ_RED, BOARD_LAYOUT, CORNER_INDICES, SIDE_COLOR } from './sequence';
 
 export interface HeroGroup {
   cards: string[];
@@ -10,7 +11,8 @@ export interface HeroGroup {
 
 export type WinHero =
   | { kind: 'hand'; groups: HeroGroup[]; wildRanks?: string[]; caption?: string }
-  | { kind: 'ludo'; winnerColor: string; caption?: string };
+  | { kind: 'ludo'; winnerColor: string; caption?: string }
+  | { kind: 'sequence'; board: (number | null)[]; sequences: { cells: number[]; side: number }[]; winnerSide: number; needed: number; caption?: string };
 
 interface Area { x: number; y: number; w: number; h: number }
 
@@ -265,6 +267,100 @@ function drawLudoHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<WinH
   ctx.fillText('TOKENS HOME', rx - 2, dy + dieS + 102);
 }
 
+// ---- Sequence: the final 10x10 board, chips as rings (the card stays readable), the winning lines glowing gold ----
+function drawSequenceHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<WinHero, { kind: 'sequence' }>) {
+  const size = Math.min(a.h - 6, 300);
+  const cs = size / 10;
+  const ox = a.x + a.w / 2 - size / 2 - 150;
+  const oy = a.y + (a.h - size) / 2;
+  const centre = (i: number) => [ox + (i % 10) * cs + cs / 2, oy + Math.floor(i / 10) * cs + cs / 2] as const;
+
+  ctx.save();
+  roundRectPath(ctx, ox - 8, oy - 8, size + 16, size + 16, 14);
+  const wood = ctx.createLinearGradient(ox, oy, ox + size, oy + size);
+  wood.addColorStop(0, '#92602D');
+  wood.addColorStop(1, '#5A3A18');
+  ctx.fillStyle = wood;
+  ctx.fill();
+  roundRectPath(ctx, ox, oy, size, size, 6);
+  ctx.clip();
+  ctx.fillStyle = '#2B1B0A';
+  ctx.fillRect(ox, oy, size, size);
+
+  // cells
+  BOARD_LAYOUT.forEach((code, i) => {
+    const [cx, cy] = centre(i);
+    const x = cx - cs / 2, y = cy - cs / 2;
+    const corner = CORNER_INDICES.includes(i);
+    const pc = corner ? null : seqParseCard(code);
+    const red = !!pc && SEQ_RED[pc.suit];
+    ctx.fillStyle = corner ? '#F5B83D' : red ? '#FBE9E4' : '#FAF5E6';
+    ctx.fillRect(x + 0.75, y + 0.75, cs - 1.5, cs - 1.5);
+    ctx.textAlign = 'center';
+    if (corner) {
+      ctx.fillStyle = '#7C2D12';
+      ctx.font = `900 ${Math.round(cs * 0.6)}px ${FONT}`;
+      ctx.fillText('★', cx, cy + cs * 0.2);
+    } else if (pc) {
+      ctx.fillStyle = red ? '#DC2626' : '#0F172A';
+      ctx.font = `900 ${Math.round(cs * 0.34)}px ${FONT}`;
+      ctx.fillText(`${pc.rank}${SEQ_SYMBOL[pc.suit]}`, cx, cy + cs * 0.12);
+    }
+  });
+
+  // the winning lines: a gold glow through the five chips
+  hero.sequences.forEach((seq) => {
+    const pts = seq.cells.map(centre);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = 'rgba(253, 224, 71, 0.9)';
+    ctx.shadowBlur = 14;
+    ctx.strokeStyle = 'rgba(253, 224, 71, 0.55)';
+    ctx.lineWidth = cs * 0.98;
+    ctx.beginPath();
+    pts.forEach(([x, y], k) => (k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  // chips: thick team-coloured rings, hollow so the card shows through
+  hero.board.forEach((side, i) => {
+    if (side == null) return;
+    const [cx, cy] = centre(i);
+    const col = SIDE_COLOR[side] || '#2563EB';
+    ctx.beginPath();
+    ctx.arc(cx, cy, cs * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = `${col}40`;
+    ctx.fill();
+    ctx.lineWidth = cs * 0.16;
+    ctx.strokeStyle = col;
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  // right: the tally
+  const rx = ox + size + 70;
+  const winCol = SIDE_COLOR[hero.winnerSide] || '#2563EB';
+  const rowY = a.y + a.h / 2 - 70;
+  for (let k = 0; k < 5; k++) {
+    ctx.beginPath();
+    ctx.arc(rx + 18 + k * 38, rowY, 17, 0, Math.PI * 2);
+    ctx.fillStyle = `${winCol}55`;
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = winCol;
+    ctx.stroke();
+  }
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `900 56px ${FONT}`;
+  ctx.fillText(`${hero.needed} / ${hero.needed}`, rx - 4, rowY + 80);
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.font = `700 24px ${FONT}`;
+  ctx.fillText('SEQUENCES', rx - 2, rowY + 112);
+}
+
 export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: WinHero) {
   // panel
   ctx.save();
@@ -276,7 +372,7 @@ export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: Win
   ctx.stroke();
   ctx.restore();
 
-  const caption = hero.caption ?? (hero.kind === 'hand' ? 'THE WINNING HAND' : 'ALL FOUR HOME');
+  const caption = hero.caption ?? (hero.kind === 'hand' ? 'THE WINNING HAND' : hero.kind === 'sequence' ? 'THE WINNING BOARD' : 'ALL FOUR HOME');
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255, 229, 138, 0.95)';
   ctx.font = `800 22px ${FONT}`;
@@ -286,5 +382,6 @@ export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: Win
 
   const inner: Area = { x: area.x + 24, y: area.y + 56, w: area.w - 48, h: area.h - 72 };
   if (hero.kind === 'hand') drawHandHero(ctx, inner, hero);
+  else if (hero.kind === 'sequence') drawSequenceHero(ctx, inner, hero);
   else drawLudoHero(ctx, inner, hero);
 }

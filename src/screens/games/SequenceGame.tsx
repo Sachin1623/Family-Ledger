@@ -38,18 +38,20 @@ import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
-const CardChip: React.FC<{ cardId: string; selected?: boolean; onClick?: () => void }> = ({ cardId, selected, onClick }) => {
+// Felt-table hand card (absolutely positioned inside the fan).
+const CardChip: React.FC<{ cardId: string; selected?: boolean; onClick?: () => void; style?: React.CSSProperties }> = ({ cardId, selected, onClick, style }) => {
   const { rank, suit } = parseCard(cardId);
   const red = SUIT_RED[suit];
   return (
     <button
       onClick={onClick}
-      className={`shrink-0 w-11 h-14 rounded-lg border-2 flex flex-col items-center justify-center font-bold bg-white transition-all ${
-        selected ? 'border-primary -translate-y-2 shadow-md' : 'border-border-subtle'
-      } ${red ? 'text-error' : 'text-on-surface'}`}
+      style={style}
+      className={`absolute w-14 h-20 rounded-lg bg-white border border-slate-300 flex items-center justify-center font-black transition-all shadow-[0_3px_0_rgba(0,0,0,0.25),0_6px_10px_rgba(0,0,0,0.3)] active:scale-95 ${
+        selected ? 'ring-[3px] ring-amber-400 shadow-[0_10px_14px_rgba(0,0,0,0.4)]' : ''
+      } ${red ? 'text-red-600' : 'text-slate-900'}`}
     >
-      <span className="text-xs">{rank}</span>
-      <span className="text-sm leading-none">{SUIT_SYMBOL[suit]}</span>
+      <span className="absolute top-[3px] left-[5px] text-[0.75rem]">{rank}</span>
+      <span className="text-[1.7rem] mt-2">{SUIT_SYMBOL[suit]}</span>
     </button>
   );
 };
@@ -75,8 +77,10 @@ function sequenceOverlayStyle(seq: { cells: number[]; side: number }): React.CSS
   const base: React.CSSProperties = {
     position: 'absolute',
     boxSizing: 'border-box',
-    border: `3px solid ${color}`,
-    background: `${color}22`,
+    border: '3px solid #FDE047',
+    background: `${color}26`,
+    boxShadow: '0 0 12px #FDE047aa',
+    zIndex: 25,
     borderRadius: 9999,
     pointerEvents: 'none',
   };
@@ -214,7 +218,7 @@ export default function SequenceGame() {
     for (let side = 0; side < counts.length; side++) {
       if (counts[side] > (prev[side] || 0) && counts[side] < needed) {
         setSmallCelebration({ side, line: SMALL_SEQUENCE_LINES[Math.floor(Math.random() * SMALL_SEQUENCE_LINES.length)] });
-        const t = setTimeout(() => setSmallCelebration(null), 2800);
+        const t = setTimeout(() => setSmallCelebration(null), 3400);
         prevCountsRef.current = counts;
         return () => clearTimeout(t);
       }
@@ -532,6 +536,8 @@ export default function SequenceGame() {
   // ---- Active / Finished (the board stays visible and viewable after the game ends — only the
   // result panel below is dismissible/reopenable, not the whole screen) ----
   const isFinished = game.status === 'finished';
+  // Legal-move glow: your own team colour for placing, red when a one-eyed jack removes an opponent's chip.
+  const hintColor = selectedCard && isOneEyedJack(selectedCard) ? '#EF4444' : SIDE_COLOR[mySide] || '#2563EB';
   const turnPlayer = game.players[game.currentTurnSeatIndex];
   const needed = sequencesToWin(game.playerCount);
   const winnerText =
@@ -543,6 +549,7 @@ export default function SequenceGame() {
   const winShare = isFinished && me && game.winnerSide != null && sideForSeat(me.seatIndex, game.playerCount) === game.winnerSide
     ? buildWinShare({
         gameName: 'Sequence',
+        hero: { kind: 'sequence' as const, board: game.board || [], sequences: game.sequences || [], winnerSide: game.winnerSide, needed },
         winnerLabel: winnerNames,
         standings: Array.from(new Set(game.players.map((p) => sideForSeat(p.seatIndex, game.playerCount))))
           .sort((a, b) => Number(b === game.winnerSide) - Number(a === game.winnerSide))
@@ -558,59 +565,75 @@ export default function SequenceGame() {
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
-      {smallCelebration && (
-        <div className="fixed inset-x-0 top-14 z-50 flex justify-center pointer-events-none px-6">
+      {(() => {
+        const win = showBigCelebration && bigCelebrationLine && game.winnerSide != null;
+        const small = !win && smallCelebration;
+        if (!win && !small) return null;
+        const side = win ? game.winnerSide! : smallCelebration!.side;
+        const tc = SIDE_COLOR[side];
+        const dismiss = () => { setShowBigCelebration(false); setSmallCelebration(null); };
+        const n = win ? 40 : 26;
+        const confetti = Array.from({ length: n }).map((_, i) => {
+          const ang = (i / n) * Math.PI * 2 + (i % 3) * 0.2;
+          const dist = (win ? 130 : 100) + ((i * 37) % 90);
+          return { dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, color: ['#fbbf24', '#f87171', '#60a5fa', '#4ade80', '#fff', '#c084fc'][i % 6], delay: (i % 7) * 0.04, rot: (i * 57) % 360 };
+        });
+        const seqCount = sequenceCountBySide[side] || 0;
+        return (
           <div
             role="button"
             tabIndex={0}
-            onClick={() => setSmallCelebration(null)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSmallCelebration(null); }}
-            className="pointer-events-auto cursor-pointer px-5 py-3 rounded-2xl shadow-2xl text-center animate-bounce max-w-xs"
-            style={{ background: SIDE_COLOR[smallCelebration.side], color: 'white' }}
+            onClick={dismiss}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') dismiss(); }}
+            className="fixed inset-0 z-[230] flex items-center justify-center cursor-pointer overflow-hidden"
+            style={{ background: `radial-gradient(circle at 50% 45%, ${tc}66, rgba(0,0,0,0.8) 70%)`, animation: 'seqFade 0.25s ease-out' }}
           >
-            <p className="text-2xl mb-0.5">✨🔗</p>
-            <p className="text-sm font-black leading-snug">{smallCelebration.line}</p>
-            <p className="text-[10px] font-bold opacity-80 mt-1">
-              {SIDE_LABEL[smallCelebration.side]}{isTeamPlay ? ' team' : ''} lines up a sequence! · tap to dismiss
-            </p>
+            <style>{`
+              @keyframes seqFade{from{opacity:0}to{opacity:1}}
+              @keyframes seqPop{0%{transform:scale(.2) rotate(-8deg);opacity:0}55%{transform:scale(1.25) rotate(3deg);opacity:1}100%{transform:scale(1) rotate(-2deg)}}
+              @keyframes seqChip{0%{transform:translateY(-40px) scale(.2);opacity:0}70%{transform:translateY(4px) scale(1.15);opacity:1}100%{transform:translateY(0) scale(1);opacity:1}}
+              @keyframes seqGlow{0%,100%{box-shadow:0 0 0 2px #fde047,0 0 14px #fde047}50%{box-shadow:0 0 0 2px #fde047,0 0 30px #fde047}}
+              @keyframes seqBurst{0%{transform:translate(0,0) rotate(0) scale(.4);opacity:1}100%{transform:translate(var(--dx),var(--dy)) rotate(var(--rot)) scale(1);opacity:0}}
+              @keyframes seqRise{0%{transform:translateY(16px);opacity:0}100%{transform:translateY(0);opacity:1}}
+              @keyframes seqTrophy{0%{transform:translateY(30px) scale(.3);opacity:0}60%{transform:translateY(-8px) scale(1.2);opacity:1}100%{transform:translateY(0) scale(1)}}
+            `}</style>
+            <div className="absolute left-1/2 top-[44%]">
+              {confetti.map((c, i) => (
+                <i
+                  key={i}
+                  className="absolute block w-2 h-3 rounded-[2px]"
+                  style={{ background: c.color, ['--dx' as any]: `${c.dx}px`, ['--dy' as any]: `${c.dy}px`, ['--rot' as any]: `${c.rot}deg`, animation: `seqBurst 1.3s ease-out ${0.7 + c.delay}s both` }}
+                />
+              ))}
+            </div>
+            <div className="relative text-center px-6 flex flex-col items-center">
+              {win && <span className="text-[4.5rem] leading-none" style={{ animation: 'seqTrophy 0.7s cubic-bezier(.2,1.3,.4,1) 0.1s both' }}>🏆</span>}
+              {/* five chips snap into a row — the sequence */}
+              <div className="flex gap-1.5 mb-3">
+                {[0, 1, 2, 3, 4].map((k) => (
+                  <span
+                    key={k}
+                    className="w-10 h-10 rounded-full border-[5px]"
+                    style={{ borderColor: tc, background: `${tc}55`, animation: `seqChip 0.35s cubic-bezier(.3,1.4,.5,1) ${0.1 + k * 0.1}s both, seqGlow 1.2s ease-in-out ${0.7}s infinite` }}
+                  />
+                ))}
+              </div>
+              <p
+                className="text-[3.4rem] leading-none font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-b from-amber-100 via-amber-300 to-amber-600 drop-shadow-[0_6px_0_rgba(0,0,0,0.45)]"
+                style={{ filter: `drop-shadow(0 0 22px ${tc})`, animation: 'seqPop 0.6s cubic-bezier(.2,1.3,.4,1) 0.65s both' }}
+              >
+                {win ? 'WINNER!' : 'SEQUENCE!'}
+              </p>
+              <p className="mt-3 text-sm font-extrabold text-white max-w-[16rem] leading-snug" style={{ animation: 'seqRise 0.4s ease-out 1.1s both' }}>
+                {win ? bigCelebrationLine : smallCelebration!.line}
+              </p>
+              <p className="mt-3 inline-block px-4 py-1.5 rounded-full text-xs font-black text-white shadow-lg" style={{ background: tc, animation: 'seqRise 0.4s ease-out 1.25s both' }}>
+                {win ? winnerText : `${SIDE_LABEL[side]}${isTeamPlay ? ' team' : ''} · ${seqCount} of ${needed} sequences`}
+              </p>
+            </div>
           </div>
-        </div>
-      )}
-      {showBigCelebration && bigCelebrationLine && game.winnerSide != null && (
-        <div className="fixed inset-x-0 top-14 z-50 flex justify-center pointer-events-none px-6">
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setShowBigCelebration(false)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setShowBigCelebration(false); }}
-            className="pointer-events-auto cursor-pointer px-5 py-3.5 rounded-2xl shadow-2xl text-center animate-bounce max-w-xs border-2 border-white/40"
-            style={{ background: SIDE_COLOR[game.winnerSide], color: 'white' }}
-          >
-            <p className="text-3xl mb-0.5">🎆🎉🎇</p>
-            <p className="text-base font-black leading-snug">{winnerText}</p>
-            <p className="text-sm font-bold opacity-90">{bigCelebrationLine}</p>
-            <p className="text-[10px] font-bold opacity-80 mt-1">tap to dismiss</p>
-          </div>
-        </div>
-      )}
-      <header className="p-3 flex items-center gap-2 bg-white border-b border-border-subtle">
-        <h1 className="font-black text-primary text-sm shrink-0">Sequence</h1>
-        <ReactionButton onSend={handleSendQuickReaction} />
-        <div className="flex items-center gap-1.5 ml-auto shrink-0">
-          <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-          <VoiceChatButton voice={voice} />
-          <HelpButton onClick={() => setShowHelp(true)} />
-          {isFinished ? (
-            <button onClick={() => setShowResultPanel(true)} className="p-2 text-primary" aria-label="Show result">
-              <span className="material-symbols-outlined text-[20px] block">emoji_events</span>
-            </button>
-          ) : (
-            <button onClick={handleEndGame} className="p-2 text-error/70" aria-label="End game">
-              <span className="material-symbols-outlined text-[20px] block">flag</span>
-            </button>
-          )}
-        </div>
-      </header>
+        );
+      })()}
       {showHelp && <GameHelpModal content={SEQUENCE_HELP} onClose={() => setShowHelp(false)} />}
       {showChat && user && (
         <ChatPanel
@@ -626,107 +649,216 @@ export default function SequenceGame() {
         />
       )}
 
-      <main className="flex-1 p-3 max-w-md mx-auto w-full space-y-3 pb-6">
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-1.5">
+      {/* Full-screen table (covers the app header and tab bar): header, player pills, a turn banner,
+          the wooden board, and your hand in a dock underneath. */}
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_30%,#2a2147_0%,#161233_55%,#0a0820_100%)]">
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
+
+        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
+          <button onClick={() => navigate('/games/sequence')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          </button>
+          <div className="leading-tight">
+            <h1 className="text-[15px] font-black">Sequence</h1>
+            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">
+              {isTeamPlay ? `${sideCount(game.playerCount)} TEAMS` : `${game.playerCount} PLAYERS`} · FIRST TO {needed}
+            </span>
+          </div>
+          <ReactionButton onSend={handleSendQuickReaction} />
+          <div className="flex-1" />
+          <div className="flex items-center gap-1">
+            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+            <VoiceChatButton voice={voice} />
+            <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            {isFinished ? (
+              <button onClick={() => setShowResultPanel(true)} className="p-1.5 text-amber-300 shrink-0" aria-label="Show result">
+                <span className="material-symbols-outlined text-[22px] block">emoji_events</span>
+              </button>
+            ) : (
+              <button onClick={handleEndGame} className="p-1.5 text-red-300 shrink-0" aria-label="End game">
+                <span className="material-symbols-outlined text-[22px] block">flag</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* player pills — each shows its side's colour and sequence trophies */}
+        <div className="relative shrink-0 flex flex-wrap items-center justify-center gap-1.5 px-3 pt-2">
+          {game.players.map((p, i) => {
+            const side = sideForSeat(p.seatIndex, game.playerCount);
+            const color = SIDE_COLOR[side];
+            const active = !isFinished && i === game.currentTurnSeatIndex;
+            const compact = game.players.length > 4;
+            return (
+              <div
+                key={p.uid}
+                className={`flex items-center gap-2 rounded-full p-1 pr-3 border-2 backdrop-blur-sm ${compact ? 'h-9' : 'h-[3.1rem]'} ${
+                  !compact ? (game.players.length > 2 ? 'w-[calc(50%-0.2rem)]' : 'min-w-[9.5rem]') : ''
+                } ${active ? 'bg-black/55' : 'bg-black/35 border-white/15'}`}
+                style={active ? { borderColor: color, boxShadow: `0 0 0 2px #fff, 0 0 16px ${color}` } : undefined}
+              >
+                <div className={`relative shrink-0 rounded-full flex items-center justify-center font-black bg-slate-700 ${compact ? 'w-6 h-6 text-[10px]' : 'w-9 h-9 text-sm'}`} style={{ border: `3px solid ${color}` }}>
+                  <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
+                    {p.isBot ? <span className="text-sm leading-none">🤖</span> : p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
+                  </div>
+                  <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <p className={`font-extrabold truncate ${compact ? 'text-[10px] max-w-[4.5rem]' : 'text-[11px]'}`}>{p.uid === user.uid ? 'You' : p.displayName}</p>
+                  {!compact && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {Array.from({ length: needed }).map((_, k) => (
+                        <i key={k} className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] not-italic font-black ${k < (sequenceCountBySide[side] || 0) ? 'bg-gradient-to-b from-amber-200 to-amber-600 text-amber-950' : 'bg-white/20 text-white/60'}`}>
+                          {k < (sequenceCountBySide[side] || 0) ? '★' : k + 1}
+                        </i>
+                      ))}
+                      <span className="text-[9px] font-bold text-white/60 ml-0.5">{SIDE_LABEL[side]}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* many-player games: one trophy strip per side instead of per-player trophies */}
+        {game.players.length > 4 && (
+          <div className="relative shrink-0 flex justify-center gap-3 pt-1.5">
             {Array.from({ length: sideCount(game.playerCount) }, (_, side) => (
-              <div key={side} className="flex items-center gap-1">
+              <div key={side} className="flex items-center gap-1 text-[10px] font-black">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: SIDE_COLOR[side] }} />
-                <span className="text-[10px] font-bold text-text-muted">
-                  {sequenceCountBySide[side] || 0}/{needed}
-                </span>
+                <span className="text-white/80">{SIDE_LABEL[side]} {sequenceCountBySide[side] || 0}/{needed}</span>
               </div>
             ))}
           </div>
-          <p className="text-xs font-bold flex items-center gap-1" style={{ color: isFinished ? SIDE_COLOR[game.winnerSide ?? 0] : isMyTurn ? '#16A34A' : undefined }}>
-            {isFinished ? 'Game over' : isMyTurn ? 'Your turn' : `${turnPlayer?.displayName || 'Opponent'}'s turn`}
-            {!isFinished && !isMyTurn && turnPlayer?.uid && <PresenceDot uid={turnPlayer.uid} className="w-2 h-2" />}
-          </p>
-        </div>
+        )}
 
-        <div className="relative grid grid-cols-10 gap-[1.5px] bg-border-subtle rounded-xl overflow-hidden border-2 border-border-subtle">
-          {board.map((chipSide, i) => {
-            const cardCode = BOARD_LAYOUT[i];
-            const isCorner = CORNER_INDICES.includes(i);
-            const isValidTarget = selectedCard != null && validCells.includes(i);
-            // Only highlight the opponent's most recent placement — you already know which chip
-            // you just placed, so calling it out for your own move is just visual noise.
-            const isLastPlaced = game.lastPlacedCell === i && chipSide != null && chipSide !== mySide;
-            const parsed = !isCorner ? parseCard(cardCode) : null;
+        {/* turn banner */}
+        <div className="relative shrink-0 flex justify-center pt-2">
+          {(() => {
+            const bannerColor = isFinished ? SIDE_COLOR[game.winnerSide ?? 0] : isMyTurn ? SIDE_COLOR[mySide] || '#2563eb' : '#475569';
             return (
-              <button
-                key={i}
-                onClick={() => handleCellTap(i)}
-                disabled={!isValidTarget}
-                className={`relative aspect-square flex items-center justify-center bg-white ${isValidTarget ? 'ring-2 ring-inset ring-success' : ''}`}
-              >
-                {chipSide != null && (
-                  <span
-                    className={`absolute inset-[2px] rounded-full ${isLastPlaced ? 'animate-pulse' : ''}`}
-                    style={{
-                      background: SIDE_COLOR[chipSide],
-                      // A gold ring (not either team's own blue/red) so the last-placed chip pops
-                      // regardless of which side just played — a plain white halo was too easy to
-                      // miss against the board's white cell background.
-                      boxShadow: isLastPlaced ? '0 0 0 2px white, 0 0 0 4px #FACC15, 0 0 10px 4px rgba(250,204,21,0.75)' : undefined,
-                    }}
-                  />
-                )}
-                {isCorner ? (
-                  <span className={`material-symbols-outlined text-[16px] relative z-10 ${chipSide != null ? 'text-white' : 'text-primary/40'}`}>star</span>
-                ) : (
-                  <span
-                    className={`relative z-10 text-[11px] sm:text-xs font-bold leading-none ${
-                      chipSide != null ? 'text-white' : parsed && SUIT_RED[parsed.suit] ? 'text-error' : 'text-on-surface'
-                    }`}
-                  >
-                    {parsed?.rank}{parsed ? SUIT_SYMBOL[parsed.suit] : ''}
-                  </span>
-                )}
-              </button>
+              <span className="px-4 py-1 rounded-full text-[11px] font-black tracking-wide" style={{ background: bannerColor, boxShadow: `0 0 18px ${bannerColor}99` }}>
+                {isFinished ? 'GAME OVER' : isMyTurn ? (selectedCard ? 'TAP A GLOWING SPACE' : 'YOUR TURN · PLAY A CARD') : `${(turnPlayer?.displayName || 'OPPONENT').toUpperCase()}'S TURN`}
+              </span>
             );
-          })}
-          {(game.sequences || []).map((seq, idx) => (
-            <div key={idx} style={sequenceOverlayStyle(seq)} />
-          ))}
+          })()}
         </div>
 
-        {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
+        {/* the board — scrolls on very short screens so the hand dock never gets squeezed out */}
+        <div className="relative flex-1 min-h-0 overflow-y-auto px-3 pt-2.5 pb-1">
+          <div className="mx-auto w-full max-w-[26rem] p-[7px] rounded-2xl bg-gradient-to-br from-[#92602d] to-[#5a3a18] shadow-[0_14px_30px_rgba(0,0,0,0.55),inset_0_2px_0_rgba(255,255,255,0.3)]">
+            <div className="relative grid grid-cols-10 gap-[1.5px] bg-[#2b1b0a] rounded-lg overflow-hidden">
+              {board.map((chipSide, i) => {
+                const cardCode = BOARD_LAYOUT[i];
+                const isCorner = CORNER_INDICES.includes(i);
+                const isValidTarget = selectedCard != null && validCells.includes(i);
+                // Only highlight the opponent's most recent placement — you already know which chip
+                // you just placed, so calling it out for your own move is just visual noise.
+                const isLastPlaced = game.lastPlacedCell === i && chipSide != null && chipSide !== mySide;
+                const parsed = !isCorner ? parseCard(cardCode) : null;
+                const red = !!parsed && SUIT_RED[parsed.suit];
+                const hint = hintColor;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => handleCellTap(i)}
+                    disabled={!isValidTarget}
+                    className={`relative aspect-square flex items-center justify-center ${
+                      isCorner ? 'bg-[radial-gradient(circle,#fde68a,#d97706)]' : red ? 'bg-gradient-to-b from-[#fff7f5] to-[#fbe4de]' : 'bg-gradient-to-b from-[#fffdf6] to-[#efe8d4]'
+                    } ${isValidTarget ? 'z-[2] animate-pulse' : ''}`}
+                    style={isValidTarget ? { boxShadow: `inset 0 0 0 3px ${hint}, 0 0 12px ${hint}` } : undefined}
+                  >
+                    {isValidTarget && <span className="absolute inset-0" style={{ background: `${hint}40` }} />}
+                    {isCorner ? (
+                      <span className="material-symbols-outlined text-[20px] relative z-10 text-orange-900" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                    ) : (
+                      <span className={`relative z-10 font-black leading-none ${red ? 'text-red-600' : 'text-slate-900'}`} style={{ fontSize: 'min(3vw, 12px)' }}>
+                        {parsed?.rank}{parsed ? SUIT_SYMBOL[parsed.suit] : ''}
+                      </span>
+                    )}
+                    {/* The chip is a thick ring, hollow in the middle, so the card underneath stays readable. */}
+                    {chipSide != null && (
+                      <span
+                        className={`absolute inset-[1px] z-20 rounded-full pointer-events-none ${isLastPlaced ? 'animate-pulse' : ''}`}
+                        style={{
+                          border: `4px solid ${SIDE_COLOR[chipSide]}`,
+                          background: `${SIDE_COLOR[chipSide]}33`,
+                          boxShadow: isLastPlaced
+                            ? '0 0 0 2px #fff, 0 0 0 4px #FACC15, 0 0 10px 4px rgba(250,204,21,0.75), 0 3px 5px rgba(0,0,0,0.4)'
+                            : 'inset 0 1px 2px rgba(255,255,255,0.5), inset 0 -2px 3px rgba(0,0,0,0.3), 0 3px 5px rgba(0,0,0,0.4)',
+                        }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+              {(game.sequences || []).map((seq, idx) => (
+                <div key={idx} style={sequenceOverlayStyle(seq)} />
+              ))}
+            </div>
+          </div>
 
-        {!isFinished && selectedCard && (
-          <div className="bg-white rounded-2xl border border-border-subtle p-3 space-y-2">
-            <p className="text-[11px] text-text-muted">
+          <div className="flex justify-center gap-4 mt-2 text-[10px] font-extrabold text-white/75">
+            <span><b className="text-amber-200">✦</b> Two-eyed J = wild</span>
+            <span><b className="text-red-300">✖</b> One-eyed J = remove a chip</span>
+          </div>
+
+          {!isFinished && selectedCard && (
+            <p className="mt-2 mx-auto max-w-[26rem] text-center bg-black/45 border text-white text-[11px] font-extrabold px-3 py-1.5 rounded-2xl" style={{ borderColor: hintColor }}>
               {isOneEyedJack(selectedCard)
                 ? 'One-eyed jack — tap an opponent chip to remove it.'
                 : isTwoEyedJack(selectedCard)
                 ? 'Two-eyed jack — wild! Tap any open space.'
-                : 'Tap a highlighted space to place your chip.'}
+                : isDead
+                ? 'This card has no open space left — it is dead.'
+                : `${parseCard(selectedCard).rank}${SUIT_SYMBOL[parseCard(selectedCard).suit]} can go on ${validCells.length === 1 ? 'one space' : 'two spaces'} — tap a glowing one.`}
             </p>
-            {isDead && (
-              <button onClick={handleExchangeDead} disabled={busy} className="w-full py-2.5 bg-warning text-white font-bold rounded-xl text-sm disabled:opacity-50">
-                {busy ? 'Exchanging…' : 'Dead Card — Exchange It'}
-              </button>
-            )}
-          </div>
-        )}
+          )}
+        </div>
 
+        {/* dock: your hand, deck count and the dead-card button */}
         {!isFinished && (
-          <div>
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1 mb-1">
-              Your Hand · {game.cardsRemaining} left in deck
-            </p>
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {handSorted.map((c, idx) => (
-                // Keyed by value+position, not just value — a two-deck shoe routinely deals
-                // duplicate cards into the same hand, and a bare `key={c}` collision between two
-                // identical cards causes React to misattribute clicks/DOM nodes between them after
-                // a resort (e.g. tapping the first of two 5s could silently act on the second).
-                <CardChip key={`${c}-${idx}`} cardId={c} selected={selectedCard === c} onClick={() => handleCardTap(c)} />
-              ))}
+          <div className="relative shrink-0 px-3 pb-3 space-y-1.5">
+            {error && <p className="text-xs font-bold text-red-300 text-center">{error}</p>}
+            {(() => {
+              const cardW = 56;
+              const avail = Math.min(typeof window !== 'undefined' ? window.innerWidth : 400, 448) - 32;
+              const step = handSorted.length > 1 ? Math.min(cardW + 6, (avail - cardW) / (handSorted.length - 1)) : 0;
+              return (
+                <div className="relative mx-auto h-[6.2rem]" style={{ width: step * Math.max(0, handSorted.length - 1) + cardW }}>
+                  {handSorted.map((c, idx) => {
+                    const sel = selectedCard === c;
+                    return (
+                      // Keyed by value+position, not just value — a two-deck shoe routinely deals
+                      // duplicate cards into the same hand, and a bare `key={c}` collision between two
+                      // identical cards causes React to misattribute clicks/DOM nodes between them after
+                      // a resort (e.g. tapping the first of two 5s could silently act on the second).
+                      <CardChip key={`${c}-${idx}`} cardId={c} selected={sel} onClick={() => handleCardTap(c)} style={{ left: idx * step, top: sel ? 2 : 16, zIndex: sel ? 50 : idx }} />
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 px-4 py-3 rounded-full bg-black/40 border border-white/18 text-[11px] font-extrabold text-white/80 whitespace-nowrap">🂠 {game.cardsRemaining} in deck</span>
+              {selectedCard && isDead ? (
+                <button
+                  onClick={handleExchangeDead}
+                  disabled={busy}
+                  className="flex-1 py-3 rounded-full text-sm font-black tracking-wide bg-gradient-to-b from-amber-300 to-amber-600 text-amber-950 shadow-[0_5px_0_#92400e,0_9px_16px_rgba(0,0,0,0.4)] active:translate-y-[3px] disabled:opacity-50"
+                >
+                  {busy ? 'EXCHANGING…' : 'DEAD CARD — EXCHANGE IT'}
+                </button>
+              ) : (
+                <div className="flex-1 py-3 rounded-full text-center text-[13px] font-black tracking-wide bg-white/10 border border-white/20 text-white/75">
+                  {!isMyTurn ? 'WAITING FOR YOUR TURN' : selectedCard ? 'TAP A GLOWING SPACE' : 'SELECT A CARD'}
+                </div>
+              )}
             </div>
           </div>
         )}
-      </main>
+      </div>
 
       {/* Result panel — dismissible (X, backdrop tap) rather than a full-screen takeover, so the
           player can close it to look at the final board; reopenable via the header trophy button. */}
