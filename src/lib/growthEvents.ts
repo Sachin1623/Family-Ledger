@@ -13,6 +13,7 @@ export type GrowthEventType =
   | 'invite_inapp'
   | 'share_whatsapp'
   | 'share_facebook'
+  | 'share_instagram'
   | 'share_twitter'
   | 'share_linkedin'
   | 'share_native'

@@ -104,7 +104,7 @@ export function buildShareMessages(theme: SpreadTheme = 'money') {
   return { shareUrl, webShareUrl, message, shortMessage };
 }
 
-export type ShareTarget = 'native' | 'whatsapp' | 'facebook' | 'twitter' | 'linkedin';
+export type ShareTarget = 'native' | 'whatsapp' | 'facebook' | 'instagram' | 'twitter' | 'linkedin';
 
 // Plain per-platform share (no image-banner attempt) — logs the growth event, then opens the
 // platform's own share intent, falling back to clipboard copy when there's no share API at all.
@@ -118,6 +118,12 @@ export function shareAppPlain(target: ShareTarget, uid: string | undefined | nul
   }
   if (target === 'facebook') {
     window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(webShareUrl)}`, '_blank');
+    return;
+  }
+  if (target === 'instagram') {
+    // Instagram has no web share link at all — copy the text so it can be pasted into a post.
+    navigator.clipboard?.writeText(message).catch(() => {});
+    alert('Caption copied! Open Instagram and paste it into your post.');
     return;
   }
   if (target === 'twitter') {

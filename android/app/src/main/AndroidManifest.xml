@@ -80,6 +80,14 @@
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="text/plain" />
         </intent>
+        <!-- AppSharePlugin: lets us check these apps are installed before sending an image straight to
+             one of them (Spread the Word / "Share my win" buttons). -->
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.instagram.android" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.twitter.android" />
+        <package android:name="com.linkedin.android" />
     </queries>
 
     <!-- Permissions -->

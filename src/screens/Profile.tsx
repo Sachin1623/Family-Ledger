@@ -24,6 +24,8 @@ import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberS
 import { logGrowthEvent } from '../lib/growthEvents';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
 import SpreadPosterPicker from '../components/SpreadPosterPicker';
+import { loadSpreadPosters } from '../lib/spreadPosterCache';
+import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
 import { ShareBrandBadge } from '../components/ShareBrandBadge';
 
@@ -525,6 +527,15 @@ export default function Profile() {
   // Tapping any Share button first opens the poster picker (a fresh set of themed posters is drawn
   // every time); the chosen poster is then shared to whichever target was tapped.
   const [pickerTarget, setPickerTarget] = useState<ShareTarget | null>(null);
+  // A short note under the share buttons (e.g. "Caption copied — paste it into your post").
+  const [shareNote, setShareNote] = useState<string | null>(null);
+  // Draw the posters quietly in the background shortly after Profile opens, so the picker is instant.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      loadSpreadPosters().catch((err) => console.error('Poster prewarm failed:', err));
+    }, 1500);
+    return () => clearTimeout(t);
+  }, []);
   const [highlightShareCard, setHighlightShareCard] = useState(false);
   useEffect(() => {
     if (searchParams.get('share') !== '1') return;
@@ -802,8 +813,26 @@ export default function Profile() {
     if (!target) return;
     // The post text follows the poster the person picked (money / health / family / games / all).
     const { message, shortMessage } = buildShareMessages(posterId);
-    const shared = await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message, blob);
+    const text = target === 'twitter' ? shortMessage : message;
     setPickerTarget(null);
+    setShareNote(null);
+
+    // A specific platform button opens THAT app directly (its own composer — post / story / reel
+    // options where the app offers them), when the installed build supports it and the app is on the
+    // phone. Otherwise it falls through to the normal share sheet below, exactly as before.
+    if (target !== 'native') {
+      const direct = await shareImageToApp(target as DirectShareTarget, blob, text);
+      if (direct.status === 'shared') {
+        logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
+        if (direct.captionCopied) setShareNote("Caption copied — paste it into your post. (Facebook and Instagram don't let apps fill it in.)");
+        return;
+      }
+      if (direct.status === 'not_installed') {
+        setShareNote(`That app doesn't seem to be installed — choose another app from the share sheet instead.`);
+      }
+    }
+
+    const shared = await shareViaOsSheetWithBanner(text, blob);
     if (shared) {
       logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
       return;
@@ -1174,6 +1203,13 @@ export default function Profile() {
                 Facebook
               </button>
               <button
+                onClick={() => handleShareApp('instagram')}
+                className="bg-[#D62976]/10 text-[#B01E5E] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#D62976]/20 active:scale-[0.98] transition-all border border-[#D62976]/20"
+              >
+                <ShareBrandBadge platform="instagram" />
+                Instagram
+              </button>
+              <button
                 onClick={() => handleShareApp('twitter')}
                 className="bg-[#0F1419]/10 text-[#0F1419] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0F1419]/20 active:scale-[0.98] transition-all border border-[#0F1419]/20"
               >
@@ -1182,12 +1218,13 @@ export default function Profile() {
               </button>
               <button
                 onClick={() => handleShareApp('linkedin')}
-                className="bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
+                className="col-span-2 bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
               >
                 <ShareBrandBadge platform="linkedin" />
                 LinkedIn
               </button>
             </div>
+            {shareNote && <p className="text-[11px] font-bold text-primary bg-primary/5 rounded-lg px-2.5 py-1.5">{shareNote}</p>}
             <button
               onClick={handleShareLinkOnly}
               className="w-full text-center text-[11px] font-bold text-primary underline underline-offset-2"

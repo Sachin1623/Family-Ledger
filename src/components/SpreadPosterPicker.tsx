@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
-import { renderAllSpreadCards, SpreadPoster, SpreadVariantId } from '../lib/spreadCardImage';
+import type { SpreadPoster, SpreadVariantId } from '../lib/spreadCardImage';
+import { loadSpreadPosters, peekSpreadPosters } from '../lib/spreadPosterCache';
 
 // "Pick a poster to share": every time it opens it draws a fresh set of themed posters (each with
 // 4–6 features, the logo and a Play Store QR code) and lets the person choose the one that fits who
@@ -22,27 +23,27 @@ export default function SpreadPosterPicker({
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The posters are drawn in the background when Profile opens (see spreadPosterCache.ts), so this
+  // usually shows them instantly; it only draws on the spot if that hasn't finished yet.
+  const apply = (set: { posters: SpreadPoster[]; urls: Record<string, string> }) => {
+    setPosters(set.posters);
+    setUrls(set.urls);
+    setSelected((cur) => (cur && set.posters.some((p) => p.id === cur) ? cur : set.posters[0]?.id ?? null));
+  };
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const created: string[] = [];
-    setLoading(true);
     setError(null);
-    setPosters([]);
-    setUrls({});
-    setSelected(null);
-    renderAllSpreadCards()
+    const ready = peekSpreadPosters();
+    if (ready) {
+      apply(ready);
+      return;
+    }
+    setLoading(true);
+    loadSpreadPosters()
       .then((set) => {
-        if (cancelled) return;
-        const map: Record<string, string> = {};
-        set.forEach((p) => {
-          const u = URL.createObjectURL(p.blob);
-          created.push(u);
-          map[p.id] = u;
-        });
-        setPosters(set);
-        setUrls(map);
-        setSelected(set[0]?.id ?? null);
+        if (!cancelled) apply(set);
       })
       .catch((err) => {
         console.error('Poster generation failed:', err);
@@ -53,9 +54,22 @@ export default function SpreadPosterPicker({
       });
     return () => {
       cancelled = true;
-      created.forEach((u) => URL.revokeObjectURL(u));
     };
   }, [open]);
+
+  // Redraws a fresh set (new taglines) on request.
+  const shuffle = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      apply(await loadSpreadPosters(true));
+    } catch (err) {
+      console.error('Poster shuffle failed:', err);
+      setError('Could not create new posters. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleShare = async () => {
     const poster = posters.find((p) => p.id === selected);
@@ -83,11 +97,16 @@ export default function SpreadPosterPicker({
             <div className="p-4 border-b border-border-subtle flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-base font-black text-primary">Pick a poster to share</h2>
-                <p className="text-[11px] text-text-muted">Fresh posters, made just now — tap the one you like.</p>
+                <p className="text-[11px] text-text-muted">Tap the one you like — or shuffle for new wording.</p>
               </div>
-              <button onClick={onClose} className="p-2 hover:bg-surface rounded-full shrink-0" aria-label="Close">
-                <span className="material-symbols-outlined">close</span>
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={shuffle} disabled={loading} className="p-2 hover:bg-surface rounded-full disabled:opacity-40" aria-label="Shuffle posters">
+                  <span className="material-symbols-outlined">shuffle</span>
+                </button>
+                <button onClick={onClose} className="p-2 hover:bg-surface rounded-full" aria-label="Close">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">

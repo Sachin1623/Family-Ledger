@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 // everywhere else in this app) has no brand icons, and this app has no licensed brand-asset kit
 // to pull exact vector logos from, so these are simplified color+mark badges (brand color + the
 // platform's recognizable letter/glyph) rather than pixel-perfect reproductions.
-export function ShareBrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'x' | 'linkedin' }) {
+export function ShareBrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'instagram' | 'x' | 'linkedin' }) {
   const base = 'w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-white leading-none';
   switch (platform) {
     case 'whatsapp':
@@ -17,6 +17,12 @@ export function ShareBrandBadge({ platform }: { platform: 'whatsapp' | 'facebook
       );
     case 'facebook':
       return <span className={clsx(base, 'bg-[#1877F2] font-black text-[12px] italic')}>f</span>;
+    case 'instagram':
+      return (
+        <span className={clsx(base, 'bg-gradient-to-tr from-[#FEDA75] via-[#D62976] to-[#4F5BD5]')}>
+          <span className="material-symbols-outlined text-[11px]" style={{ fontVariationSettings: "'FILL' 0" }}>photo_camera</span>
+        </span>
+      );
     case 'x':
       return <span className={clsx(base, 'bg-black font-black text-[10px]')}>X</span>;
     case 'linkedin':
