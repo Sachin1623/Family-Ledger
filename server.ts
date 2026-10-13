@@ -2969,6 +2969,16 @@ async function startServer() {
     next();
   });
 
+  // The legacy us-central1 service (REDIRECT_TO_DOMAIN=1) only forwards visitors to the real domain
+  // (307 keeps the request method, so API calls survive too) — the live backend is the one behind
+  // familyledger.thirteenapps.com. It also never stamps app_config/webBuild (see below).
+  if (process.env.REDIRECT_TO_DOMAIN === '1') {
+    app.use((req, res, next) => {
+      if (req.path === '/api/health') return next();
+      return res.redirect(307, `https://familyledger.thirteenapps.com${req.originalUrl}`);
+    });
+  }
+
   // Use JSON and urlencoded body parsers. Default express.json() limit is 100kb, which is too
   // small for /api/admin/broadcast's resized-image data URIs (up to 3 images, base64-encoded —
   // every other image upload in this app writes straight to Firestore from the client, bypassing
@@ -15541,7 +15551,10 @@ async function startServer() {
   // marker with a value every real user's tab would then treat as "newer" than what they're
   // actually running. `DEPLOY_CHANGELOG` is set via `--update-env-vars` on the `gcloud run deploy`
   // that ships this revision — a one-line summary of what changed, shown in the update popup.
-  if (adminDb && process.env.K_REVISION) {
+  // Only ONE backend may stamp this marker: a second service (the old us-central1 one) waking up
+  // overwrote it with its own old revision, so every phone on the live backend saw a permanent
+  // "update available" popup that no reload could clear.
+  if (adminDb && process.env.K_REVISION && process.env.REDIRECT_TO_DOMAIN !== '1') {
     adminDb.collection('app_config').doc('webBuild').set({
       revision: process.env.K_REVISION,
       changelog: process.env.DEPLOY_CHANGELOG || null,
