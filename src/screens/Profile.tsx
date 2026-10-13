@@ -23,6 +23,7 @@ import { resizeImageFile } from '../lib/imageUtils';
 import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberSystem } from '../lib/constants';
 import { logGrowthEvent } from '../lib/growthEvents';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
+import SpreadPosterPicker from '../components/SpreadPosterPicker';
 import { ShareBrandBadge } from '../components/ShareBrandBadge';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
@@ -188,45 +189,6 @@ function PublicProfileSettingsSection() {
   );
 }
 
-// The image half of "Spread the Word" — captured off-screen via html2canvas (see
-// captureShareBannerImage below) and attached to the share alongside the text message, same
-// pattern as WeeklySummary.tsx's RecapTile. Built from JSX rather than a static asset so the
-// feature list here always matches whatever the app actually does — the old approach (5 hand-made
-// PNG slides in public/) had gone stale (no Goals slide at all) and needed re-exporting by hand
-// every time the feature set changed; this regenerates itself from the same code that renders the
-// rest of the screen.
-const SHARE_BANNER_FEATURES: { icon: string; label: string; sub: string }[] = [
-  { icon: 'call_split', label: 'Split Expenses', sub: 'Equally, %, or exact' },
-  { icon: 'pie_chart', label: 'Real Budgets', sub: 'By category, splitting optional' },
-  { icon: 'autorenew', label: 'Recurring Bills', sub: 'Rent & wifi log themselves' },
-  { icon: 'flag', label: 'Goals', sub: 'Savings targets & real accounts' },
-  { icon: 'forum', label: 'Group Chat', sub: 'Friends, no separate app' },
-  { icon: 'sports_esports', label: 'Games', sub: 'Ludo, Rummy & more' },
-];
-const ShareBanner = React.forwardRef<HTMLDivElement, {}>((_props, ref) => (
-  <div ref={ref} style={{ width: 1080, background: 'linear-gradient(135deg, #003044, #0f4761)' }}>
-    <div className="p-14 space-y-8">
-      <div className="flex items-center gap-5">
-        <img src="/logo.svg" alt="" className="w-20 h-20 rounded-2xl bg-white/15 p-3" />
-        <div>
-          <p className="text-5xl font-black text-white leading-none">FamilyLedger</p>
-          <p className="text-xl text-white/70 font-bold mt-3">Split bills. Track budgets. Stay sane.</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-5">
-        {SHARE_BANNER_FEATURES.map((f) => (
-          <div key={f.label} className="bg-white/10 rounded-2xl p-6">
-            <span className="material-symbols-outlined text-white text-[36px]">{f.icon}</span>
-            <p className="text-2xl font-black text-white mt-3 leading-tight">{f.label}</p>
-            <p className="text-base text-white/70 font-bold mt-1 leading-snug">{f.sub}</p>
-          </div>
-        ))}
-      </div>
-      <p className="text-center text-white/80 text-lg font-bold">Free on Android — play.google.com/store/apps/details?id=com.familyledger.app</p>
-    </div>
-  </div>
-));
-ShareBanner.displayName = 'ShareBanner';
 
 // Self-contained App Lock settings block — manages its own local state (device-local, see
 // lib/appLock.ts) rather than lifting it into Profile's own state, since nothing else on this
@@ -559,7 +521,9 @@ export default function Profile() {
   // instead means the very next tap — a genuine, in-the-moment click on the Share button — is what
   // actually triggers it, which works everywhere.
   const shareCardRef = useRef<HTMLDivElement>(null);
-  const shareBannerRef = useRef<HTMLDivElement>(null);
+  // Tapping any Share button first opens the poster picker (a fresh set of themed posters is drawn
+  // every time); the chosen poster is then shared to whichever target was tapped.
+  const [pickerTarget, setPickerTarget] = useState<ShareTarget | null>(null);
   const [highlightShareCard, setHighlightShareCard] = useState(false);
   useEffect(() => {
     if (searchParams.get('share') !== '1') return;
@@ -763,25 +727,6 @@ export default function Profile() {
     }
   };
 
-  // Renders the off-screen ShareBanner to a PNG Blob via html2canvas — same capture pattern as
-  // WeeklySummary.tsx's RecapTile, just lazy-imported (html2canvas-pro is a genuinely heavy
-  // dependency, and unlike the weekly-recap modal — opened specifically to view/share stats —
-  // most Profile visits never touch sharing at all, so this matches the Health screens' lazy-load
-  // convention for the same library rather than WeeklySummary's static one). Returns null on any
-  // failure so callers can fall back to a text-only share instead of hard-failing. Blob (not a
-  // File) so both the native and web share paths below can each wrap it the way they actually need.
-  const captureShareBannerImage = async (): Promise<Blob | null> => {
-    if (!shareBannerRef.current) return null;
-    try {
-      const { default: html2canvas } = await import('html2canvas-pro');
-      const canvas = await html2canvas(shareBannerRef.current, { backgroundColor: null, scale: 2, useCORS: true });
-      return await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
-    } catch (err) {
-      console.error('Failed to capture share banner image:', err);
-      return null;
-    }
-  };
-
   // Tries the OS share sheet WITH the feature banner image first, for every target — including
   // the per-platform buttons, not just "native" — before falling back to that platform's own
   // text-only link. This is a deliberate improvement over routing platform buttons straight to
@@ -796,10 +741,7 @@ export default function Profile() {
   // — it silently did nothing on a real native install, the image never actually attached. Only
   // falls to navigator.share when there's no native Share/Filesystem plugin available at all (i.e.
   // genuinely running in a browser, not the installed app).
-  const shareViaOsSheetWithBanner = async (message: string): Promise<boolean> => {
-    const blob = await captureShareBannerImage();
-    if (!blob) return false;
-
+  const shareViaOsSheetWithBanner = async (message: string, blob: Blob): Promise<boolean> => {
     if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Filesystem') && Capacitor.isPluginAvailable('Share')) {
       try {
         const base64Data = await blobToBase64(blob);
@@ -851,10 +793,17 @@ export default function Profile() {
     logGrowthEvent('share_link_only', user?.uid);
   };
 
-  const handleShareApp = async (target: ShareTarget) => {
+  // Every Share button opens the poster picker; once a poster is chosen this shares it.
+  const handleShareApp = (target: ShareTarget) => setPickerTarget(target);
+
+  const handlePosterChosen = async (blob: Blob) => {
+    const target = pickerTarget;
+    if (!target) return;
     const { message, shortMessage } = buildShareMessages();
-    if (await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message)) {
-      logGrowthEvent(`share_${target}`, user?.uid);
+    const shared = await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message, blob);
+    setPickerTarget(null);
+    if (shared) {
+      logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
       return;
     }
     // Image sharing unsupported (or no share sheet at all) — same text-only fallbacks as before.
@@ -1915,15 +1864,7 @@ export default function Profile() {
         </div>
       </main>
 
-      {/* Rendered but invisible (not display:none — html2canvas needs a real layout to capture)
-          purely so captureShareBannerImage() above has something to screenshot. A zero-size,
-          overflow-hidden, zero-opacity wrapper rather than parking it far off-screen — html2canvas
-          reads the child's own uncapped layout regardless of the parent's visual clipping, and
-          this avoids relying on extreme coordinates rendering/painting reliably on every browser
-          engine and WebView. */}
-      <div className="absolute top-0 left-0 h-0 w-0 overflow-hidden opacity-0 pointer-events-none" aria-hidden="true">
-        <ShareBanner ref={shareBannerRef} />
-      </div>
+      <SpreadPosterPicker open={pickerTarget !== null} onClose={() => setPickerTarget(null)} onShare={handlePosterChosen} />
 
       <AnimatePresence>
         {showDeleteConfirm && (

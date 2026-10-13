@@ -1,10 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-// html2canvas-pro, not plain html2canvas — see HealthGlucose.tsx's PDF export for why (the
-// original throws on Tailwind v4's color-mix()/oklab()-based opacity modifiers, which this
-// recap tile's own classes use).
-import html2canvas from 'html2canvas-pro';
+import { Capacitor } from '@capacitor/core';
+import { renderRecapCard } from '../lib/recapCardImage';
+import { buildRecapView } from '../lib/recapFeatures';
+import { installLinksText } from '../lib/cardCanvas';
+import { shareOrDownloadFile } from '../lib/fileShare';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
@@ -25,6 +26,14 @@ interface SummaryBucket {
   expenseLinesAdded: number;
   chatGroups: number;
   chatPeople: number;
+  // Newer fields (older recaps don't have them — treated as 0).
+  bpReadings?: number;
+  glucoseReadings?: number;
+  medicineDoses?: number;
+  vaccinesGiven?: number;
+  todosAdded?: number;
+  shoppingLists?: number;
+  goalsCreated?: number;
 }
 
 interface SummaryDoc {
@@ -48,7 +57,7 @@ function buildShareMessage(summary: SummaryDoc): string {
   const trackingLine = summary.goalsTracked || summary.accountsMonitored
     ? ` I'm also tracking ${summary.goalsTracked ?? 0} savings goal${(summary.goalsTracked ?? 0) === 1 ? '' : 's'} across ${summary.accountsMonitored ?? 0} account${(summary.accountsMonitored ?? 0) === 1 ? '' : 's'}.`
     : '';
-  return `🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!${trackingLine}\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${SHARE_LANDING_URL}`;
+  return `🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!${trackingLine}\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${installLinksText()}`;
 }
 
 function StatRow({ icon, label, current, previous }: { icon: string; label: string; current: number; previous: number }) {
@@ -97,57 +106,27 @@ function PeriodStats({ current, previous }: { current: SummaryBucket; previous: 
       <StatRow icon="edit_note" label="Expense lines you added" current={current.expenseLinesAdded} previous={previous.expenseLinesAdded} />
       <StatRow icon="chat" label="Groups/games you chatted in" current={current.chatGroups} previous={previous.chatGroups} />
       <StatRow icon="diversity_3" label="People you connected with via chat" current={current.chatPeople} previous={previous.chatPeople} />
+      {/* Newer stats — only shown once there's something to show, so older recaps look unchanged. */}
+      {((current.bpReadings ?? 0) > 0 || (previous.bpReadings ?? 0) > 0) && <StatRow icon="favorite" label="BP readings logged" current={current.bpReadings ?? 0} previous={previous.bpReadings ?? 0} />}
+      {((current.glucoseReadings ?? 0) > 0 || (previous.glucoseReadings ?? 0) > 0) && <StatRow icon="water_drop" label="Glucose readings logged" current={current.glucoseReadings ?? 0} previous={previous.glucoseReadings ?? 0} />}
+      {((current.medicineDoses ?? 0) > 0 || (previous.medicineDoses ?? 0) > 0) && <StatRow icon="medication" label="Medicine doses taken" current={current.medicineDoses ?? 0} previous={previous.medicineDoses ?? 0} />}
+      {((current.vaccinesGiven ?? 0) > 0 || (previous.vaccinesGiven ?? 0) > 0) && <StatRow icon="vaccines" label="Vaccines recorded" current={current.vaccinesGiven ?? 0} previous={previous.vaccinesGiven ?? 0} />}
+      {((current.todosAdded ?? 0) > 0 || (previous.todosAdded ?? 0) > 0) && <StatRow icon="task_alt" label="To-dos added" current={current.todosAdded ?? 0} previous={previous.todosAdded ?? 0} />}
+      {((current.shoppingLists ?? 0) > 0 || (previous.shoppingLists ?? 0) > 0) && <StatRow icon="shopping_cart" label="Shopping lists made" current={current.shoppingLists ?? 0} previous={previous.shoppingLists ?? 0} />}
+      {((current.goalsCreated ?? 0) > 0 || (previous.goalsCreated ?? 0) > 0) && <StatRow icon="flag" label="New goals set" current={current.goalsCreated ?? 0} previous={previous.goalsCreated ?? 0} />}
     </div>
   );
 }
 
-// The actual "recap tile" that gets captured as an image for one-click sharing (see
-// captureRecapImage below) — a compact, self-contained branded card with the real numbers baked
-// directly into the pixels. This is what makes the shared image itself carry the personalized
-// stats regardless of platform: WhatsApp/Facebook's own caption-text handling is unreliable (see
-// the share handlers' comments), but an attached image always shows exactly what's rendered here.
-const RecapTile = React.forwardRef<HTMLDivElement, { summary: SummaryDoc }>(({ summary }, ref) => {
-  const w = summary.week;
-  const tiles: Array<{ icon: string; value: number; label: string }> = [
-    { icon: 'sports_esports', value: w.gamesPlayed, label: `Games played${w.coPlayers ? ` · with ${w.coPlayers}` : ''}` },
-    { icon: 'groups', value: w.groupsEngaged, label: 'Groups engaged in' },
-    { icon: 'receipt_long', value: w.expensesTracked, label: 'Expenses tracked' },
-    { icon: 'diversity_3', value: w.chatPeople, label: 'People chatted with' },
-  ];
-  return (
-    <div ref={ref} className="rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, #003044, #0f4761)' }}>
-      <div className="p-5 space-y-4">
-        <div className="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="" className="w-9 h-9 rounded-xl bg-white/15 p-1.5" />
-          <div>
-            <p className="text-sm font-black text-white leading-none">FamilyLedger</p>
-            <p className="text-[10px] text-white/70 uppercase tracking-wider font-bold mt-1">{summary.periodLabel}</p>
-          </div>
-        </div>
-        <p className="text-sm font-bold text-white leading-snug">{summary.kudos}</p>
-        <div className="grid grid-cols-2 gap-2">
-          {tiles.map((t) => (
-            <div key={t.label} className="bg-white/10 rounded-xl p-2.5">
-              <div className="flex items-center gap-1 text-white/70">
-                <span className="material-symbols-outlined text-[13px]">{t.icon}</span>
-              </div>
-              <p className="text-xl font-black text-white leading-none mt-1">{t.value}</p>
-              <p className="text-[9px] text-white/70 font-bold mt-0.5 leading-tight">{t.label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-});
-RecapTile.displayName = 'RecapTile';
 
 export default function WeeklySummary() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [showHistory, setShowHistory] = React.useState(false);
-  const recapTileRef = React.useRef<HTMLDivElement>(null);
+  // The picture that gets shared, drawn on a canvas (see recapCardImage.ts) — also shown here as the
+  // preview, so what you see is exactly what goes out.
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
 
   const [summariesSnap, loading] = useCollection(
     user ? query(collection(db, 'userWeeklySummaries'), where('userId', '==', user.uid), orderBy('generatedAt', 'desc'), limit(20)) : null,
@@ -160,43 +139,55 @@ export default function WeeklySummary() {
 
   const close = () => navigate('/');
 
-  // Renders the visible RecapTile (real stats baked into the pixels) to a PNG File — the one-click
-  // "attach a screenshot of the tile" mechanism. Returns null on any failure (e.g. an ad-blocker or
-  // unusual WebView blocking canvas export) so callers can fall back to a text-only share instead
-  // of hard-failing the whole action.
-  const captureRecapImage = async (): Promise<File | null> => {
-    if (!recapTileRef.current) return null;
-    try {
-      const canvas = await html2canvas(recapTileRef.current, { backgroundColor: null, scale: 2, useCORS: true });
-      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
-      if (!blob) return null;
-      return new File([blob], 'familyledger-weekly-recap.png', { type: 'image/png' });
-    } catch (err) {
-      console.error('Failed to capture recap tile image:', err);
-      return null;
-    }
-  };
+  // What the picture features depends on where THIS person was most engaged this week (health, games,
+  // money, planning, chat...) — at least six different features, most-used first.
+  const buildRecapBlob = (summary: SummaryDoc) =>
+    renderRecapCard({
+      periodLabel: summary.periodLabel,
+      kudos: summary.kudos,
+      view: buildRecapView(summary.week, summary.prevWeek, { goalsTracked: summary.goalsTracked, accountsMonitored: summary.accountsMonitored }),
+    });
 
-  // All three buttons below try the SAME best path first — hand the real recap-tile screenshot
-  // (plus the full text) to the OS share sheet via the Web Share API, so whichever app the user
-  // picks (WhatsApp — either a contact or Status, Facebook, Instagram, anything else registered as
-  // a share target) receives the actual image with real numbers baked in, not just a generic
-  // banner or bare link. They only diverge in their FALLBACK when file-sharing isn't supported on
-  // the device/browser — that's a genuine platform capability gap, not something fixable client-side.
-  const shareViaOsSheet = async (message: string): Promise<boolean> => {
-    const nav = navigator as any;
-    if (!nav.share) return false;
-    const image = await captureRecapImage();
-    if (image && nav.canShare?.({ files: [image] })) {
-      try {
-        await nav.share({ title: 'FamilyLedger', text: message, files: [image] });
-        return true;
-      } catch (err) {
-        if ((err as any)?.name === 'AbortError') return true; // user cancelled — don't fall through to a second share path
-        console.error('Image share failed, falling back:', err);
-      }
+  // Preview of the exact image that will be shared, regenerated whenever the selected recap changes.
+  React.useEffect(() => {
+    if (!active) {
+      setPreviewUrl(null);
+      return;
     }
-    return false;
+    let cancelled = false;
+    let url: string | null = null;
+    buildRecapBlob(active)
+      .then((blob) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+      })
+      .catch((err) => console.error('Recap preview failed:', err));
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id]);
+
+  // All three buttons below try the SAME best path first — hand the recap picture (plus the full
+  // text) to the phone's own share sheet, so whichever app the user picks (WhatsApp — a contact or
+  // Status, Facebook, Instagram, anything else registered as a share target) receives the actual
+  // image with real numbers baked in. On the installed app this goes through the native share
+  // plugin (the WebView's own navigator.share can't reliably carry files); in a browser it uses the
+  // Web Share API. They only diverge in their FALLBACK when neither is available.
+  const shareViaOsSheet = async (message: string): Promise<boolean> => {
+    if (!active) return false;
+    const nav = navigator as any;
+    if (!Capacitor.isNativePlatform() && !nav.share) return false;
+    try {
+      const blob = await buildRecapBlob(active);
+      await shareOrDownloadFile(blob, 'familyledger-weekly-recap.png', 'image/png', message);
+      return true;
+    } catch (err) {
+      console.error('Image share failed, falling back:', err);
+      return false;
+    }
   };
 
   const handleShareStatus = async () => {
@@ -255,7 +246,11 @@ export default function WeeklySummary() {
 
             {active && (
               <>
-                <RecapTile ref={recapTileRef} summary={active} />
+                {previewUrl ? (
+                  <img src={previewUrl} alt="Your weekly recap picture" className="w-full rounded-2xl shadow-md" />
+                ) : (
+                  <div className="w-full aspect-[4/5] rounded-2xl bg-surface animate-pulse" />
+                )}
 
                 {(active.goalsTracked !== undefined || active.accountsMonitored !== undefined) && (
                   <div>

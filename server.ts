@@ -1480,6 +1480,16 @@ interface WeeklySummaryBucket {
   expenseLinesAdded: number;
   chatGroups: number;
   chatPeople: number;
+  // Added so the recap can show where each person was actually most engaged (health, planning,
+  // goals...) instead of only games/expenses/chat. Older recap docs simply lack these — the client
+  // treats a missing value as 0.
+  bpReadings: number;
+  glucoseReadings: number;
+  medicineDoses: number;
+  vaccinesGiven: number;
+  todosAdded: number;
+  shoppingLists: number;
+  goalsCreated: number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1521,9 +1531,13 @@ async function computeUserWeeklyStats(
   const raw: Record<SummaryWindow, {
     games: number; coPlayers: Set<string>; groupsEngaged: Set<string>;
     expensesTracked: number; expenseLinesAdded: number; chatGroups: Set<string>; chatPeople: Set<string>;
+    bp: number; glucose: number; meds: number; vaccines: number; todos: number; shopping: number; goals: number;
   }> = {} as any;
   SUMMARY_WINDOWS.forEach((w) => {
-    raw[w] = { games: 0, coPlayers: new Set(), groupsEngaged: new Set(), expensesTracked: 0, expenseLinesAdded: 0, chatGroups: new Set(), chatPeople: new Set() };
+    raw[w] = {
+      games: 0, coPlayers: new Set(), groupsEngaged: new Set(), expensesTracked: 0, expenseLinesAdded: 0, chatGroups: new Set(), chatPeople: new Set(),
+      bp: 0, glucose: 0, meds: 0, vaccines: 0, todos: 0, shopping: 0, goals: 0,
+    };
   });
 
   // 1. Games played + co-players.
@@ -1623,6 +1637,34 @@ async function computeUserWeeklyStats(
     });
   }
 
+  // 8. Health, planning and goals activity. Single-field `userId`/`ownerUid` queries (no composite
+  // index needed) with the date window applied in memory — these collections are small per user.
+  const countInto = (docs: FirebaseFirestore.QueryDocumentSnapshot[], dateField: string, key: 'bp' | 'glucose' | 'meds' | 'vaccines' | 'todos' | 'shopping' | 'goals', keep?: (d: any) => boolean) => {
+    docs.forEach((d) => {
+      const data = d.data();
+      if (keep && !keep(data)) return;
+      const t = new Date(data[dateField]).getTime();
+      if (!Number.isFinite(t)) return;
+      summaryBucketsFor(now - t).forEach((w) => { raw[w][key] += 1; });
+    });
+  };
+  const [bpSnap, glSnap, medSnap, vacSnap, todoSnap, shopSnap, goalSnap] = await Promise.all([
+    db.collection('bloodPressureLogs').where('userId', '==', uid).select('createdAt').get(),
+    db.collection('glucoseLogs').where('userId', '==', uid).select('createdAt').get(),
+    db.collection('medicineLogs').where('userId', '==', uid).select('loggedAt', 'status').get(),
+    db.collection('vaccineDoses').where('ownerUid', '==', uid).select('status', 'givenDate').get(),
+    db.collection('todos').where('userId', '==', uid).select('createdAt').get(),
+    db.collection('shoppingLists').where('userId', '==', uid).select('createdAt').get(),
+    db.collection('goals').where('userId', '==', uid).select('createdAt').get(),
+  ]);
+  countInto(bpSnap.docs, 'createdAt', 'bp');
+  countInto(glSnap.docs, 'createdAt', 'glucose');
+  countInto(medSnap.docs, 'loggedAt', 'meds', (d) => d.status === 'taken'); // loggedAt = when the dose was actually marked
+  countInto(vacSnap.docs, 'givenDate', 'vaccines', (d) => d.status === 'given');
+  countInto(todoSnap.docs, 'createdAt', 'todos');
+  countInto(shopSnap.docs, 'createdAt', 'shopping');
+  countInto(goalSnap.docs, 'createdAt', 'goals');
+
   const result = {} as Record<SummaryWindow, WeeklySummaryBucket>;
   SUMMARY_WINDOWS.forEach((w) => {
     result[w] = {
@@ -1633,6 +1675,13 @@ async function computeUserWeeklyStats(
       expenseLinesAdded: raw[w].expenseLinesAdded,
       chatGroups: raw[w].chatGroups.size,
       chatPeople: raw[w].chatPeople.size,
+      bpReadings: raw[w].bp,
+      glucoseReadings: raw[w].glucose,
+      medicineDoses: raw[w].meds,
+      vaccinesGiven: raw[w].vaccines,
+      todosAdded: raw[w].todos,
+      shoppingLists: raw[w].shopping,
+      goalsCreated: raw[w].goals,
     };
   });
   return result;
