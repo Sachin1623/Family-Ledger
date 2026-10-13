@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { doc, updateDoc, setDoc, collection, query, where } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'motion/react';
+import { doc, updateDoc, setDoc, collection, query, where, documentId } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -531,6 +532,78 @@ export default function LudoGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionsKey, gameId]);
 
+  // ---- Immersive-table state: profile photos, last rolls, capture toast, result overlay ----
+  // Current profile photos for everyone seated (the photo saved on the game when someone sat down can
+  // be empty or out of date).
+  const humanUids = useMemo(() => players.filter((p) => !p.isBot).map((p) => p.uid), [players]);
+  const [playerUsersValue] = useCollection(
+    humanUids.length > 0 ? query(collection(db, 'users'), where(documentId(), 'in', humanUids.slice(0, 30))) : null,
+  );
+  const photoByUid = useMemo(() => {
+    const m: Record<string, string> = {};
+    playerUsersValue?.docs.forEach((d) => {
+      const photo = (d.data() as any).photoURL;
+      if (photo) m[d.id] = photo;
+    });
+    return m;
+  }, [playerUsersValue]);
+
+  // The last few rolls, newest last. A roll happens exactly when `awaitingRoll` flips true → false.
+  const [rollHistory, setRollHistory] = useState<{ value: number; color: Color }[]>([]);
+  const prevAwaitingRef = React.useRef<boolean | null>(null);
+  useEffect(() => {
+    if (game?.status !== 'active') {
+      prevAwaitingRef.current = null;
+      return;
+    }
+    const awaiting = game.awaitingRoll ?? true;
+    if (prevAwaitingRef.current === true && awaiting === false && game.diceValue != null) {
+      const color = players[game.currentTurnSeatIndex]?.color;
+      if (color) setRollHistory((h) => [...h.slice(-4), { value: game.diceValue, color }]);
+    }
+    prevAwaitingRef.current = awaiting;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.status, game?.awaitingRoll, game?.diceValue, game?.currentTurnSeatIndex]);
+
+  // "X captured Y's token!" — spotted by comparing token positions between consecutive snapshots: a
+  // token that was on the board and is now back in the yard, while someone else's token moved.
+  const prevTokensRef = React.useRef<Record<string, number[]> | null>(null);
+  const [captureToast, setCaptureToast] = useState<{ id: number; text: string } | null>(null);
+  useEffect(() => {
+    if (game?.status !== 'active') {
+      prevTokensRef.current = null;
+      return;
+    }
+    const now: Record<string, number[]> = {};
+    players.forEach((p) => { now[p.uid] = [...p.tokens]; });
+    const prev = prevTokensRef.current;
+    prevTokensRef.current = now;
+    if (!prev || justVoided) return;
+    let mover: LudoPlayer | undefined;
+    const captured: LudoPlayer[] = [];
+    players.forEach((p) => {
+      const before = prev[p.uid];
+      if (!before) return;
+      p.tokens.forEach((pos, i) => {
+        if (pos === YARD && before[i] !== YARD && before[i] >= 0) captured.push(p);
+        else if (pos !== before[i] && pos !== YARD) mover = p;
+      });
+    });
+    const victim = captured.find((c) => c.uid !== mover?.uid);
+    if (!mover || !victim) return;
+    const id = Date.now();
+    const text = victim.uid === user?.uid
+      ? `${mover.displayName} captured your token!`
+      : `${mover.displayName} captured ${victim.displayName}'s token!`;
+    setCaptureToast({ id, text });
+    const t = setTimeout(() => setCaptureToast((cur) => (cur?.id === id ? null : cur)), 3500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionsKey, game?.status]);
+
+  const [hideResult, setHideResult] = useState(false);
+  const [showExitMenuLudo, setShowExitMenuLudo] = useState(false);
+
   if (loading) return <div className="p-8 text-center text-sm text-text-muted">Loading…</div>;
   if (!game) return <div className="p-8 text-center text-sm text-text-muted">Game not found.</div>;
 
@@ -817,6 +890,391 @@ export default function LudoGame() {
     }
   };
 
+  // ---- Active / finished: the immersive table ----
+  if (game.status === 'active' || game.status === 'finished') {
+    const SLOT_ORDER: Color[] = ['green', 'yellow', 'blue', 'red']; // clockwise from top-left
+    const rotSteps = myPlayer ? ROTATION_DEG[boardSlot(myPlayer.seatIndex, players.length)] / 90 : 0;
+    const quadrantOf = (pl: LudoPlayer) => (SLOT_ORDER.indexOf(boardSlot(pl.seatIndex, players.length)) + rotSteps) % 4; // 0 TL · 1 TR · 2 BR · 3 BL
+    const photoFor = (pl: LudoPlayer) => photoByUid[pl.uid] || pl.photoURL || (pl.uid === user?.uid ? profile?.photoURL || user?.photoURL || '' : '');
+    const turnPlayer = players[game.currentTurnSeatIndex];
+    const canRoll = game.status === 'active' && isMyTurn && awaitingRoll && !rolling;
+
+    const handleTokenTap = (tokenIndex: number) => {
+      if (isMyTurn && movable.includes(tokenIndex)) handleMoveToken(tokenIndex);
+      else setSelectedTokenIndex((cur) => (cur === tokenIndex ? null : tokenIndex));
+    };
+
+    const renderBadge = (pl: LudoPlayer, side: 'left' | 'right') => {
+      const active = game.status === 'active' && turnPlayer?.uid === pl.uid;
+      const home = pl.tokens.filter((tk) => tk === HOME).length;
+      const photo = photoFor(pl);
+      return (
+        <div
+          key={pl.uid}
+          className={clsx(
+            'flex items-center gap-2 h-[3.4rem] min-w-0 max-w-[48%] rounded-full p-1.5 border-2 backdrop-blur-sm',
+            side === 'right' && 'flex-row-reverse text-right pl-3 ml-auto',
+            side === 'left' && 'pr-3',
+            active ? 'bg-black/55' : 'bg-black/35 border-white/15',
+          )}
+          style={active ? { borderColor: COLOR_HEX[pl.color], boxShadow: `0 0 0 2px #fff, 0 0 20px ${COLOR_HEX[pl.color]}` } : undefined}
+        >
+          <div className="relative w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-lg font-black text-white bg-slate-700" style={{ border: `3px solid ${COLOR_HEX[pl.color]}` }}>
+            <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
+              {pl.isBot ? <span className="text-xl leading-none">🤖</span> : photo ? <img src={photo} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (pl.displayName?.slice(0, 1) || '?')}
+            </div>
+            {active && <span className="absolute -inset-1.5 rounded-full border-[3px] border-transparent border-t-white border-r-white animate-spin" style={{ animationDuration: '2.4s' }} />}
+            <PresenceDot uid={pl.uid} className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5" />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <p className="text-[12px] font-extrabold text-white truncate">{pl.uid === user?.uid ? 'You' : pl.displayName}</p>
+            <div className={clsx('flex items-center gap-[3px] mt-1', side === 'right' && 'justify-end')}>
+              {[0, 1, 2, 3].map((i) => (
+                <span key={i} className="w-[9px] h-[9px] rounded-full border-[1.5px] border-white/80" style={{ backgroundColor: i < home ? COLOR_HEX[pl.color] : 'transparent' }} />
+              ))}
+              <span className="text-[9px] text-white/80 ml-1 whitespace-nowrap">{home}/4 home</span>
+            </div>
+          </div>
+        </div>
+      );
+    };
+    const rowPlayers = (quads: number[]) => players.filter((pl) => quads.includes(quadrantOf(pl)));
+    const topRow = rowPlayers([0, 1]);
+    const bottomRow = rowPlayers([3, 2]);
+    const sideOf = (pl: LudoPlayer): 'left' | 'right' => (quadrantOf(pl) === 0 || quadrantOf(pl) === 3 ? 'left' : 'right');
+
+    const bannerText = game.status === 'finished'
+      ? 'GAME OVER'
+      : isMyTurn
+      ? 'YOUR TURN'
+      : `${turnPlayer?.displayName?.toUpperCase() || ''}'S TURN`;
+    const mainText = game.status === 'finished'
+      ? 'Game over'
+      : isMyTurn
+      ? awaitingRoll ? 'Your turn — tap ROLL' : movable.length === 0 ? 'No moves — passing…' : `You rolled a ${dice}`
+      : awaitingRoll ? `${turnPlayer?.displayName} is rolling…` : `${turnPlayer?.displayName} rolled a ${dice}`;
+    const subText = game.status === 'finished'
+      ? ''
+      : isMyTurn
+      ? awaitingRoll ? 'Roll the dice to move' : movable.length === 0 ? '' : 'Tap a glowing token to move it'
+      : awaitingRoll ? 'Waiting for their roll' : 'Waiting for them to move…';
+
+    return (
+      <div className="flex flex-col min-h-screen bg-surface">
+        <ReactionOverlay reactions={floatingReactions} />
+        {showHelp && <GameHelpModal content={LUDO_HELP} onClose={() => setShowHelp(false)} />}
+        {showChat && user && (
+          <ChatPanel
+            collectionName="ludoGames"
+            gameId={gameId!}
+            messages={chatMessages}
+            loading={chatLoading}
+            myUid={user.uid}
+            myDisplayName={profile?.displayName || user.displayName || 'Player'}
+            myPhotoURL={profile?.photoURL || user.photoURL || ''}
+            otherUids={players.filter((p) => p.uid !== user.uid).map((p) => p.uid)}
+            onClose={() => setShowChat(false)}
+          />
+        )}
+
+        {showExitMenuLudo && (
+          <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowExitMenuLudo(false)}>
+            <div className="w-full max-w-xs bg-white rounded-3xl shadow-2xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+              <p className="text-xs font-bold text-text-muted uppercase tracking-wider text-center pb-1">Leave this game?</p>
+              <button onClick={() => navigate('/games/ludo')} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-on-surface text-left px-4">
+                <span className="block">Go to Lobby</span>
+                <span className="block text-[10px] font-medium text-text-muted mt-0.5">The game carries on — come back anytime</span>
+              </button>
+              <button onClick={() => { setShowExitMenuLudo(false); handleEndGame(); }} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-error text-left px-4">
+                <span className="block">End game for everyone</span>
+                <span className="block text-[10px] font-medium text-text-muted mt-0.5">This can't be undone</span>
+              </button>
+              <button onClick={() => setShowExitMenuLudo(false)} className="w-full py-2.5 text-sm font-bold text-text-muted">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Full-screen table (covers the app header and tab bar): a dark game backdrop, the board in a
+            wooden frame with each player's badge at their corner, and the dice dock underneath. */}
+        <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_22%,#1d4e7a_0%,#0e2f4d_48%,#071a2c_100%)]">
+          <div aria-hidden className="pointer-events-none absolute inset-0 opacity-50 [background-image:radial-gradient(rgba(255,255,255,0.16)_1px,transparent_1.5px)] [background-size:26px_26px]" />
+
+          <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
+            <button onClick={() => navigate('/games/ludo')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            </button>
+            <div className="leading-tight">
+              <h1 className="text-[15px] font-black">Ludo</h1>
+              <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">ROOM {game.code}</span>
+            </div>
+            <ReactionButton onSend={handleSendReaction} />
+            <div className="flex-1" />
+            <div className="flex items-center gap-1">
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+              {isPlayer && game.status === 'active' && (
+                <button onClick={() => setShowExitMenuLudo(true)} className="p-1.5 text-red-300" aria-label="Leave game">
+                  <span className="material-symbols-outlined text-[22px] block">logout</span>
+                </button>
+              )}
+            </div>
+          </header>
+
+          <div className="relative shrink-0 flex justify-center pt-1.5">
+            <span
+              className="px-4 py-1 rounded-full text-[11px] font-black tracking-wide text-white"
+              style={{ background: turnPlayer ? COLOR_HEX[turnPlayer.color] : '#475569', boxShadow: `0 0 18px ${turnPlayer ? COLOR_HEX[turnPlayer.color] : '#475569'}99`, color: turnPlayer?.color === 'yellow' ? '#1f2937' : '#fff' }}
+            >
+              {bannerText}
+            </span>
+          </div>
+
+          <div className="relative flex-1 min-h-0 flex flex-col items-center justify-start gap-1.5 px-2 pt-2">
+            <div className="flex justify-between gap-2 w-full" style={{ maxWidth: 'min(100%, calc(100dvh - 24rem))' }}>
+              {topRow.map((pl) => renderBadge(pl, sideOf(pl)))}
+            </div>
+
+            <div className="w-full rounded-[1.4rem] p-1.5 bg-gradient-to-br from-[#8a5a2b] to-[#5b3a1a] shadow-[0_14px_28px_rgba(0,0,0,0.55),inset_0_2px_0_rgba(255,255,255,0.25)]" style={{ maxWidth: 'min(100%, calc(100dvh - 24rem))' }}>
+              <div
+              className="relative grid bg-white rounded-xl overflow-hidden mx-auto transition-transform duration-500"
+              style={{
+                gridTemplateColumns: `repeat(${GRID_SIZE}, 1fr)`,
+                gridTemplateRows: `repeat(${GRID_SIZE}, 1fr)`,
+                aspectRatio: '1',
+                width: '100%',
+                transform: `rotate(${myRotation}deg)`,
+              }}
+            >
+              {COLORS.map((slot) => (
+                <YardPanel key={slot} slot={slot} color={slotColors[slot]} />
+              ))}
+
+              <CenterTriangle slotColors={slotColors} />
+
+              {Array.from({ length: GRID_SIZE * GRID_SIZE }, (_, idx) => {
+                const row = Math.floor(idx / GRID_SIZE);
+                const col = idx % GRID_SIZE;
+                const key = `${row},${col}`;
+
+                // Yards and the center 3x3 are rendered as their own spanning elements above —
+                // skip per-cell rendering for the coordinates they cover.
+                if (COLORS.some((c) => {
+                  const { rows, cols } = YARD_SPANS[c];
+                  return row >= rows[0] && row <= rows[1] && col >= cols[0] && col <= cols[1];
+                })) return null;
+                if (
+                  row >= 6 && row <= 8 && col >= 6 && col <= 8 &&
+                  !CORNER_CELLS.some(([r, c]) => r === row && c === col) &&
+                  !FINAL_STRETCH_CELLS.some(([r, c]) => r === row && c === col)
+                ) return null;
+
+                // Each color's private final run-in lane, tinted to match that color (was plain
+                // white before, indistinguishable from ordinary track cells).
+                const homeStretchSlot = COLORS.find((c) => HOME_STRETCH_CELLS[c].some(([r, cc]) => r === row && cc === col));
+                const homeStretchColor = homeStretchSlot ? slotColors[homeStretchSlot] : undefined;
+                const safe = SAFE_CELL_KEYS.has(key);
+
+                return (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-center border border-border-subtle/40"
+                    style={{ gridColumn: col + 1, gridRow: row + 1, backgroundColor: homeStretchColor ? `${COLOR_HEX[homeStretchColor]}26` : '#fff' }}
+                  >
+                    {/* Always rendered (not just when the cell is empty) — a token landing on a
+                        star should never make the star itself disappear, it just sits on top of
+                        it, same as a real board. */}
+                    {safe && <span className="material-symbols-outlined text-[12px] text-primary/60">star</span>}
+                  </div>
+                );
+              })}
+
+              {/* Token overlay — one continuous element per token so CSS can smoothly slide it
+                  between cells instead of unmounting/remounting into a new grid cell each hop
+                  (mirrors Business's PawnToken overlay). */}
+              {players.flatMap((p) =>
+                p.tokens.map((pos, tokenIndex) => {
+                  const tKey = `${p.uid}:${tokenIndex}`;
+                  const dp = displayPositions[tKey] ?? tokenGridPosition(boardSlot(p.seatIndex, players.length), tokenIndex, pos);
+                  return { tKey, uid: p.uid, color: p.color, tokenIndex, dp };
+                }),
+              ).map((t, _i, arr) => {
+                const groupKey = `${t.dp.row.toFixed(1)},${t.dp.col.toFixed(1)}`;
+                const group = arr.filter((o) => `${o.dp.row.toFixed(1)},${o.dp.col.toFixed(1)}` === groupKey);
+                const idxInGroup = group.findIndex((o) => o.tKey === t.tKey);
+                const offsetX = group.length > 1 ? (idxInGroup % 2) * 7 - 3.5 : 0;
+                const offsetY = group.length > 1 ? Math.floor(idxInGroup / 2) * 7 - 3.5 : 0;
+                // Yard slots (see yardSlotFrac) already resolve to the exact board-fraction center
+                // of their dashed placeholder circle — unlike every other case here (PATH52/home-
+                // stretch cell indices, which are top-left corners and need +0.5 to reach a cell's
+                // center), so adding +0.5 again for a yard token overshoots by half a cell and
+                // visibly misaligns it from its circle. `dp.isYard` (not the token's live position)
+                // decides this, so it can never disagree with what `dp` itself actually contains.
+                const cellCol = t.dp.isYard ? t.dp.col : t.dp.col + 0.5;
+                const cellRow = t.dp.isYard ? t.dp.row : t.dp.row + 0.5;
+                // A single click on this token's button in "Your Tokens" below (see
+                // handleTokenButtonClick) blows it way up right here on the board and pops it
+                // above every other token — the direct fix for tokens becoming unreadably tiny
+                // once several stack on the same cell.
+                const isSelected = !!myPlayer && t.tKey === `${myPlayer.uid}:${selectedTokenIndex}`;
+                const baseSize = t.dp.isYard ? 38 : 26;
+                const isMine = !!myPlayer && t.uid === myPlayer.uid;
+                const isMovableTok = isMyTurn && isMine && movable.includes(t.tokenIndex);
+                const size = isSelected ? baseSize * 2.2 : baseSize;
+                return (
+                  <div
+                    key={t.tKey}
+                    onClick={isMine ? () => handleTokenTap(t.tokenIndex) : undefined}
+                    className={clsx('absolute transition-[left,top] duration-500 ease-in-out', isMine ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')}
+                    style={{
+                      left: `calc(${(cellCol / GRID_SIZE) * 100}% + ${offsetX}px)`,
+                      top: `calc(${(cellRow / GRID_SIZE) * 100}% + ${offsetY}px)`,
+                      transform: 'translate(-50%, -50%)',
+                      zIndex: isSelected ? 30 : 10,
+                    }}
+                  >
+                    <div className="relative transition-transform duration-500" style={{ transform: `rotate(${-myRotation}deg)` }}>
+                      {isSelected && (
+                        <div
+                          className="absolute inset-0 rounded-full animate-ping"
+                          style={{ backgroundColor: COLOR_HEX[t.color], opacity: 0.35 }}
+                        />
+                      )}
+                      {isMovableTok && (
+                        <>
+                          <span className="absolute -inset-2.5 rounded-full border-4 border-white animate-ping" />
+                          <span className="absolute -inset-1 rounded-full opacity-40" style={{ backgroundColor: COLOR_HEX[t.color] }} />
+                          <span className="absolute left-1/2 -translate-x-1/2 -top-6 text-white text-[16px] font-black leading-none animate-bounce" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>▼</span>
+                        </>
+                      )}
+                      <PawnToken color={COLOR_HEX[t.color]} size={size} />
+                      {/* Token number — matches the "Your Tokens" selector's own 1-4 labels, so a
+                          token on the board can be identified/tracked without needing to open
+                          that panel first. */}
+                      <span
+                        className="absolute left-1/2 -translate-x-1/2 text-white font-black leading-none"
+                        style={{
+                          top: t.dp.isYard ? '30%' : '22%',
+                          fontSize: (t.dp.isYard ? 11 : 8) * (isSelected ? 1.6 : 1),
+                          textShadow: '0 0 1.5px rgba(0,0,0,0.95), 0 0 1px rgba(0,0,0,0.95)',
+                        }}
+                      >
+                        {t.tokenIndex + 1}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            </div>
+
+            <div className="flex justify-between gap-2 w-full" style={{ maxWidth: 'min(100%, calc(100dvh - 24rem))' }}>
+              {bottomRow.map((pl) => renderBadge(pl, sideOf(pl)))}
+            </div>
+
+            {/* The dock: big die, what just happened, the ROLL button and the last few rolls. */}
+            {game.status === 'active' && (
+              <div className="flex flex-col items-center gap-1 pt-1">
+                <DiceFace value={dice} spinning={rolling} size={84} />
+                <p className="text-[13px] font-black leading-tight text-center">{mainText}</p>
+                {subText && <p className="text-[10px] text-white/80 leading-tight text-center">{subText}</p>}
+                <button
+                  type="button"
+                  onClick={canRoll ? handleRoll : undefined}
+                  disabled={!canRoll}
+                  className={clsx(
+                    'mt-1 px-10 py-2 rounded-full text-sm font-black tracking-wide transition-all',
+                    canRoll
+                      ? 'bg-gradient-to-b from-green-400 to-green-700 shadow-[0_5px_0_#0f5f2e,0_9px_16px_rgba(0,0,0,0.4)] active:translate-y-[3px] active:shadow-[0_2px_0_#0f5f2e] animate-pulse'
+                      : 'bg-gradient-to-b from-slate-500 to-slate-600 shadow-[0_5px_0_#334155] opacity-70',
+                  )}
+                >
+                  {rolling ? '…' : 'ROLL'}
+                </button>
+                {rollHistory.length > 0 && (
+                  <div className="flex items-center gap-1 pt-1 text-[10px] text-white/80">
+                    <span className="mr-0.5">LAST ROLLS</span>
+                    {rollHistory.map((r, i) => (
+                      <span key={i} className="w-5 h-5 rounded-md flex items-center justify-center font-black text-[11px]" style={{ backgroundColor: i === rollHistory.length - 1 ? COLOR_HEX[r.color] : 'rgba(255,255,255,0.15)', color: i === rollHistory.length - 1 && r.color === 'yellow' ? '#1f2937' : '#fff' }}>
+                        {r.value}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* toasts */}
+          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-[34%] z-[20] w-[min(92vw,20rem)] space-y-2">
+            <AnimatePresence>
+              {captureToast && (
+                <motion.div
+                  key={captureToast.id}
+                  initial={{ scale: 0.8, opacity: 0, y: 10 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="text-center px-4 py-2.5 rounded-2xl bg-slate-900/95 border-2 border-amber-400 shadow-2xl text-sm font-extrabold"
+                >
+                  💥 {captureToast.text}
+                  <span className="block text-[10px] font-semibold text-white/80 mt-0.5">A captured token goes back to its yard — it needs a 6 to come out</span>
+                </motion.div>
+              )}
+              {justVoided && (
+                <motion.div key="void" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center px-3 py-2 rounded-2xl bg-red-950/95 border border-red-400 text-[11px] font-bold">
+                  🎲🎲🎲 Three 6's in a row! {voidNotice?.playerName}'s moves this turn were cancelled — rolling again.
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Result: shown over the board when the game ends; "View board" tucks it away. */}
+          {game.status === 'finished' && !hideResult && (
+            <div className="absolute inset-0 z-[40] flex flex-col items-center justify-center bg-black/60 p-4">
+          <div className="relative w-full max-w-sm bg-white text-on-surface rounded-3xl p-6 text-center space-y-3 overflow-hidden shadow-2xl">
+            {game.winnerUid && <Fireworks />}
+            <span className="relative material-symbols-outlined text-4xl text-primary">{game.winnerUid ? 'emoji_events' : 'flag'}</span>
+            <p className="relative text-lg font-black text-primary">
+              {game.winnerUid
+                ? game.winningTeam
+                  ? `${game.winningTeam.map((uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Someone').join(' & ')} won!`
+                  : `${players.find((p) => p.uid === game.winnerUid)?.displayName || 'Someone'} won!`
+                : `Game ended early${game.endedByName ? ` by ${game.endedByName}` : ''}.`}
+            </p>
+            {(() => {
+              const winnerUids: string[] = game.winnerUid ? (game.winningTeam || [game.winnerUid]) : [];
+              if (!user || !winnerUids.includes(user.uid)) return null;
+              const nameOf = (uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Player';
+              const share = buildWinShare({
+                gameName: 'Ludo',
+                winnerLabel: winnerUids.map(nameOf).join(' & '),
+                standings: [...players]
+                  .sort((a, b) => Number(winnerUids.includes(b.uid)) - Number(winnerUids.includes(a.uid)))
+                  .map((p) => ({ name: p.displayName, label: winnerUids.includes(p.uid) ? 'First home' : undefined, isWinner: winnerUids.includes(p.uid) })),
+                detail: `${players.length}-player game${game.winningTeam ? ' · team win' : ''}`,
+              });
+              return <ShareWinButton card={share.card} caption={share.caption} className="relative" />;
+            })()}
+            <button onClick={() => navigate('/tools?category=games')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
+              Back to Games
+            </button>
+            {user?.uid === game.hostUid && (
+              <button onClick={handleDeleteGame} className="relative w-full py-2.5 text-error/70 font-bold text-sm">
+                Delete Game
+              </button>
+            )}
+          </div>
+              <button onClick={() => setHideResult(true)} className="mt-3 text-white/90 text-sm font-bold underline">View board</button>
+            </div>
+          )}
+          {game.status === 'finished' && hideResult && (
+            <button onClick={() => setHideResult(false)} className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[40] px-5 py-2.5 rounded-full bg-white text-primary text-sm font-black shadow-xl">Show result</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
@@ -1000,276 +1458,6 @@ export default function LudoGame() {
           </div>
         )}
 
-        {game.status === 'finished' && (
-          <div className="relative bg-white rounded-2xl border border-border-subtle p-6 text-center space-y-3 overflow-hidden">
-            {game.winnerUid && <Fireworks />}
-            <span className="relative material-symbols-outlined text-4xl text-primary">{game.winnerUid ? 'emoji_events' : 'flag'}</span>
-            <p className="relative text-lg font-black text-primary">
-              {game.winnerUid
-                ? game.winningTeam
-                  ? `${game.winningTeam.map((uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Someone').join(' & ')} won!`
-                  : `${players.find((p) => p.uid === game.winnerUid)?.displayName || 'Someone'} won!`
-                : `Game ended early${game.endedByName ? ` by ${game.endedByName}` : ''}.`}
-            </p>
-            {(() => {
-              const winnerUids: string[] = game.winnerUid ? (game.winningTeam || [game.winnerUid]) : [];
-              if (!user || !winnerUids.includes(user.uid)) return null;
-              const nameOf = (uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Player';
-              const share = buildWinShare({
-                gameName: 'Ludo',
-                winnerLabel: winnerUids.map(nameOf).join(' & '),
-                standings: [...players]
-                  .sort((a, b) => Number(winnerUids.includes(b.uid)) - Number(winnerUids.includes(a.uid)))
-                  .map((p) => ({ name: p.displayName, label: winnerUids.includes(p.uid) ? 'First home' : undefined, isWinner: winnerUids.includes(p.uid) })),
-                detail: `${players.length}-player game${game.winningTeam ? ' · team win' : ''}`,
-              });
-              return <ShareWinButton card={share.card} caption={share.caption} className="relative" />;
-            })()}
-            <button onClick={() => navigate('/tools?category=games')} className="relative w-full py-3 bg-primary text-white font-bold rounded-2xl">
-              Back to Games
-            </button>
-            {user?.uid === game.hostUid && (
-              <button onClick={handleDeleteGame} className="relative w-full py-2.5 text-error/70 font-bold text-sm">
-                Delete Game
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Board + tokens stay visible in BOTH active and finished states — only the roll/move
-            controls further down are active-only — so finishing a game never yanks the board out
-            from under the win banner above. */}
-        {(game.status === 'active' || game.status === 'finished') && (
-          <>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {players.map((p, seat) => (
-                <div
-                  key={p.uid}
-                  className={clsx(
-                    'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border-2',
-                    seat === game.currentTurnSeatIndex ? 'text-white' : 'text-white/90',
-                  )}
-                  style={{ backgroundColor: COLOR_HEX[p.color], borderColor: seat === game.currentTurnSeatIndex ? '#fff' : COLOR_HEX[p.color] }}
-                >
-                  <PresenceDot uid={p.uid} className="w-2 h-2" />
-                  {p.isBot && '🤖 '}{p.displayName} {seat === game.currentTurnSeatIndex && '•'}
-                </div>
-              ))}
-            </div>
-
-            {players.length === 4 && (() => {
-              const teamA = players.filter((p) => p.team === 0);
-              const teamB = players.filter((p) => p.team === 1);
-              if (teamA.length === 0 || teamB.length === 0) return null;
-              return (
-                <p className="text-[10px] font-bold text-text-muted text-center leading-tight">
-                  🤝 Team play: {teamA.map((p) => p.displayName).join(' & ')} vs {teamB.map((p) => p.displayName).join(' & ')} — teammates can't capture each other
-                </p>
-              );
-            })()}
-
-            {justVoided && (
-              <div className="bg-error/10 border border-error/30 text-error text-[11px] font-bold text-center rounded-xl py-2 px-3 leading-tight">
-                🎲🎲🎲 Three 6's in a row! {voidNotice?.playerName}'s moves this turn were cancelled — rolling again.
-              </div>
-            )}
-
-            <div
-              className="relative grid bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden mx-auto transition-transform duration-500"
-              style={{
-                gridTemplateColumns: `repeat(${GRID_SIZE}, 1fr)`,
-                gridTemplateRows: `repeat(${GRID_SIZE}, 1fr)`,
-                aspectRatio: '1',
-                width: '100%',
-                transform: `rotate(${myRotation}deg)`,
-              }}
-            >
-              {COLORS.map((slot) => (
-                <YardPanel key={slot} slot={slot} color={slotColors[slot]} />
-              ))}
-
-              <CenterTriangle slotColors={slotColors} />
-
-              {Array.from({ length: GRID_SIZE * GRID_SIZE }, (_, idx) => {
-                const row = Math.floor(idx / GRID_SIZE);
-                const col = idx % GRID_SIZE;
-                const key = `${row},${col}`;
-
-                // Yards and the center 3x3 are rendered as their own spanning elements above —
-                // skip per-cell rendering for the coordinates they cover.
-                if (COLORS.some((c) => {
-                  const { rows, cols } = YARD_SPANS[c];
-                  return row >= rows[0] && row <= rows[1] && col >= cols[0] && col <= cols[1];
-                })) return null;
-                if (
-                  row >= 6 && row <= 8 && col >= 6 && col <= 8 &&
-                  !CORNER_CELLS.some(([r, c]) => r === row && c === col) &&
-                  !FINAL_STRETCH_CELLS.some(([r, c]) => r === row && c === col)
-                ) return null;
-
-                // Each color's private final run-in lane, tinted to match that color (was plain
-                // white before, indistinguishable from ordinary track cells).
-                const homeStretchSlot = COLORS.find((c) => HOME_STRETCH_CELLS[c].some(([r, cc]) => r === row && cc === col));
-                const homeStretchColor = homeStretchSlot ? slotColors[homeStretchSlot] : undefined;
-                const safe = SAFE_CELL_KEYS.has(key);
-
-                return (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-center border border-border-subtle/40"
-                    style={{ gridColumn: col + 1, gridRow: row + 1, backgroundColor: homeStretchColor ? `${COLOR_HEX[homeStretchColor]}26` : '#fff' }}
-                  >
-                    {/* Always rendered (not just when the cell is empty) — a token landing on a
-                        star should never make the star itself disappear, it just sits on top of
-                        it, same as a real board. */}
-                    {safe && <span className="material-symbols-outlined text-[12px] text-primary/60">star</span>}
-                  </div>
-                );
-              })}
-
-              {/* Token overlay — one continuous element per token so CSS can smoothly slide it
-                  between cells instead of unmounting/remounting into a new grid cell each hop
-                  (mirrors Business's PawnToken overlay). */}
-              {players.flatMap((p) =>
-                p.tokens.map((pos, tokenIndex) => {
-                  const tKey = `${p.uid}:${tokenIndex}`;
-                  const dp = displayPositions[tKey] ?? tokenGridPosition(boardSlot(p.seatIndex, players.length), tokenIndex, pos);
-                  return { tKey, color: p.color, tokenIndex, dp };
-                }),
-              ).map((t, _i, arr) => {
-                const groupKey = `${t.dp.row.toFixed(1)},${t.dp.col.toFixed(1)}`;
-                const group = arr.filter((o) => `${o.dp.row.toFixed(1)},${o.dp.col.toFixed(1)}` === groupKey);
-                const idxInGroup = group.findIndex((o) => o.tKey === t.tKey);
-                const offsetX = group.length > 1 ? (idxInGroup % 2) * 7 - 3.5 : 0;
-                const offsetY = group.length > 1 ? Math.floor(idxInGroup / 2) * 7 - 3.5 : 0;
-                // Yard slots (see yardSlotFrac) already resolve to the exact board-fraction center
-                // of their dashed placeholder circle — unlike every other case here (PATH52/home-
-                // stretch cell indices, which are top-left corners and need +0.5 to reach a cell's
-                // center), so adding +0.5 again for a yard token overshoots by half a cell and
-                // visibly misaligns it from its circle. `dp.isYard` (not the token's live position)
-                // decides this, so it can never disagree with what `dp` itself actually contains.
-                const cellCol = t.dp.isYard ? t.dp.col : t.dp.col + 0.5;
-                const cellRow = t.dp.isYard ? t.dp.row : t.dp.row + 0.5;
-                // A single click on this token's button in "Your Tokens" below (see
-                // handleTokenButtonClick) blows it way up right here on the board and pops it
-                // above every other token — the direct fix for tokens becoming unreadably tiny
-                // once several stack on the same cell.
-                const isSelected = !!myPlayer && t.tKey === `${myPlayer.uid}:${selectedTokenIndex}`;
-                const baseSize = t.dp.isYard ? 26 : 13;
-                const size = isSelected ? baseSize * 2.2 : baseSize;
-                return (
-                  <div
-                    key={t.tKey}
-                    className="absolute pointer-events-none transition-[left,top] duration-500 ease-in-out"
-                    style={{
-                      left: `calc(${(cellCol / GRID_SIZE) * 100}% + ${offsetX}px)`,
-                      top: `calc(${(cellRow / GRID_SIZE) * 100}% + ${offsetY}px)`,
-                      transform: 'translate(-50%, -50%)',
-                      zIndex: isSelected ? 30 : 10,
-                    }}
-                  >
-                    <div className="relative transition-transform duration-500" style={{ transform: `rotate(${-myRotation}deg)` }}>
-                      {isSelected && (
-                        <div
-                          className="absolute inset-0 rounded-full animate-ping"
-                          style={{ backgroundColor: COLOR_HEX[t.color], opacity: 0.35 }}
-                        />
-                      )}
-                      <PawnToken color={COLOR_HEX[t.color]} size={size} />
-                      {/* Token number — matches the "Your Tokens" selector's own 1-4 labels, so a
-                          token on the board can be identified/tracked without needing to open
-                          that panel first. */}
-                      <span
-                        className="absolute left-1/2 -translate-x-1/2 text-white font-black leading-none"
-                        style={{
-                          top: t.dp.isYard ? '30%' : '22%',
-                          fontSize: (t.dp.isYard ? 9 : 6) * (isSelected ? 1.6 : 1),
-                          textShadow: '0 0 1.5px rgba(0,0,0,0.95), 0 0 1px rgba(0,0,0,0.95)',
-                        }}
-                      >
-                        {t.tokenIndex + 1}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Roll/move controls are active-only — the board and tokens above stay visible once
-                the game finishes, but there's nothing left to control by then. */}
-            {game.status === 'active' && (
-            <>
-            {/* Dice and the token controller share a row (rather than stacking) so this block
-                stays short enough that the fixed-position quick-reaction bar never overlaps
-                the tappable token buttons. */}
-            <div className="flex items-start gap-2">
-              <div className="flex flex-col items-center gap-1.5 shrink-0 w-20">
-                <DiceFace value={dice} spinning={rolling} size={40} />
-                {/* Rolling now happens via this button, not tapping the die itself — the die
-                    stays a plain white cube; this button carries the "whose turn" color instead,
-                    visible to every viewer even though only the active player can actually tap it. */}
-                <button
-                  type="button"
-                  onClick={isMyTurn && awaitingRoll && !rolling ? handleRoll : undefined}
-                  disabled={!(isMyTurn && awaitingRoll && !rolling)}
-                  className={clsx(
-                    'w-full py-1.5 rounded-lg text-[10px] font-black text-white uppercase tracking-wide transition-all shadow-sm',
-                    isMyTurn && awaitingRoll && !rolling ? 'active:scale-95 cursor-pointer animate-pulse' : 'opacity-50 cursor-default',
-                  )}
-                  style={{ backgroundColor: COLOR_HEX[players[game.currentTurnSeatIndex]?.color] }}
-                >
-                  {rolling ? '…' : 'Roll'}
-                </button>
-                {isMyTurn ? (
-                  awaitingRoll ? null : movable.length === 0 ? (
-                    <p className="text-[10px] text-text-muted text-center leading-tight">No moves — passing…</p>
-                  ) : selectedTokenIndex != null && movable.includes(selectedTokenIndex) ? (
-                    <p className="text-[10px] font-bold text-primary text-center leading-tight">Tap again to move</p>
-                  ) : (
-                    <p className="text-[10px] text-text-muted text-center leading-tight">Pick a token</p>
-                  )
-                ) : (
-                  <p className="text-[10px] text-text-muted text-center leading-tight">
-                    Waiting for {players[game.currentTurnSeatIndex]?.displayName}…
-                  </p>
-                )}
-              </div>
-
-              {myPlayer && (
-                <div className="flex-1 bg-white rounded-2xl border border-border-subtle p-2.5 min-w-0">
-                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1.5">
-                    Your Tokens {!isMyTurn && <span className="normal-case font-medium opacity-70">— tap to locate</span>}
-                  </p>
-                  <div className="grid grid-cols-4 gap-1">
-                    {myPlayer.tokens.map((pos, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleTokenButtonClick(i)}
-                        className={clsx(
-                          'py-1.5 px-0.5 rounded-lg text-[9px] font-bold border-2 transition-all flex flex-col items-center gap-0.5 min-w-0',
-                          movable.includes(i) ? 'animate-pulse text-white border-transparent' : 'text-text-muted border-border-subtle',
-                          selectedTokenIndex === i && 'ring-2 ring-offset-1 ring-primary scale-105',
-                        )}
-                        style={movable.includes(i) ? { backgroundColor: COLOR_HEX[myPlayer.color] } : undefined}
-                      >
-                        <span
-                          className={clsx('w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-black shrink-0', movable.includes(i) ? 'bg-white/25' : 'text-white')}
-                          style={!movable.includes(i) ? { backgroundColor: COLOR_HEX[myPlayer.color] } : undefined}
-                        >
-                          {i + 1}
-                        </span>
-                        <span className="truncate w-full text-center">{statusLabel(pos)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            </>
-            )}
-
-          </>
-        )}
       </main>
     </div>
   );
@@ -1288,7 +1476,7 @@ const YardPanel: React.FC<{ slot: Color; color: Color }> = ({ slot, color }) => 
     >
       <div className="grid grid-cols-2 grid-rows-2 gap-[10%] w-full h-full bg-white rounded-[18%] p-[10%]">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="rounded-full w-full h-full border-2 border-dashed opacity-30" style={{ borderColor: COLOR_HEX[color] }} />
+          <div key={i} className="rounded-full w-full h-full border-2 border-dashed opacity-60" style={{ borderColor: COLOR_HEX[color], backgroundColor: `${COLOR_HEX[color]}1f` }} />
         ))}
       </div>
     </div>
