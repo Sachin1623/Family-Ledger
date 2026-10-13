@@ -24,6 +24,7 @@ import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberS
 import { logGrowthEvent } from '../lib/growthEvents';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
 import SpreadPosterPicker from '../components/SpreadPosterPicker';
+import AppVersionChip from '../components/AppVersionChip';
 import { loadSpreadPosters } from '../lib/spreadPosterCache';
 import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
@@ -1045,7 +1046,11 @@ export default function Profile() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 pb-24 max-w-2xl mx-auto w-full space-y-8 pt-8">
+      <main className="flex-1 p-4 pb-24 max-w-2xl mx-auto w-full space-y-8 pt-4">
+        {/* Installed version/build, always — plus an Update button once the store has a newer one. */}
+        <div className="flex justify-end">
+          <AppVersionChip />
+        </div>
         <section className="flex flex-col items-center">
           <div className="relative mb-4 group">
             <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-white shadow-xl relative">

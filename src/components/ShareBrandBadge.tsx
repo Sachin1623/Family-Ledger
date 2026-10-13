@@ -1,31 +1,21 @@
 import React from 'react';
-import { clsx } from 'clsx';
+import { siFacebook, siInstagram, siWhatsapp, siLinkedin, siX } from 'simple-icons';
 
-// Small brand-colored badges for "Spread the Word" share buttons (Profile.tsx's card and
-// SpreadWordPrompt.tsx's popup), standing in for each platform's logo — Material Symbols (used
-// everywhere else in this app) has no brand icons, and this app has no licensed brand-asset kit
-// to pull exact vector logos from, so these are simplified color+mark badges (brand color + the
-// platform's recognizable letter/glyph) rather than pixel-perfect reproductions.
+// The real brand logos (from the open Simple Icons set) for the "Spread the Word" and share buttons
+// (Profile.tsx's card and SpreadWordPrompt.tsx's popup), each in its own brand colour.
+const ICONS = {
+  whatsapp: siWhatsapp,
+  facebook: siFacebook,
+  instagram: siInstagram,
+  x: siX,
+  linkedin: siLinkedin,
+} as const;
+
 export function ShareBrandBadge({ platform }: { platform: 'whatsapp' | 'facebook' | 'instagram' | 'x' | 'linkedin' }) {
-  const base = 'w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-white leading-none';
-  switch (platform) {
-    case 'whatsapp':
-      return (
-        <span className={clsx(base, 'bg-[#25D366]')}>
-          <span className="material-symbols-outlined text-[11px]" style={{ fontVariationSettings: "'FILL' 1" }}>call</span>
-        </span>
-      );
-    case 'facebook':
-      return <span className={clsx(base, 'bg-[#1877F2] font-black text-[12px] italic')}>f</span>;
-    case 'instagram':
-      return (
-        <span className={clsx(base, 'bg-gradient-to-tr from-[#FEDA75] via-[#D62976] to-[#4F5BD5]')}>
-          <span className="material-symbols-outlined text-[11px]" style={{ fontVariationSettings: "'FILL' 0" }}>photo_camera</span>
-        </span>
-      );
-    case 'x':
-      return <span className={clsx(base, 'bg-black font-black text-[10px]')}>X</span>;
-    case 'linkedin':
-      return <span className={clsx(base, 'bg-[#0A66C2] font-black text-[8px]')}>in</span>;
-  }
+  const icon = ICONS[platform];
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5 shrink-0" role="img" aria-label={icon.title}>
+      <path d={icon.path} fill={`#${icon.hex}`} />
+    </svg>
+  );
 }

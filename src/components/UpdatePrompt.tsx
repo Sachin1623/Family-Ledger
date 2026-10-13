@@ -1,20 +1,9 @@
 import React from 'react';
-import { Capacitor } from '@capacitor/core';
-import { App as CapacitorApp } from '@capacitor/app';
-import { doc } from 'firebase/firestore';
-import { useDocument } from 'react-firebase-hooks/firestore';
-import { db } from '../lib/firebase';
+import { useAppUpdate } from '../lib/useAppUpdate';
 import { motion, AnimatePresence } from 'motion/react';
-
-const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
-// No live App Store listing yet (iOS is still TestFlight-only) — leave blank until one exists.
-// The "Update Now" button is hidden on iOS whenever this is empty (see below).
-const APP_STORE_URL = '';
 
 const DISMISS_STORAGE_KEY = 'fl_update_prompt_dismissal';
 const DISMISS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-type PlatformVersionConfig = { latestVersionCode?: number; latestVersionName?: string; releaseNotes?: string };
 
 function readDismissal(): { versionCode: number; dismissedAt: number } | null {
   try {
@@ -38,59 +27,26 @@ function readDismissal(): { versionCode: number; dismissedAt: number } | null {
 // No-ops entirely on web, where there's no native build to be behind.
 export default function UpdatePrompt() {
   const [sessionDismissed, setSessionDismissed] = React.useState(false);
-  const [installedBuild, setInstalledBuild] = React.useState<number | null>(null);
+  const { updateAvailable, latestVersionName, latestVersionCode, releaseNotes, startUpdate } = useAppUpdate();
 
-  const [versionDoc] = useDocument(doc(db, 'app_config', 'version'));
-  const rawConfig = versionDoc?.data() as
-    | { android?: PlatformVersionConfig; ios?: PlatformVersionConfig | null; latestVersionCode?: number; latestVersionName?: string; releaseNotes?: string }
-    | undefined;
-
-  const platform = Capacitor.getPlatform();
-  // Pre-iOS docs stored one flat set of fields (always meant for Android, the only native
-  // platform that existed then) — treat that shape as Android's config until an admin re-saves
-  // through the updated form, which writes the new per-platform shape.
-  const config: PlatformVersionConfig | undefined =
-    platform === 'android'
-      ? rawConfig?.android ?? (rawConfig ? { latestVersionCode: rawConfig.latestVersionCode, latestVersionName: rawConfig.latestVersionName, releaseNotes: rawConfig.releaseNotes } : undefined)
-      : platform === 'ios'
-        ? rawConfig?.ios ?? undefined
-        : undefined;
-
-  React.useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
-    CapacitorApp.getInfo()
-      .then((info) => setInstalledBuild(parseInt(info.build, 10)))
-      .catch((err) => console.error('Failed to read installed app version:', err));
-  }, []);
-
-  const needsUpdate =
-    Capacitor.isNativePlatform() &&
-    installedBuild != null &&
-    typeof config?.latestVersionCode === 'number' &&
-    installedBuild < config.latestVersionCode;
-
-  const storeUrl = platform === 'ios' ? APP_STORE_URL : PLAY_STORE_URL;
   const persistedDismissal = readDismissal();
   const isCooledDown =
     !!persistedDismissal &&
-    persistedDismissal.versionCode === config?.latestVersionCode &&
+    persistedDismissal.versionCode === latestVersionCode &&
     Date.now() - persistedDismissal.dismissedAt < DISMISS_COOLDOWN_MS;
 
   const handleDismiss = () => {
     setSessionDismissed(true);
-    if (typeof config?.latestVersionCode === 'number') {
+    if (typeof latestVersionCode === 'number') {
       try {
-        localStorage.setItem(
-          DISMISS_STORAGE_KEY,
-          JSON.stringify({ versionCode: config.latestVersionCode, dismissedAt: Date.now() }),
-        );
+        localStorage.setItem(DISMISS_STORAGE_KEY, JSON.stringify({ versionCode: latestVersionCode, dismissedAt: Date.now() }));
       } catch (err) {
         console.error('Failed to persist update-prompt dismissal:', err);
       }
     }
   };
 
-  if (!needsUpdate || sessionDismissed || isCooledDown) return null;
+  if (!updateAvailable || sessionDismissed || isCooledDown) return null;
 
   return (
     <AnimatePresence>
@@ -107,23 +63,21 @@ export default function UpdatePrompt() {
           <div className="text-center space-y-1">
             <h3 className="text-lg font-bold text-primary">Update Available</h3>
             <p className="text-sm text-text-muted">
-              {config?.latestVersionName ? `Version ${config.latestVersionName} is ready.` : 'A new version is ready.'}
+              {latestVersionName ? `Version ${latestVersionName} is ready.` : 'A new version is ready.'}
             </p>
           </div>
-          {config?.releaseNotes && (
+          {releaseNotes && (
             <div className="bg-surface rounded-2xl border border-border-subtle p-4 max-h-40 overflow-y-auto">
-              <p className="text-xs text-on-surface whitespace-pre-wrap">{config.releaseNotes}</p>
+              <p className="text-xs text-on-surface whitespace-pre-wrap">{releaseNotes}</p>
             </div>
           )}
           <div className="flex flex-col gap-2">
-            {storeUrl && (
-              <button
-                onClick={() => window.open(storeUrl, '_system')}
-                className="w-full bg-primary text-white py-3.5 rounded-2xl font-bold active:scale-95 transition-all"
-              >
-                Update Now
-              </button>
-            )}
+            <button
+              onClick={startUpdate}
+              className="w-full bg-primary text-white py-3.5 rounded-2xl font-bold active:scale-95 transition-all"
+            >
+              Update Now
+            </button>
             <button
               onClick={handleDismiss}
               className="w-full py-3.5 rounded-2xl font-bold text-text-muted hover:bg-surface-container transition-all"

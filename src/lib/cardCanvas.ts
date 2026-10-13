@@ -3,6 +3,7 @@
 // the install footer with a scannable Play Store QR code. Pure canvas — no remote images, so it
 // renders the same everywhere and never trips CORS-tainted-canvas errors.
 import QRCode from 'qrcode';
+import { Capacitor } from '@capacitor/core';
 
 export const W = 1080;
 export const H = 1350;
@@ -14,7 +15,14 @@ export const WEB_URL = 'https://familyledger.thirteenapps.com';
 
 // The text that accompanies every shared picture. An image itself can't be tapped, so the real,
 // clickable links live here (and the QR code on the image carries the Play Store link too).
+// On the iPhone app we never mention Google Play / Android (App Store guideline 2.3.10 asks iOS apps
+// to stay focused on the iOS experience), so everything points at the website instead.
+export function isIosApp(): boolean {
+  return Capacitor.getPlatform() === 'ios';
+}
+
 export function installLinksText(): string {
+  if (isIosApp()) return `🌐 Try FamilyLedger free: ${WEB_URL}`;
   return `📲 Install FamilyLedger free on Android: ${PLAY_STORE_URL}\n🌐 Or use it on the web: ${WEB_URL}`;
 }
 
@@ -206,7 +214,8 @@ export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: strin
   const qrSize = 210;
   const qrX = W - 70 - qrSize;
   const qrY = H - 40 - qrSize - 28;
-  drawQr(ctx, PLAY_STORE_URL, qrX, qrY, qrSize);
+  const ios = isIosApp();
+  drawQr(ctx, ios ? WEB_URL : PLAY_STORE_URL, qrX, qrY, qrSize);
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
   ctx.font = `700 22px ${FONT}`;
@@ -227,7 +236,7 @@ export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: strin
   ctx.fillText(fitText(ctx, ctaText, leftW - 50, 34, '800', 24), leftX + leftW / 2, pillY + 55);
 
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText(fitText(ctx, 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
+  ctx.fillText(fitText(ctx, ios ? 'Free for the whole family' : 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.fillText(fitText(ctx, 'familyledger.thirteenapps.com', leftW, 28, '600', 20), leftX + leftW / 2, pillY + pillH + 92);
 }

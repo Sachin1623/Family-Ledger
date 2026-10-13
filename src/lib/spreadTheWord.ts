@@ -1,4 +1,5 @@
 import { logGrowthEvent } from './growthEvents';
+import { isIosApp } from './cardCanvas';
 
 // Shared between Profile.tsx's "Spread the Word" card (which also tries an OS-share-sheet image
 // attempt first, via its own shareViaOsSheetWithBanner — that part stays Profile-only, since it
@@ -92,15 +93,18 @@ const THEME_COPY: Record<SpreadTheme, ThemeCopy> = {
 };
 
 export function buildShareMessages(theme: SpreadTheme = 'money') {
-  const shareUrl = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+  // iPhone app: no Google Play / Android wording or link (see isIosApp), the website link instead.
+  const ios = isIosApp();
+  const shareUrl = ios ? 'https://familyledger.thirteenapps.com' : 'https://play.google.com/store/apps/details?id=com.familyledger.app';
   const webShareUrl = `${window.location.origin}/share`;
   const c = THEME_COPY[theme] || THEME_COPY.money;
+  const platformWording = (t: string) => (ios ? t.replace(/free on Android/gi, 'free to try') : t);
   // WhatsApp/native have no length limit and WhatsApp renders *bold*/dividers as real formatting, so
   // the long version leans into that. Twitter/X gets the short one — its 280-char compose box would
   // just force a manual trim of the long version, and a mistimed trim can cut the link off entirely.
   const divider = '▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬';
-  const message = `*${c.title}*\n_${c.tagline}_\n${divider}\n\n${c.intro}\n\n${c.features.join('\n')}\n\n${divider}\n👉 Try it — free on Android:\n${shareUrl}`;
-  const shortMessage = `${c.short}\n${shareUrl}`;
+  const message = platformWording(`*${c.title}*\n_${c.tagline}_\n${divider}\n\n${c.intro}\n\n${c.features.join('\n')}\n\n${divider}\n👉 Try it — free on Android:\n${shareUrl}`);
+  const shortMessage = platformWording(`${c.short}\n${shareUrl}`);
   return { shareUrl, webShareUrl, message, shortMessage };
 }
 
