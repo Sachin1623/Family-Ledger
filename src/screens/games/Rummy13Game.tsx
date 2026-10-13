@@ -115,10 +115,10 @@ const CardChip: React.FC<{
       className={`relative ${dims} shrink-0 rounded-lg border-2 flex flex-col ${corner && !faceDown ? 'items-start justify-start' : 'items-center justify-center'} font-bold bg-white transition-all ${
         onClick ? 'cursor-pointer active:scale-95' : ''
       } ${
-        highlight
+        selected
+          ? 'border-primary ring-2 ring-primary/70 shadow-md bg-primary/10'
+          : highlight
           ? 'border-warning ring-2 ring-warning/60 shadow-md'
-          : selected
-          ? 'border-primary ring-2 ring-primary/70 shadow-md'
           : 'border-border-subtle'
       } ${dim ? 'opacity-40' : ''} ${faceDown ? 'bg-primary text-white border-white ring-1 ring-inset ring-white/50 [background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.14)_0_5px,transparent_5px_10px)]' : joker ? 'text-warning' : red ? 'text-error' : 'text-on-surface'}`}
     >
