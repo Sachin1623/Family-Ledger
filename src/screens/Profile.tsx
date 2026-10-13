@@ -24,6 +24,7 @@ import { CURRENCY_SYMBOLS, getCurrencySymbol, COUNTRIES, NUMBER_SYSTEMS, NumberS
 import { logGrowthEvent } from '../lib/growthEvents';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
 import SpreadPosterPicker from '../components/SpreadPosterPicker';
+import type { SpreadVariantId } from '../lib/spreadCardImage';
 import { ShareBrandBadge } from '../components/ShareBrandBadge';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
@@ -796,10 +797,11 @@ export default function Profile() {
   // Every Share button opens the poster picker; once a poster is chosen this shares it.
   const handleShareApp = (target: ShareTarget) => setPickerTarget(target);
 
-  const handlePosterChosen = async (blob: Blob) => {
+  const handlePosterChosen = async (blob: Blob, posterId: SpreadVariantId) => {
     const target = pickerTarget;
     if (!target) return;
-    const { message, shortMessage } = buildShareMessages();
+    // The post text follows the poster the person picked (money / health / family / games / all).
+    const { message, shortMessage } = buildShareMessages(posterId);
     const shared = await shareViaOsSheetWithBanner(target === 'twitter' ? shortMessage : message, blob);
     setPickerTarget(null);
     if (shared) {
@@ -807,7 +809,7 @@ export default function Profile() {
       return;
     }
     // Image sharing unsupported (or no share sheet at all) — same text-only fallbacks as before.
-    shareAppPlain(target, user?.uid);
+    shareAppPlain(target, user?.uid, posterId);
   };
 
 
