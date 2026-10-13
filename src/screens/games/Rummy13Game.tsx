@@ -736,9 +736,26 @@ export default function Rummy13Game() {
     const revealed = deal?.revealedHands;
     const revealWildcardRanks = withPrintedJoker(deal?.wildJokerRank ? [deal.wildJokerRank as Rank] : []);
     const standings = [...table.players].sort((a, b) => a.cumulativeScore - b.cumulativeScore);
+    // The declared (winning) hand, laid out in its groups, for the share picture.
+    const winRev = winner ? revealed?.[winner.uid] : undefined;
+    const winGroups = (winRev?.declaredGroups?.length ? winRev.declaredGroups : winRev?.groups) || [];
+    const winHero = winGroups.length > 0
+      ? {
+          kind: 'hand' as const,
+          caption: 'DECLARED WITH 0 POINTS',
+          wildRanks: revealWildcardRanks as string[],
+          groups: winGroups
+            .filter((g) => g.cards.length > 0)
+            .map((g) => ({
+              label: isPureSequence(g.cards) ? 'Pure sequence' : isValidSequence(g.cards, revealWildcardRanks).valid ? 'Sequence' : 'Set',
+              cards: g.cards,
+            })),
+        }
+      : undefined;
     const winShare = winner && winner.uid === user.uid
       ? buildWinShare({
           gameName: '13-Card Rummy',
+          hero: winHero,
           winnerLabel: winner.displayName,
           standings: standings.map((p) => ({ name: p.displayName, label: `${p.cumulativeScore} pts`, isWinner: p.uid === table.winnerUid })),
           detail: `${table.players.length}-player table`,

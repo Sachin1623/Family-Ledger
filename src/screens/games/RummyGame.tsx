@@ -12,6 +12,7 @@ import {
   SUIT_SYMBOL,
   SUIT_RED,
   isPureSequence,
+  isValidSequence,
   isValidGroup,
   sortHandForDisplay,
   type RummyGame as RummyGameDoc,
@@ -792,9 +793,28 @@ export default function RummyGame() {
   if (game.status === 'finished') {
     const winner = game.players.find((p) => p.uid === game.winnerUid);
     const revealWildcardRanks = [game.wildcardRank1, game.wildcardRank2].filter(Boolean) as Rank[];
+    // The winning hand, laid out in its groups, for the share picture.
+    const winMelds = winner ? game.revealedHands?.[winner.uid]?.melds : undefined;
+    const winHero = winMelds
+      ? {
+          kind: 'hand' as const,
+          caption: 'THE WINNING HAND',
+          wildRanks: revealWildcardRanks as string[],
+          groups: [
+            { label: 'Pure 5-run', cards: winMelds.five },
+            { label: 'Pure 4-run', cards: winMelds.four },
+            { label: 'Pure 3-run', cards: winMelds.three },
+            ...winMelds.groups.map((g) => ({
+              label: isPureSequence(g.cards) ? 'Pure run' : isValidSequence(g.cards, revealWildcardRanks).valid ? 'Run' : 'Set',
+              cards: g.cards,
+            })),
+          ],
+        }
+      : undefined;
     const winShare = winner && winner.uid === user.uid
       ? buildWinShare({
           gameName: '27-Hand Rummy',
+          hero: winHero,
           winnerLabel: winner.displayName,
           standings: [...game.players]
             .sort((a, b) => Number(b.uid === game.winnerUid) - Number(a.uid === game.winnerUid))

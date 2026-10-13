@@ -1245,8 +1245,10 @@ export default function LudoGame() {
               const winnerUids: string[] = game.winnerUid ? (game.winningTeam || [game.winnerUid]) : [];
               if (!user || !winnerUids.includes(user.uid)) return null;
               const nameOf = (uid: string) => players.find((p) => p.uid === uid)?.displayName || 'Player';
+              const winnerColor = players.find((p) => winnerUids.includes(p.uid))?.color;
               const share = buildWinShare({
                 gameName: 'Ludo',
+                hero: winnerColor ? { kind: 'ludo', winnerColor: COLOR_HEX[winnerColor] } : undefined,
                 winnerLabel: winnerUids.map(nameOf).join(' & '),
                 standings: [...players]
                   .sort((a, b) => Number(winnerUids.includes(b.uid)) - Number(winnerUids.includes(a.uid)))
