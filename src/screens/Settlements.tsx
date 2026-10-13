@@ -312,16 +312,27 @@ export default function Settlements() {
   // "loaded"). Firing on that premature false would set spendUserFilter before real data exists,
   // and the pre-existing "drop stale candidates" effect below would then immediately wipe it back
   // out against that still-empty candidate list the moment it (re-)runs.
-  const memberParam = searchParams.get('member');
+  //
+  // `members` is the multi-person form of the same thing (comma-separated uids): it's how the
+  // quick view's "edit" round-trip (see `quickViewReturnTo` below) puts the person filter back after
+  // the user finishes editing/deleting on the Group Expenses screen.
+  const memberParam = searchParams.get('members') || searchParams.get('member');
   const appliedMemberParamRef = useRef<string | null>(null);
   useEffect(() => {
     if (!memberParam || memberParam === appliedMemberParamRef.current || !expensesValue) return;
     appliedMemberParamRef.current = memberParam;
-    setSpendUserFilter(new Set([memberParam]));
+    setSpendUserFilter(new Set(memberParam.split(',').filter(Boolean)));
     requestAnimationFrame(() => {
       document.getElementById('spend-items-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, [memberParam, expensesValue]);
+
+  // Where the quick view's edit/delete flow (which happens on the Group Expenses screen) sends the
+  // user back to: this same screen, same group chip and same person filter, instead of dropping
+  // them on the Group Expenses list.
+  const quickViewReturnTo =
+    `/settlements${selectedGroupId && selectedGroupId !== 'overall' ? `/${selectedGroupId}` : ''}` +
+    (spendUserFilter.size > 0 ? `?members=${encodeURIComponent(Array.from(spendUserFilter).join(','))}` : '');
 
   if (expensesLoading) {
     return <div className="p-8 text-center text-text-muted">Loading settlements...</div>;
@@ -618,6 +629,7 @@ export default function Settlements() {
           payerPhoto={allMembers[quickViewExpense.paidBy]?.photoURL}
           members={membersArray}
           onClose={() => setQuickViewExpense(null)}
+          returnTo={quickViewReturnTo}
         />
       )}
 
