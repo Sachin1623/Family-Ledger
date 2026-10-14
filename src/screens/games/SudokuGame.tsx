@@ -20,8 +20,12 @@ import {
   advancePuzzleCursor,
   startNewGame,
   peersOf,
+  readBestScores,
 } from '../../lib/sudoku';
 import { flushPendingSudokuScores } from '../../lib/sudokuSync';
+import { useAuth } from '../../context/AuthContext';
+import ShareWinButton from '../../components/ShareWinButton';
+import { buildWinShare } from '../../lib/winShareImage';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import Fireworks from '../../components/Fireworks';
 import { SUDOKU_HELP } from '../../lib/gameHelp';
@@ -55,6 +59,7 @@ const CELEBRATION_LINES = [
 export default function SudokuGame() {
   const navigate = useNavigate();
   const { difficulty } = useParams<{ difficulty: Difficulty }>();
+  const { profile, user } = useAuth();
   const [game, setGame] = React.useState<ActiveGame | null>(() => (difficulty ? loadActiveGame(difficulty) : null));
   const solutionRef = React.useRef<Board | null>(null);
   const [selected, setSelected] = React.useState<number | null>(null);
@@ -64,7 +69,7 @@ export default function SudokuGame() {
   // doing nothing, which is otherwise the only useful thing that tap could mean.
   const [highlightDigit, setHighlightDigit] = React.useState<number | null>(null);
   const [history, setHistory] = React.useState<HistoryEntry[]>([]);
-  const [completion, setCompletion] = React.useState<{ score: number } | null>(null);
+  const [completion, setCompletion] = React.useState<{ score: number; prevBest: number; stars: number } | null>(null);
   const [showHelp, setShowHelp] = React.useState(false);
   // A separate, tap-to-dismiss celebration overlay in front of the stats modal — triggered by the
   // SAME `completion` transition that opens the stats modal, so it's naturally tied to "once per
@@ -144,6 +149,10 @@ export default function SudokuGame() {
       mistakes: game.mistakes,
       hintsUsed: game.hintsUsed,
     });
+    // 3 stars for a clean solve (no mistakes, no hints), fewer as slips and hints add up.
+    const slips = game.mistakes + game.hintsUsed * 1.5;
+    const stars = slips === 0 ? 3 : slips <= 3 ? 2 : 1;
+    const prevBest = readBestScores()[game.difficulty].bestScore;
     recordLocalScore(game.difficulty, score);
     queuePendingScore({
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -168,7 +177,7 @@ export default function SudokuGame() {
       return prev;
     });
     flushPendingSudokuScores();
-    setCompletion({ score });
+    setCompletion({ score, prevBest, stars });
   };
 
   const handleDigit = (digit: number) => {
@@ -454,34 +463,81 @@ export default function SudokuGame() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[280] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-[280] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              className="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-5 text-center overflow-hidden"
+              className="relative w-full max-w-sm p-6 space-y-5 text-center overflow-hidden rounded-3xl border border-cyan-300/30 text-white shadow-[0_0_40px_rgba(34,211,238,0.25)] bg-[radial-gradient(ellipse_at_50%_0%,#0f4d46_0%,#0a2c3d_60%,#06141f_100%)]"
             >
               <Fireworks />
-              <div className="relative w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto text-primary">
-                <span className="material-symbols-outlined text-3xl">emoji_events</span>
+              <style>{`
+                @keyframes sdStar{0%{transform:scale(0) rotate(-40deg);opacity:0}70%{transform:scale(1.35) rotate(8deg);opacity:1}100%{transform:scale(1) rotate(0);opacity:1}}
+                @keyframes sdShine{0%,100%{filter:drop-shadow(0 0 4px #fbbf24)}50%{filter:drop-shadow(0 0 14px #fde047)}}
+              `}</style>
+              <div className="relative flex items-end justify-center gap-2">
+                {[0, 1, 2].map((k) => {
+                  const on = k < completion.stars;
+                  return (
+                    <span
+                      key={k}
+                      className={`leading-none ${k === 1 ? 'text-[3.6rem] -mb-1' : 'text-[2.8rem]'} ${on ? 'text-amber-300' : 'text-white/15'}`}
+                      style={on ? { animation: `sdStar 0.5s cubic-bezier(.3,1.5,.5,1) ${0.15 + k * 0.2}s both, sdShine 1.6s ease-in-out ${1}s infinite` } : undefined}
+                    >
+                      ★
+                    </span>
+                  );
+                })}
               </div>
               <div className="relative">
-                <h2 className="text-lg font-black text-primary">Puzzle Solved!</h2>
-                <p className="text-sm text-text-muted mt-1 capitalize">{game.difficulty} · {formatTime(game.elapsedSeconds)}</p>
+                <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-b from-amber-100 via-amber-300 to-amber-600">PUZZLE SOLVED!</h2>
+                <p className="text-xs font-extrabold text-white/70 mt-1 uppercase tracking-[0.16em]">
+                  {completion.stars === 3 ? 'Flawless — no slips, no hints' : completion.stars === 2 ? 'Nicely done' : 'Solved — try for a cleaner run'}
+                </p>
               </div>
-              <div className="bg-surface rounded-2xl p-4">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Score</p>
-                <p className="text-3xl font-black text-primary">{completion.score.toLocaleString()}</p>
-                <p className="text-[11px] text-text-muted mt-1">{game.mistakes} mistake{game.mistakes !== 1 ? 's' : ''} · {game.hintsUsed} hint{game.hintsUsed !== 1 ? 's' : ''}</p>
+              <div className="relative rounded-2xl p-4 bg-black/30 border border-white/15">
+                <p className="text-[10px] font-extrabold text-white/60 uppercase tracking-[0.16em]">Score · {game.difficulty}</p>
+                <p className="text-5xl font-black text-amber-300 [text-shadow:0_0_18px_rgba(251,191,36,0.5)]">{completion.score.toLocaleString()}</p>
+                {completion.prevBest === 0 ? (
+                  <p className="mt-1 inline-block px-3 py-0.5 rounded-full bg-green-500 text-green-950 text-[11px] font-black">🎉 FIRST SOLVE ON THE BOARD</p>
+                ) : completion.score > completion.prevBest ? (
+                  <p className="mt-1 inline-block px-3 py-0.5 rounded-full bg-amber-400 text-amber-950 text-[11px] font-black">🏅 NEW PERSONAL BEST (was {completion.prevBest.toLocaleString()})</p>
+                ) : (
+                  <p className="mt-1 text-[11px] font-bold text-white/60">Personal best: {completion.prevBest.toLocaleString()}</p>
+                )}
               </div>
-              <div className="flex flex-col gap-2">
-                <button onClick={handlePlayAgain} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
-                  Play Another {game.difficulty.charAt(0).toUpperCase() + game.difficulty.slice(1)}
+              <div className="relative grid grid-cols-3 gap-2">
+                {[
+                  { icon: 'schedule', label: 'TIME', value: formatTime(game.elapsedSeconds), tint: 'text-cyan-300' },
+                  { icon: 'error', label: 'MISTAKES', value: String(game.mistakes), tint: 'text-red-300' },
+                  { icon: 'lightbulb', label: 'HINTS', value: String(game.hintsUsed), tint: 'text-amber-300' },
+                ].map((t) => (
+                  <div key={t.label} className="rounded-xl bg-black/30 border border-white/15 py-2">
+                    <span className={`material-symbols-outlined text-[18px] ${t.tint}`}>{t.icon}</span>
+                    <p className="text-lg font-black tabular-nums leading-tight">{t.value}</p>
+                    <p className="text-[8px] tracking-[0.14em] text-white/55 font-bold">{t.label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="relative flex flex-col gap-2">
+                <ShareWinButton
+                  {...(() => {
+                    const w = buildWinShare({
+                      gameName: 'Sudoku',
+                      winnerLabel: profile?.displayName || user?.displayName || 'Me',
+                      standings: [{ name: profile?.displayName || user?.displayName || 'Me', label: `${completion.score.toLocaleString()} pts`, isWinner: true }],
+                      detail: `${game.difficulty.charAt(0).toUpperCase()}${game.difficulty.slice(1)} · ${formatTime(game.elapsedSeconds)} · ${'★'.repeat(completion.stars)}`,
+                    });
+                    return { card: w.card, caption: w.caption };
+                  })()}
+                />
+                <button onClick={handlePlayAgain} className="w-full py-3 rounded-full text-sm font-black tracking-wide text-white bg-gradient-to-b from-green-400 to-green-700 shadow-[0_5px_0_#0f5f2e,0_9px_16px_rgba(0,0,0,0.4)] active:translate-y-[3px] active:shadow-[0_2px_0_#0f5f2e]">
+                  PLAY ANOTHER {game.difficulty.toUpperCase()}
                 </button>
-                <button onClick={() => navigate('/games/sudoku/leaderboard')} className="w-full py-3 text-primary font-bold rounded-2xl border border-border-subtle">
-                  View Leaderboard
+                <button onClick={() => navigate('/games/sudoku/leaderboard')} className="w-full py-3 rounded-full text-sm font-black bg-white/10 border border-white/25">
+                  🏅 View Leaderboard
                 </button>
-                <button onClick={() => navigate('/tools?category=games')} className="w-full py-2 text-text-muted font-bold text-sm">
+                <button onClick={() => navigate('/tools?category=games')} className="w-full py-2 text-white/60 font-bold text-sm">
                   Back to Games
                 </button>
               </div>
@@ -494,33 +550,65 @@ export default function SudokuGame() {
           modal's actual buttons underneath. Only ever mounted once per solve, since it's driven
           by the same `completion` transition (see the effect that sets `celebrationLine`). */}
       <AnimatePresence>
-        {completion && celebrationLine && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setCelebrationLine(null)}
-            className="fixed inset-0 z-[290] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6 cursor-pointer"
-          >
+        {completion && celebrationLine && (() => {
+          const confetti = Array.from({ length: 36 }).map((_, i) => {
+            const ang = (i / 36) * Math.PI * 2 + (i % 3) * 0.2;
+            const dist = 120 + ((i * 37) % 100);
+            return { dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, color: ['#fbbf24', '#f87171', '#60a5fa', '#4ade80', '#fff', '#22d3ee'][i % 6], delay: (i % 7) * 0.04, rot: (i * 57) % 360 };
+          });
+          return (
             <motion.div
-              initial={{ opacity: 0, scale: 0.7, rotate: -6 }}
-              animate={{ opacity: 1, scale: 1, rotate: 0 }}
-              transition={{ type: 'spring', damping: 14, stiffness: 260 }}
-              className="text-center space-y-4 max-w-xs"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setCelebrationLine(null)}
+              className="fixed inset-0 z-[290] flex items-center justify-center p-6 cursor-pointer overflow-hidden"
+              style={{ background: 'radial-gradient(circle at 50% 45%, rgba(34,211,238,0.35), rgba(0,0,0,0.85) 70%)' }}
             >
-              <motion.div
-                animate={{ y: [0, -10, 0] }}
-                transition={{ duration: 1.1, repeat: Infinity, ease: 'easeInOut' }}
-                className="text-6xl"
-              >
-                🎉🥳🎊
-              </motion.div>
-              <h2 className="text-2xl font-black text-white">You did it!</h2>
-              <p className="text-base font-bold text-white/90">{celebrationLine}</p>
-              <p className="text-xs font-bold text-white/60 uppercase tracking-wider pt-2">Tap anywhere to continue</p>
+              <style>{`
+                @keyframes sdPop{0%{transform:scale(.2) rotate(-8deg);opacity:0}55%{transform:scale(1.25) rotate(3deg);opacity:1}100%{transform:scale(1) rotate(-2deg)}}
+                @keyframes sdTile{0%{transform:scale(0) rotate(-20deg);opacity:0}70%{transform:scale(1.2) rotate(4deg);opacity:1}100%{transform:scale(1) rotate(0);opacity:1}}
+                @keyframes sdGlow{0%,100%{box-shadow:0 0 0 2px #22d3ee,0 0 10px #22d3ee}50%{box-shadow:0 0 0 2px #fde047,0 0 26px #fde047}}
+                @keyframes sdBurst{0%{transform:translate(0,0) rotate(0) scale(.4);opacity:1}100%{transform:translate(var(--dx),var(--dy)) rotate(var(--rot)) scale(1);opacity:0}}
+                @keyframes sdRise{0%{transform:translateY(16px);opacity:0}100%{transform:translateY(0);opacity:1}}
+              `}</style>
+              <div className="absolute left-1/2 top-[45%]">
+                {confetti.map((c, i) => (
+                  <i
+                    key={i}
+                    className="absolute block w-2 h-3 rounded-[2px]"
+                    style={{ background: c.color, ['--dx' as any]: `${c.dx}px`, ['--dy' as any]: `${c.dy}px`, ['--rot' as any]: `${c.rot}deg`, animation: `sdBurst 1.3s ease-out ${1.0 + c.delay}s both` }}
+                  />
+                ))}
+              </div>
+              <div className="relative text-center flex flex-col items-center max-w-xs">
+                {/* the nine digits drop into a 3x3 block, one after another */}
+                <div className="grid grid-cols-3 gap-1.5 mb-4">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n, k) => (
+                    <span
+                      key={n}
+                      className="w-11 h-11 rounded-lg flex items-center justify-center text-xl font-black text-white bg-gradient-to-b from-[#19505e] to-[#0d2e3b]"
+                      style={{ animation: `sdTile 0.4s cubic-bezier(.3,1.4,.5,1) ${0.05 + k * 0.08}s both, sdGlow 1.4s ease-in-out ${0.9}s infinite` }}
+                    >
+                      {n}
+                    </span>
+                  ))}
+                </div>
+                <p
+                  className="text-[3.6rem] leading-none font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-b from-amber-100 via-amber-300 to-amber-600 drop-shadow-[0_6px_0_rgba(0,0,0,0.45)]"
+                  style={{ filter: 'drop-shadow(0 0 22px #22d3ee)', animation: 'sdPop 0.6s cubic-bezier(.2,1.3,.4,1) 0.9s both' }}
+                >
+                  SOLVED!
+                </p>
+                <p className="mt-3 text-sm font-extrabold text-white leading-snug" style={{ animation: 'sdRise 0.4s ease-out 1.35s both' }}>{celebrationLine}</p>
+                <p className="mt-3 inline-block px-4 py-1.5 rounded-full text-xs font-black text-white bg-teal-600 shadow-lg capitalize" style={{ animation: 'sdRise 0.4s ease-out 1.5s both' }}>
+                  {game.difficulty} · {formatTime(game.elapsedSeconds)} · {completion.score.toLocaleString()} pts
+                </p>
+                <p className="mt-5 text-[11px] font-bold text-white/55 uppercase tracking-wider" style={{ animation: 'sdRise 0.4s ease-out 1.8s both' }}>Tap anywhere to continue</p>
+              </div>
             </motion.div>
-          </motion.div>
-        )}
+          );
+        })()}
       </AnimatePresence>
     </div>
   );
