@@ -5,7 +5,7 @@
 import type { SharedLine, SharedReceipt } from './receiptShare';
 
 export interface ParsedReceipt {
-  app: 'phonepe' | 'paytm';
+  app: 'phonepe' | 'paytm' | 'gpay';
   isPhonePe: boolean;
   status: 'success' | 'failed' | 'pending' | 'unknown';
   direction: 'paid' | 'received' | 'unknown';
@@ -44,7 +44,7 @@ const CATEGORY_HINTS: Array<[RegExp, string]> = [
   [/swiggy|zomato|domino|mcdonald|kfc|starbucks|pizza|cafe|restaurant/i, 'food'],
   [/uber|ola\b|rapido|irctc|redbus|metro|fastag|petrol|fuel|indian oil|bharat petroleum|hp pay/i, 'travel'],
   [/amazon|flipkart|myntra|ajio|meesho|nykaa/i, 'shopping'],
-  [/apollo|pharm|medplus|netmeds|1mg|hospital|clinic|diagnostic/i, 'health'],
+  [/apollo|pharm|medplus|netmeds|1mg|practo|hospital|clinic|diagnostic/i, 'health'],
   [/florist|flower|archies|ferns n petals|fnp|gift/i, 'gifts'],
   [/netflix|hotstar|spotify|prime video|bookmyshow|pvr|inox|sony ?liv|zee5/i, 'ent'],
   [/nutrition|supplement|protein|gnc|gym|fitness/i, 'health'],
@@ -52,9 +52,9 @@ const CATEGORY_HINTS: Array<[RegExp, string]> = [
 ];
 
 export function suggestCategory(p: Pick<ParsedReceipt, 'kind' | 'payee' | 'upiId'>): string {
-  if (p.kind === 'bill') return 'bills';
   // The payee's name is the better clue; the UPI id is only a fallback (its bank/app suffix can mislead).
   const hit = CATEGORY_HINTS.find(([re]) => re.test(p.payee)) || CATEGORY_HINTS.find(([re]) => re.test(p.upiId));
+  if (p.kind === 'bill') return hit ? hit[1] : 'bills'; // a subscription bill (SonyLIV) is entertainment, a phone / power bill is Bills
   return hit ? hit[1] : '';
 }
 
@@ -227,11 +227,12 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
 // A stable key for "who was paid", used to remember what the user calls this payee (and its category).
 // The UPI id is the real identity of a payee; bills use the biller + the number the bill was for.
 export function payeeKey(p: ParsedReceipt): string {
+  const masked = /[*•]/.test(p.upiId) || /^\.{2,}/.test(p.upiId);
   const raw = p.kind === 'bill' && p.payee
     ? `bill:${p.payee}:${p.reference}` // a bill-pay UPI id is shared by every biller, so the biller + number is the identity
-    : p.upiId.includes('@') && !p.upiId.includes('*')
+    : p.upiId.includes('@') && !masked
     ? p.upiId
-    : p.upiId.includes('*') && p.payee
+    : masked && p.payee
     ? `person:${p.payee}|${p.upiId}` // a masked UPI id is shared by many people, so the name is part of the key
     : p.kind === 'bill' && p.payee
     ? `bill:${p.payee}:${p.reference}`
