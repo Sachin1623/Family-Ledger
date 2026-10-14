@@ -156,9 +156,9 @@ export const TOURS: TourDef[] = [
         description: 'View spending across all your groups combined, or zoom into just one.',
       },
       {
-        selector: 'analysis-chart',
-        title: 'Spending trend',
-        description: 'A chart of spending over time — switch between daily, weekly, and monthly, and sort ascending or descending.',
+        selector: 'analysis-overview',
+        title: 'Your month at a glance',
+        description: 'This month against last month, where you are heading by month-end, and a few plain-language highlights. Use the other tabs for the trend chart, categories, groups and people.',
       },
     ],
   },

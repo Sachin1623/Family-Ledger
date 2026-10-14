@@ -16,6 +16,7 @@ import { parseLocalDate, todayLocalDateString, currentLocalMonthKey } from '../l
 import { shareOrDownloadFile } from '../lib/fileShare';
 import { useLanguage } from '../context/LanguageContext';
 import { memberContribution } from '../lib/settleMath';
+import { OverviewTab, SpendingCalendar, WeekdayCard, RecurringCard, MoversCard, PayeesCard, YearGlance } from '../components/AnalysisInsights';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -204,7 +205,13 @@ export default function GroupAnalysisSummary() {
   // explicit request — Essential vs Optional rides along with Categories (both are ways of
   // slicing spend by category), Groups only ever has anything to show in the "All Groups" view
   // (same pre-existing condition as before, just no longer sharing a 2-column grid with Categories).
-  const [analysisTab, setAnalysisTab] = useState<'trend' | 'categories' | 'groups' | 'members'>('trend');
+  const [analysisTab, setAnalysisTab] = useState<'overview' | 'trend' | 'categories' | 'groups' | 'members'>('overview');
+  // The Overview and the insight cards have their own month stepper (independent of the month chips in the
+  // filters, which keep narrowing the Trend / Categories / Groups / People lists exactly as before).
+  const [ovMonthKey, setOvMonthKey] = useState(() => currentLocalMonthKey());
+  // The filter card is collapsed behind one button by default — it used to take half of the first screen.
+  const [showFilters, setShowFilters] = useState(false);
+  const [showAllMembers, setShowAllMembers] = useState(false);
 
   // Every "view transactions" link on this screen carries the currently-active filters over to
   // Group Expenses as query params (read back by GroupExpenses.tsx), so switching screens doesn't
@@ -400,6 +407,10 @@ export default function GroupAnalysisSummary() {
     return '$';
   }, [groupData?.currency, selectedGroupId, allGroups]);
 
+  const fmtAmount = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
+  const categoryIconOf = (id: string) =>
+    CATEGORIES_LIST.find((c) => c.id === id)?.icon || EXPENSE_CATEGORIES.find((c) => c.id === id)?.icon || INCOME_CATEGORIES.find((c) => c.id === id)?.icon || '🧾';
+
   const groupMembers = useMemo(() => {
     const raw = selectedGroupId === 'all' 
       ? allRelevantMembers 
@@ -438,6 +449,26 @@ export default function GroupAnalysisSummary() {
   // Every year actually present in this scope's data, for the quick year-filter row — always
   // includes the current year even with zero history yet, so a brand-new group isn't left with
   // nothing to tap.
+  // The Overview and its insight cards look at the scope's whole history (archived groups left out, like the
+  // other month-vs-month readouts) — the month/category/member filters below don't narrow them.
+  const insightExpenses = useMemo(() => allExpenses.filter((exp: any) => !allGroups.find((g: any) => g.id === exp.groupId)?.archived), [allExpenses, allGroups]);
+
+  // Months offered by the month chip: the last 24, plus any older month that actually has entries.
+  const overviewMonthOptions = useMemo(() => {
+    const keys = new Set<string>();
+    const now = new Date();
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      keys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    insightExpenses.forEach((e: any) => keys.add(String(e.date || '').slice(0, 7)));
+    keys.add(ovMonthKey);
+    return Array.from(keys)
+      .filter((k) => /^\d{4}-\d{2}$/.test(k))
+      .sort((a, b) => b.localeCompare(a))
+      .map((k) => ({ key: k, label: `${MONTH_LABELS[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}` }));
+  }, [insightExpenses, ovMonthKey]);
+
   const availableYears = useMemo(() => {
     const years = new Set<number>([new Date().getFullYear()]);
     allExpenses.forEach((exp) => years.add(parseLocalDate(exp.date).getFullYear()));
@@ -955,28 +986,9 @@ export default function GroupAnalysisSummary() {
           </div>
         </div>
 
-        {!routeGroupId && (
-          <div className="relative" data-tour="analysis-group-filter">
-            <select
-              className="w-full bg-surface-container border border-border-subtle rounded-xl text-xs font-bold px-4 py-2.5 pr-10 appearance-none focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer h-10 shadow-sm"
-              onChange={(e) => setSelectedGroupId(e.target.value)}
-              value={selectedGroupId || ''}
-            >
-              <option value="all">{t('analysis.allMyGroups')}</option>
-              {/* Archived groups stay fully selectable (their own history is still real data
-                  worth looking at) — just pushed to the bottom and marked, rather than mixed in
-                  with the groups actually in current use. A stable sort (archived-ness is the
-                  only key) keeps everything else in its existing order. */}
-              {[...allGroups].sort((a: any, b: any) => (a.archived ? 1 : 0) - (b.archived ? 1 : 0)).map((g: any) => (
-                <option key={g.id} value={g.id}>{g.name}{g.archived ? ` (${t('analysis.archivedTag')})` : ''}</option>
-              ))}
-            </select>
-            <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none text-[20px]">expand_more</span>
-          </div>
-        )}
       </div>
 
-      <main className="flex-1 p-4 md:p-8 max-w-4xl mx-auto w-full space-y-6">
+      <main className="flex-1 p-4 md:p-8 pb-32 max-w-4xl mx-auto w-full space-y-6">
         {allGroups.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-text-muted gap-4">
             <span className="material-symbols-outlined text-5xl">group_off</span>
@@ -988,7 +1000,51 @@ export default function GroupAnalysisSummary() {
                 breakdowns, favorites), not just Trend, so they live above the tab bar instead of
                 being nested inside the Trend tile. Labeled so the card reads as its own distinct
                 "Filters" section rather than floating unlabeled controls. */}
-            <div className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+              {!routeGroupId && (
+                <div className="relative shrink-0" data-tour="analysis-group-filter">
+                  <select
+                    className="max-w-[170px] bg-primary text-white rounded-full text-xs font-bold pl-3.5 pr-8 py-2 appearance-none outline-none cursor-pointer shadow-sm truncate"
+                    onChange={(e) => setSelectedGroupId(e.target.value)}
+                    value={selectedGroupId || ''}
+                    aria-label="Group"
+                  >
+                    <option value="all">{t('analysis.allMyGroups')}</option>
+                    {/* Archived groups stay selectable (their history is still real data) — pushed to the bottom and marked. */}
+                    {[...allGroups].sort((a: any, b: any) => (a.archived ? 1 : 0) - (b.archived ? 1 : 0)).map((g: any) => (
+                      <option key={g.id} value={g.id}>{g.name}{g.archived ? ` (${t('analysis.archivedTag')})` : ''}</option>
+                    ))}
+                  </select>
+                  <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-white pointer-events-none text-[18px]">expand_more</span>
+                </div>
+              )}
+              <div className="relative shrink-0">
+                <select
+                  className="bg-primary text-white rounded-full text-xs font-bold pl-3.5 pr-8 py-2 appearance-none outline-none cursor-pointer shadow-sm"
+                  onChange={(e) => setOvMonthKey(e.target.value)}
+                  value={ovMonthKey}
+                  aria-label="Month"
+                >
+                  {overviewMonthOptions.map((o) => (
+                    <option key={o.key} value={o.key}>{o.label}</option>
+                  ))}
+                </select>
+                <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-white pointer-events-none text-[18px]">expand_more</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFilters((v) => !v)}
+                aria-expanded={showFilters}
+                className={clsx(
+                  'shrink-0 flex items-center gap-1.5 rounded-full text-xs font-bold px-3.5 py-2 border shadow-sm',
+                  showFilters || activeFilterCount > 0 ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-text-muted border-border-subtle',
+                )}
+              >
+                <span className="material-symbols-outlined text-[16px]">tune</span>
+                {t('analysis.filtersTitle')}{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ''}
+              </button>
+            </div>
+            <div className={clsx('bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3', !showFilters && 'hidden')}>
               <div className="flex items-center justify-between gap-1.5">
                 <h2 className="text-[10px] font-black text-text-muted uppercase tracking-widest flex items-center gap-1.5 shrink-0">
                   <span className="material-symbols-outlined text-[14px]">filter_alt</span>
@@ -1169,10 +1225,11 @@ export default function GroupAnalysisSummary() {
 
             <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
               {([
+                ['overview', 'Overview'],
                 ['trend', 'Trend'],
                 ['categories', 'Categories'],
                 ['groups', 'Groups'],
-                ['members', 'Members'],
+                ['members', 'People'],
               ] as const).map(([key, label]) => (
                 <button
                   key={key}
@@ -1184,6 +1241,22 @@ export default function GroupAnalysisSummary() {
                 </button>
               ))}
             </div>
+
+            {analysisTab === 'overview' && (
+              <div data-tour="analysis-overview">
+              <OverviewTab
+                expenses={insightExpenses}
+                monthKey={ovMonthKey}
+                onMonthChange={setOvMonthKey}
+                currentMonthKey={thisMonthKey}
+                budget={selectedGroupId && selectedGroupId !== 'all' ? budgetsByMonth[ovMonthKey] ?? null : null}
+                hasIncomeData={entryTypeFilter !== 'expense'}
+                fmt={fmtAmount}
+                categoryLabel={categoryLabel}
+                categoryIcon={categoryIconOf}
+              />
+              </div>
+            )}
 
             {analysisTab === 'trend' && (
             <motion.section
@@ -1682,6 +1755,7 @@ export default function GroupAnalysisSummary() {
               </div>
               <div className="space-y-6">
                 {[...groupMembers]
+                  .filter((m: any) => showAllMembers || categoryMemberContributionExpenses.some((exp: any) => memberContribution(exp, m.userId) > 0))
                   .sort((a: any, b: any) => {
                     // Multi-payer aware: each member's own contribution, not the full amount of
                     // every expense they happened to be one of several payers on.
@@ -1775,11 +1849,36 @@ export default function GroupAnalysisSummary() {
                     </div>
                   );
                 })}
+                {(() => {
+                  const quiet = groupMembers.filter((m: any) => !categoryMemberContributionExpenses.some((exp: any) => memberContribution(exp, m.userId) > 0)).length;
+                  if (quiet === 0) return null;
+                  return (
+                    <button type="button" onClick={() => setShowAllMembers((v) => !v)} className="w-full text-center text-xs font-black text-primary py-2">
+                      {showAllMembers ? 'Hide members with no entries' : `Show ${quiet} member${quiet === 1 ? '' : 's'} with no entries`}
+                    </button>
+                  );
+                })()}
               </div>
             </motion.section>
             )}
 
-            {analysisTab === 'trend' && selectedGroupId && selectedGroupId !== 'all' && (
+            {analysisTab === 'trend' && (
+              <>
+                <SpendingCalendar expenses={insightExpenses} monthKey={ovMonthKey} fmt={fmtAmount} categoryLabel={categoryLabel} />
+                <WeekdayCard expenses={insightExpenses} fmt={fmtAmount} />
+                <RecurringCard expenses={insightExpenses} monthKey={ovMonthKey} fmt={fmtAmount} />
+              </>
+            )}
+
+            {analysisTab === 'categories' && (
+              <>
+                <MoversCard expenses={insightExpenses} monthKey={ovMonthKey} fmt={fmtAmount} categoryLabel={categoryLabel} categoryIcon={categoryIconOf} />
+                <PayeesCard expenses={categoryMemberExpenses} fmt={fmtAmount} />
+                <YearGlance expenses={insightExpenses} year={Number(ovMonthKey.slice(0, 4))} fmt={fmtAmount} />
+              </>
+            )}
+
+            {(analysisTab === 'trend' || analysisTab === 'overview') && selectedGroupId && selectedGroupId !== 'all' && (
               <motion.section
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}

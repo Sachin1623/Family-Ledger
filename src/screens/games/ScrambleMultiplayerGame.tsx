@@ -69,6 +69,12 @@ export default function ScrambleMultiplayerGame() {
   const [answer, setAnswer] = React.useState<UiTile[]>([]);
   const [feedback, setFeedback] = React.useState<{ kind: 'already-used' | 'invalid'; key: number } | null>(null);
   const [lastAward, setLastAward] = React.useState<{ points: number; key: number } | null>(null);
+  const [lastSolved, setLastSolved] = React.useState<{ word: string; points: number; key: number } | null>(null);
+  React.useEffect(() => {
+    if (!lastSolved) return;
+    const t = setTimeout(() => setLastSolved(null), 1250);
+    return () => clearTimeout(t);
+  }, [lastSolved]);
   const [perWordStartedAt, setPerWordStartedAt] = React.useState(Date.now());
   const [dragGhost, setDragGhost] = React.useState<{ letter: string; x: number; y: number } | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -221,6 +227,7 @@ export default function ScrambleMultiplayerGame() {
           : await callApi('/api/scramble/submit', { gameId, guess: guessWord });
       if (result?.status === 'correct') {
         setLastAward({ points: result.pointsAwarded, key: Date.now() });
+        setLastSolved({ word: guessWord, points: result.pointsAwarded, key: Date.now() });
         if (revisitIndex !== null) setRevisitIndex(null);
       } else if (result?.status === 'invalid' || result?.status === 'already-used') {
         setFeedback({ kind: result.status, key: Date.now() });
@@ -365,439 +372,377 @@ export default function ScrambleMultiplayerGame() {
     navigate('/games/scramble-multiplayer');
   };
 
+  const tileFace = 'bg-gradient-to-b from-[#fff3c9] to-[#f1d27a] text-[#3a2a00] shadow-[0_5px_0_#b88a1d,0_9px_14px_rgba(0,0,0,0.45)]';
+  const wordFrac = Math.max(0, Math.min(1, perWordRemaining / perWordSeconds));
+  const wordUrgent = perWordRemaining <= 5;
+  const ringColor = wordUrgent ? '#ff4d5e' : '#f5c451';
+  const medal = (idx: number) => (idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`);
+  const slotCount = game.wordLength;
+  const hintShown = revisitIndex === null ? hintPrefix : '';
+  const winnerPlayer = players.find((p) => p.uid === game.winnerUid);
+  const iWon = !!user && !!winnerPlayer && winnerPlayer.uid === user.uid;
+  const confetti = Array.from({ length: 34 }).map((_, i) => {
+    const ang = (i / 34) * Math.PI * 2 + (i % 3) * 0.2;
+    const dist = 110 + ((i * 37) % 100);
+    return { dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, color: ['#fbbf24', '#f87171', '#60a5fa', '#4ade80', '#fff', '#c084fc'][i % 6], delay: (i % 7) * 0.04, rot: (i * 57) % 360 };
+  });
+
+  const avatar = (p: (typeof players)[number], size = 'w-7 h-7 text-[10px]') => (
+    <div className={clsx('relative shrink-0 rounded-full bg-slate-600 flex items-center justify-center font-black', size)}>
+      <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center">
+        {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
+      </div>
+      <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
+    </div>
+  );
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      {/* Header + (while actively playing) the core play controls share one sticky block pinned to
-          the top of the viewport — this is what keeps the play area always in view: no matter how
-          tall "Everyone's Progress" grows below it, the word/letters/buttons never scroll out of
-          reach, and there's no fragile pixel-offset math needed for a second sticky region. */}
-      <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-b border-border-subtle pt-[env(safe-area-inset-top)]">
-        <div className="max-w-xl mx-auto w-full p-4 flex items-center justify-between gap-2">
-          <button onClick={handleExit} className="text-xs font-bold text-primary flex items-center gap-1 shrink-0">
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-            Scramble
+      {showHelp && <GameHelpModal content={SCRAMBLE_HELP} onClose={() => setShowHelp(false)} />}
+
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
+        <style>{`
+          @keyframes mpTile{0%{transform:scale(.6) rotate(-8deg);opacity:0}60%{transform:scale(1.15) rotate(2deg);opacity:1}100%{transform:scale(1) rotate(0);opacity:1}}
+          @keyframes mpPts{0%{transform:translateY(24px) scale(.3);opacity:0}30%{transform:translateY(0) scale(1.25);opacity:1}100%{transform:translateY(-34px) scale(1);opacity:0}}
+          @keyframes mpBurst{0%{transform:translate(0,0) rotate(0) scale(.4);opacity:1}100%{transform:translate(var(--dx),var(--dy)) rotate(var(--rot)) scale(1);opacity:0}}
+          @keyframes mpRise{0%{transform:translateY(16px);opacity:0}100%{transform:translateY(0);opacity:1}}
+        `}</style>
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
+
+        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
+          <button onClick={handleExit} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
           </button>
+          <div className="leading-tight">
+            <h1 className="text-[15px] font-black">Scramble</h1>
+            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">
+              {game.status === 'waiting' ? 'WAITING FOR PLAYERS' : game.status === 'finished' ? 'MATCH OVER' : `RACE · WORD ${Math.min(game.totalWords, (myProgress?.roundIndex ?? 0) + 1)} OF ${game.totalWords}`}
+            </span>
+          </div>
+          <div className="flex-1" />
           {game.status === 'active' && (
-            <div className="flex items-center gap-1.5">
-              <div
-                className={clsx(
-                  'px-3 py-1.5 rounded-full text-sm font-black tabular-nums',
-                  matchRemaining <= 15 ? 'bg-error/10 text-error' : 'bg-primary/10 text-primary',
-                )}
-                title="Overall match timer"
-              >
-                {formatClock(matchRemaining)}
-              </div>
-              <div className="px-2.5 py-1.5 rounded-full text-xs font-bold text-text-muted bg-surface border border-border-subtle" title="Per-word timer (no penalty)">
-                {formatClock(perWordRemaining)}
-              </div>
+            <div className={clsx('px-2.5 py-1 rounded-full text-sm font-black tabular-nums border', matchRemaining <= 15 ? 'bg-red-500/20 text-red-300 border-red-400/40 animate-pulse' : 'bg-white/10 text-white border-white/15')} title="Overall match timer">
+              {formatClock(matchRemaining)}
             </div>
           )}
           <VoiceChatButton voice={voice} />
-          <HelpButton onClick={() => setShowHelp(true)} />
-        </div>
+          <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+        </header>
 
-        {game.status === 'active' && canPlayNow && (
-          <div className="max-w-xl mx-auto w-full px-3 pb-3 space-y-2">
-            <div className="flex items-center justify-around text-center">
-              <div>
-                <p className="text-xl font-black text-primary leading-tight">{myProgress?.score ?? 0}</p>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Score</p>
-              </div>
-              <div>
-                <p className="text-xl font-black text-on-surface leading-tight">{myProgress?.solvedCount ?? 0}/{game.totalWords}</p>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Solved</p>
-              </div>
-              <div>
-                <p className="text-xl font-black text-on-surface leading-tight">{game.wordLength}</p>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Letters</p>
-              </div>
-            </div>
+        {error && <p className="relative text-xs font-bold text-red-300 px-4 pt-1">{error}</p>}
 
-            {revisitIndex !== null && (
-              <div className="flex items-center justify-between bg-warning/10 rounded-xl px-3 py-1.5">
-                <p className="text-[11px] font-bold text-warning">Revisiting Word #{revisitIndex + 1}</p>
-                <button onClick={() => setRevisitIndex(null)} className="text-[11px] font-bold text-primary">
-                  Back to current
-                </button>
+        <main className="relative flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-6 flex flex-col gap-3 max-w-md mx-auto w-full">
+          {game.status === 'waiting' && (
+            <div className="rounded-3xl bg-white text-on-surface p-5 space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Share code</p>
+                  <p className="text-2xl font-black text-primary tracking-widest">{game.code}</p>
+                  <p className="text-[10px] text-text-muted mt-1">{game.wordLength}-letter · {game.totalWords} words · {MATCH_TIMER_LABEL[game.matchTimerMode]}</p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => navigator.clipboard?.writeText(game.code)} className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">content_copy</span> Copy
+                  </button>
+                  <ShareGameButton gameLabel="Scramble" code={game.code} path={`/games/scramble-multiplayer/${gameId}`} className="px-3 py-2 bg-[#25D366] text-white rounded-xl text-xs font-bold flex items-center gap-1" />
+                </div>
               </div>
-            )}
-
-            <div>
-              <motion.div
-                ref={answerZoneRef}
-                animate={feedback ? { x: [0, -8, 8, -8, 0] } : {}}
-                transition={{ duration: 0.35 }}
-                className={clsx(
-                  'relative min-h-[48px] rounded-xl border-2 border-dashed p-2 flex flex-wrap items-center gap-1.5',
-                  feedback ? 'border-error/50 bg-error/5' : 'border-border-subtle bg-white',
-                )}
-              >
-                {answer.length === 0 && <p className="text-xs text-text-muted italic px-1">Tap or drag letters here…</p>}
-                {answer.map((tile) => (
-                  <div
-                    key={tile.id}
-                    onPointerDown={(e) => handleTileDown(e, tile, 'answer')}
-                    onPointerMove={handleTileMove}
-                    onPointerUp={handleTileUp}
-                    style={{ touchAction: 'none' }}
-                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white font-black text-base sm:text-lg uppercase shadow-sm cursor-pointer select-none bg-primary"
-                  >
-                    {tile.letter}
+              <div className="rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
+                {players.map((p) => (
+                  <div key={p.uid} className="p-3 flex items-center gap-3">
+                    <div className="relative w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0">
+                      {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
+                      <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
+                    </div>
+                    <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
+                    {p.uid === game.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
                   </div>
                 ))}
-                <AnimatePresence>
-                  {lastAward && (
-                    <motion.p
-                      key={lastAward.key}
-                      initial={{ opacity: 0, y: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, y: -30, scale: 1.1 }}
-                      exit={{ opacity: 0 }}
-                      onAnimationComplete={() => setLastAward(null)}
-                      className="absolute top-1 right-3 text-success font-black text-lg pointer-events-none"
-                    >
-                      +{lastAward.points}
-                    </motion.p>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-              <AnimatePresence mode="wait">
-                {feedback && (
-                  <motion.p
-                    key={feedback.key}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="text-xs font-bold text-center text-error mt-1"
-                  >
-                    {feedback.kind === 'invalid' ? "Not a valid word — double-tap a letter to send it back." : 'Already used this match — double-tap a letter to try again.'}
-                  </motion.p>
-                )}
-              </AnimatePresence>
-            </div>
-
-            <div className="bg-white rounded-xl border border-border-subtle p-2.5 flex flex-wrap items-center justify-center gap-1.5 min-h-[56px]">
-              {pool.map((tile, i) => (
-                <motion.div
-                  key={tile.id}
-                  layout
-                  onPointerDown={(e) => handleTileDown(e, tile, 'pool')}
-                  onPointerMove={handleTileMove}
-                  onPointerUp={handleTileUp}
-                  style={{ touchAction: 'none', backgroundColor: TILE_COLORS[i % TILE_COLORS.length] }}
-                  initial={{ opacity: 0, scale: 0.5, rotate: -10 }}
-                  animate={{ opacity: 1, scale: 1, rotate: 0 }}
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white font-black text-base sm:text-lg uppercase shadow-sm cursor-pointer select-none"
-                >
-                  {tile.letter}
-                </motion.div>
-              ))}
-            </div>
-
-            {revisitIndex === null && hintPrefix.length > 0 && (
-              <p className="text-center text-xs text-text-muted">
-                Hint: <span className="font-black text-primary tracking-widest uppercase">{hintPrefix}{'_'.repeat(Math.max(0, game.wordLength - hintPrefix.length))}</span>
-              </p>
-            )}
-
-            <button
-              onClick={handleSubmit}
-              disabled={!guessWord || submitting}
-              className="w-full py-2.5 bg-primary text-white rounded-xl text-sm font-bold disabled:opacity-40"
-            >
-              Submit
-            </button>
-
-            {revisitIndex === null && (
-              <>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleShuffle}
-                    disabled={shuffling || pool.length < 2}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold text-primary bg-primary/5 disabled:opacity-40 flex items-center justify-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">shuffle</span>
-                    Shuffle (-{MULTIPLAYER_SHUFFLE_PENALTY} pt)
-                  </button>
-                  <button
-                    onClick={handleHint}
-                    disabled={hinting || (myProgress?.hintsUsedTotal ?? 0) >= MULTIPLAYER_MAX_HINTS}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold text-primary bg-primary/5 disabled:opacity-40 flex items-center justify-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">lightbulb</span>
-                    Hint ({MULTIPLAYER_MAX_HINTS - (myProgress?.hintsUsedTotal ?? 0)} left, -{MULTIPLAYER_HINT_PENALTY} pts)
-                  </button>
-                </div>
-                <button
-                  onClick={handlePass}
-                  disabled={passing}
-                  className="w-full py-2 rounded-xl text-xs font-bold text-error bg-error/5 disabled:opacity-40 flex items-center justify-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined text-[16px]">skip_next</span>
-                  Pass Word (-{MULTIPLAYER_PASS_PENALTY} pts)
-                </button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showHelp && <GameHelpModal content={SCRAMBLE_HELP} onClose={() => setShowHelp(false)} />}
-      {error && <p className="text-xs font-bold text-error px-4 pt-2 max-w-xl mx-auto w-full">{error}</p>}
-
-      <main className="flex-1 p-3 max-w-xl mx-auto w-full space-y-2.5 pb-10">
-        {game.status === 'waiting' && (
-          <>
-            <div className="bg-white rounded-2xl border border-border-subtle p-5 flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Share code</p>
-                <p className="text-2xl font-black text-primary tracking-widest">{game.code}</p>
-                <p className="text-[10px] text-text-muted mt-1">{game.wordLength}-letter · {game.totalWords} words · {MATCH_TIMER_LABEL[game.matchTimerMode]}</p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={() => navigator.clipboard?.writeText(game.code)}
-                  className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[14px]">content_copy</span> Copy
-                </button>
-                <ShareGameButton
-                  gameLabel="Scramble"
-                  code={game.code}
-                  path={`/games/scramble-multiplayer/${gameId}`}
-                  className="px-3 py-2 bg-[#25D366] text-white rounded-xl text-xs font-bold flex items-center gap-1"
-                />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-              {players.map((p) => (
-                <div key={p.uid} className="p-4 flex items-center gap-3">
-                  <div className="relative w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0">
-                    {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
-                    <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
+                {Array.from({ length: Math.max(0, 2 - players.length) }).map((_, i) => (
+                  <div key={i} className="p-3 flex items-center gap-3 opacity-40">
+                    <div className="w-9 h-9 rounded-full border-2 border-dashed border-border-subtle" />
+                    <p className="text-sm text-text-muted italic">Waiting for player…</p>
                   </div>
-                  <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
-                  {p.uid === game.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
-                </div>
-              ))}
-              {Array.from({ length: Math.max(0, 2 - players.length) }).map((_, i) => (
-                <div key={i} className="p-4 flex items-center gap-3 opacity-40">
-                  <div className="w-9 h-9 rounded-full border-2 border-dashed border-border-subtle" />
-                  <p className="text-sm text-text-muted italic">Waiting for player…</p>
-                </div>
-              ))}
+                ))}
+              </div>
+              {!isPlayer && user && players.length < 4 && (
+                <button onClick={handleJoinGame} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">Join Game</button>
+              )}
+              {isPlayer && (
+                <button onClick={() => setShowInvite((v) => !v)} className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">group_add</span>
+                  Invite Group Members
+                </button>
+              )}
+              {isPlayer && showInvite && (
+                <InvitePicker
+                  groupIds={groupIds}
+                  alreadyIn={players.map((p) => p.uid)}
+                  onInvite={async (uids, poke) => {
+                    await callApi('/api/scramble/invite', { gameId, inviteeUids: uids, poke });
+                  }}
+                  extraCandidates={friendCandidates}
+                />
+              )}
+              {isHost ? (
+                <button onClick={handleStart} disabled={starting || players.length < 2} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
+                  {starting ? 'Starting…' : players.length < 2 ? 'Need 2+ players' : 'Start Game'}
+                </button>
+              ) : (
+                <p className="text-center text-xs text-text-muted">Waiting for the host to start the game…</p>
+              )}
             </div>
+          )}
 
-            {!isPlayer && user && players.length < 4 && (
-              <button onClick={handleJoinGame} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
-                Join Game
-              </button>
-            )}
-
-            {isPlayer && (
-              <button
-                onClick={() => setShowInvite((v) => !v)}
-                className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2"
-              >
-                <span className="material-symbols-outlined text-[18px]">group_add</span>
-                Invite Group Members
-              </button>
-            )}
-
-            {isPlayer && showInvite && (
-              <InvitePicker
-                groupIds={groupIds}
-                alreadyIn={players.map((p) => p.uid)}
-                onInvite={async (uids, poke) => {
-                  await callApi('/api/scramble/invite', { gameId, inviteeUids: uids, poke });
-                }}
-                extraCandidates={friendCandidates}
-              />
-            )}
-
-            {isHost ? (
-              <button
-                onClick={handleStart}
-                disabled={starting || players.length < 2}
-                className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50"
-              >
-                {starting ? 'Starting…' : players.length < 2 ? 'Need 2+ players' : 'Start Game'}
-              </button>
-            ) : (
-              <p className="text-center text-xs text-text-muted">Waiting for the host to start the game…</p>
-            )}
-          </>
-        )}
-
-        {game.status === 'active' && !isPlayer && (
-          <div className="bg-white rounded-2xl border border-border-subtle p-5 text-center">
-            <p className="text-sm text-text-muted">This match already started before you joined — you can still watch everyone's progress below.</p>
-          </div>
-        )}
-
-        {game.status === 'active' && (
-          <>
-            {isPlayer && iAmFinished && revisitIndex === null && (
-              <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 text-center">
-                <p className="text-sm font-bold text-primary">You've solved every word — waiting on the others to finish or time to run out.</p>
-              </div>
-            )}
-
-            {isPlayer && myPassedRounds.length > 0 && (
-              <div className="bg-warning/5 border border-warning/20 rounded-xl p-2.5 space-y-1.5">
-                <p className="text-[10px] font-bold text-warning uppercase tracking-wider">Passed Words — Revisit for +10 pts each</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {myPassedRounds.map((ri) => (
-                    <button
-                      key={ri}
-                      onClick={() => setRevisitIndex(ri)}
-                      disabled={revisitIndex === ri}
-                      className={clsx(
-                        'px-2.5 py-1 rounded-lg border text-[11px] font-bold',
-                        revisitIndex === ri ? 'bg-warning text-white border-warning' : 'bg-white border-warning/30 text-warning',
-                      )}
-                    >
-                      Word #{ri + 1}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <section className="space-y-1.5">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Everyone's Progress</p>
-              <div className="bg-white rounded-xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-                {ranked.map((p) => {
+          {game.status === 'active' && (
+            <>
+              {/* live scoreboard */}
+              <div className="flex flex-col gap-1.5">
+                {ranked.map((p, idx) => {
                   const pr = progressByUid[p.uid];
                   const pct = Math.min(100, Math.round(((pr?.roundIndex ?? 0) / game.totalWords) * 100));
+                  const me = p.uid === user?.uid;
                   return (
-                    <div key={p.uid} className="p-2 flex items-center gap-2">
-                      <div className="relative w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-primary text-[10px] font-bold overflow-hidden shrink-0">
-                        {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
-                        <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
-                      </div>
+                    <div key={p.uid} className={clsx('flex items-center gap-2 rounded-2xl px-2.5 py-1.5 border-[1.5px] bg-[#121a2e]', me ? 'border-amber-300 shadow-[0_0_14px_rgba(245,196,81,0.25)]' : 'border-[#1f2a47]')}>
+                      <span className="w-5 text-center text-sm">{medal(idx)}</span>
+                      {avatar(p)}
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-on-surface truncate">
-                          {p.displayName}{p.uid === user?.uid && ' (You)'}
-                          {pr?.finished && <span className="ml-1 text-success">✓</span>}
-                        </p>
-                        <div className="h-1 bg-surface rounded-full overflow-hidden mt-0.5">
-                          <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                        <p className="text-xs font-extrabold truncate">{me ? 'You' : p.displayName}{pr?.finished && <span className="ml-1 text-emerald-300">✓</span>}</p>
+                        <div className="h-1.5 bg-[#1f2a47] rounded-full overflow-hidden mt-0.5">
+                          <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-200 transition-all" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-xs font-black text-primary">{pr?.score ?? 0}</p>
-                        <p className="text-[9px] text-text-muted">{pr?.solvedCount ?? 0} solved · {pr?.wrongGuesses ?? 0} wrong</p>
+                      <div className="text-right shrink-0 leading-tight">
+                        <p className={clsx('text-sm font-black tabular-nums', me ? 'text-amber-300' : 'text-white')}>{pr?.score ?? 0}</p>
+                        <p className="text-[8.5px] font-bold text-white/45">{pr?.solvedCount ?? 0} solved</p>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </section>
-          </>
-        )}
 
-        {game.status === 'finished' && (
-          <>
-            <div className="relative bg-white rounded-3xl border border-border-subtle p-6 text-center space-y-2 overflow-hidden">
-              {game.winnerUid && <Fireworks />}
-              <p className="relative text-xs font-bold text-text-muted uppercase tracking-wider">Winner</p>
-              <p className="relative text-2xl font-black text-primary">
-                {players.find((p) => p.uid === game.winnerUid)?.displayName || '—'}
-              </p>
-              {(() => {
-                const winnerPlayer = players.find((p) => p.uid === game.winnerUid);
-                if (!user || !winnerPlayer || winnerPlayer.uid !== user.uid) return null;
-                const top = progressByUid[winnerPlayer.uid]?.score ?? 0;
-                const second = ranked.find((p) => p.uid !== winnerPlayer.uid);
-                const share = buildWinShare({
-                  gameName: 'Word Scramble',
-                  winnerLabel: winnerPlayer.displayName,
-                  standings: ranked.map((p) => ({ name: p.displayName, score: progressByUid[p.uid]?.score ?? 0, isWinner: p.uid === game.winnerUid })),
-                  detail: `${progressByUid[winnerPlayer.uid]?.solvedCount ?? 0}/${game.totalWords} words solved`,
-                  scoreLine: `${top} pts${second ? ` vs ${progressByUid[second.uid]?.score ?? 0}` : ''}`,
-                });
-                return <ShareWinButton card={share.card} caption={share.caption} className="relative pt-2" />;
-              })()}
-            </div>
-            <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-              {ranked.map((p, idx) => {
-                const pr = progressByUid[p.uid];
-                return (
-                  <div key={p.uid} className={clsx('p-4 flex items-center gap-3', p.uid === game.winnerUid && 'bg-primary/5')}>
-                    <span className="w-6 text-center text-sm font-black text-text-muted">{idx + 1}</span>
-                    <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs overflow-hidden shrink-0">
-                      {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-on-surface truncate">{p.displayName}{p.uid === user?.uid && ' (You)'}</p>
-                      <p className="text-[10px] text-text-muted">
-                        {pr?.solvedCount ?? 0}/{game.totalWords} solved · {pr?.wrongGuesses ?? 0} wrong · {pr?.hintsUsedTotal ?? 0} hints
-                        {(pr?.passedRounds?.length ?? 0) > 0 && <> · {pr!.passedRounds!.length} passed</>}
-                      </p>
-                    </div>
-                    <p className="text-sm font-black text-primary shrink-0">{pr?.score ?? 0}</p>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="flex gap-2">
-              <button onClick={() => navigate('/games/scramble-multiplayer')} className="flex-1 py-3.5 rounded-2xl text-sm font-bold text-text-muted border border-border-subtle">
-                Back to Lobby
-              </button>
-              {isPlayer && (
-                <button
-                  onClick={() => (game.rematchGameId ? navigate(`/games/scramble-multiplayer/${game.rematchGameId}`) : handleRematch())}
-                  disabled={rematching}
-                  className="flex-1 py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50"
-                >
-                  {game.rematchGameId ? 'Join Rematch' : rematching ? 'Starting…' : 'Quick Rematch'}
-                </button>
+              {!isPlayer && (
+                <div className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] p-4 text-center text-xs text-white/70">This match already started before you joined — you can still watch everyone's progress above.</div>
               )}
-            </div>
 
-            <section className="space-y-1.5">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                Every Word This Match{revealLoading && ' — loading definitions…'}
-              </p>
-              {!game.revealedWords || game.revealedWords.length === 0 ? (
-                <p className="text-xs text-text-muted italic px-1">Word list is still being revealed…</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {game.revealedWords.map((w, i) => {
-                    const def = revealDefs[w.toLowerCase()];
-                    return (
-                      <div key={i} className="bg-white rounded-xl border border-border-subtle p-3 space-y-1">
-                        <p className="text-xs font-black text-primary uppercase tracking-wide">
-                          #{i + 1} · {w}
-                        </p>
-                        {def?.status === 'found' ? (
-                          <>
-                            <p className="text-xs text-on-surface leading-snug">{def.definition.meaning}</p>
-                            {def.definition.example && <p className="text-[11px] text-text-muted italic leading-snug">"{def.definition.example}"</p>}
-                          </>
-                        ) : def?.status === 'error' ? (
-                          <p className="text-[11px] text-warning italic">Couldn't load a definition — check your connection.</p>
-                        ) : (
-                          !revealLoading && <p className="text-[11px] text-text-muted italic">No dictionary definition found.</p>
-                        )}
-                      </div>
-                    );
-                  })}
+              {isPlayer && iAmFinished && revisitIndex === null && (
+                <div className="rounded-2xl bg-emerald-500/10 border border-emerald-400/30 p-3 text-center text-sm font-extrabold text-emerald-200">
+                  You've solved every word — waiting on the others to finish or time to run out.
                 </div>
               )}
-            </section>
-          </>
+
+              {canPlayNow && (
+                <>
+                  {revisitIndex !== null && (
+                    <div className="flex items-center justify-between rounded-2xl bg-amber-400/10 border border-amber-300/30 px-3 py-1.5">
+                      <p className="text-[11px] font-extrabold text-amber-300">Revisiting Word #{revisitIndex + 1}</p>
+                      <button onClick={() => setRevisitIndex(null)} className="text-[11px] font-extrabold text-white">Back to current</button>
+                    </div>
+                  )}
+
+                  <div className="self-center w-[84px] h-[84px] rounded-full flex items-center justify-center shrink-0" style={{ background: `conic-gradient(${ringColor} ${wordFrac * 360}deg, #1f2a47 0deg)` }}>
+                    <div className={clsx('w-[66px] h-[66px] rounded-full bg-[#0c1230] flex flex-col items-center justify-center', wordUrgent && 'animate-pulse')}>
+                      <p className="text-[20px] font-black tabular-nums leading-none" style={{ color: wordUrgent ? '#ff8a96' : '#fff' }}>{formatClock(perWordRemaining)}</p>
+                      <p className="text-[7px] font-extrabold tracking-[0.14em] text-white/50 mt-0.5">THIS WORD</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <motion.div ref={answerZoneRef} animate={feedback ? { x: [0, -8, 8, -8, 0] } : {}} transition={{ duration: 0.35 }} className="relative flex justify-center gap-2 flex-wrap">
+                      {Array.from({ length: Math.max(slotCount, answer.length) }).map((_, i) => {
+                        const tile = answer[i];
+                        const hinted = !tile && i < hintShown.length;
+                        return tile ? (
+                          <div
+                            key={tile.id}
+                            onPointerDown={(e) => handleTileDown(e, tile, 'answer')}
+                            onPointerMove={handleTileMove}
+                            onPointerUp={handleTileUp}
+                            style={{ touchAction: 'none' }}
+                            className={clsx('w-[50px] h-[56px] rounded-2xl flex items-center justify-center font-black text-[27px] uppercase cursor-pointer select-none', tileFace, feedback && '!from-[#ffd0d4] !to-[#ff8a96]')}
+                          >
+                            {tile.letter}
+                          </div>
+                        ) : (
+                          <div key={`slot-${i}`} className={clsx('w-[50px] h-[56px] rounded-2xl border-2 border-dashed flex items-center justify-center font-black text-[27px] uppercase', hinted ? 'border-emerald-400/70 bg-emerald-500/10 text-emerald-300/70' : 'border-[#2c3a63] bg-[#0e1632]')}>
+                            {hinted ? hintShown[i] : ''}
+                          </div>
+                        );
+                      })}
+                      <AnimatePresence>
+                        {lastAward && (
+                          <motion.p key={lastAward.key} initial={{ opacity: 0, y: 0, scale: 0.8 }} animate={{ opacity: 1, y: -30, scale: 1.1 }} exit={{ opacity: 0 }} onAnimationComplete={() => setLastAward(null)} className="absolute -top-2 right-2 text-emerald-300 font-black text-xl pointer-events-none">
+                            +{lastAward.points}
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+                    <div className="h-5 mt-2 text-center">
+                      {feedback ? (
+                        <p className="text-[11px] font-bold text-red-300">{feedback.kind === 'invalid' ? 'Not a valid word — double-tap a letter to send it back.' : 'Already used this match — double-tap a letter to try again.'}</p>
+                      ) : hintShown.length > 0 ? (
+                        <p className="text-[11px] font-bold text-white/55">Hint: <span className="font-black text-emerald-300 tracking-[0.25em] uppercase">{hintShown}{'_'.repeat(Math.max(0, game.wordLength - hintShown.length))}</span></p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl bg-[#0e1632] border border-[#1f2a47] p-3.5 flex flex-wrap items-center justify-center gap-2.5 min-h-[84px]">
+                    {pool.map((tile, i) => (
+                      <motion.div
+                        key={tile.id}
+                        layout
+                        onPointerDown={(e) => handleTileDown(e, tile, 'pool')}
+                        onPointerMove={handleTileMove}
+                        onPointerUp={handleTileUp}
+                        style={{ touchAction: 'none', backgroundColor: TILE_COLORS[i % TILE_COLORS.length] }}
+                        initial={{ opacity: 0, scale: 0.5, rotate: -10 }}
+                        animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                        className="w-[52px] h-[58px] rounded-2xl flex items-center justify-center text-white font-black text-[27px] uppercase cursor-pointer select-none shadow-[0_5px_0_rgba(0,0,0,0.35),0_9px_14px_rgba(0,0,0,0.5)]"
+                      >
+                        {tile.letter}
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  <button onClick={handleSubmit} disabled={!guessWord || submitting} className={clsx('w-full py-3.5 rounded-2xl text-[15px] font-black transition-transform active:translate-y-0.5', guessWord && !submitting ? 'bg-gradient-to-r from-amber-300 to-amber-200 text-[#1a1300] shadow-[0_5px_0_#b88a1d]' : 'bg-[#1b2543] text-[#5d6c92]')}>
+                    Submit
+                  </button>
+
+                  {revisitIndex === null && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <button onClick={handleShuffle} disabled={shuffling || pool.length < 2} className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] py-2.5 text-[11px] font-extrabold text-slate-200 disabled:opacity-40">
+                        <span className="material-symbols-outlined text-[18px] block mx-auto">shuffle</span>Shuffle<span className="block text-[8.5px] text-white/45 font-bold">−{MULTIPLAYER_SHUFFLE_PENALTY} pt</span>
+                      </button>
+                      <button onClick={handleHint} disabled={hinting || (myProgress?.hintsUsedTotal ?? 0) >= MULTIPLAYER_MAX_HINTS} className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] py-2.5 text-[11px] font-extrabold text-slate-200 disabled:opacity-40">
+                        <span className="material-symbols-outlined text-[18px] block mx-auto">lightbulb</span>Hint<span className="block text-[8.5px] text-white/45 font-bold">{MULTIPLAYER_MAX_HINTS - (myProgress?.hintsUsedTotal ?? 0)} left · −{MULTIPLAYER_HINT_PENALTY}</span>
+                      </button>
+                      <button onClick={handlePass} disabled={passing} className="rounded-2xl bg-[#2a1520] border border-[#4a2030] py-2.5 text-[11px] font-extrabold text-red-300 disabled:opacity-40">
+                        <span className="material-symbols-outlined text-[18px] block mx-auto">skip_next</span>Pass<span className="block text-[8.5px] text-red-300/60 font-bold">−{MULTIPLAYER_PASS_PENALTY} pts</span>
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {isPlayer && myPassedRounds.length > 0 && (
+                <div className="rounded-2xl bg-amber-400/10 border border-amber-300/25 p-2.5 space-y-1.5">
+                  <p className="text-[10px] font-extrabold tracking-[0.1em] text-amber-300 uppercase">Passed words — revisit for +10 pts each</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {myPassedRounds.map((ri) => (
+                      <button key={ri} onClick={() => setRevisitIndex(ri)} disabled={revisitIndex === ri} className={clsx('px-2.5 py-1 rounded-lg border text-[11px] font-extrabold', revisitIndex === ri ? 'bg-amber-300 text-amber-950 border-amber-300' : 'bg-white/5 border-amber-300/30 text-amber-200')}>
+                        Word #{ri + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {game.status === 'finished' && (
+            <>
+              <div className="relative rounded-3xl bg-[#0c1230]/90 border border-white/10 p-5 text-center space-y-1.5 overflow-hidden">
+                {game.winnerUid && iWon && (
+                  <div className="absolute left-1/2 top-[35%] pointer-events-none">
+                    {confetti.map((c, i) => (
+                      <i key={i} className="absolute block w-2 h-3 rounded-[2px]" style={{ background: c.color, ['--dx' as any]: `${c.dx}px`, ['--dy' as any]: `${c.dy}px`, ['--rot' as any]: `${c.rot}deg`, animation: `mpBurst 1.4s ease-out ${0.3 + c.delay}s both` }} />
+                    ))}
+                  </div>
+                )}
+                <p className="relative text-[11px] font-extrabold tracking-[0.18em] text-amber-300">{iWon ? 'VICTORY' : game.winnerUid ? 'WINNER' : 'MATCH OVER'}</p>
+                <p className="relative text-5xl" style={{ animation: 'mpTile 0.6s cubic-bezier(.3,1.4,.5,1) both' }}>{game.winnerUid ? '🏆' : '🏁'}</p>
+                <p className="relative text-2xl font-black">{winnerPlayer?.displayName || '—'}</p>
+                {winnerPlayer && <p className="relative text-xs font-bold text-white/60">{progressByUid[winnerPlayer.uid]?.score ?? 0} pts · {progressByUid[winnerPlayer.uid]?.solvedCount ?? 0}/{game.totalWords} words</p>}
+                {(() => {
+                  if (!user || !winnerPlayer || !iWon) return null;
+                  const top = progressByUid[winnerPlayer.uid]?.score ?? 0;
+                  const second = ranked.find((p) => p.uid !== winnerPlayer.uid);
+                  const share = buildWinShare({
+                    gameName: 'Word Scramble',
+                    winnerLabel: winnerPlayer.displayName,
+                    standings: ranked.map((p) => ({ name: p.displayName, score: progressByUid[p.uid]?.score ?? 0, isWinner: p.uid === game.winnerUid })),
+                    detail: `${progressByUid[winnerPlayer.uid]?.solvedCount ?? 0}/${game.totalWords} words solved`,
+                    scoreLine: `${top} pts${second ? ` vs ${progressByUid[second.uid]?.score ?? 0}` : ''}`,
+                  });
+                  return <ShareWinButton card={share.card} caption={share.caption} className="relative pt-2" />;
+                })()}
+              </div>
+
+              <div className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] divide-y divide-[#1f2a47] overflow-hidden">
+                {ranked.map((p, idx) => {
+                  const pr = progressByUid[p.uid];
+                  return (
+                    <div key={p.uid} className={clsx('p-3 flex items-center gap-3', p.uid === game.winnerUid && 'bg-amber-300/10')}>
+                      <span className="w-6 text-center text-sm">{medal(idx)}</span>
+                      {avatar(p, 'w-9 h-9 text-xs')}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-extrabold truncate">{p.displayName}{p.uid === user?.uid && ' (You)'}</p>
+                        <p className="text-[10px] text-white/50">
+                          {pr?.solvedCount ?? 0}/{game.totalWords} solved · {pr?.wrongGuesses ?? 0} wrong · {pr?.hintsUsedTotal ?? 0} hints
+                          {(pr?.passedRounds?.length ?? 0) > 0 && <> · {pr!.passedRounds!.length} passed</>}
+                        </p>
+                      </div>
+                      <p className="text-base font-black text-amber-300 shrink-0 tabular-nums">{pr?.score ?? 0}</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={() => navigate('/games/scramble-multiplayer')} className="flex-1 py-3.5 rounded-2xl text-sm font-extrabold text-white bg-white/10 border border-white/15">Back to Lobby</button>
+                {isPlayer && (
+                  <button onClick={() => (game.rematchGameId ? navigate(`/games/scramble-multiplayer/${game.rematchGameId}`) : handleRematch())} disabled={rematching} className="flex-1 py-3.5 bg-gradient-to-r from-emerald-500 to-emerald-400 text-emerald-950 font-black rounded-2xl disabled:opacity-50">
+                    {game.rematchGameId ? 'Join Rematch' : rematching ? 'Starting…' : 'Quick Rematch'}
+                  </button>
+                )}
+              </div>
+
+              <section className="space-y-1.5">
+                <p className="text-[10px] font-extrabold tracking-[0.14em] text-white/55 px-1">EVERY WORD THIS MATCH{revealLoading && ' — LOADING MEANINGS…'}</p>
+                {!game.revealedWords || game.revealedWords.length === 0 ? (
+                  <p className="text-xs text-white/45 italic px-1">Word list is still being revealed…</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {game.revealedWords.map((w, i) => {
+                      const def = revealDefs[w.toLowerCase()];
+                      return (
+                        <div key={i} className="rounded-xl bg-[#121a2e] border border-[#1f2a47] p-2.5 space-y-0.5">
+                          <p className="text-xs font-black text-amber-300 uppercase tracking-wide">#{i + 1} · {w}</p>
+                          {def?.status === 'found' ? (
+                            <>
+                              <p className="text-[11px] text-slate-200 leading-snug">{def.definition.meaning}</p>
+                              {def.definition.example && <p className="text-[10px] text-white/45 italic leading-snug">"{def.definition.example}"</p>}
+                            </>
+                          ) : def?.status === 'error' ? (
+                            <p className="text-[10px] text-amber-300 italic">Couldn't load a definition — check your connection.</p>
+                          ) : (
+                            !revealLoading && <p className="text-[10px] text-white/45 italic">No dictionary definition found.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+        </main>
+
+        {/* Word solved — the tiles pop gold and the points fly up */}
+        {lastSolved && game.status === 'active' && (
+          <div className="pointer-events-none absolute inset-0 z-[40] flex flex-col items-center justify-center" style={{ background: 'radial-gradient(circle at 50% 40%, rgba(90,61,10,0.55), rgba(7,10,24,0.25) 70%)' }}>
+            <div className="flex gap-2 flex-wrap justify-center">
+              {lastSolved.word.split('').map((l, i) => (
+                <div key={i} className={clsx('w-[50px] h-[56px] rounded-2xl flex items-center justify-center font-black text-[27px] uppercase', tileFace)} style={{ animation: `mpTile 0.4s cubic-bezier(.3,1.4,.5,1) ${i * 0.07}s both` }}>{l}</div>
+              ))}
+            </div>
+            <p className="mt-3 text-[3rem] leading-none font-black text-amber-300 drop-shadow-[0_0_20px_rgba(245,196,81,0.9)]" style={{ animation: 'mpPts 1.1s ease-out 0.15s both' }}>+{lastSolved.points}</p>
+          </div>
         )}
-      </main>
+      </div>
 
       {dragGhost && (
-        <div
-          className="fixed z-[300] w-12 h-12 rounded-xl flex items-center justify-center text-white font-black text-xl uppercase shadow-lg pointer-events-none bg-primary"
-          style={{ left: dragGhost.x - 24, top: dragGhost.y - 24 }}
-        >
+        <div className={clsx('fixed z-[300] w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl uppercase pointer-events-none', tileFace)} style={{ left: dragGhost.x - 28, top: dragGhost.y - 28 }}>
           {dragGhost.letter}
         </div>
       )}

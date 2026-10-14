@@ -2,6 +2,7 @@
 // rummy hand laid out in its groups, or the Ludo board with the winner's tokens home.
 import { FONT, EMOJI_FONT, roundRectPath, fitText } from './cardCanvas';
 import { parseCard, SUIT_SYMBOL, SUIT_RED } from './rummy';
+import { PIECE_GLYPH } from './chess';
 import { parseCard as seqParseCard, SUIT_SYMBOL as SEQ_SYMBOL, SUIT_RED as SEQ_RED, BOARD_LAYOUT, CORNER_INDICES, SIDE_COLOR } from './sequence';
 
 export interface HeroGroup {
@@ -12,6 +13,7 @@ export interface HeroGroup {
 export type WinHero =
   | { kind: 'hand'; groups: HeroGroup[]; wildRanks?: string[]; caption?: string }
   | { kind: 'ludo'; winnerColor: string; caption?: string }
+  | { kind: 'chess'; fen: string; winnerColor: 'w' | 'b'; lastMove?: { from: string; to: string } | null; reason: string; moves: number; caption?: string }
   | { kind: 'sequence'; board: (number | null)[]; sequences: { cells: number[]; side: number }[]; winnerSide: number; needed: number; caption?: string };
 
 interface Area { x: number; y: number; w: number; h: number }
@@ -361,6 +363,79 @@ function drawSequenceHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<
   ctx.fillText('SEQUENCES', rx - 2, rowY + 112);
 }
 
+// ---- Chess: the final position from white's side, last move glowing gold, the mated king in red ----
+function drawChessHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<WinHero, { kind: 'chess' }>) {
+  const size = Math.min(a.h - 6, 300);
+  const cs = size / 8;
+  const ox = a.x + a.w / 2 - size / 2 - 150;
+  const oy = a.y + (a.h - size) / 2;
+  const sqName = (r: number, c: number) => `${'abcdefgh'[c]}${8 - r}`;
+
+  ctx.save();
+  roundRectPath(ctx, ox - 8, oy - 8, size + 16, size + 16, 14);
+  ctx.fillStyle = '#1F2A47';
+  ctx.fill();
+  roundRectPath(ctx, ox, oy, size, size, 6);
+  ctx.clip();
+
+  const rows = hero.fen.split(' ')[0].split('/');
+  const loserKing = hero.winnerColor === 'w' ? 'k' : 'K';
+  for (let r = 0; r < 8; r++) {
+    let c = 0;
+    const cells: string[] = [];
+    for (const ch of rows[r] || '') {
+      if (/\d/.test(ch)) for (let i = 0; i < Number(ch); i++) cells.push('');
+      else cells.push(ch);
+    }
+    for (c = 0; c < 8; c++) {
+      const x = ox + c * cs;
+      const y = oy + r * cs;
+      ctx.fillStyle = (r + c) % 2 ? '#6F86B3' : '#DFE6F3';
+      ctx.fillRect(x, y, cs, cs);
+      const name = sqName(r, c);
+      if (hero.lastMove && (hero.lastMove.from === name || hero.lastMove.to === name)) {
+        ctx.fillStyle = 'rgba(245, 196, 81, 0.6)';
+        ctx.fillRect(x, y, cs, cs);
+      }
+      const piece = cells[c];
+      if (!piece) continue;
+      if (piece === loserKing && hero.reason === 'checkmate') {
+        ctx.fillStyle = 'rgba(255, 77, 94, 0.65)';
+        ctx.fillRect(x, y, cs, cs);
+      }
+      const white = piece === piece.toUpperCase();
+      ctx.textAlign = 'center';
+      ctx.font = `${Math.round(cs * 0.82)}px "Segoe UI Symbol", "Noto Sans Symbols 2", "Apple Symbols", ${FONT}`;
+      const gx = x + cs / 2;
+      const gy = y + cs * 0.76;
+      const glyph = PIECE_GLYPH[piece.toLowerCase() as keyof typeof PIECE_GLYPH];
+      if (white) {
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#0B1020';
+        ctx.strokeText(glyph, gx, gy);
+        ctx.fillStyle = '#FFFFFF';
+      } else {
+        ctx.fillStyle = '#10141F';
+      }
+      ctx.fillText(glyph, gx, gy);
+    }
+  }
+  ctx.restore();
+
+  // right: how it ended
+  const rx = ox + size + 56;
+  const cy = a.y + a.h / 2;
+  ctx.textAlign = 'left';
+  ctx.font = `120px ${EMOJI_FONT}`;
+  ctx.fillText('👑', rx - 6, cy - 10);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `900 40px ${FONT}`;
+  ctx.fillText(hero.reason.toUpperCase(), rx - 2, cy + 52);
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.font = `700 24px ${FONT}`;
+  ctx.fillText(`IN ${hero.moves} MOVES`, rx - 2, cy + 86);
+}
+
 export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: WinHero) {
   // panel
   ctx.save();
@@ -372,7 +447,7 @@ export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: Win
   ctx.stroke();
   ctx.restore();
 
-  const caption = hero.caption ?? (hero.kind === 'hand' ? 'THE WINNING HAND' : hero.kind === 'sequence' ? 'THE WINNING BOARD' : 'ALL FOUR HOME');
+  const caption = hero.caption ?? (hero.kind === 'hand' ? 'THE WINNING HAND' : hero.kind === 'sequence' ? 'THE WINNING BOARD' : hero.kind === 'chess' ? 'THE FINAL POSITION' : 'ALL FOUR HOME');
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255, 229, 138, 0.95)';
   ctx.font = `800 22px ${FONT}`;
@@ -383,5 +458,6 @@ export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: Win
   const inner: Area = { x: area.x + 24, y: area.y + 56, w: area.w - 48, h: area.h - 72 };
   if (hero.kind === 'hand') drawHandHero(ctx, inner, hero);
   else if (hero.kind === 'sequence') drawSequenceHero(ctx, inner, hero);
+  else if (hero.kind === 'chess') drawChessHero(ctx, inner, hero);
   else drawLudoHero(ctx, inner, hero);
 }
