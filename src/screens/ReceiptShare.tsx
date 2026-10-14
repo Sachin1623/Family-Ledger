@@ -16,6 +16,7 @@ export default function ReceiptShare() {
   const [payee, setPayee] = useState(parsed?.payee || '');
   const [date, setDate] = useState(parsed?.date || '');
   const [copied, setCopied] = useState(false);
+  const [attach, setAttach] = useState(true);
 
   if (!share || !parsed) {
     return (
@@ -38,7 +39,8 @@ export default function ReceiptShare() {
     if (payee.trim()) q.set('description', payee.trim());
     if (date) q.set('date', date);
     if (parsed.categoryHint) q.set('category', parsed.categoryHint);
-    navigate(`/add-expense?${q.toString()}`);
+    // The picture goes along as router state (too big for the URL); Add Expense shows it under the receipt photos.
+    navigate(`/add-expense?${q.toString()}`, { state: { receiptImages: attach && share.imageData ? [share.imageData] : [] } });
   };
 
   const debug = {
@@ -54,7 +56,7 @@ export default function ReceiptShare() {
     subject: share.subject,
     error: share.error,
   };
-  const debugText = JSON.stringify({ ...debug, parsed, ocrText: share.ocrText, lines: share.lines }, null, 2);
+  const debugText = JSON.stringify({ ...debug, imageAttached: !!share.imageData, parsed, ocrText: share.ocrText, lines: share.lines }, null, 2);
 
   return (
     <div className="p-4 max-w-md mx-auto space-y-4 pb-28">
@@ -111,6 +113,24 @@ export default function ReceiptShare() {
         )}
       </div>
 
+      {share.imageData && (
+        <div className="rounded-2xl bg-white border border-border-subtle p-3 flex items-center gap-3">
+          <img src={share.imageData} alt="Receipt" className={clsx('w-16 h-20 object-cover object-top rounded-lg border border-border-subtle', !attach && 'opacity-30')} />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-black text-primary">Attach this receipt</p>
+            <p className="text-[11px] text-text-muted">Kept with the expense as a receipt photo, so you can look it up later. You can remove it on the next screen.</p>
+          </div>
+          <button
+            onClick={() => setAttach((v) => !v)}
+            role="switch"
+            aria-checked={attach}
+            className={clsx('w-11 h-6 rounded-full relative transition-all shrink-0', attach ? 'bg-primary' : 'bg-gray-300')}
+          >
+            <span className={clsx('w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow', attach ? 'right-0.5' : 'left-0.5')} />
+          </button>
+        </div>
+      )}
+
       <button
         onClick={createExpense}
         disabled={!canCreate}
@@ -118,7 +138,7 @@ export default function ReceiptShare() {
       >
         Review &amp; add expense
       </button>
-      <p className="text-[11px] text-text-muted text-center -mt-2">Nothing is saved until you confirm on the next screen. The receipt image is not kept.</p>
+      <p className="text-[11px] text-text-muted text-center -mt-2">Nothing is saved until you confirm on the next screen.</p>
 
       <details className="rounded-2xl bg-white border border-border-subtle p-3">
         <summary className="text-xs font-black text-primary cursor-pointer">What FamilyLedger received (for testing)</summary>

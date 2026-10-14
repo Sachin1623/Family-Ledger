@@ -14,6 +14,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
+import android.util.Base64;
 import android.provider.OpenableColumns;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -26,6 +27,7 @@ import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import org.json.JSONObject;
 
@@ -148,12 +150,14 @@ public class ReceiptSharePlugin extends Plugin {
                             out.put("error", "ocr-result: " + e);
                         }
                         out.put("ocrMs", SystemClock.elapsedRealtime() - t0);
+                        attachImage(out, finalBmp);
                         finalBmp.recycle();
                         recognizer.close();
                         deliver(out, live);
                     })
                     .addOnFailureListener(e -> {
                         out.put("error", "ocr: " + e);
+                        attachImage(out, finalBmp);
                         finalBmp.recycle();
                         recognizer.close();
                         deliver(out, live);
@@ -235,6 +239,25 @@ public class ReceiptSharePlugin extends Plugin {
 
         out.put("kind", "file");
         return null;
+    }
+
+    /**
+     * A small compressed copy of the receipt (long side 1100 px, JPEG) so the web layer can attach it to the
+     * expense the user creates — same size class as the other receipt photos kept with expenses.
+     */
+    private void attachImage(JSObject out, Bitmap bmp) {
+        try {
+            int w = bmp.getWidth();
+            int h = bmp.getHeight();
+            float scale = Math.min(1f, 1100f / Math.max(w, h));
+            Bitmap small = scale < 1f ? Bitmap.createScaledBitmap(bmp, Math.round(w * scale), Math.round(h * scale), true) : bmp;
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            small.compress(Bitmap.CompressFormat.JPEG, 62, bytes);
+            out.put("imageData", "data:image/jpeg;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP));
+            if (small != bmp) small.recycle();
+        } catch (Exception e) {
+            out.put("imageError", e.toString());
+        }
     }
 
     private void deliver(JSObject out, boolean live) {

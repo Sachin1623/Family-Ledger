@@ -1,7 +1,8 @@
 // Share-to-FamilyLedger for payment receipts (Android only for now — see ReceiptSharePlugin.java).
 // Another app (PhonePe …) shares a receipt to us; the native side copies it, reads the text on the phone
 // (Google ML Kit, no network, nothing uploaded) and hands the result here. The image itself is deleted
-// right after reading — only the extracted text is kept, and only in memory.
+// right after reading. A small compressed copy is passed along so it can be attached to the expense — but
+// only if the user keeps the "attach" switch on and then saves the expense.
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 
 export interface SharedLine {
@@ -25,6 +26,8 @@ export interface SharedReceipt {
   height?: number;
   pages?: number;
   ocrText?: string;
+  imageData?: string; // small compressed copy (data:image/jpeg;base64,…) to attach to the expense
+  imageError?: string;
   lines?: SharedLine[];
   ocrMs?: number;
   error?: string;

@@ -84,7 +84,11 @@ export default function AddExpense() {
   const [splitMembers, setSplitMembers] = useState<string[]>([]);
   const [splitType, setSplitType] = useState<'equally' | 'percentage' | 'amount'>('equally');
   const [memberSplits, setMemberSplits] = useState<Record<string, number>>({});
-  const [images, setImages] = useState<string[]>([]);
+  // A receipt shared from another app (ReceiptShare.tsx) arrives as router state, already compressed.
+  const [images, setImages] = useState<string[]>(() => {
+    const shared = (location.state as { receiptImages?: unknown } | null)?.receiptImages;
+    return Array.isArray(shared) ? shared.filter((x): x is string => typeof x === 'string') : [];
+  });
 
   // Inline "add a member" for split-enabled groups — lets the user add a placeholder trip
   // participant (someone not on the app yet) right from the split picker, without navigating
