@@ -40,6 +40,24 @@
                     android:scheme="https"
                     android:host="familyledger.thirteenapps.com" />
             </intent-filter>
+
+            <!-- Receipts shared from other apps (PhonePe …) via the share menu. Text, images and PDFs are
+                 all accepted for now so the first test shows what each payment app really sends. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <provider

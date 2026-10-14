@@ -124,6 +124,8 @@ import UpdatePrompt from './components/UpdatePrompt';
 import UpdateBanner from './components/UpdateBanner';
 import ConsentBanner from './components/ConsentBanner';
 import GlobalChatPopup from './components/GlobalChatPopup';
+import ReceiptShareBridge from './components/ReceiptShareBridge';
+import ReceiptShare from './screens/ReceiptShare';
 import PointsToastBridge from './components/PointsToastBridge';
 import PointsFlyAnimation from './components/PointsFlyAnimation';
 import BroadcastBanner from './components/BroadcastBanner';
@@ -313,6 +315,7 @@ export default function App() {
       <FabActionProvider>
         <Router>
           <NavigationBridge />
+          <ReceiptShareBridge />
           <PointsToastBridge />
           <PointsFlyAnimation />
           <UpdatePrompt />
@@ -372,6 +375,7 @@ export default function App() {
               <Route path="/groups/:groupId/manage" element={<AuthenticatedLayout><ManageGroup /></AuthenticatedLayout>} />
               <Route path="/create-group" element={<AuthenticatedLayout><CreateGroup /></AuthenticatedLayout>} />
               <Route path="/add-expense" element={<AuthenticatedLayout><AddExpense /></AuthenticatedLayout>} />
+              <Route path="/receipt-share" element={<AuthenticatedLayout><ReceiptShare /></AuthenticatedLayout>} />
               <Route path="/settlements" element={<AuthenticatedLayout><Settlements /></AuthenticatedLayout>} />
               <Route path="/settlements/:groupId" element={<AuthenticatedLayout><Settlements /></AuthenticatedLayout>} />
               <Route path="/analysis" element={<AuthenticatedLayout><GroupAnalysisSummary /></AuthenticatedLayout>} />

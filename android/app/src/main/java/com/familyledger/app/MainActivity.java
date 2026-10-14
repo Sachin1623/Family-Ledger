@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AiSharePlugin.class);
         registerPlugin(AppSharePlugin.class);
+        registerPlugin(ReceiptSharePlugin.class);
         registerPlugin(AlarmClockPlugin.class);
         registerPlugin(AppPermissionsPlugin.class);
         super.onCreate(savedInstanceState);

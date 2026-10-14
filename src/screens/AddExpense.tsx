@@ -58,7 +58,11 @@ export default function AddExpense() {
   const [entryType, setEntryType] = useState<'expense' | 'income'>('expense');
   const [category, setCategory] = useState(() => searchParams.get('category') || 'food');
   const paymentMethod = 'cash';
-  const [date, setDate] = useState(todayLocalDateString());
+  // A shared payment receipt (see ReceiptShare.tsx) can pre-fill the payment date as ?date=YYYY-MM-DD.
+  const [date, setDate] = useState(() => {
+    const d = searchParams.get('date');
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayLocalDateString();
+  });
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [showSuccess, setShowSuccess] = useState(false);
