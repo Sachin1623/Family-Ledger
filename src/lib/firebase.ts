@@ -1,3 +1,4 @@
+import { isIosApp } from './platform';
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, OAuthProvider } from 'firebase/auth';
 import {
@@ -92,7 +93,10 @@ export const appleProvider = new OAuthProvider('apple.com');
 const ANALYTICS_CONSENT_KEY = 'familyledger_analytics_consent';
 let analyticsInstance: Analytics | null = null;
 
+// The iPhone/iPad app never runs web analytics or shows the cookie prompt (App Store guideline 5.1.2:
+// no tracking, so nothing to ask permission for). Analytics stays a web / Android choice.
 function initAnalyticsSdk() {
+  if (isIosApp()) return;
   isSupported()
     .then((supported) => {
       if (supported) analyticsInstance = getAnalytics(app);
@@ -101,6 +105,7 @@ function initAnalyticsSdk() {
 }
 
 export function getAnalyticsConsent(): 'granted' | 'denied' | null {
+  if (isIosApp()) return 'denied';
   try {
     const v = localStorage.getItem(ANALYTICS_CONSENT_KEY);
     return v === 'granted' || v === 'denied' ? v : null;
@@ -110,6 +115,7 @@ export function getAnalyticsConsent(): 'granted' | 'denied' | null {
 }
 
 export function setAnalyticsConsent(consent: 'granted' | 'denied') {
+  if (isIosApp()) return;
   try {
     localStorage.setItem(ANALYTICS_CONSENT_KEY, consent);
   } catch {

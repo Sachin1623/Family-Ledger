@@ -1,3 +1,4 @@
+import { isIosApp } from '../lib/platform';
 import React, { useEffect, useState, useRef } from 'react';
 import { getAppVersion } from '../lib/appVersion';
 import { useAuth } from '../context/AuthContext';
@@ -1735,7 +1736,7 @@ export default function Profile() {
           <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.security')}</h3>
           <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
             {Capacitor.isNativePlatform() && <AppLockSettings />}
-            <AnalyticsConsentToggle />
+            {!isIosApp() && <AnalyticsConsentToggle />}
             {isPasswordUser && (
               <div className="p-4 space-y-4">
                 <div

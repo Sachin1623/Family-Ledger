@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { getAnalyticsConsent, setAnalyticsConsent } from '../lib/firebase';
+import { isIosApp } from '../lib/platform';
 
 // A genuine opt-in choice (Accept / Decline), not a dismissible toast — GDPR/ePrivacy require an
 // affirmative "yes" before analytics starts, not just a policy disclosure the user can ignore.
@@ -14,6 +15,7 @@ export default function ConsentBanner() {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [decided, setDecided] = useState(() => getAnalyticsConsent() !== null);
+  if (isIosApp()) return null; // no analytics / cookie prompt inside the iOS app
 
   const choose = (consent: 'granted' | 'denied') => {
     setAnalyticsConsent(consent);
