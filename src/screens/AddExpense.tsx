@@ -26,6 +26,7 @@ import { buildRoster } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
+const LAST_EXPENSE_GROUP_KEY = 'fl_last_expense_group';
 
 // First-time guided flow through this form — same engine as CreateGroup.tsx / GoalWizard.tsx /
 // AccountsHub.tsx's Add Account modal (progressive reveal, a glow highlight directly on the real
@@ -145,6 +146,15 @@ export default function AddExpense() {
       setGroupId(groups[0].id);
     }
   }, [groups, groupId]);
+
+  // Opened from a shared receipt: start on the group the user last added an expense to (still changeable).
+  const fromReceipt = !!(location.state as { fromReceipt?: boolean } | null)?.fromReceipt;
+  React.useEffect(() => {
+    if (!fromReceipt || groupId) return;
+    let last = '';
+    try { last = localStorage.getItem(LAST_EXPENSE_GROUP_KEY) || ''; } catch { /* private mode etc. */ }
+    if (last && groups.some((g: any) => g.id === last && !g.archived)) setGroupId(last);
+  }, [fromReceipt, groups, groupId]);
 
   const [groupMembersValue] = useCollection(
     groupId ? query(collection(db, 'members'), where('groupId', '==', groupId)) : null
@@ -577,6 +587,18 @@ export default function AddExpense() {
           amount: evaluatedAmount,
           actorName: profile?.displayName || user.displayName || 'Someone',
         });
+      }
+
+      // Remember the choices for next time: the group, and — for a shared receipt — what this payee means
+      // to the user (description + category), keyed by the payee's UPI id.
+      try { localStorage.setItem(LAST_EXPENSE_GROUP_KEY, groupId); } catch { /* ignore */ }
+      const sharedPayeeKey = (location.state as { payeeKey?: string } | null)?.payeeKey;
+      if (sharedPayeeKey && description.trim()) {
+        setDoc(
+          doc(db, 'receiptPayees', user.uid),
+          { map: { [sharedPayeeKey]: { d: description.trim(), c: category, at: new Date().toISOString() } } },
+          { merge: true },
+        ).catch((err) => console.error('Could not remember payee choice:', err));
       }
 
       setShowSuccess(true);

@@ -215,3 +215,16 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
   if (!out.payee) out.notes.push("Couldn't read who was paid.");
   return out;
 }
+
+// A stable key for "who was paid", used to remember what the user calls this payee (and its category).
+// The UPI id is the real identity of a payee; bills use the biller + the number the bill was for.
+export function payeeKey(p: ParsedReceipt): string {
+  const raw = p.upiId.includes('@')
+    ? p.upiId
+    : p.kind === 'bill' && p.payee
+    ? `bill:${p.payee}:${p.reference}`
+    : p.payee
+    ? `name:${p.payee}`
+    : '';
+  return raw.toLowerCase().replace(/[^a-z0-9@._:-]+/g, '_').slice(0, 120);
+}

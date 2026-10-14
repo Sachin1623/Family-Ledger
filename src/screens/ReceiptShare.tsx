@@ -1,8 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { getSharedReceipt } from '../lib/receiptShare';
-import { parsePhonePeReceipt } from '../lib/phonepeReceipt';
+import { parsePhonePeReceipt, payeeKey } from '../lib/phonepeReceipt';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { useAuth } from '../context/AuthContext';
+import { EXPENSE_CATEGORIES } from '../lib/constants';
 
 // Opened when a receipt is shared to FamilyLedger from another app (PhonePe …). Shows what was read,
 // lets you correct it, then hands over to Add Expense. Never saves anything on its own.
@@ -10,13 +14,33 @@ import { parsePhonePeReceipt } from '../lib/phonepeReceipt';
 export default function ReceiptShare() {
   const navigate = useNavigate();
   const share = getSharedReceipt();
+  const { user } = useAuth();
   const parsed = useMemo(() => (share ? parsePhonePeReceipt(share) : null), [share]);
+  const key = useMemo(() => (parsed ? payeeKey(parsed) : ''), [parsed]);
 
   const [amount, setAmount] = useState(parsed?.amount || '');
   const [payee, setPayee] = useState(parsed?.payee || '');
   const [date, setDate] = useState(parsed?.date || '');
   const [copied, setCopied] = useState(false);
-  const [attach, setAttach] = useState(true);
+  // What this user chose for this payee last time (description + category), from their private list.
+  const [remembered, setRemembered] = useState<{ d: string; c: string } | null>(null);
+  const [category, setCategory] = useState(parsed?.categoryHint || '');
+  useEffect(() => {
+    if (!user || !key) return;
+    let cancelled = false;
+    getDoc(doc(db, 'receiptPayees', user.uid))
+      .then((snap) => {
+        const m = snap.data()?.map?.[key];
+        if (cancelled || !m) return;
+        if (typeof m.d === 'string' && m.d) setPayee(m.d);
+        if (typeof m.c === 'string' && m.c) setCategory(m.c);
+        setRemembered({ d: m.d || '', c: m.c || '' });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user, key]);
 
   if (!share || !parsed) {
     return (
@@ -38,9 +62,9 @@ export default function ReceiptShare() {
     q.set('amount', amount);
     if (payee.trim()) q.set('description', payee.trim());
     if (date) q.set('date', date);
-    if (parsed.categoryHint) q.set('category', parsed.categoryHint);
+    if (category) q.set('category', category);
     // The picture goes along as router state (too big for the URL); Add Expense shows it under the receipt photos.
-    navigate(`/add-expense?${q.toString()}`, { state: { receiptImages: attach && share.imageData ? [share.imageData] : [] } });
+    navigate(`/add-expense?${q.toString()}`, { state: { receiptImages: share.imageData ? [share.imageData] : [], payeeKey: key, fromReceipt: true } });
   };
 
   const debug = {
@@ -112,6 +136,16 @@ export default function ReceiptShare() {
           <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{parsed.kind === 'bill' ? `Paid to · ${parsed.billType || 'Bill'}` : 'Paid to'}</span>
           <input value={payee} onChange={(e) => setPayee(e.target.value)} className="mt-1 w-full text-sm font-bold bg-surface rounded-xl px-3 py-2.5 outline-none" />
         </label>
+        {(remembered || category) && (
+          <div className="flex flex-wrap items-center gap-2 -mt-1">
+            {remembered && <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-800 text-[11px] font-black">✓ Remembered from last time</span>}
+            {category && (
+              <span className="px-2.5 py-1 rounded-full bg-surface text-primary text-[11px] font-black">
+                {EXPENSE_CATEGORIES.find((c) => c.id === category)?.icon} {EXPENSE_CATEGORIES.find((c) => c.id === category)?.name || category}
+              </span>
+            )}
+          </div>
+        )}
         <label className="block">
           <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Date{parsed.time ? ` · ${parsed.time}` : ''}</span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 w-full text-sm font-bold bg-surface rounded-xl px-3 py-2.5 outline-none" />
@@ -128,23 +162,26 @@ export default function ReceiptShare() {
         )}
       </div>
 
-      {share.imageData && (
-        <div className="rounded-2xl bg-white border border-border-subtle p-3 flex items-center gap-3">
-          <img src={share.imageData} alt="Receipt" className={clsx('w-16 h-20 object-cover object-top rounded-lg border border-border-subtle', !attach && 'opacity-30')} />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-black text-primary">Attach this receipt</p>
-            <p className="text-[11px] text-text-muted">Kept with the expense as a receipt photo, so you can look it up later. You can remove it on the next screen.</p>
+      {/* The receipt picture always goes along to Add Expense (the user can remove it there). */}
+      <div className="rounded-2xl bg-white border border-border-subtle p-3 flex items-center gap-3">
+        {share.imageData ? (
+          <img src={share.imageData} alt="Receipt" className="w-16 h-20 object-cover object-top rounded-lg border border-border-subtle" />
+        ) : (
+          <div className="w-16 h-20 rounded-lg bg-surface flex items-center justify-center text-text-muted">
+            <span className="material-symbols-outlined">image_not_supported</span>
           </div>
-          <button
-            onClick={() => setAttach((v) => !v)}
-            role="switch"
-            aria-checked={attach}
-            className={clsx('w-11 h-6 rounded-full relative transition-all shrink-0', attach ? 'bg-primary' : 'bg-gray-300')}
-          >
-            <span className={clsx('w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow', attach ? 'right-0.5' : 'left-0.5')} />
-          </button>
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-black text-primary">{share.imageData ? 'Receipt will be attached' : 'Receipt picture not received'}</p>
+          <p className="text-[11px] text-text-muted">
+            {share.imageData
+              ? 'It goes to the expense as a receipt photo. You can remove it on the next screen.'
+              : share.imageError
+              ? `The picture could not be prepared (${share.imageError}).`
+              : 'This app version cannot pass the picture along. Install the latest FamilyLedger build.'}
+          </p>
         </div>
-      )}
+      </div>
 
       <button
         onClick={createExpense}

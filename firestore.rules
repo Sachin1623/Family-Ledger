@@ -157,6 +157,11 @@ service cloud.firestore {
     }
 
     // --- Users ---
+    // What each user calls the people/shops they pay (from shared payment receipts): one private doc per user.
+    match /receiptPayees/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
     match /users/{userId} {
       allow read: if isSignedIn();
       // `shopId`/`shopRole` (Shopkeeper mode access) are deliberately excluded from what the
