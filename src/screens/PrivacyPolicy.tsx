@@ -79,6 +79,10 @@ export default function PrivacyPolicy() {
             <p>
               If you use Blood Pressure, Glucose, or Medicine tracking, we store the readings, dose logs, and (for medicines) the illness/incident grouping and schedule you enter. This data stays private to you by default. You can choose to share it with a specific group and/or specific friends (visible to them the same way a shared goal is), and/or grant a delegate (e.g. a family caregiver) permission to log entries on your behalf — a delegate you've added can add and view entries for you, exactly as if they were you, until you remove that permission.
             </p>
+            <h3 className="font-semibold text-primary">M.1 Payment Receipts You Share</h3>
+            <p>
+              If you share a payment receipt (for example from PhonePe, Google Pay or Paytm) to FamilyLedger, the picture is read on your device to find the amount, the payee and the date — it is not sent to any third-party text-recognition service. You then review the expense before anything is saved. If you keep the receipt attached, a small compressed copy is stored with that expense like any other receipt photo you add. We also remember, privately for your account only, the description and category you chose for a payee and a short marker of each receipt you added so we can warn you about duplicates.
+            </p>
             <h3 className="font-semibold text-primary">M. Shared Reminders Data</h3>
             <p>
               If you create a Shared Reminder, we store its text, schedule, and (if you enable it) who has acknowledged or completed it. A reminder is visible to whichever group and/or specific friends you choose to share it with when you create it.

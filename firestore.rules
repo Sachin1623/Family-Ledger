@@ -157,6 +157,12 @@ service cloud.firestore {
     }
 
     // --- Users ---
+    // One tiny marker per shared receipt a user has added (doc id = `${uid}_${transactionId}`), so sharing it again
+    // can warn about a duplicate. Private to the user.
+    match /receiptTxns/{markerId} {
+      allow read, write: if isSignedIn() && markerId.matches(request.auth.uid + '_.*');
+    }
+
     // What each user calls the people/shops they pay (from shared payment receipts): one private doc per user.
     match /receiptPayees/{userId} {
       allow read, write: if isSignedIn() && request.auth.uid == userId;

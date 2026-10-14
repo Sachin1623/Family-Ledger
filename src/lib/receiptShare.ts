@@ -1,4 +1,4 @@
-// Share-to-FamilyLedger for payment receipts (Android only for now — see ReceiptSharePlugin.java).
+// Share-to-FamilyLedger for payment receipts — Android (ReceiptSharePlugin.java) and iOS (ReceiptSharePlugin.swift).
 // Another app (PhonePe …) shares a receipt to us; the native side copies it, reads the text on the phone
 // (Google ML Kit, no network, nothing uploaded) and hands the result here. The image itself is deleted
 // right after reading. A small compressed copy is passed along so it can be attached to the expense — but
@@ -37,13 +37,20 @@ export interface SharedReceipt {
 
 interface ReceiptSharePlugin {
   getPendingShare(): Promise<SharedReceipt | Record<string, never>>;
+  // iOS: a file handed to the app ("Copy to FamilyLedger") is read here; Android receives the share by itself.
+  processFile(opts: { url: string }): Promise<SharedReceipt>;
   addListener(event: 'receiptShared', cb: (data: SharedReceipt) => void): Promise<PluginListenerHandle>;
 }
 
 const ReceiptShare = registerPlugin<ReceiptSharePlugin>('ReceiptShare');
 
 export function receiptShareAvailable(): boolean {
-  return Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('ReceiptShare');
+  const p = Capacitor.getPlatform();
+  return (p === 'android' || p === 'ios') && Capacitor.isPluginAvailable('ReceiptShare');
+}
+
+export function processReceiptFile(url: string) {
+  return ReceiptShare.processFile({ url });
 }
 
 export function getPendingReceiptShare() {

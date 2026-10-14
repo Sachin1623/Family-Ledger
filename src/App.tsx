@@ -210,6 +210,7 @@ const NavigationBridge = () => {
     const listenerPromise = CapacitorApp.addListener('appUrlOpen', (data) => {
       try {
         const url = new URL(data.url);
+        if (url.protocol === 'file:') return; // a receipt handed to the app (see ReceiptShareBridge), not a deep link
         navigate(url.pathname + url.search);
       } catch (err) {
         console.error('Failed to parse deep link URL:', data.url, err);

@@ -21,6 +21,7 @@ import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
 import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
 import PayerPicker from '../components/PayerPicker';
 
+import ReceiptBanner, { type ReceiptInfo } from '../components/ReceiptBanner';
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
 import { buildRoster } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
@@ -149,6 +150,7 @@ export default function AddExpense() {
 
   // Opened from a shared receipt: start on the group the user last added an expense to (still changeable).
   const fromReceipt = !!(location.state as { fromReceipt?: boolean } | null)?.fromReceipt;
+  const receiptInfo = (location.state as { receipt?: ReceiptInfo } | null)?.receipt;
   React.useEffect(() => {
     if (!fromReceipt || groupId) return;
     let last = '';
@@ -592,6 +594,11 @@ export default function AddExpense() {
       // Remember the choices for next time: the group, and — for a shared receipt — what this payee means
       // to the user (description + category), keyed by the payee's UPI id.
       try { localStorage.setItem(LAST_EXPENSE_GROUP_KEY, groupId); } catch { /* ignore */ }
+      const sharedTxnId = (location.state as { txnId?: string } | null)?.txnId;
+      if (sharedTxnId) {
+        // So sharing the same receipt again can warn that it was already added.
+        setDoc(doc(db, 'receiptTxns', `${user.uid}_${sharedTxnId}`), { at: new Date().toISOString(), groupId }, { merge: true }).catch(() => {});
+      }
       const sharedPayeeKey = (location.state as { payeeKey?: string } | null)?.payeeKey;
       if (sharedPayeeKey && description.trim()) {
         setDoc(
@@ -670,6 +677,7 @@ export default function AddExpense() {
           if (!(e.target as HTMLElement).closest('[data-amount-field]')) setShowKeypad(false);
         }}
       >
+        {receiptInfo && <ReceiptBanner info={receiptInfo} amount={amount} onPickAmount={setAmount} />}
         <main className="max-w-md mx-auto w-full space-y-5 pb-20">
           {selectedGroup?.incomeEnabled && (
             <div className="flex gap-1.5" data-tour="expense-type-toggle">
