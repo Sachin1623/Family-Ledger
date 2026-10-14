@@ -3,6 +3,7 @@
 // Firestore/auth dependencies on purpose — the game itself must be fully playable with no network.
 import { auth, db } from './firebase';
 import { doc, runTransaction } from 'firebase/firestore';
+import { checkLeaderboard } from './leaderboardCheck';
 import { readPendingScores, removePendingScore, ScrambleScoreRecord } from './scramble';
 
 async function syncOneScore(uid: string, userName: string, userPhoto: string, record: ScrambleScoreRecord) {
@@ -38,6 +39,7 @@ export async function flushPendingScrambleScores(): Promise<void> {
     try {
       await syncOneScore(user.uid, user.displayName || 'Someone', user.photoURL || '', record);
       removePendingScore(record.id);
+      void checkLeaderboard('scramble', record.wordLength);
     } catch (err) {
       console.error('Scramble score sync failed, will retry later:', err);
       break;

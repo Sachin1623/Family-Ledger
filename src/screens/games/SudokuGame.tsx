@@ -37,7 +37,7 @@ function formatTime(totalSeconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-const DIFFICULTY_COLOR: Record<string, string> = { easy: '#0F7A38', medium: '#B45309', hard: '#B91C1C' };
+const DIFFICULTY_BADGE: Record<string, string> = { easy: '#16a34a', medium: '#d97706', hard: '#dc2626' };
 
 const CELEBRATION_LINES = [
   "BOOM! You just out-logic'd a grid of tiny squares. Legendary.",
@@ -282,131 +282,171 @@ export default function SudokuGame() {
   // value" highlighting — lets scanning for a specific digit persist across selecting other cells.
   const highlightValue = highlightDigit ?? selectedValue;
 
+  const filled = game.board.filter((v) => v !== 0).length;
+  const accent = DIFFICULTY_BADGE[game.difficulty] || '#22c55e';
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-primary capitalize">Sudoku · {game.difficulty}</span>
-          <div className="flex items-center gap-3 text-xs font-bold text-text-muted">
-            <span className="flex items-center gap-1">
-              <span className="material-symbols-outlined text-[16px]">schedule</span>
-              {formatTime(game.elapsedSeconds)}
-            </span>
-            <span className="flex items-center gap-1 text-error">
-              <span className="material-symbols-outlined text-[16px]">error</span>
-              {game.mistakes}
-            </span>
-            {!completion && (
-              <button onClick={handleQuit} className="p-2 text-error shrink-0" aria-label="Quit puzzle">
-                <span className="material-symbols-outlined text-[22px] block">logout</span>
-              </button>
-            )}
-            <HelpButton onClick={() => setShowHelp(true)} />
-          </div>
-        </div>
+      {showHelp && <GameHelpModal content={SUDOKU_HELP} onClose={() => setShowHelp(false)} />}
 
-        {showHelp && <GameHelpModal content={SUDOKU_HELP} onClose={() => setShowHelp(false)} />}
+      {/* Full-screen game table (covers the app header and tab bar), same look as the other games. */}
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_25%,#0f4d46_0%,#0a2c3d_55%,#06141f_100%)]">
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
 
-        {!completion && (
-          <div className="flex items-center justify-end gap-4">
-            <button onClick={handleRestart} className="flex items-center gap-1 text-[11px] font-bold text-text-muted">
-              <span className="material-symbols-outlined text-[15px]">restart_alt</span>
-              Restart
+        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
+          <button onClick={() => navigate('/games/sudoku')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          </button>
+          <h1 className="text-[15px] font-black flex items-center">
+            Sudoku
+            <span className="ml-2 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase text-white" style={{ background: accent }}>{game.difficulty}</span>
+          </h1>
+          <div className="flex-1" />
+          {!completion && (
+            <button onClick={handleRestart} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Restart puzzle">
+              <span className="material-symbols-outlined text-[18px]">restart_alt</span>
             </button>
+          )}
+          <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+          {!completion && (
+            <button onClick={handleQuit} className="p-1.5 text-red-300 shrink-0" aria-label="Quit puzzle">
+              <span className="material-symbols-outlined text-[22px] block">logout</span>
+            </button>
+          )}
+        </header>
+
+        {/* stat chips */}
+        <div className="relative shrink-0 flex justify-center gap-2 px-3 pt-3">
+          <div className="flex items-center gap-1.5 h-9 rounded-full px-3.5 bg-black/35 border border-white/15">
+            <span className="material-symbols-outlined text-[18px] text-cyan-300">schedule</span>
+            <div className="leading-none"><p className="text-[15px] font-black tabular-nums">{formatTime(game.elapsedSeconds)}</p><p className="text-[7px] tracking-[0.14em] text-white/55 font-bold mt-0.5">TIME</p></div>
           </div>
-        )}
+          <div className="flex items-center gap-1.5 h-9 rounded-full px-3.5 bg-black/35 border border-red-400/60">
+            <span className="material-symbols-outlined text-[18px] text-red-300">error</span>
+            <div className="leading-none"><p className="text-[15px] font-black tabular-nums">{game.mistakes}</p><p className="text-[7px] tracking-[0.14em] text-white/55 font-bold mt-0.5">MISTAKES</p></div>
+          </div>
+          <div className="flex items-center gap-1.5 h-9 rounded-full px-3.5 bg-black/35 border border-white/15">
+            <span className="material-symbols-outlined text-[18px] text-amber-300">lightbulb</span>
+            <div className="leading-none"><p className="text-[15px] font-black tabular-nums">{game.hintsUsed}</p><p className="text-[7px] tracking-[0.14em] text-white/55 font-bold mt-0.5">HINTS</p></div>
+          </div>
+        </div>
 
-        <div className={clsx('space-y-5', completion && 'pointer-events-none opacity-60')}>
-        <div
-          className="grid grid-cols-9 bg-white rounded-2xl overflow-hidden border-2 shadow-sm"
-          style={{ borderColor: DIFFICULTY_COLOR[game.difficulty] }}
-        >
-          {game.board.map((value, i) => {
-            const row = Math.floor(i / 9);
-            const col = i % 9;
-            const isGiven = game.givens[i] !== 0;
-            const isSelected = selected === i;
-            const isPeer = selectedRow != null && selectedCol != null && (row === selectedRow || col === selectedCol);
-            const isSameValue = value !== 0 && value === highlightValue;
-            const hasConflict = conflictSet.has(i);
-            const notes = game.notes[i];
+        {/* progress */}
+        <div className="relative shrink-0 mx-4 mt-2.5">
+          <div className="flex justify-between text-[10px] font-extrabold text-white/70 mb-1">
+            <span>BOARD COMPLETE</span>
+            <span className="tabular-nums">{filled} / 81</span>
+          </div>
+          <div className="h-2 rounded-full bg-white/12 overflow-hidden">
+            <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-green-400 shadow-[0_0_12px_#22d3ee] transition-all" style={{ width: `${(filled / 81) * 100}%` }} />
+          </div>
+        </div>
 
-            return (
-              <button
-                key={i}
-                onClick={() => setSelected(i)}
-                className={clsx(
-                  'aspect-square flex items-center justify-center text-lg font-bold relative transition-colors',
-                  col % 3 === 0 && col !== 0 && 'border-l-2',
-                  row % 3 === 0 && row !== 0 && 'border-t-2',
-                  'border-r border-b border-border-subtle',
-                  isSelected ? 'bg-blue-300' : isSameValue ? 'bg-blue-200' : isPeer ? 'bg-blue-100' : isGiven ? 'bg-surface-container' : 'bg-white',
-                  hasConflict ? 'text-error' : isGiven ? 'text-on-surface' : 'text-primary',
-                )}
-                style={{
-                  borderLeftColor: col % 3 === 0 && col !== 0 ? DIFFICULTY_COLOR[game.difficulty] : undefined,
-                  borderTopColor: row % 3 === 0 && row !== 0 ? DIFFICULTY_COLOR[game.difficulty] : undefined,
-                }}
-              >
-                {value !== 0 ? (
-                  value
-                ) : notes && notes.length > 0 ? (
-                  <div className="grid grid-cols-3 gap-0 w-full h-full p-0.5 text-[8px] font-bold text-text-muted leading-none">
-                    {Array.from({ length: 9 }, (_, n) => n + 1).map((n) => (
-                      <div key={n} className="flex items-center justify-center">{notes.includes(n) ? n : ''}</div>
-                    ))}
-                  </div>
-                ) : null}
+        <div className={clsx('relative flex-1 min-h-0 overflow-y-auto flex flex-col', completion && 'pointer-events-none opacity-60')}>
+          {/* board */}
+          <div className="mx-auto w-full max-w-[26rem] px-3 pt-3">
+            <div className="p-1.5 rounded-[18px] bg-gradient-to-br from-[#1f6f68] to-[#0d3b4a] shadow-[0_14px_30px_rgba(0,0,0,0.55),inset_0_2px_0_rgba(255,255,255,0.25),0_0_22px_rgba(34,211,238,0.25)]">
+              <div className="grid grid-cols-9 bg-[#06202b] rounded-xl overflow-hidden gap-px">
+                {game.board.map((value, i) => {
+                  const row = Math.floor(i / 9);
+                  const col = i % 9;
+                  const isGiven = game.givens[i] !== 0;
+                  const isSelected = selected === i;
+                  const isPeer = selectedRow != null && selectedCol != null && (row === selectedRow || col === selectedCol || (Math.floor(row / 3) === Math.floor(selectedRow / 3) && Math.floor(col / 3) === Math.floor(selectedCol / 3)));
+                  const isSameValue = value !== 0 && value === highlightValue;
+                  const hasConflict = conflictSet.has(i);
+                  const notes = game.notes[i];
+
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setSelected(i)}
+                      className={clsx(
+                        'aspect-square flex items-center justify-center font-black relative transition-colors text-[clamp(1.1rem,5.4vw,1.5rem)]',
+                        col % 3 === 0 && col !== 0 && 'border-l-2 border-l-cyan-400/80',
+                        row % 3 === 0 && row !== 0 && 'border-t-2 border-t-cyan-400/80',
+                        isSelected
+                          ? 'bg-gradient-to-b from-cyan-600 to-cyan-800 shadow-[inset_0_0_0_2.5px_#22d3ee,0_0_14px_#22d3ee] z-[2]'
+                          : isSameValue
+                          ? 'bg-gradient-to-b from-amber-700 to-amber-900'
+                          : isPeer
+                          ? 'bg-gradient-to-b from-[#19505e] to-[#13414f]'
+                          : 'bg-gradient-to-b from-[#123b4a] to-[#0d2e3b]',
+                        hasConflict ? 'text-red-400 [text-shadow:0_0_10px_#ef4444]' : isGiven ? 'text-white [text-shadow:0_2px_0_rgba(0,0,0,0.4)]' : 'text-teal-300 [text-shadow:0_0_10px_#14b8a6]',
+                      )}
+                    >
+                      {value !== 0 ? (
+                        value
+                      ) : notes && notes.length > 0 ? (
+                        <div className="grid grid-cols-3 gap-0 w-full h-full p-0.5 text-[8px] font-extrabold text-sky-300 leading-none">
+                          {Array.from({ length: 9 }, (_, n) => n + 1).map((n) => (
+                            <div key={n} className="flex items-center justify-center">{notes.includes(n) ? n : ''}</div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* tools */}
+          <div className="flex justify-center gap-4 pt-4">
+            {[
+              { key: 'notes', icon: 'edit_note', label: 'Notes', on: notesMode, onClick: () => setNotesMode((n) => !n), disabled: false, badge: null as number | null },
+              { key: 'undo', icon: 'undo', label: 'Undo', on: false, onClick: handleUndo, disabled: history.length === 0, badge: null },
+              { key: 'erase', icon: 'backspace', label: 'Erase', on: false, onClick: handleErase, disabled: false, badge: null },
+              { key: 'hint', icon: 'lightbulb', label: 'Hint', on: false, onClick: handleHint, disabled: false, badge: game.hintsUsed },
+            ].map((t) => (
+              <button key={t.key} onClick={t.onClick} disabled={t.disabled} className={clsx('flex flex-col items-center gap-1 text-[10px] font-extrabold text-white/80', t.disabled && 'opacity-40')}>
+                <span
+                  className={clsx(
+                    'relative w-12 h-12 rounded-full flex items-center justify-center border shadow-[0_4px_0_rgba(0,0,0,0.3)] active:translate-y-[2px]',
+                    t.on ? 'bg-gradient-to-b from-amber-300 to-amber-600 text-amber-950 border-amber-300 shadow-[0_4px_0_#92400e,0_0_14px_rgba(251,191,36,0.5)]' : 'bg-white/10 border-white/20',
+                  )}
+                >
+                  <span className="material-symbols-outlined text-[22px]">{t.icon}</span>
+                  {t.badge != null && t.badge > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center border-2 border-[#0a2c3d]">{t.badge}</span>
+                  )}
+                </span>
+                {t.label}
               </button>
-            );
-          })}
-        </div>
+            ))}
+          </div>
 
-        <div className="flex items-center justify-center gap-4">
-          <button
-            onClick={() => setNotesMode((n) => !n)}
-            className={clsx('flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl text-[10px] font-bold', notesMode ? 'bg-primary text-white' : 'text-text-muted')}
-          >
-            <span className="material-symbols-outlined text-[20px]">edit_note</span>
-            Notes
-          </button>
-          <button onClick={handleUndo} disabled={history.length === 0} className="flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl text-[10px] font-bold text-text-muted disabled:opacity-30">
-            <span className="material-symbols-outlined text-[20px]">undo</span>
-            Undo
-          </button>
-          <button onClick={handleErase} className="flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl text-[10px] font-bold text-text-muted">
-            <span className="material-symbols-outlined text-[20px]">backspace</span>
-            Erase
-          </button>
-          <button onClick={handleHint} className="flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl text-[10px] font-bold text-text-muted">
-            <span className="material-symbols-outlined text-[20px]">lightbulb</span>
-            Hint ({game.hintsUsed})
-          </button>
-        </div>
+          <div className="flex-1 min-h-3" />
 
-        <div className="grid grid-cols-9 gap-1.5">
-          {Array.from({ length: 9 }, (_, n) => n + 1).map((n) => {
-            const isDone = digitCounts[n] >= 9;
-            return (
-              <button
-                key={n}
-                onClick={() => handleDigit(n)}
-                className={clsx(
-                  'aspect-square rounded-xl text-lg font-bold active:scale-95 transition-transform',
-                  highlightDigit === n
-                    ? 'bg-primary text-white border border-primary'
-                    : isDone
-                    ? 'bg-surface-container text-text-muted border border-border-subtle'
-                    : 'bg-white border border-border-subtle text-primary',
-                )}
-              >
-                {n}
-              </button>
-            );
-          })}
+          {/* number keys: how many of each digit are still missing */}
+          <div className="grid grid-cols-9 gap-1.5 px-3 pt-3 pb-4 mx-auto w-full max-w-[28rem]">
+            {Array.from({ length: 9 }, (_, n) => n + 1).map((n) => {
+              const left = Math.max(0, 9 - digitCounts[n]);
+              const isDone = left === 0;
+              const active = highlightDigit === n;
+              return (
+                <button
+                  key={n}
+                  onClick={() => handleDigit(n)}
+                  className={clsx(
+                    'relative h-14 rounded-xl flex items-center justify-center text-2xl font-black active:translate-y-[3px] transition-transform',
+                    active
+                      ? 'bg-gradient-to-b from-amber-200 to-amber-500 text-amber-950 shadow-[0_5px_0_#92400e,0_0_14px_rgba(251,191,36,0.5)] -translate-y-0.5'
+                      : isDone
+                      ? 'bg-gradient-to-b from-[#0f3a47] to-[#0b2c37] text-green-400 shadow-[0_5px_0_#06202b] opacity-75'
+                      : 'bg-gradient-to-b from-[#e8f7ff] to-[#b6d8e6] text-[#0a2c3d] shadow-[0_5px_0_#5b8fa3,0_8px_12px_rgba(0,0,0,0.35)]',
+                  )}
+                >
+                  {n}
+                  <span className={clsx('absolute bottom-0.5 text-[8px] font-extrabold', isDone ? 'text-green-400' : active ? 'text-amber-900' : 'text-[#3b6b80]')}>
+                    {isDone ? '✓' : `${left} left`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-        </div>
-      </main>
+      </div>
 
       <AnimatePresence>
         {completion && (

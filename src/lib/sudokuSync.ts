@@ -3,6 +3,7 @@
 // dependencies on purpose — the game itself must be fully playable with no network at all.
 import { auth, db } from './firebase';
 import { doc, runTransaction } from 'firebase/firestore';
+import { checkLeaderboard } from './leaderboardCheck';
 import { readPendingScores, removePendingScore, SudokuScoreRecord } from './sudoku';
 
 async function syncOneScore(uid: string, userName: string, userPhoto: string, record: SudokuScoreRecord) {
@@ -43,6 +44,7 @@ export async function flushPendingSudokuScores(): Promise<void> {
     try {
       await syncOneScore(user.uid, user.displayName || 'Someone', user.photoURL || '', record);
       removePendingScore(record.id);
+      void checkLeaderboard('sudoku', record.difficulty);
     } catch (err) {
       console.error('Sudoku score sync failed, will retry later:', err);
       break;

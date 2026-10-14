@@ -238,6 +238,8 @@ export default function SequenceGame() {
   }, [searchParams, setSearchParams]);
 
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
+  // Finished board: number the last 5 moves of each side right on the chips (toggle).
+  const [showMoves, setShowMoves] = useState(true);
 
   useEffect(() => {
     setSelectedCard(null);
@@ -577,6 +579,14 @@ export default function SequenceGame() {
   // result panel below is dismissible/reopenable, not the whole screen) ----
   const isFinished = game.status === 'finished';
   // Legal-move glow: your own team colour for placing, red when a one-eyed jack removes an opponent's chip.
+  // cell -> the move that last touched it, for the last 5 moves of each side (finished games only).
+  const lastMoveByCell = new Map<number, { n: number; side: number; action: 'place' | 'remove' }>();
+  if (isFinished && showMoves) {
+    const bySide = new Map<number, NonNullable<typeof game.moves>>();
+    (game.moves || []).forEach((m) => bySide.set(m.side, [...(bySide.get(m.side) || []), m]));
+    bySide.forEach((list) => list.slice(-5).forEach((m) => lastMoveByCell.set(m.cell, m)));
+  }
+  const hasMoveLog = (game.moves || []).length > 0;
   const hintColor = selectedCard && isOneEyedJack(selectedCard) ? '#EF4444' : SIDE_COLOR[mySide] || '#2563EB';
   const turnPlayer = game.players[game.currentTurnSeatIndex];
   const needed = sequencesToWin(game.playerCount);
@@ -830,6 +840,20 @@ export default function SequenceGame() {
                         }}
                       />
                     )}
+                    {(() => {
+                      const mv = lastMoveByCell.get(i);
+                      if (!mv) return null;
+                      const col = SIDE_COLOR[mv.side] || '#2563EB';
+                      return mv.action === 'remove' ? (
+                        <span className="absolute inset-[3px] z-30 rounded-full flex items-center justify-center bg-red-600/85 text-white text-[10px] font-black border-2 border-white shadow">
+                          ✖<span className="text-[7px] ml-px">{mv.n}</span>
+                        </span>
+                      ) : (
+                        <span className="absolute -bottom-0.5 -right-0.5 z-30 min-w-[15px] h-[15px] px-[2px] rounded-full bg-white flex items-center justify-center text-[8px] leading-none font-black shadow" style={{ color: col, border: `2px solid ${col}` }}>
+                          {mv.n}
+                        </span>
+                      );
+                    })()}
                   </button>
                 );
               })}
@@ -839,6 +863,26 @@ export default function SequenceGame() {
             </div>
           </div>
 
+          {isFinished && (
+            <div className="mt-2 flex items-center justify-center gap-2">
+              <button
+                onClick={() => setShowMoves((v) => !v)}
+                disabled={!hasMoveLog}
+                className={`px-3 py-1.5 rounded-full text-[11px] font-black border ${showMoves && hasMoveLog ? 'bg-amber-400 text-amber-950 border-amber-300' : 'bg-white/10 text-white/80 border-white/25'} disabled:opacity-50`}
+              >
+                {showMoves ? 'Hide' : 'Show'} last 5 moves of each side
+              </button>
+              <button onClick={() => setShowResultPanel(true)} className="px-3 py-1.5 rounded-full text-[11px] font-black bg-white/10 text-white border border-white/25">
+                🏆 Result
+              </button>
+            </div>
+          )}
+          {isFinished && showMoves && hasMoveLog && (
+            <p className="mt-1.5 text-center text-[10px] font-bold text-white/70">Numbers show the order of the moves · ✖ = a chip that was removed</p>
+          )}
+          {isFinished && !hasMoveLog && (
+            <p className="mt-1.5 text-center text-[10px] font-bold text-white/60">Move numbers are recorded for new games only.</p>
+          )}
           <div className="flex justify-center gap-4 mt-2 text-[10px] font-extrabold text-white/75">
             <span><b className="text-amber-200">✦</b> Two-eyed J = wild</span>
             <span><b className="text-red-300">✖</b> One-eyed J = remove a chip</span>
@@ -921,6 +965,9 @@ export default function SequenceGame() {
             {error && <p className="text-xs font-bold text-error">{error}</p>}
             {winShare && <ShareWinButton card={winShare.card} caption={winShare.caption} />}
             <div className="flex flex-col gap-2 pt-1">
+              <button onClick={() => setShowResultPanel(false)} className="w-full py-3 bg-amber-400 text-amber-950 font-black rounded-2xl">
+                View the finished board
+              </button>
               {isPlayer && (
                 <button
                   onClick={() => (game.rematchGameId ? navigate(`/games/sequence/${game.rematchGameId}`) : handlePlayAgain())}

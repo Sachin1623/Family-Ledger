@@ -3223,6 +3223,95 @@ async function startServer() {
     }
   });
 
+  // Rank-drop alerts for the two game leaderboards (Sudoku per difficulty, Scramble per word length).
+  // Scores are saved straight to Firestore from the phone, so the phone calls this right after a score
+  // is saved. We keep a snapshot of each board's top ranks; when someone has been pushed down from a
+  // top-10 spot, they get a competitive nudge (push + in-app banner + feed entry).
+  app.post('/api/leaderboard/check', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const board = String(req.body?.board || '');
+    const key = String(req.body?.key || '');
+    if (!['sudoku', 'scramble'].includes(board) || !/^[a-z0-9]{1,12}$/i.test(key)) {
+      return res.status(400).json({ error: 'Unknown leaderboard.' });
+    }
+    try {
+      const TRACK = 12; // ranks tracked, so a drop from 10 to 11 or 12 is still visible
+      const snap = board === 'sudoku'
+        ? await db.collection('sudokuLeaderboard').where('difficulty', '==', key).get()
+        : await db.collection('scrambleLeaderboard').where('wordLength', '==', Number(key)).get();
+      // One row per player: Sudoku ranks by total score, Scramble by best single match (a player can have
+      // several Scramble docs, one per timer mode — the best counts).
+      const best = new Map<string, { uid: string; name: string; score: number; at: string }>();
+      snap.docs.forEach((d) => {
+        const x = d.data();
+        const score = board === 'sudoku' ? Number(x.totalScore ?? x.bestScore ?? 0) : Number(x.bestScore ?? 0);
+        const cur = best.get(x.userId);
+        if (!cur || score > cur.score) best.set(x.userId, { uid: x.userId, name: x.userName || 'Someone', score, at: x.updatedAt || '' });
+      });
+      const standings = Array.from(best.values()).sort((a, b) => b.score - a.score || a.at.localeCompare(b.at));
+      const newRanks: Record<string, number> = {};
+      standings.slice(0, TRACK).forEach((e, i) => { newRanks[e.uid] = i + 1; });
+
+      const rankRef = db.collection('leaderboardRanks').doc(`${board}_${key}`);
+      const prevRanks: Record<string, number> | null = await db.runTransaction(async (tx) => {
+        const prev = await tx.get(rankRef);
+        tx.set(rankRef, { ranks: newRanks, updatedAt: new Date().toISOString() });
+        return prev.exists ? ((prev.data()!.ranks || {}) as Record<string, number>) : null;
+      });
+      if (!prevRanks) return res.json({ ok: true, notified: 0 });
+
+      const nameOf = (uid: string) => standings.find((e) => e.uid === uid)?.name || 'Someone';
+      const boardLabel = board === 'sudoku'
+        ? `Sudoku ${key.charAt(0).toUpperCase()}${key.slice(1)}`
+        : `Scramble ${key}-letter`;
+      const route = `/games/${board}/leaderboard`;
+      const callerNew = newRanks[decoded.uid];
+      const callerPrev = prevRanks[decoded.uid];
+
+      let notified = 0;
+      for (const [uid, oldRank] of Object.entries(prevRanks)) {
+        if (uid === decoded.uid || oldRank > 10) continue;
+        const newRank = newRanks[uid] ?? TRACK + 1;
+        if (newRank <= oldRank) continue;
+        // The caller is the one who just scored, so if they now sit above this player (and were below
+        // before) they're the one who did it.
+        const culprit = callerNew !== undefined && callerNew < newRank && (callerPrev === undefined || callerPrev > oldRank) ? nameOf(decoded.uid) : null;
+        const rankText = newRank > TRACK ? `out of the Top ${TRACK}` : `#${newRank}`;
+        const lines = culprit
+          ? [
+              `🔥 ${culprit} just snatched your spot! You slipped from #${oldRank} to ${rankText} on ${boardLabel}. Take it back!`,
+              `😤 You've been overtaken! ${culprit} pushed you from #${oldRank} to ${rankText} on ${boardLabel}. Time to fight back!`,
+              `⚔️ Rank alert: #${oldRank} → ${rankText} on ${boardLabel}. ${culprit} is coming for your crown — are you going to let that slide?`,
+            ]
+          : [
+              `😤 You've slipped from #${oldRank} to ${rankText} on ${boardLabel}. Someone is coming for your crown!`,
+              `🔥 Your #${oldRank} spot on ${boardLabel} just fell — you're ${rankText} now. Time to fight back!`,
+            ];
+        const body = lines[Math.floor(Math.random() * lines.length)];
+        const title = newRank > 10 ? '🚨 Knocked out of the Top 10!' : '📉 You just got overtaken!';
+        notified++;
+        try {
+          const userData = (await db.collection('users').doc(uid).get()).data() || {};
+          const foregrounded = userData.appForegroundAt && Date.now() - new Date(userData.appForegroundAt).getTime() < 45000;
+          if (!foregrounded) {
+            const tokens = await collectPushTokens(db, [uid], 'notificationsEnabled');
+            await sendPush(tokens, title, body, { type: 'leaderboard_slip', route });
+          }
+          await createInviteNotice(db, uid, 'game', title, body, route);
+          await logFeedActivity(db, { userId: uid, type: 'leaderboard_slip', description: body, data: { board, key, oldRank, newRank, route } });
+        } catch (err) {
+          console.error('leaderboard slip notify failed:', err);
+        }
+      }
+      return res.json({ ok: true, notified });
+    } catch (error) {
+      console.error('leaderboard/check error:', error);
+      return res.status(500).json({ error: 'Unable to check leaderboard.' });
+    }
+  });
+
   // Friends/group-scoped ranking — deliberately NOT a global "every FamilyLedger user" board,
   // since that's a much less meaningful comparison for a family-finance app than "how am I doing
   // against the people I actually share expenses/games with."
@@ -12161,6 +12250,12 @@ async function startServer() {
       winnerSide: won ? mySide : null,
       finishedAt: sequenceFinishedAt,
       lastPlacedCell: action === 'place' ? cellIndex : game.lastPlacedCell ?? null,
+      // Move history for the finished-board view: each chip placed or removed, numbered in order. Only the
+      // most recent 30 are kept (the board only ever shows the last 5 per side), so the doc stays small.
+      moveCount: (game.moveCount || 0) + (action === 'dead' ? 0 : 1),
+      moves: action === 'dead'
+        ? (game.moves || [])
+        : [...(game.moves || []), { n: (game.moveCount || 0) + 1, side: mySide, cell: cellIndex, action }].slice(-30),
       lastAction: { text: won ? `${mySeat.displayName} completed a sequence and won!` : actionText, at: new Date().toISOString() },
     });
 

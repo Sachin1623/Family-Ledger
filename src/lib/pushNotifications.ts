@@ -60,6 +60,8 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo('/admin/feedback');
   } else if (data.type === 'poke' && data.groupId) {
     navigateTo(`/add-expense?groupId=${data.groupId}`);
+  } else if (data.type === 'leaderboard_slip' && data.route) {
+    navigateTo(data.route);
   } else if (data.type === 'dm_chat' && data.otherUid) {
     openChatPopup({ kind: 'dm', uid: data.otherUid });
   } else if (data.type === 'friend_request' && data.uid) {

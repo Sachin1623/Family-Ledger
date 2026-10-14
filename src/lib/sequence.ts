@@ -247,6 +247,8 @@ export interface SequenceGame {
   board: (number | null)[]; // length 100, side index or null
   lockedCells: number[]; // cells that are part of a completed sequence (immune to removal)
   sequences?: { cells: number[]; side: number }[]; // each completed sequence's own 5 cells + side, for drawing a per-sequence outline (lockedCells alone is just the flat union, not enough to know which 5 belong together)
+  moveCount?: number; // chips placed/removed so far (dead-card swaps aren't counted)
+  moves?: { n: number; side: number; cell: number; action: 'place' | 'remove' }[]; // the most recent 30, for the finished-board view
   lastPlacedCell?: number | null; // the most recent 'place' action's cell, for a brief highlight — untouched by 'remove'/'dead' actions
   sequenceCountBySide: number[];
   winnerSide: number | null;
