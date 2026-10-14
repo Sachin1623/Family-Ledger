@@ -38,6 +38,33 @@ import PresenceDot from '../../components/PresenceDot';
 import ShareGameButton from '../../components/ShareGameButton';
 import { useGameTurnPresence } from '../../lib/gameTurnPresence';
 
+// A jack's little portrait: two eyes (front-facing, wild) or one eye (profile, removes a chip).
+const JackFace: React.FC<{ twoEyed: boolean; red: boolean }> = ({ twoEyed, red }) => {
+  const hat = red ? '#DC2626' : '#1E293B';
+  return (
+    <svg width="50" height="50" viewBox="0 0 40 40" aria-hidden>
+      <path d="M7 14 L10 5 L16 10 L20 3 L24 10 L30 5 L33 14 Z" fill={hat} stroke="#F59E0B" strokeWidth="1.2" strokeLinejoin="round" />
+      {twoEyed ? (
+        <>
+          <ellipse cx="20" cy="25" rx="11.5" ry="12" fill="#FDE2C4" stroke="#7C4A1E" strokeWidth="1.2" />
+          <circle cx="14.5" cy="22" r="4.6" fill="#fff" stroke="#0F172A" strokeWidth="1.3" />
+          <circle cx="25.5" cy="22" r="4.6" fill="#fff" stroke="#0F172A" strokeWidth="1.3" />
+          <circle cx="14.5" cy="22.4" r="2.5" fill="#0F172A" />
+          <circle cx="25.5" cy="22.4" r="2.5" fill="#0F172A" />
+          <path d="M13 31 Q20 35 27 31" fill="none" stroke="#7C4A1E" strokeWidth="1.3" strokeLinecap="round" />
+        </>
+      ) : (
+        <>
+          <path d="M9 24 Q9 13 20 13 Q29 13 29 22 L33 26 L29 28 Q29 37 20 37 Q9 37 9 24 Z" fill="#FDE2C4" stroke="#7C4A1E" strokeWidth="1.2" strokeLinejoin="round" />
+          <circle cx="22.5" cy="22" r="5" fill="#fff" stroke="#0F172A" strokeWidth="1.4" />
+          <circle cx="23.8" cy="22.4" r="2.6" fill="#0F172A" />
+          <path d="M19 32 Q24 34 28 31" fill="none" stroke="#7C4A1E" strokeWidth="1.3" strokeLinecap="round" />
+        </>
+      )}
+    </svg>
+  );
+};
+
 // Felt-table hand card (absolutely positioned inside the fan).
 const CardChip: React.FC<{ cardId: string; selected?: boolean; onClick?: () => void; style?: React.CSSProperties }> = ({ cardId, selected, onClick, style }) => {
   const { rank, suit } = parseCard(cardId);
@@ -50,8 +77,20 @@ const CardChip: React.FC<{ cardId: string; selected?: boolean; onClick?: () => v
         selected ? 'ring-[3px] ring-amber-400 shadow-[0_10px_14px_rgba(0,0,0,0.4)]' : ''
       } ${red ? 'text-red-600' : 'text-slate-900'}`}
     >
-      <span className="absolute top-[3px] left-[5px] text-[0.75rem]">{rank}</span>
-      <span className="text-[1.7rem] mt-2">{SUIT_SYMBOL[suit]}</span>
+      <span className="absolute top-[3px] left-[5px] text-[0.75rem] leading-none text-center">
+        {rank}
+        {rank === 'J' && <span className="block text-[0.8rem] leading-none mt-0.5">{SUIT_SYMBOL[suit]}</span>}
+      </span>
+      {rank === 'J' ? (
+        <div className="flex flex-col items-center mt-3">
+          <JackFace twoEyed={isTwoEyedJack(cardId)} red={red} />
+          <span className={`mt-0.5 px-1.5 rounded-sm text-[8px] font-black leading-[11px] tracking-wide text-white ${isTwoEyedJack(cardId) ? 'bg-amber-500' : 'bg-red-600'}`}>
+            {isTwoEyedJack(cardId) ? 'WILD' : 'REMOVE'}
+          </span>
+        </div>
+      ) : (
+        <span className="text-[1.7rem] mt-2">{SUIT_SYMBOL[suit]}</span>
+      )}
     </button>
   );
 };
@@ -385,12 +424,13 @@ export default function SequenceGame() {
   };
 
   const handleCardTap = (cardId: string) => {
-    if (!isMyTurn || busy) return;
+    // Tapping a card is allowed on anyone's turn so you can see where it could go; only playing is turn-gated.
+    if (busy) return;
     setSelectedCard((prev) => (prev === cardId ? null : cardId));
   };
 
   const handleCellTap = async (idx: number) => {
-    if (!selectedCard || !validCells.includes(idx)) return;
+    if (!isMyTurn || !selectedCard || !validCells.includes(idx)) return;
     const action = isOneEyedJack(selectedCard) ? 'remove' : 'place';
     await call('/api/sequence/play', { cardId: selectedCard, action, cellIndex: idx }).catch(() => {});
     setSelectedCard(null);
@@ -763,7 +803,7 @@ export default function SequenceGame() {
                   <button
                     key={i}
                     onClick={() => handleCellTap(i)}
-                    disabled={!isValidTarget}
+                    disabled={!isValidTarget || !isMyTurn}
                     className={`relative aspect-square flex items-center justify-center ${
                       isCorner ? 'bg-[radial-gradient(circle,#fde68a,#d97706)]' : red ? 'bg-gradient-to-b from-[#fff7f5] to-[#fbe4de]' : 'bg-gradient-to-b from-[#fffdf6] to-[#efe8d4]'
                     } ${isValidTarget ? 'z-[2] animate-pulse' : ''}`}
@@ -806,6 +846,7 @@ export default function SequenceGame() {
 
           {!isFinished && selectedCard && (
             <p className="mt-2 mx-auto max-w-[26rem] text-center bg-black/45 border text-white text-[11px] font-extrabold px-3 py-1.5 rounded-2xl" style={{ borderColor: hintColor }}>
+              {!isMyTurn && <span className="text-amber-200">Preview — not your turn yet. </span>}
               {isOneEyedJack(selectedCard)
                 ? 'One-eyed jack — tap an opponent chip to remove it.'
                 : isTwoEyedJack(selectedCard)
@@ -842,7 +883,7 @@ export default function SequenceGame() {
             })()}
             <div className="flex items-center gap-2">
               <span className="shrink-0 px-4 py-3 rounded-full bg-black/40 border border-white/18 text-[11px] font-extrabold text-white/80 whitespace-nowrap">🂠 {game.cardsRemaining} in deck</span>
-              {selectedCard && isDead ? (
+              {selectedCard && isDead && isMyTurn ? (
                 <button
                   onClick={handleExchangeDead}
                   disabled={busy}
