@@ -9,7 +9,7 @@ export default function PrivacyPolicy() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Privacy Policy</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: October 3, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 14, 2026</p>
           <p>
             FamilyLedger ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our mobile application and services.
           </p>
@@ -52,9 +52,32 @@ export default function PrivacyPolicy() {
             <p>
               We use Google Analytics (Firebase Analytics) to understand how the app is used and to find and fix problems — things like which screens are opened and how often, not the content of your expenses or messages. This only runs if you've opted in via the consent prompt shown the first time you use the app; declining it doesn't limit any feature. You can find your current choice, and change it, from Settings.
             </p>
+            <h3 className="font-semibold text-primary">F.2 App Version Check and Device Information</h3>
+            <p>
+              When the app opens, it asks our server which version is current (sending only its own version number and whether it's the Android, iPhone/iPad or web version) so it can tell you when an update is available. We also store a push-notification token for your device so we can deliver notifications you've turned on.
+            </p>
+            <p>
+              <strong>iPhone and iPad:</strong> the FamilyLedger app for iPhone and iPad does not run Google Analytics or show the analytics consent prompt, does not use your device's advertising identifier, and does not track you across other companies' apps or websites. We do not use any data for advertising.
+            </p>
             <h3 className="font-semibold text-primary">G. Games Data</h3>
             <p>
-              If you play a multiplayer game (Ludo, 27-Hand Rummy, Business, Sweep, or Sudoku), we store the live game state needed to run it — token positions, dice rolls, scores, property ownership, deal progress, and your win/loss record — which is visible to the other players in that specific game. For card games with hidden information (27-Hand Rummy, Sweep), your card hand is stored so the game can be dealt and played correctly, but it is never readable by other players — only cards you actually play or that are otherwise revealed by the rules become visible to them. Quick-reaction emoji are shown briefly to other players in the game and are not kept as a permanent history.
+              If you play a multiplayer game (Ludo, 27-Hand Rummy, 13-Card Rummy, Business, Sweep, Sequence, Spade Pledge, Chess, Sudoku or Scramble), we store the live game state needed to run it — token positions, dice rolls, scores, property ownership, deal progress, and your win/loss record — which is visible to the other players in that specific game. For card games with hidden information (27-Hand Rummy, Sweep), your card hand is stored so the game can be dealt and played correctly, but it is never readable by other players — only cards you actually play or that are otherwise revealed by the rules become visible to them. Quick-reaction emoji are shown briefly to other players in the game and are not kept as a permanent history.
+            </p>
+            <h3 className="font-semibold text-primary">G.1 Leaderboards and Ranking Alerts</h3>
+            <p>
+              Sudoku and Scramble have leaderboards. To put you on one, we store your display name, profile picture, and your scores (best and total score, and games played) for each difficulty or word length you play — and these are visible to other signed-in FamilyLedger users who open that leaderboard. If another player's new score moves them above you, we may send you an in-app and push notification telling you your rank changed (for example, that you slipped down a place). To do this we keep a private record of the current ranking positions for each leaderboard. You can turn off notifications in your device settings or in the app.
+            </p>
+            <h3 className="font-semibold text-primary">G.2 Voice Chat</h3>
+            <p>
+              Some games offer voice chat. It only uses your microphone while you've joined it, and your device asks for microphone permission first. Audio is sent directly between the players in that game (peer-to-peer) and is not recorded or stored by us. To set up those direct connections, the players' devices exchange connection details through our database, and Google's public STUN servers help each device discover its own network address — as is normal for peer-to-peer calls, the other participants' devices can learn your network (IP) address while you're connected.
+            </p>
+            <h3 className="font-semibold text-primary">G.3 Online Status</h3>
+            <p>
+              The app regularly records when it was last open on your device so that members of your groups, your friends, and the players in a game you're in can see a green "online" dot next to your name. It shows whether you're online, not what you're doing.
+            </p>
+            <h3 className="font-semibold text-primary">G.4 Sharing Your Wins and Weekly Summary</h3>
+            <p>
+              When you choose to share a game win, a "Spread the Word" poster, or your weekly summary, the picture is created on your device — it includes your display name, the result or statistics you're sharing, and a link to the app — and is handed to the app you pick (WhatsApp, Instagram, etc.) through your phone's share sheet. We don't receive that picture; once you post it, it is governed by that other app's own terms and privacy policy. Separately, each week we calculate summary statistics from your own activity in the app (for example, counts of expenses logged or readings recorded) and notify you; these are shown only to you.
             </p>
             <h3 className="font-semibold text-primary">H. Game &amp; Group Chat</h3>
             <p>
@@ -79,13 +102,16 @@ export default function PrivacyPolicy() {
             <p>
               If you use Blood Pressure, Glucose, or Medicine tracking, we store the readings, dose logs, and (for medicines) the illness/incident grouping and schedule you enter. This data stays private to you by default. You can choose to share it with a specific group and/or specific friends (visible to them the same way a shared goal is), and/or grant a delegate (e.g. a family caregiver) permission to log entries on your behalf — a delegate you've added can add and view entries for you, exactly as if they were you, until you remove that permission.
             </p>
-            <h3 className="font-semibold text-primary">M.1 Payment Receipts You Share</h3>
-            <p>
-              If you share a payment receipt (for example from PhonePe, Google Pay or Paytm) to FamilyLedger, the picture is read on your device to find the amount, the payee and the date — it is not sent to any third-party text-recognition service. You then review the expense before anything is saved. If you keep the receipt attached, a small compressed copy is stored with that expense like any other receipt photo you add. We also remember, privately for your account only, the description and category you chose for a payee and a short marker of each receipt you added so we can warn you about duplicates.
-            </p>
             <h3 className="font-semibold text-primary">M. Shared Reminders Data</h3>
             <p>
               If you create a Shared Reminder, we store its text, schedule, and (if you enable it) who has acknowledged or completed it. A reminder is visible to whichever group and/or specific friends you choose to share it with when you create it.
+            </p>
+            <h3 className="font-semibold text-primary">N. Payment Receipts You Share</h3>
+            <p>
+              If you share a payment receipt (for example from PhonePe, Google Pay or Paytm) to FamilyLedger, the picture or PDF is read on your own device — using Google's on-device text recognition on Android and Apple's on-device Vision framework on iPhone and iPad — to find the amount, the payee, the date and the transaction reference. The picture is not sent to any third-party text-recognition service, and the original file is not kept by us. We never connect to your payment apps or bank accounts; we only see the receipt you choose to share.
+            </p>
+            <p>
+              The details are pre-filled into a new expense for you to review before anything is saved. If you keep the receipt picture attached, a small compressed copy is stored with that expense like any other receipt photo, and is visible to the members of the group the expense belongs to; you can remove it before saving. To make the feature more convenient we also keep, privately for your account only: the description and category you chose for each payee (so the next receipt from the same payee is pre-filled the way you like), and a short marker for each receipt you've added (its transaction reference), so we can warn you if you share the same receipt twice. These are deleted when you delete your account and are included in Download My Data.
             </p>
           </div>
         </section>
@@ -98,6 +124,8 @@ export default function PrivacyPolicy() {
             <li>To facilitate expense sharing, income tracking, budgets, and ledger balance calculations</li>
             <li>To operate the Personal Loans and Shopkeeper mode features you choose to use</li>
             <li>To notify you about changes to our service, group activities, loan reminders, or account-wide announcements from our team</li>
+            <li>To read payment receipts you choose to share and pre-fill an expense for you to review</li>
+            <li>To run the games, leaderboards, and the ranking and turn alerts you've enabled</li>
             <li>To provide customer support</li>
             <li>To detect, prevent, and address technical issues</li>
           </ul>
@@ -107,6 +135,9 @@ export default function PrivacyPolicy() {
           <h2 className="text-xl font-bold text-primary">3. Data Storage and Sync</h2>
           <p>
             FamilyLedger uses industry-standard cloud services (Firebase) to store and synchronize your data in real-time across your devices and with group, loan, or shop members as applicable. Your data is stored securely and access is restricted according to our security rules. App Lock settings are the one exception — they are stored only on your local device, never in the cloud.
+          </p>
+          <p>
+            Our application servers and database are hosted on Google Cloud in Singapore. Some Google services we rely on (such as sign-in, push notifications and, where you've opted in, analytics) may also process limited data in other regions.
           </p>
           <p>
             Goal amounts and Financial Account balances/account numbers (Sections 1.J–K) get an extra layer on top of that: they're individually encrypted before being written to our database, using a key scoped to that specific goal or account. Even someone with direct database access sees only unreadable ciphertext, not the real number — only you, authenticated as yourself (or someone you've explicitly shared that specific goal with, for that goal only), can ever have it decrypted.
@@ -125,6 +156,9 @@ export default function PrivacyPolicy() {
             <li>With the owner and staff of a shop you belong to, if you use Shopkeeper mode</li>
             <li>With any other signed-in FamilyLedger user who views your public profile — your level, XP, streaks, and badges only, never your coin balance or points activity log</li>
             <li>With your friends and members of your groups, on leaderboards that additionally show your coin balance</li>
+            <li>With any signed-in FamilyLedger user who opens a Sudoku or Scramble leaderboard — your display name, profile picture, and scores for that board</li>
+            <li>With the other participants in a voice chat you join — they can hear you, and may see your network (IP) address as part of the direct connection</li>
+            <li>With the app you choose, when you share a win, poster, or weekly summary picture from your device</li>
             <li>With a group and/or specific friends you choose to share a savings goal, health reading, or reminder with — off by default, only shared if you explicitly turn sharing on for that item</li>
             <li>With a delegate/caregiver you've granted permission to log health data on your behalf, and vice versa if someone has granted that permission to you</li>
             <li>With our team, if you or someone else reports a chat message for review</li>
@@ -169,7 +203,7 @@ export default function PrivacyPolicy() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-primary">8. International Data Transfers</h2>
           <p>
-            We use Google Firebase/Google Cloud to store and process data, which may transfer or store information outside your own country, including in the United States. Where this involves a transfer out of the EEA, UK, or Switzerland, it's covered by Google Cloud's own data processing terms, which incorporate the EU Standard Contractual Clauses and equivalent safeguards for exactly this purpose.
+            We use Google Firebase/Google Cloud to store and process data. Our servers and database are located in Singapore, and some Google services we use may process limited data in other regions, including the United States — so your information may be transferred outside your own country. Where this involves a transfer out of the EEA, UK, or Switzerland, it's covered by Google Cloud's own data processing terms, which incorporate the EU Standard Contractual Clauses and equivalent safeguards for exactly this purpose.
           </p>
         </section>
 

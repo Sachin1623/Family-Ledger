@@ -9,7 +9,7 @@ export default function Terms() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Terms of Service</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: October 3, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 14, 2026</p>
           <p>
             Welcome to FamilyLedger. By using our application, you agree to these terms. Please read them carefully.
           </p>
@@ -65,21 +65,49 @@ export default function Terms() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-bold text-primary">8. Limitation of Liability</h2>
+          <h2 className="text-xl font-bold text-primary">8. Games, Points &amp; Leaderboards</h2>
+          <p>
+            The games in FamilyLedger are for entertainment among friends and family. They are not gambling: you never stake or win real money, and nothing in the app can be bought or won for cash. Points, XP, coins, badges, levels and rankings are virtual, have no monetary value, cannot be exchanged or transferred, and may be adjusted, reset or removed by us (for example to fix a bug or an unfair result). You agree to play fairly: no cheating, exploiting bugs, using automation or scripts, or using several accounts to inflate scores or rankings. Some leaderboards show your display name, picture and scores to other users, and we may send you notifications about changes in your ranking — you can turn notifications off at any time.
+          </p>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xl font-bold text-primary">9. Chat and Voice Chat</h2>
+          <p>
+            You are responsible for what you say in text or voice chat. Do not record, copy or share other people's voice or messages without their consent, and do not use chat for harassment, hate, threats, spam or anything unlawful. We may remove content, limit chat features, or suspend accounts that break these rules, including after another user reports a message.
+          </p>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xl font-bold text-primary">10. Receipt Sharing</h2>
+          <p>
+            You can share a payment receipt to FamilyLedger to pre-fill an expense. This is a convenience: the amount, payee, date and other details are read automatically and <strong>may be wrong or incomplete</strong>. You must check every detail before saving, and you remain responsible for the entries you save. Use it only for payments you actually made and receipts you have not altered. FamilyLedger is not affiliated with, endorsed by, or connected to PhonePe, Google Pay, Paytm, any bank, or any payment provider — those names and logos belong to their owners. We do not access your payment accounts or those apps' data; we only read the receipt you choose to share.
+          </p>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xl font-bold text-primary">11. Sharing Outside the App</h2>
+          <p>
+            You can share pictures such as game wins, posters and summaries to other apps. These are created on your device and may include your display name and statistics. What you post, and where, is your own choice and responsibility, and the other app's terms apply once you share.
+          </p>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xl font-bold text-primary">12. Limitation of Liability</h2>
           <p>
             FamilyLedger is provided "as is" without any warranties of any kind. We do not guarantee that the app will always be safe, secure, or error-free, or that it will function without disruptions, delays, or imperfections.
           </p>
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-bold text-primary">9. Termination</h2>
+          <h2 className="text-xl font-bold text-primary">13. Termination</h2>
           <p>
             We reserve the right to terminate or suspend your account and access to the service at our sole discretion, without notice, for conduct that we believe violates these Terms or is harmful to other users of the service, us, or third parties, or for any other reason.
           </p>
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-bold text-primary">10. Changes to Terms</h2>
+          <h2 className="text-xl font-bold text-primary">14. Changes to Terms</h2>
           <p>
             We may modify these terms at any time. If we make changes, we will notify you by revising the date at the top of this policy. Your continued use of the service after such changes indicates your acceptance of the new Terms.
           </p>

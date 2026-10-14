@@ -20,6 +20,7 @@ export async function exportMyData(uid: string): Promise<void> {
     userPointsSnap,
     myLedgerSnap,
     friendshipsSnap,
+    receiptPayeesSnap,
   ] = await Promise.all([
     getDoc(doc(db, 'users', uid)),
     getDoc(doc(db, 'users', uid, 'private', 'info')),
@@ -30,6 +31,7 @@ export async function exportMyData(uid: string): Promise<void> {
     getDoc(doc(db, 'userPoints', uid)),
     getDocs(query(collection(db, 'pointsLedger'), where('uid', '==', uid))),
     getDocs(query(collection(db, 'friendships'), where('participants', 'array-contains', uid))),
+    getDoc(doc(db, 'receiptPayees', uid)),
   ]);
 
   // `expenses` rules gate reads on group membership (via `canModifyGroup(resource.data.groupId)`),
@@ -73,6 +75,8 @@ export async function exportMyData(uid: string): Promise<void> {
       ledger: myLedgerSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
     },
     friendships: friendshipsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    // What you chose to call each payee when adding expenses from shared payment receipts.
+    receiptPayeeChoices: receiptPayeesSnap.exists() ? receiptPayeesSnap.data() : null,
   };
 
   const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });

@@ -47,6 +47,7 @@ export default function DataDeletion() {
             <li><strong>Financial Records:</strong> Every goal, financial account, and loan ledger you own privately (not shared with a group or friend), including their full history.</li>
             <li><strong>Health Tracking:</strong> Your blood pressure, glucose, and medicine records, including any medical incidents/illnesses and baby vaccination profiles you created — even ones you'd shared read-only access to.</li>
             <li><strong>Game History:</strong> Your personal gamification points, badges, and leaderboard entries.</li>
+            <li><strong>Receipt Preferences:</strong> The payee names and categories we remembered for you, and the markers used to warn about duplicate receipts.</li>
             <li><strong>Usage History:</strong> Activity, login, and interaction logs.</li>
           </ul>
         </section>

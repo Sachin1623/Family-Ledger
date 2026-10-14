@@ -109,7 +109,7 @@ const CATEGORIES: DataCategory[] = [
   },
   {
     icon: 'stadium',
-    title: 'Games (Ludo, Rummy, Business, Sweep, Sudoku)',
+    title: 'Games (Ludo, Rummy, Business, Sweep, Sequence, Spade Pledge, Chess, Sudoku, Scramble)',
     rows: [
       {
         data: 'Board/turn state — token positions, dice rolls, scores, property ownership, deal progress',
@@ -135,6 +135,53 @@ const CATEGORIES: DataCategory[] = [
         data: 'Game chat messages',
         why: 'Let players in a game talk to each other',
         sharedWith: 'Other players currently in that specific game',
+      },
+      {
+        data: 'Sudoku & Scramble leaderboard entry — your display name, profile picture and scores',
+        why: 'Rank players against each other, and tell you if someone passes you',
+        sharedWith: 'Any signed-in FamilyLedger user who opens that leaderboard',
+      },
+      {
+        data: 'Voice chat audio (only while you have joined)',
+        why: 'Let players talk to each other during a game',
+        sharedWith: 'Players in that game, directly device-to-device — not recorded or stored by us; they may see your network (IP) address',
+      },
+      {
+        data: 'Online status (when the app was last open)',
+        why: 'Show a green "online" dot next to your name',
+        sharedWith: 'Members of your groups, your friends, and players in your game',
+      },
+    ],
+  },
+  {
+    icon: 'receipt_long',
+    title: 'Payment Receipts You Share (PhonePe, Google Pay, Paytm)',
+    rows: [
+      {
+        data: 'The receipt picture or PDF you share, and the amount, payee, date and transaction reference read from it',
+        why: 'Pre-fill an expense for you to review — the reading happens on your device, nothing is sent to a text-recognition service',
+        sharedWith: 'Nobody until you save the expense; if you keep the picture attached, the members of that expense\'s group can see it like any receipt photo',
+      },
+      {
+        data: 'The description and category you chose for each payee',
+        why: 'Pre-fill the next receipt from the same payee the way you like',
+        sharedWith: 'Nobody — private to your account',
+      },
+      {
+        data: 'A marker for each receipt you added (its transaction reference)',
+        why: 'Warn you if you share the same receipt twice',
+        sharedWith: 'Nobody — private to your account',
+      },
+    ],
+  },
+  {
+    icon: 'share',
+    title: 'Pictures You Share (wins, posters, weekly summary)',
+    rows: [
+      {
+        data: 'A picture made on your device with your display name, the result or statistics, and a link to the app',
+        why: 'Let you show off a win or tell friends about the app',
+        sharedWith: "Only the app you pick in your phone's share sheet — we don't receive it",
       },
     ],
   },
@@ -193,8 +240,13 @@ const CATEGORIES: DataCategory[] = [
     rows: [
       {
         data: 'Push notification token, notification preferences',
-        why: 'Deliver alerts you\'ve opted into (group activity, reminders, turn notifications, announcements)',
+        why: 'Deliver alerts you\'ve opted into (group activity, reminders, turn notifications, ranking changes, announcements)',
         sharedWith: 'Nobody — used only by our servers to deliver your notifications',
+      },
+      {
+        data: 'Weekly summary statistics calculated from your own activity',
+        why: 'Send you a recap of your week',
+        sharedWith: 'Nobody — only you',
       },
     ],
   },
@@ -206,6 +258,11 @@ const CATEGORIES: DataCategory[] = [
         data: 'Activity logs, app version, rough usage patterns',
         why: 'Improve the app, power the Activity Feed, detect and fix bugs',
         sharedWith: 'Nobody outside FamilyLedger',
+      },
+      {
+        data: 'Google Analytics screen-view statistics — only if you accept the consent prompt; never in the iPhone/iPad app',
+        why: 'Understand which screens are used and find problems',
+        sharedWith: 'Google (our analytics provider) — you can switch it off any time in Profile',
       },
     ],
   },

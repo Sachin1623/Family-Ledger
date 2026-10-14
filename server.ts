@@ -567,6 +567,8 @@ async function hardDeleteUserData(
     // Social/reminders — personal only.
     { name: 'userWeeklySummaries', field: 'userId' },
     { name: 'inviteNotices', field: 'toUid' },
+    // Shared payment receipts: the user's remembered payee names/categories (doc id = uid).
+    { name: 'receiptPayees', field: '__docId' },
     // Account/auth-adjacent
     { name: 'loginEvents', field: 'uid' },
     { name: 'growthEvents', field: 'uid' },
@@ -585,6 +587,29 @@ async function hardDeleteUserData(
       pushDeleteAll(ops, snap);
     }
     if (ops.length > 0) await commitInChunks(db, ops);
+  }
+
+  // Shared payment receipts: the duplicate-receipt markers (doc id = `${uid}_${transactionId}`), and this user's
+  // entry in each leaderboard's rank snapshot (kept only to detect rank changes).
+  {
+    const idPath = admin.firestore.FieldPath.documentId();
+    const markers = await db.collection('receiptTxns').where(idPath, '>=', `${uid}_`).where(idPath, '<', `${uid}_\uf8ff`).get();
+    const markerOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    pushDeleteAll(markerOps, markers);
+    if (markerOps.length > 0) await commitInChunks(db, markerOps);
+
+    const rankDocs = await db.collection('leaderboardRanks').get();
+    for (const rd of rankDocs.docs) {
+      const data = rd.data();
+      if (data.ranks?.[uid] !== undefined || data.notified?.[uid] !== undefined) {
+        await rd.ref
+          .update(
+            new admin.firestore.FieldPath('ranks', uid), admin.firestore.FieldValue.delete(),
+            new admin.firestore.FieldPath('notified', uid), admin.firestore.FieldValue.delete(),
+          )
+          .catch(() => {});
+      }
+    }
   }
 
   // userPoints' own subcollections (badges/meta/habitStreaks) don't get swept by the parent

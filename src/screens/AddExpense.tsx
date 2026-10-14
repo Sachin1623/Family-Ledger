@@ -597,7 +597,7 @@ export default function AddExpense() {
       const sharedTxnId = (location.state as { txnId?: string } | null)?.txnId;
       if (sharedTxnId) {
         // So sharing the same receipt again can warn that it was already added.
-        setDoc(doc(db, 'receiptTxns', `${user.uid}_${sharedTxnId}`), { at: new Date().toISOString(), groupId }, { merge: true }).catch(() => {});
+        setDoc(doc(db, 'receiptTxns', `${user.uid}_${sharedTxnId}`), { uid: user.uid, at: new Date().toISOString(), groupId }, { merge: true }).catch(() => {});
       }
       const sharedPayeeKey = (location.state as { payeeKey?: string } | null)?.payeeKey;
       if (sharedPayeeKey && description.trim()) {
