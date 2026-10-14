@@ -3237,7 +3237,7 @@ async function startServer() {
       return res.status(400).json({ error: 'Unknown leaderboard.' });
     }
     try {
-      const TRACK = 12; // ranks tracked, so a drop from 10 to 11 or 12 is still visible
+      const TRACK = 5000; // ranks remembered per board (keeps the snapshot doc well under Firestore's 1 MB limit)
       const snap = board === 'sudoku'
         ? await db.collection('sudokuLeaderboard').where('difficulty', '==', key).get()
         : await db.collection('scrambleLeaderboard').where('wordLength', '==', Number(key)).get();
@@ -3254,13 +3254,36 @@ async function startServer() {
       const newRanks: Record<string, number> = {};
       standings.slice(0, TRACK).forEach((e, i) => { newRanks[e.uid] = i + 1; });
 
+      // How often a slip is worth a notification depends on where you stand: every single place in the
+      // Top 10, then every 10 places up to rank 100, every 100 up to 1000, every 1000 up to 10000, and
+      // so on. `notified[uid]` remembers the rank the player was last told about (or last climbed to), so
+      // slips add up between alerts; climbing back up moves that marker up with you.
+      const stepFor = (rank: number) => (rank <= 10 ? 1 : Math.pow(10, Math.ceil(Math.log10(rank)) - 1));
+
+      type Alert = { uid: string; from: number; to: number; prevRank: number };
       const rankRef = db.collection('leaderboardRanks').doc(`${board}_${key}`);
-      const prevRanks: Record<string, number> | null = await db.runTransaction(async (tx) => {
-        const prev = await tx.get(rankRef);
-        tx.set(rankRef, { ranks: newRanks, updatedAt: new Date().toISOString() });
-        return prev.exists ? ((prev.data()!.ranks || {}) as Record<string, number>) : null;
+      const alerts: Alert[] = await db.runTransaction(async (tx) => {
+        const prevDoc = await tx.get(rankRef);
+        const prevRanks: Record<string, number> = prevDoc.exists ? (prevDoc.data()!.ranks || {}) : {};
+        const prevNotified: Record<string, number> = prevDoc.exists ? (prevDoc.data()!.notified || {}) : {};
+        const newNotified: Record<string, number> = {};
+        const out: Alert[] = [];
+        for (const [uid, rank] of Object.entries(newRanks)) {
+          const baseline = prevNotified[uid] ?? prevRanks[uid];
+          if (baseline === undefined) { newNotified[uid] = rank; continue; } // new to the board (or first-ever check): nothing to slip from
+          if (rank < baseline) { newNotified[uid] = rank; continue; } // climbed — measure future slips from here
+          if (rank > baseline && rank - baseline >= stepFor(baseline) && uid !== decoded.uid) {
+            out.push({ uid, from: baseline, to: rank, prevRank: prevRanks[uid] ?? baseline });
+            newNotified[uid] = rank;
+          } else {
+            newNotified[uid] = baseline;
+          }
+        }
+        // First-ever check of a board only records the standings — nobody is alerted for history.
+        tx.set(rankRef, { ranks: newRanks, notified: newNotified, updatedAt: new Date().toISOString() });
+        return prevDoc.exists ? out : [];
       });
-      if (!prevRanks) return res.json({ ok: true, notified: 0 });
+      if (alerts.length === 0) return res.json({ ok: true, notified: 0 });
 
       const nameOf = (uid: string) => standings.find((e) => e.uid === uid)?.name || 'Someone';
       const boardLabel = board === 'sudoku'
@@ -3268,39 +3291,33 @@ async function startServer() {
         : `Scramble ${key}-letter`;
       const route = `/games/${board}/leaderboard`;
       const callerNew = newRanks[decoded.uid];
-      const callerPrev = prevRanks[decoded.uid];
 
       let notified = 0;
-      for (const [uid, oldRank] of Object.entries(prevRanks)) {
-        if (uid === decoded.uid || oldRank > 10) continue;
-        const newRank = newRanks[uid] ?? TRACK + 1;
-        if (newRank <= oldRank) continue;
-        // The caller is the one who just scored, so if they now sit above this player (and were below
-        // before) they're the one who did it.
-        const culprit = callerNew !== undefined && callerNew < newRank && (callerPrev === undefined || callerPrev > oldRank) ? nameOf(decoded.uid) : null;
-        const rankText = newRank > TRACK ? `out of the Top ${TRACK}` : `#${newRank}`;
+      for (const a of alerts) {
+        // The caller is the one who just scored, so if they now sit above this player they're the one who did it.
+        const culprit = callerNew !== undefined && callerNew < a.to ? nameOf(decoded.uid) : null;
         const lines = culprit
           ? [
-              `🔥 ${culprit} just snatched your spot! You slipped from #${oldRank} to ${rankText} on ${boardLabel}. Take it back!`,
-              `😤 You've been overtaken! ${culprit} pushed you from #${oldRank} to ${rankText} on ${boardLabel}. Time to fight back!`,
-              `⚔️ Rank alert: #${oldRank} → ${rankText} on ${boardLabel}. ${culprit} is coming for your crown — are you going to let that slide?`,
+              `🔥 ${culprit} just snatched your spot! You slipped from #${a.from} to #${a.to} on ${boardLabel}. Take it back!`,
+              `😤 You've been overtaken! ${culprit} pushed you from #${a.from} to #${a.to} on ${boardLabel}. Time to fight back!`,
+              `⚔️ Rank alert: #${a.from} → #${a.to} on ${boardLabel}. ${culprit} is coming for your crown — are you going to let that slide?`,
             ]
           : [
-              `😤 You've slipped from #${oldRank} to ${rankText} on ${boardLabel}. Someone is coming for your crown!`,
-              `🔥 Your #${oldRank} spot on ${boardLabel} just fell — you're ${rankText} now. Time to fight back!`,
+              `😤 You've slipped from #${a.from} to #${a.to} on ${boardLabel}. Someone is coming for your crown!`,
+              `🔥 Your #${a.from} spot on ${boardLabel} just fell — you're #${a.to} now. Time to fight back!`,
             ];
         const body = lines[Math.floor(Math.random() * lines.length)];
-        const title = newRank > 10 ? '🚨 Knocked out of the Top 10!' : '📉 You just got overtaken!';
+        const title = a.from <= 10 && a.to > 10 ? '🚨 Knocked out of the Top 10!' : a.to <= 10 ? '📉 You just got overtaken!' : "📉 You're sliding down the board!";
         notified++;
         try {
-          const userData = (await db.collection('users').doc(uid).get()).data() || {};
+          const userData = (await db.collection('users').doc(a.uid).get()).data() || {};
           const foregrounded = userData.appForegroundAt && Date.now() - new Date(userData.appForegroundAt).getTime() < 45000;
           if (!foregrounded) {
-            const tokens = await collectPushTokens(db, [uid], 'notificationsEnabled');
+            const tokens = await collectPushTokens(db, [a.uid], 'notificationsEnabled');
             await sendPush(tokens, title, body, { type: 'leaderboard_slip', route });
           }
-          await createInviteNotice(db, uid, 'game', title, body, route);
-          await logFeedActivity(db, { userId: uid, type: 'leaderboard_slip', description: body, data: { board, key, oldRank, newRank, route } });
+          await createInviteNotice(db, a.uid, 'game', title, body, route);
+          await logFeedActivity(db, { userId: a.uid, type: 'leaderboard_slip', description: body, data: { board, key, oldRank: a.from, newRank: a.to, route } });
         } catch (err) {
           console.error('leaderboard slip notify failed:', err);
         }
