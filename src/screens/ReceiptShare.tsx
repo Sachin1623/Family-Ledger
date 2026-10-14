@@ -92,6 +92,21 @@ export default function ReceiptShare() {
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
             className="mt-1 w-full text-3xl font-black text-primary bg-surface rounded-xl px-3 py-2 outline-none"
           />
+          {parsed.alternatives.length > 1 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-text-muted">Which is right?</span>
+              {parsed.alternatives.map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setAmount(a)}
+                  className={clsx('px-3 py-1 rounded-full text-xs font-black border', amount === a ? 'bg-primary text-white border-primary' : 'bg-white text-primary border-border-subtle')}
+                >
+                  ₹{a}
+                </button>
+              ))}
+            </div>
+          )}
         </label>
         <label className="block">
           <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{parsed.kind === 'bill' ? `Paid to · ${parsed.billType || 'Bill'}` : 'Paid to'}</span>

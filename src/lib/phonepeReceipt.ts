@@ -9,7 +9,8 @@ export interface ParsedReceipt {
   status: 'success' | 'failed' | 'pending' | 'unknown';
   direction: 'paid' | 'received' | 'unknown';
   amount: string; // digits with optional decimals, no symbol or commas
-  amountSure: boolean; // seen with a ₹ sign and matching a second amount on the receipt
+  amountSure: boolean; // matches what was debited, and no other reading fits as well
+  alternatives: string[]; // when two readings both fit (e.g. 90 vs 790), both are offered to the user
   payee: string;
   upiId: string;
   txnId: string;
@@ -39,7 +40,7 @@ const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
   const out: ParsedReceipt = {
-    isPhonePe: false, status: 'unknown', direction: 'unknown', amount: '', amountSure: false,
+    isPhonePe: false, status: 'unknown', direction: 'unknown', amount: '', amountSure: false, alternatives: [],
     payee: '', upiId: '', txnId: '', utr: '', paidFrom: '', kind: 'payment', billType: '', reference: '', categoryHint: '', message: '', date: '', time: '', notes: [],
   };
 
@@ -69,7 +70,7 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
 
   // Everything between "Paid to" and "Transfer Details" is the payee block: name, UPI id, amount.
   const paidIdx = lines.findIndex((l) => /^paid\s+to$/i.test(l));
-  const endIdx = lines.findIndex((l, i) => i > paidIdx && /transfer\s+details/i.test(l));
+  const endIdx = lines.findIndex((l, i) => i > paidIdx && /(transfer|payment|bill)\s+details|transaction\s*id|^debited\s+from$/i.test(l));
   const block = paidIdx >= 0 ? lines.slice(paidIdx + 1, endIdx > paidIdx ? endIdx : paidIdx + 8) : [];
 
   const nameLines: string[] = [];
@@ -79,7 +80,7 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
     if (l.includes('@')) { upiParts.push(l); continue; }
     if (/^[A-Z0-9-]{8,}$/.test(l) && !/\s/.test(l) && upiParts.length === 0 && nameLines.length > 0) { upiParts.push(l); continue; } // first half of a wrapped UPI id
     if (l.length <= 3) continue; // the round avatar's initials
-    if (upiParts.length > 0) { upiParts.push(l); continue; } // second half of a wrapped UPI id
+    if (upiParts.length > 0) { if (!upiParts.join('').includes('@')) upiParts.push(l); continue; } // second half of a wrapped UPI id (never anything after a complete one)
     nameLines.push(l);
   }
   out.payee = nameLines.join(' ');
@@ -109,6 +110,7 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
     [/uber|ola\b|rapido|irctc|redbus|metro|fastag|petrol|fuel|indian oil|bharat petroleum|hp pay/i, 'travel'],
     [/amazon|flipkart|myntra|ajio|meesho|nykaa/i, 'shopping'],
     [/apollo|pharm|medplus|netmeds|1mg|hospital|clinic|diagnostic/i, 'health'],
+    [/florist|flower|archies|ferns n petals|fnp|gift/i, 'gifts'],
     [/netflix|hotstar|spotify|prime video|bookmyshow|pvr|inox|sony ?liv|zee5/i, 'ent'],
     [/airtel|jio|vodafone|\bvi\b|bsnl|electricity|bescom|tata power|adani|water|gas|broadband|dth|tata play|recharge/i, 'bills'],
   ];
@@ -136,41 +138,79 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
   // Debited from: the account / wallet that paid
   const dIdx = lines.findIndex((l) => /^debited\s+from$/i.test(l));
   if (dIdx >= 0) {
-    const cand = lines.slice(dIdx + 1, dIdx + 4).find((l) => !MONEY_LINE.test(l) && l.length > 2);
-    if (cand) out.paidFrom = cand;
+    const sources: string[] = [];
+    for (const l of lines.slice(dIdx + 1, dIdx + 8)) {
+      if (/^(utr|powered by|upi|unified)/i.test(l) || /bank$/i.test(l) && sources.length > 0) break;
+      if (MONEY_LINE.test(l) || l.length <= 2) continue;
+      sources.push(l);
+      if (sources.length === 3) break;
+    }
+    out.paidFrom = sources.join(' + ');
   }
 
   const mIdx = lines.findIndex((l) => /^message$/i.test(l));
   if (mIdx >= 0 && lines[mIdx + 1] && !/transaction\s*id/i.test(lines[mIdx + 1])) out.message = lines[mIdx + 1];
 
-  // Amount: the same figure appears twice on a receipt (beside the payee, and again under "Debited from").
-  // The reader often mangles the ₹ sign into a leading digit ("7202" for ₹202), so when one figure is exactly
-  // another with one extra digit in front, the shorter one is the real amount.
+  // Amount: the figure shown beside the payee must equal what was debited — from one source, or several added
+  // together (a payment can be split between the wallet and a bank). The phone's text reader often mangles the ₹ sign
+  // into a leading digit ("790" for ₹90, "733.02" for ₹33.02), so every figure is tried both as read and with its first
+  // character dropped, and the reading where header = sum of debits wins.
   type Tok = { value: string; line: number };
   const toks: Tok[] = [];
   lines.forEach((l, i) => {
     const m = l.match(MONEY_LINE);
     if (m) toks.push({ value: m[2].replace(/,/g, ''), line: i });
   });
-  const canon = (v: string) => {
-    const shorter = toks.find((u) => u.value !== v && v.length === u.value.length + 1 && v.slice(1) === u.value);
-    return shorter ? shorter.value : v;
-  };
-  const resolved = toks.map((t) => ({ ...t, value: canon(t.value) }));
-  const counts = new Map<string, number>();
-  resolved.forEach((t) => counts.set(t.value, (counts.get(t.value) || 0) + 1));
-  const repeated = resolved.find((t) => (counts.get(t.value) || 0) >= 2);
-  const inBlock = resolved.find((t) => paidIdx >= 0 && t.line > paidIdx && (endIdx < 0 || t.line < endIdx));
-  const pick = repeated || inBlock || resolved[0];
-  if (pick) {
-    out.amount = pick.value;
-    out.amountSure = !!repeated;
+  const cents = (v: string) => Math.round(parseFloat(v) * 100);
+  // Only a leading 7, 2 or 3 can be a ₹ sign read as a digit; any other first digit is a real part of the amount.
+  const stripped = (v: string) => (v.length > 1 && '723'.includes(v[0]) && /^\d/.test(v.slice(1)) ? v.slice(1) : v);
+  const headerTok = toks.find((t) => dIdx < 0 || t.line < dIdx);
+  const debitToks = dIdx >= 0 ? toks.filter((t) => t.line > dIdx) : [];
+  let resolved = false;
+  if (headerTok && debitToks.length > 0 && debitToks.length <= 3) {
+    const group = [headerTok, ...debitToks];
+    // try the fewest "dropped first character" readings first
+    const masks = Array.from({ length: 1 << group.length }, (_, i) => i).sort((x, y) => x.toString(2).replace(/0/g, '').length - y.toString(2).replace(/0/g, '').length);
+    const fits: string[] = [];
+    for (const mask of masks) {
+      const vals = group.map((t, i) => (mask & (1 << i) ? stripped(t.value) : t.value));
+      if (vals.some((v) => /^0\d/.test(v))) continue; // "02" is a chopped "202", not a real amount
+      const sum = vals.slice(1).reduce((acc, v) => acc + cents(v), 0);
+      if (cents(vals[0]) === sum && sum > 0 && !fits.includes(vals[0])) fits.push(vals[0]);
+    }
+    if (fits.length > 0) {
+      // Usually exactly one reading fits. If several do (the same stray digit sits in front of both the total
+      // and a debit — 790 = 733.02 + 56.98 and 90 = 33.02 + 56.98), start with the smallest and offer all.
+      fits.sort((a, b) => cents(a) - cents(b));
+      out.amount = fits[0];
+      out.amountSure = fits.length === 1;
+      if (fits.length > 1) out.alternatives = fits;
+      resolved = true;
+    }
+  }
+  if (!resolved) {
+    // No consistent reading: fall back to the figure that repeats, else the first one near the payee.
+    const canon = (v: string) => {
+      const shorter = toks.find((u) => u.value !== v && v.length === u.value.length + 1 && v.slice(1) === u.value);
+      return shorter ? shorter.value : v;
+    };
+    const rt = toks.map((t) => ({ ...t, value: canon(t.value) }));
+    const counts = new Map<string, number>();
+    rt.forEach((t) => counts.set(t.value, (counts.get(t.value) || 0) + 1));
+    const repeated = rt.find((t) => (counts.get(t.value) || 0) >= 2);
+    const inBlock = rt.find((t) => paidIdx >= 0 && t.line > paidIdx && (endIdx < 0 || t.line < endIdx));
+    const pick = repeated || inBlock || rt[0];
+    if (pick) {
+      out.amount = pick.value;
+      out.amountSure = !!repeated;
+    }
   }
 
   if (!out.isPhonePe) out.notes.push("This doesn't look like a PhonePe receipt.");
   if (out.status !== 'success') out.notes.push(out.status === 'unknown' ? "Couldn't confirm the payment succeeded." : `Payment status looks ${out.status} — check before saving.`);
   if (out.direction === 'received') out.notes.push('This looks like money you received, not a payment you made.');
   if (!out.amount) out.notes.push("Couldn't read the amount.");
+  else if (out.alternatives.length > 1) out.notes.push(`The amount could be ${out.alternatives.map((a) => '₹' + a).join(' or ')} — tap the right one.`);
   else if (!out.amountSure) out.notes.push('Please double-check the amount.');
   if (!out.payee) out.notes.push("Couldn't read who was paid.");
   return out;
