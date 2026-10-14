@@ -37,6 +37,7 @@ export default function ReceiptShare() {
     q.set('amount', amount);
     if (payee.trim()) q.set('description', payee.trim());
     if (date) q.set('date', date);
+    if (parsed.categoryHint) q.set('category', parsed.categoryHint);
     navigate(`/add-expense?${q.toString()}`);
   };
 
@@ -91,17 +92,18 @@ export default function ReceiptShare() {
           />
         </label>
         <label className="block">
-          <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Paid to</span>
+          <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{parsed.kind === 'bill' ? `Paid to · ${parsed.billType || 'Bill'}` : 'Paid to'}</span>
           <input value={payee} onChange={(e) => setPayee(e.target.value)} className="mt-1 w-full text-sm font-bold bg-surface rounded-xl px-3 py-2.5 outline-none" />
         </label>
         <label className="block">
           <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Date{parsed.time ? ` · ${parsed.time}` : ''}</span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 w-full text-sm font-bold bg-surface rounded-xl px-3 py-2.5 outline-none" />
         </label>
-        {(parsed.txnId || parsed.paidFrom || parsed.message || parsed.upiId) && (
+        {(parsed.txnId || parsed.paidFrom || parsed.message || parsed.upiId || parsed.reference) && (
           <div className="pt-2 border-t border-border-subtle space-y-1 text-[11px] text-text-muted">
             {parsed.paidFrom && <p><b>Paid from:</b> {parsed.paidFrom}</p>}
             {parsed.upiId && <p className="break-all"><b>UPI ID:</b> {parsed.upiId}</p>}
+            {parsed.reference && <p><b>Number:</b> {parsed.reference}</p>}
             {parsed.message && <p><b>Message:</b> {parsed.message}</p>}
             {parsed.txnId && <p className="break-all"><b>Transaction ID:</b> {parsed.txnId}</p>}
             {parsed.utr && <p><b>UTR:</b> {parsed.utr}</p>}
