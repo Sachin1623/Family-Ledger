@@ -111,8 +111,8 @@ function drawHandHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<WinH
     void cards;
     row.forEach((g) => {
       g.cards.forEach((c, i) => {
-        // A printed joker isn't a normal rank+suit id (e.g. "JK1"), so anything that doesn't parse as one is the joker.
-        const joker = !/^(10|[2-9AJQK])[SHDC]$/.test(c);
+        // A printed joker isn't a normal rank+suit id (e.g. "JK1"); real card ids may carry a deck suffix, like "10H_1", so anything that doesn't parse as one is the joker.
+        const joker = !/^(10|[2-9AJQK])[SHDC](_\d+)?$/.test(c);
         miniCard(ctx, x + i * cardW * ratio, y, cardW, c, { wild: !joker && !!hero.wildRanks?.includes(parseCard(c).rank), joker });
       });
       const gw = widthOf(g);
