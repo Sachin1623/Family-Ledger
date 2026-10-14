@@ -28,6 +28,8 @@ export interface SharedReceipt {
   ocrText?: string;
   imageData?: string; // small compressed copy (data:image/jpeg;base64,…) to attach to the expense
   imageError?: string;
+  imageChars?: number;
+  pluginVersion?: number; // 3+ = can pass the receipt picture along; missing = an older build
   lines?: SharedLine[];
   ocrMs?: number;
   error?: string;

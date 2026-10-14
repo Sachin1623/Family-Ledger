@@ -95,6 +95,8 @@ public class ReceiptSharePlugin extends Plugin {
         intent.putExtra(HANDLED_FLAG, true);
 
         final JSObject out = new JSObject();
+        // Lets the web layer tell a new build from an old one (and a failed picture from a missing feature).
+        out.put("pluginVersion", 3);
         String type = intent.getType();
         out.put("action", intent.getAction());
         out.put("mime", type == null ? "" : type);
@@ -253,7 +255,9 @@ public class ReceiptSharePlugin extends Plugin {
             Bitmap small = scale < 1f ? Bitmap.createScaledBitmap(bmp, Math.round(w * scale), Math.round(h * scale), true) : bmp;
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             small.compress(Bitmap.CompressFormat.JPEG, 62, bytes);
-            out.put("imageData", "data:image/jpeg;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP));
+            String data = Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP);
+            out.put("imageData", "data:image/jpeg;base64," + data);
+            out.put("imageChars", data.length());
             if (small != bmp) small.recycle();
         } catch (Exception e) {
             out.put("imageError", e.toString());

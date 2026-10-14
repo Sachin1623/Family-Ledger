@@ -5,6 +5,7 @@
 import type { SharedLine, SharedReceipt } from './receiptShare';
 
 export interface ParsedReceipt {
+  app: 'phonepe' | 'paytm';
   isPhonePe: boolean;
   status: 'success' | 'failed' | 'pending' | 'unknown';
   direction: 'paid' | 'received' | 'unknown';
@@ -20,6 +21,7 @@ export interface ParsedReceipt {
   billType: string; // e.g. "Mobile bill" (bills only)
   reference: string; // the number the bill was for (mobile number, consumer number …)
   categoryHint: string; // an expense category id when the payee makes it obvious, else ''
+  payeeIsPerson: boolean; // money sent to a person (masked UPI id), not a shop or biller
   message: string;
   date: string; // YYYY-MM-DD
   time: string; // e.g. "03:45 PM"
@@ -36,10 +38,31 @@ const MONTHS: Record<string, string> = {
 // from being mistaken for amounts.
 const MONEY_LINE = /^(₹|Rs\.?|INR|[^\d\s.,])?\s*(\d{1,8}(?:,\d{2,3})*(?:\.\d{1,2})?)$/i;
 
+// A category suggestion when the payee makes it obvious (the user can always change it).
+const CATEGORY_HINTS: Array<[RegExp, string]> = [
+  [/blinkit|blink commerce|zepto|instamart|bigbasket|dmart|grofers|jiomart|reliance (fresh|smart)/i, 'groceries'],
+  [/swiggy|zomato|domino|mcdonald|kfc|starbucks|pizza|cafe|restaurant/i, 'food'],
+  [/uber|ola\b|rapido|irctc|redbus|metro|fastag|petrol|fuel|indian oil|bharat petroleum|hp pay/i, 'travel'],
+  [/amazon|flipkart|myntra|ajio|meesho|nykaa/i, 'shopping'],
+  [/apollo|pharm|medplus|netmeds|1mg|hospital|clinic|diagnostic/i, 'health'],
+  [/florist|flower|archies|ferns n petals|fnp|gift/i, 'gifts'],
+  [/netflix|hotstar|spotify|prime video|bookmyshow|pvr|inox|sony ?liv|zee5/i, 'ent'],
+  [/nutrition|supplement|protein|gnc|gym|fitness/i, 'health'],
+  [/(airtel|jio|vodafone|vi|bsnl)|electricity|bses|bescom|mseb|torrent power|tata power|adani|water|gas|broadband|dth|tata play|recharge/i, 'bills'],
+];
+
+export function suggestCategory(p: Pick<ParsedReceipt, 'kind' | 'payee' | 'upiId'>): string {
+  if (p.kind === 'bill') return 'bills';
+  // The payee's name is the better clue; the UPI id is only a fallback (its bank/app suffix can mislead).
+  const hit = CATEGORY_HINTS.find(([re]) => re.test(p.payee)) || CATEGORY_HINTS.find(([re]) => re.test(p.upiId));
+  return hit ? hit[1] : '';
+}
+
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
   const out: ParsedReceipt = {
+    app: 'phonepe', payeeIsPerson: false,
     isPhonePe: false, status: 'unknown', direction: 'unknown', amount: '', amountSure: false, alternatives: [],
     payee: '', upiId: '', txnId: '', utr: '', paidFrom: '', kind: 'payment', billType: '', reference: '', categoryHint: '', message: '', date: '', time: '', notes: [],
   };
@@ -103,22 +126,7 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
     }
   }
 
-  // A category suggestion when the payee makes it obvious (the user can always change it).
-  const CATEGORY_HINTS: Array<[RegExp, string]> = [
-    [/blinkit|blink commerce|zepto|instamart|bigbasket|dmart|grofers|jiomart|reliance (fresh|smart)/i, 'groceries'],
-    [/swiggy|zomato|domino|mcdonald|kfc|starbucks|pizza|cafe|restaurant/i, 'food'],
-    [/uber|ola\b|rapido|irctc|redbus|metro|fastag|petrol|fuel|indian oil|bharat petroleum|hp pay/i, 'travel'],
-    [/amazon|flipkart|myntra|ajio|meesho|nykaa/i, 'shopping'],
-    [/apollo|pharm|medplus|netmeds|1mg|hospital|clinic|diagnostic/i, 'health'],
-    [/florist|flower|archies|ferns n petals|fnp|gift/i, 'gifts'],
-    [/netflix|hotstar|spotify|prime video|bookmyshow|pvr|inox|sony ?liv|zee5/i, 'ent'],
-    [/airtel|jio|vodafone|\bvi\b|bsnl|electricity|bescom|tata power|adani|water|gas|broadband|dth|tata play|recharge/i, 'bills'],
-  ];
-  if (out.kind === 'bill') out.categoryHint = 'bills';
-  else {
-    const hit = CATEGORY_HINTS.find(([re]) => re.test(out.payee) || re.test(out.upiId));
-    if (hit) out.categoryHint = hit[1];
-  }
+  out.categoryHint = suggestCategory(out);
 
   // Transaction id: the line after the label (or the long T-number anywhere).
   const tIdx = lines.findIndex((l) => /transaction\s*id|utr|ref(erence)?\s*no/i.test(l));
@@ -219,8 +227,12 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
 // A stable key for "who was paid", used to remember what the user calls this payee (and its category).
 // The UPI id is the real identity of a payee; bills use the biller + the number the bill was for.
 export function payeeKey(p: ParsedReceipt): string {
-  const raw = p.upiId.includes('@')
+  const raw = p.kind === 'bill' && p.payee
+    ? `bill:${p.payee}:${p.reference}` // a bill-pay UPI id is shared by every biller, so the biller + number is the identity
+    : p.upiId.includes('@') && !p.upiId.includes('*')
     ? p.upiId
+    : p.upiId.includes('*') && p.payee
+    ? `person:${p.payee}|${p.upiId}` // a masked UPI id is shared by many people, so the name is part of the key
     : p.kind === 'bill' && p.payee
     ? `bill:${p.payee}:${p.reference}`
     : p.payee

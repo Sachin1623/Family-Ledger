@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { getSharedReceipt } from '../lib/receiptShare';
-import { parsePhonePeReceipt, payeeKey } from '../lib/phonepeReceipt';
+import { parseReceipt, payeeKey } from '../lib/receiptParse';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -15,7 +15,7 @@ export default function ReceiptShare() {
   const navigate = useNavigate();
   const share = getSharedReceipt();
   const { user } = useAuth();
-  const parsed = useMemo(() => (share ? parsePhonePeReceipt(share) : null), [share]);
+  const parsed = useMemo(() => (share ? parseReceipt(share) : null), [share]);
   const key = useMemo(() => (parsed ? payeeKey(parsed) : ''), [parsed]);
 
   const [amount, setAmount] = useState(parsed?.amount || '');
@@ -48,7 +48,7 @@ export default function ReceiptShare() {
         <span className="material-symbols-outlined text-5xl text-primary">receipt_long</span>
         <h1 className="text-lg font-black text-primary">Share a receipt</h1>
         <p className="text-sm text-text-muted">
-          Open a payment in PhonePe, tap <b>Share receipt</b> and choose <b>FamilyLedger</b>. We'll read the amount, who you paid and the date, so you can add it as an expense.
+          Open a payment in PhonePe or Paytm, tap <b>Share receipt</b> and choose <b>FamilyLedger</b>. We'll read the amount, who you paid and the date, so you can add it as an expense.
         </p>
         <button onClick={() => navigate('/')} className="px-5 py-2.5 rounded-xl bg-primary text-white font-bold text-sm">Back to Home</button>
       </div>
@@ -75,6 +75,9 @@ export default function ReceiptShare() {
     sentBy: share.referrer,
     imageSize: share.width ? `${share.width}x${share.height}` : undefined,
     pages: share.pages,
+    pluginVersion: share.pluginVersion,
+    imageChars: share.imageChars,
+    imageError: share.imageError,
     ocrMs: share.ocrMs,
     sharedText: share.text,
     subject: share.subject,
@@ -176,9 +179,9 @@ export default function ReceiptShare() {
           <p className="text-[11px] text-text-muted">
             {share.imageData
               ? 'It goes to the expense as a receipt photo. You can remove it on the next screen.'
-              : share.imageError
-              ? `The picture could not be prepared (${share.imageError}).`
-              : 'This app version cannot pass the picture along. Install the latest FamilyLedger build.'}
+              : share.pluginVersion === undefined
+              ? 'The installed app is an older test build that cannot pass the picture along. Install the newest APK (build 32 or later).'
+              : `The picture could not be prepared${share.imageError ? ` (${share.imageError})` : ''}.`}
           </p>
         </div>
       </div>
