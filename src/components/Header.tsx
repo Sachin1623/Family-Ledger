@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { collection, query, where } from 'firebase/firestore';
+import { collection, limit, orderBy, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -48,15 +48,38 @@ export default function Header() {
   // necessarily the most recent (the tour itself is generic UI explanation, not group-specific
   // content), so reusing this already-fetched id list avoids a second query.
   const firstGroupId = groupIds[0];
+  // The badge only counts entries NEWER than the last time the feed was opened, and shows at most "9+" — so it
+  // never needs the full history. Reading every activity of every group (and every personal notification) on
+  // each launch was the single biggest source of database reads. These queries fetch only what's new since
+  // `lastFeedViewedAt` (a few dozen documents at most), and wait for the profile so they don't first run unbounded.
+  // Uses the existing (groupId, createdAt desc) / (userId, createdAt desc) indexes plus (userId, personal, createdAt desc).
+  const feedLastViewed: string | undefined = profile?.lastFeedViewedAt || undefined;
   const [activitiesValue] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'activities'), where('groupId', 'in', groupIds)) : null,
+    profile && groupIds.length > 0
+      ? query(
+          collection(db, 'activities'),
+          where('groupId', 'in', groupIds),
+          ...(feedLastViewed ? [where('createdAt', '>', feedLastViewed)] : []),
+          orderBy('createdAt', 'desc'),
+          limit(50),
+        )
+      : null,
   );
   // Personal notifications (pokes, game invites/pokes/chat, DMs, expense/todo/loan reminders —
   // see logFeedActivity in server.ts) have no groupId to fan out through, so they'd never bump
   // this badge without a separate query — same `userId == auth.uid` shape ActivityFeed.tsx's
   // personalActivitiesQuery already uses.
   const [personalActivitiesValue] = useCollection(
-    user ? query(collection(db, 'activities'), where('userId', '==', user.uid)) : null,
+    profile && user
+      ? query(
+          collection(db, 'activities'),
+          where('userId', '==', user.uid),
+          where('personal', '==', true),
+          ...(feedLastViewed ? [where('createdAt', '>', feedLastViewed)] : []),
+          orderBy('createdAt', 'desc'),
+          limit(20),
+        )
+      : null,
   );
   const unreadFeedCount = React.useMemo(() => {
     const lastViewed = profile?.lastFeedViewedAt;

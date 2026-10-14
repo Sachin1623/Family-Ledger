@@ -15036,7 +15036,23 @@ async function startServer() {
       if (result.spadePledgeResolved.length > 0 || result.rummy13Resolved.length > 0) {
         console.log('cleanup-stale-games resolved:', JSON.stringify(result));
       }
-      return res.json({ ok: true, ...result });
+      // In-app banner notices are only ever shown live (the push notification covers everything else), so any that is
+      // still pending after 2 days is clutter — it used to pile up (hundreds on busy accounts) and cost database
+      // reads for nothing. Single-field `createdAt` index, a few hundred per run at most.
+      let noticesPurged = 0;
+      try {
+        const cutoff = new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString();
+        const old = await db.collection('inviteNotices').where('createdAt', '<', cutoff).limit(400).get();
+        if (!old.empty) {
+          const batch = db.batch();
+          old.docs.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+          noticesPurged = old.size;
+        }
+      } catch (err) {
+        console.error('cleanup of old inviteNotices failed:', err);
+      }
+      return res.json({ ok: true, ...result, noticesPurged });
     } catch (error) {
       console.error('cron/cleanup-stale-games error:', error);
       return res.status(500).json({ error: 'Cleanup job failed.' });
@@ -15660,6 +15676,37 @@ async function startServer() {
     // silently making every fix in a new deploy invisible until the cache expires or is cleared —
     // indistinguishable from "the fix didn't work" from inside the app itself.
     const distPath = path.join(process.cwd(), "dist");
+
+    // Compressed delivery: `npm run build` writes a Brotli (.br) and gzip (.gz) copy of every JS/CSS/HTML file next
+    // to the original (scripts/precompress.mjs). When the browser says it accepts one, send that copy straight from
+    // disk — the 7 MB app bundle goes out as ~1.5 MB and costs no CPU to compress. Same caching rules as below.
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      let rel: string;
+      try {
+        rel = decodeURIComponent(req.path);
+      } catch {
+        return next();
+      }
+      const ext = path.extname(rel).toLowerCase();
+      if (!['.js', '.mjs', '.css', '.html', '.svg', '.json', '.webmanifest'].includes(ext)) return next();
+      const full = path.join(distPath, rel);
+      if (!full.startsWith(distPath + path.sep)) return next(); // never leave dist/
+      const accepted = String(req.headers['accept-encoding'] || '');
+      const pick = /\bbr\b/.test(accepted) && fs.existsSync(full + '.br') ? { enc: 'br', file: full + '.br' }
+        : /\bgzip\b/.test(accepted) && fs.existsSync(full + '.gz') ? { enc: 'gzip', file: full + '.gz' }
+        : null;
+      if (!pick) return next();
+      res.type(ext); // the original's content type, not ".br"
+      res.setHeader('Content-Encoding', pick.enc);
+      res.setHeader('Vary', 'Accept-Encoding');
+      if (rel.startsWith('/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      else if (/^\/(sw|registerSW|workbox-.*)\.js$/.test(rel)) res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(pick.file, (err) => {
+        if (err && !res.headersSent) next();
+      });
+    });
+
     app.use(express.static(distPath, {
       index: false,
       setHeaders: (res, filePath) => {

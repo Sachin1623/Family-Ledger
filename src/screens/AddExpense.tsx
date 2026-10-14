@@ -277,9 +277,13 @@ export default function AddExpense() {
   // per-selected-group query (like the budget one above) would show nothing until then. Firestore
   // caps `in` at 30 values; not chunked further here, matching how this app's other "across all my
   // groups" queries (e.g. GroupExpenses.tsx's "all groups" view) already handle that same cap.
-  const [favoritesValue] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'expenses'), where('groupId', 'in', groupIds.slice(0, 30))) : null,
+  // Once a group is picked, its favorites come from the group listener above (budgetValue's query already holds that
+  // group's expenses) — so this all-groups query only runs while no group is chosen yet. Previously both ran together,
+  // re-reading every expense of every group each time this screen opened.
+  const [allGroupsFavoritesValue] = useCollection(
+    !groupId && groupIds.length > 0 ? query(collection(db, 'expenses'), where('groupId', 'in', groupIds.slice(0, 30))) : null,
   );
+  const favoritesValue = groupId ? groupExpensesForBudgetValue : allGroupsFavoritesValue;
   const favorites = React.useMemo(() => {
     const favs = (favoritesValue?.docs || [])
       .map((d) => ({ id: d.id, ...d.data() } as any))

@@ -29,11 +29,14 @@ interface InviteNotice {
 export default function InviteBanner() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // Only notices created AFTER this component mounted are ever shown (below), so that's all the query fetches —
+  // old unseen notices used to be re-read on every launch (hundreds, on busy accounts) just to be ignored.
+  // Needs the (toUid, createdAt) index.
+  const mountedAtRef = useRef(new Date().toISOString());
   const [noticesValue] = useCollection(
-    user ? query(collection(db, 'inviteNotices'), where('toUid', '==', user.uid)) : null,
+    user ? query(collection(db, 'inviteNotices'), where('toUid', '==', user.uid), where('createdAt', '>', mountedAtRef.current)) : null,
   );
   const [visible, setVisible] = useState<InviteNotice | null>(null);
-  const mountedAtRef = useRef(new Date().toISOString());
   const shownIdsRef = useRef<Set<string>>(new Set());
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
