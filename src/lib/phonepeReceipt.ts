@@ -25,8 +25,9 @@ const MONTHS: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
 };
 
-// A line that is just an amount, e.g. "₹202", "Rs. 1,250.50", or a bare "202" when the ₹ was lost.
-const MONEY_LINE = /^(₹|Rs\.?|INR|[2-3?])?\s*(\d[\d,]*(?:\.\d{1,2})?)$/i;
+// A line that is just an amount, e.g. "₹202", "Rs. 1,250.50", or a bare "202" (the phone's text reader often
+// drops the ₹ sign, or reads it as a digit such as 7, giving "7202").
+const MONEY_LINE = /^(₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d{1,2})?)$/i;
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
@@ -103,31 +104,28 @@ export function parsePhonePeReceipt(share: SharedReceipt): ParsedReceipt {
   const mIdx = lines.findIndex((l) => /^message$/i.test(l));
   if (mIdx >= 0 && lines[mIdx + 1] && !/transaction\s*id/i.test(lines[mIdx + 1])) out.message = lines[mIdx + 1];
 
-  // Amount: the figure that shows up more than once (header and "Debited from"), preferring the ₹ form.
-  type Cand = { value: string; hadSymbol: boolean; line: number; viaMisread: boolean };
-  const cands: Cand[] = [];
+  // Amount: the same figure appears twice on a receipt (beside the payee, and again under "Debited from").
+  // The reader often mangles the ₹ sign into a leading digit ("7202" for ₹202), so when one figure is exactly
+  // another with one extra digit in front, the shorter one is the real amount.
+  type Tok = { value: string; line: number };
+  const toks: Tok[] = [];
   lines.forEach((l, i) => {
     const m = l.match(MONEY_LINE);
-    if (!m) return;
-    const sym = m[1] || '';
-    cands.push({ value: m[2].replace(/,/g, ''), hadSymbol: /₹|rs|inr/i.test(sym), line: i, viaMisread: /^[2-3?]$/.test(sym) });
+    if (m) toks.push({ value: m[2].replace(/,/g, ''), line: i });
   });
-  // A "₹" misread as "2"/"3" glues onto the number ("2202"); that only counts if the stripped number also appears.
-  const values = new Set(cands.map((c) => c.value));
-  const fixed = cands.map((c) => (c.viaMisread ? c : c));
+  const canon = (v: string) => {
+    const shorter = toks.find((u) => u.value !== v && v.length === u.value.length + 1 && v.slice(1) === u.value);
+    return shorter ? shorter.value : v;
+  };
+  const resolved = toks.map((t) => ({ ...t, value: canon(t.value) }));
   const counts = new Map<string, number>();
-  fixed.forEach((c) => counts.set(c.value, (counts.get(c.value) || 0) + 1));
-  let pick: Cand | undefined = fixed.filter((c) => (counts.get(c.value) || 0) >= 2 && c.hadSymbol)[0] || fixed.filter((c) => (counts.get(c.value) || 0) >= 2)[0];
-  if (!pick) {
-    // A single reading: take the first figure inside the payee block, else the first ₹ figure.
-    pick = fixed.find((c) => paidIdx >= 0 && c.line > paidIdx && (endIdx < 0 || c.line < endIdx)) || fixed.find((c) => c.hadSymbol) || fixed[0];
-  }
+  resolved.forEach((t) => counts.set(t.value, (counts.get(t.value) || 0) + 1));
+  const repeated = resolved.find((t) => (counts.get(t.value) || 0) >= 2);
+  const inBlock = resolved.find((t) => paidIdx >= 0 && t.line > paidIdx && (endIdx < 0 || t.line < endIdx));
+  const pick = repeated || inBlock || resolved[0];
   if (pick) {
-    // If the pick is "2202"-style (₹ read as 2) and the stripped value is also on the receipt, use the stripped one.
-    let value = pick.value;
-    if (/^[23]\d+$/.test(value) && values.has(value.slice(1))) value = value.slice(1);
-    out.amount = value;
-    out.amountSure = (counts.get(pick.value) || 0) >= 2 && pick.hadSymbol;
+    out.amount = pick.value;
+    out.amountSure = !!repeated;
   }
 
   if (!out.isPhonePe) out.notes.push("This doesn't look like a PhonePe receipt.");
