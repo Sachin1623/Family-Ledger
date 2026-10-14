@@ -25,9 +25,11 @@ const MONTHS: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
 };
 
-// A line that is just an amount, e.g. "₹202", "Rs. 1,250.50", or a bare "202" (the phone's text reader often
-// drops the ₹ sign, or reads it as a digit such as 7, giving "7202").
-const MONEY_LINE = /^(₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d{1,2})?)$/i;
+// A line that is just an amount: "₹202", "Rs. 1,250.50", or a bare "202". The phone's text reader often mangles
+// the ₹ sign — dropping it, or reading it as a stray letter or digit ("F683.87", "7683.87") — so ANY single
+// leading character is tolerated. At most 8 digits before the decimals keeps long ids (transaction ids, UTRs)
+// from being mistaken for amounts.
+const MONEY_LINE = /^(₹|Rs\.?|INR|[^\d\s.,])?\s*(\d{1,8}(?:,\d{2,3})*(?:\.\d{1,2})?)$/i;
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
