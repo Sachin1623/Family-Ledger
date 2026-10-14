@@ -1,3 +1,4 @@
+import { openChatPopup, chatTargetFromPath } from '../lib/chatPopup';
 import React, { useEffect, useRef, useState } from 'react';
 import { collection, deleteDoc, doc, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
@@ -61,7 +62,10 @@ export default function InviteBanner() {
     if (!visible) return;
     const notice = visible;
     dismiss(notice);
-    navigate(notice.to);
+    // A chat message opens as a popup over the current screen; everything else navigates as before.
+    const chat = chatTargetFromPath(notice.to);
+    if (chat) openChatPopup(chat);
+    else navigate(notice.to);
   };
 
   return (

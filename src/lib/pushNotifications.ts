@@ -1,3 +1,4 @@
+import { openChatPopup } from './chatPopup';
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -42,7 +43,7 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
   } else if (data.type === 'comment' && data.groupId) {
     navigateTo(`/groups/${data.groupId}`);
   } else if (data.type === 'group_chat' && data.groupId) {
-    navigateTo(`/groups/${data.groupId}?chat=1`);
+    openChatPopup({ kind: 'group', groupId: data.groupId });
   } else if (data.type === 'weekly_summary') {
     navigateTo('/weekly-summary');
   } else if (data.type === 'account_goal_nudge') {
@@ -60,7 +61,7 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
   } else if (data.type === 'poke' && data.groupId) {
     navigateTo(`/add-expense?groupId=${data.groupId}`);
   } else if (data.type === 'dm_chat' && data.otherUid) {
-    navigateTo(`/?dm=${data.otherUid}`);
+    openChatPopup({ kind: 'dm', uid: data.otherUid });
   } else if (data.type === 'friend_request' && data.uid) {
     // Deep-links straight to the accept/decline prompt for THIS request rather than just the
     // Friends screen — Friends.tsx reads the `request` param on every render (not a mount-only

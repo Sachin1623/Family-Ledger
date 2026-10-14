@@ -1,4 +1,5 @@
 import React from 'react';
+import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
 
 export interface GameHelpSection {
   heading: string;
@@ -14,6 +15,14 @@ export interface GameHelpContent {
 // each game's own end-of-game overlays (bg-black/60 backdrop-blur-sm, bg-white rounded-3xl
 // shadow-2xl), not the app-wide ExpenseQuickView modal, so it feels native to the games screens.
 export const GameHelpModal: React.FC<{ content: GameHelpContent; onClose: () => void }> = ({ content, onClose }) => {
+  // Back closes this popup instead of leaving the game behind it.
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+  React.useEffect(() => {
+    const handler = () => onCloseRef.current();
+    pushModalBackHandler(handler);
+    return () => popModalBackHandler(handler);
+  }, []);
   return (
     <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />

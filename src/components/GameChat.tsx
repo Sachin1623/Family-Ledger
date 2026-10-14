@@ -1,3 +1,4 @@
+import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { addDoc, arrayRemove, arrayUnion, collection, deleteDoc, doc, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
@@ -152,6 +153,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   otherUids,
 }) => {
   const { user, profile } = useAuth();
+  // Back (Android gesture / browser back) closes this sheet instead of leaving the game screen behind it.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const handler = () => onCloseRef.current();
+    pushModalBackHandler(handler);
+    return () => popModalBackHandler(handler);
+  }, []);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [menuForId, setMenuForId] = useState<string | null>(null);

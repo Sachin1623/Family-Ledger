@@ -14,6 +14,12 @@
 // layer at a time, in the right order.
 type BackHandler = () => void;
 const stack: BackHandler[] = [];
+// popModalBackHandler undoes its pushed history entry with history.back(), which fires a popstate
+// event LATER. If another modal registered in between (React's dev double-run of an effect: push,
+// cleanup, push — or any modal opening right as another closes), that late popstate would be
+// mistaken for a real Back press and close the new modal at once. Count our own pending undo-pops
+// and ignore exactly that many popstate events.
+let ignorePops = 0;
 
 // Web/browser back support: opening a modal pushes a dummy history entry (same URL — this never
 // changes what page/tab is showing) so the *next* browser back pops that entry first instead of
@@ -41,9 +47,10 @@ export function popModalBackHandler(handler: BackHandler) {
   // is still sitting in browser history unconsumed. Pop it now so the *next* real back press goes
   // straight to the actual previous page instead of silently eating a press on this leftover entry.
   try {
+    ignorePops++;
     window.history.back();
   } catch {
-    // ignore
+    ignorePops = Math.max(0, ignorePops - 1);
   }
 }
 
@@ -62,6 +69,10 @@ export function consumeModalBackHandler(): boolean {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', () => {
+    if (ignorePops > 0) {
+      ignorePops--;
+      return;
+    }
     if (stack.length === 0) return;
     const top = stack.pop()!;
     top();

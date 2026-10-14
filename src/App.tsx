@@ -123,6 +123,7 @@ import AdminChatReports from './screens/admin/AdminChatReports';
 import UpdatePrompt from './components/UpdatePrompt';
 import UpdateBanner from './components/UpdateBanner';
 import ConsentBanner from './components/ConsentBanner';
+import GlobalChatPopup from './components/GlobalChatPopup';
 import PointsToastBridge from './components/PointsToastBridge';
 import PointsFlyAnimation from './components/PointsFlyAnimation';
 import BroadcastBanner from './components/BroadcastBanner';
@@ -317,6 +318,7 @@ export default function App() {
           <UpdatePrompt />
           <UpdateBanner />
           <ConsentBanner />
+          <GlobalChatPopup />
           <BroadcastBanner />
           <SpreadWordPrompt />
           <AppLockScreen />
