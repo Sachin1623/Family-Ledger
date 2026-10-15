@@ -212,7 +212,25 @@ export function HandArea({
     () => [...groups.map((g) => ({ kind: 'group' as const, group: g })), ...loose.map((c) => ({ kind: 'loose' as const, card: c }))],
     [groups, loose],
   );
-  const fit = useMemo(() => fitHand(items, size.w, size.h), [items, size.w, size.h]);
+  // The fit above is arithmetic; browsers add their own rounding and padding, so after painting we measure the real
+  // width of every row and, if a row still spills past the edge, narrow the target a little and fit again.
+  const layoutKey = `${size.w}x${size.h}:${items.map((it) => (it.kind === 'group' ? `g${it.group.cards.length}` : 'l')).join('')}`;
+  const [slack, setSlack] = useState<{ key: string; v: number }>({ key: '', v: 0 });
+  const slackNow = slack.key === layoutKey ? slack.v : 0;
+  const fit = useMemo(() => fitHand(items, size.w - slackNow, size.h), [items, size.w, size.h, slackNow]);
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box || size.w <= 0) return;
+    let over = 0;
+    box.querySelectorAll<HTMLElement>('[data-hand-row]').forEach((row) => {
+      const first = row.firstElementChild as HTMLElement | null;
+      const last = row.lastElementChild as HTMLElement | null;
+      if (!first || !last) return;
+      const width = last.getBoundingClientRect().right - first.getBoundingClientRect().left;
+      over = Math.max(over, width - (box.clientWidth - 12));
+    });
+    if (over > 1 && slackNow < size.w * 0.5) setSlack({ key: layoutKey, v: slackNow + over + 2 });
+  });
 
   const renderCard = (c: string, i: number, first: boolean, key: string) => {
     const wild = !!wildRanks?.includes(parseCard(c).rank);
@@ -259,7 +277,7 @@ export function HandArea({
           }
         });
         return (
-          <div key={ri} className="flex justify-center items-start" style={{ gap: GROUP_GAP }}>
+          <div key={ri} data-hand-row="" className="flex justify-center items-start" style={{ gap: GROUP_GAP }}>
             {clusters.map((cl, ci) => (
               <div key={cl.group ? `g${cl.group.idx}` : `l${ci}`} data-group-idx={cl.group?.idx} className={`relative flex flex-col rounded-md transition-colors ${isDragging && cl.group ? 'bg-amber-300/10 ring-1 ring-amber-300/40' : ''}`}>
                 <div className="flex">{cl.cards.map((c, i) => renderCard(c, i, i === 0, `${c}-${ri}-${ci}-${i}`))}</div>
