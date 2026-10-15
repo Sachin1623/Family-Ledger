@@ -472,6 +472,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
   const menuMessage = menuForId ? messages.find((x) => x.id === menuForId) || null : null;
 
+  // Press and hold a message (about half a second) to open its menu — a plain tap does nothing, so scrolling and
+  // selecting never opens it by accident.
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHold = () => { if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; } };
+  const holdHandlers = (id: string) => ({
+    onTouchStart: () => { cancelHold(); holdTimer.current = setTimeout(() => { holdTimer.current = null; setMenuForId(id); try { navigator.vibrate?.(15); } catch { /* not supported */ } }, 450); },
+    onTouchEnd: cancelHold,
+    onTouchMove: cancelHold,
+    onTouchCancel: cancelHold,
+    onMouseDown: () => { cancelHold(); holdTimer.current = setTimeout(() => { holdTimer.current = null; setMenuForId(id); }, 450); },
+    onMouseUp: cancelHold,
+    onMouseLeave: cancelHold,
+    onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); cancelHold(); setMenuForId(id); },
+  });
+
   return (
     <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm hidden sm:block" onClick={onClose} />
@@ -561,11 +576,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         </div>
                       ) : (
                         <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setMenuForId(m.id)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') setMenuForId(m.id); }}
-                          className={`px-3 pt-1.5 pb-1 break-words text-[13px] font-semibold leading-snug shadow-[0_1px_1.5px_rgba(0,0,0,0.08)] cursor-pointer active:brightness-95 ${
+                          {...holdHandlers(m.id)}
+                          className={`select-none [-webkit-touch-callout:none] px-3 pt-1.5 pb-1 break-words text-[13px] font-semibold leading-snug shadow-[0_1px_1.5px_rgba(0,0,0,0.08)] active:brightness-95 ${
                             mine
                               ? `text-white rounded-[17px] ${firstOfRun ? 'rounded-tr-[6px]' : ''} ${lastOfRun ? 'rounded-br-[6px]' : ''}`
                               : `${isGroupChat ? '' : 'bg-white'} text-slate-900 rounded-[17px] ${firstOfRun ? 'rounded-tl-[6px]' : ''} ${lastOfRun ? 'rounded-bl-[6px]' : ''} ${isMuted ? 'opacity-50' : ''}`
@@ -644,7 +656,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </button>
         </div>
 
-        {/* Tap a message: react, copy, and (yours) edit or delete — (theirs) report, mute or block */}
+        {/* Press and hold a message: react, copy, and (yours) edit or delete — (theirs) report, mute or block */}
         {menuMessage && (
           <div className="absolute inset-0 z-10 flex items-end justify-center bg-black/35" onClick={() => setMenuForId(null)}>
             <div className="w-full bg-white rounded-t-3xl p-3 space-y-2 shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
