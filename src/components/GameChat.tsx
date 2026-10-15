@@ -4,6 +4,8 @@ import { addDoc, arrayRemove, arrayUnion, collection, deleteDoc, doc, orderBy, q
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { isPresenceOnline, lastSeenLabel } from '../lib/presence';
 import ForwardPicker from './ForwardPicker';
+import ImageLightbox from './ImageLightbox';
+import { resizeImageFile } from '../lib/imageUtils';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 
@@ -18,6 +20,7 @@ interface ChatMessage {
   reactions?: Record<string, string>; // uid → emoji, one per person
   replyTo?: { id: string; displayName: string; text: string };
   forwarded?: boolean;
+  image?: string; // small JPEG data URL
 }
 
 // Bare icon, matching the Help/Leave pair's "only icons" header treatment — the small dot is a
@@ -179,6 +182,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   }, []);
   const [text, setText] = useState('');
   // The message being answered (set from the press-and-hold menu); shown above the message box, sent with the message.
+  // A photo picked from the gallery or camera, shrunk to a small JPEG, waiting to be sent.
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const handlePickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImageBusy(true);
+    try {
+      setAttachedImage(await resizeImageFile(file, 900, 900, 0.62));
+    } catch (err) {
+      console.error('Could not prepare the photo:', err);
+    } finally {
+      setImageBusy(false);
+    }
+  };
   const [replyTarget, setReplyTarget] = useState<{ id: string; displayName: string; text: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [menuForId, setMenuForId] = useState<string | null>(null);
@@ -191,7 +212,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // effect below then removes this placeholder the moment `messages` (the live listener) actually
   // contains that id, so there's never a visible moment with BOTH a "shadow" pending bubble and
   // the real confirmed message on screen at once.
-  interface PendingMessage { tempId: string; text: string; realId: string | null; at: number; replyTo?: { id: string; displayName: string; text: string } | null }
+  interface PendingMessage { tempId: string; text: string; realId: string | null; at: number; replyTo?: { id: string; displayName: string; text: string } | null; image?: string | null }
   const [pending, setPending] = useState<PendingMessage[]>([]);
 
   useEffect(() => {
@@ -206,7 +227,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const visiblePending = useMemo(() => {
     const used = new Set<string>();
     return pending.filter((p) => {
-      const match = messages.find((m) => !used.has(m.id) && m.userId === myUid && m.text === p.text && new Date(m.createdAt).getTime() >= p.at - 120000);
+      const match = messages.find((m) => !used.has(m.id) && m.userId === myUid && m.text === p.text && !!m.image === !!p.image && new Date(m.createdAt).getTime() >= p.at - 120000);
       if (match) { used.add(match.id); return false; }
       return true;
     });
@@ -304,9 +325,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const handleSend = () => sendText(text);
   const sendText = async (raw: string) => {
     const trimmed = raw.trim();
-    if (!trimmed || sending || !user) return;
+    const imageToSend = attachedImage;
+    if ((!trimmed && !imageToSend) || sending || !user) return;
     const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setPending((p) => [...p, { tempId, text: trimmed, realId: null, at: Date.now(), replyTo: replyTarget }]);
+    setPending((p) => [...p, { tempId, text: trimmed, realId: null, at: Date.now(), replyTo: replyTarget, image: imageToSend }]);
+    setAttachedImage(null);
     const replyPayload = replyTarget;
     setReplyTarget(null);
     setText('');
@@ -316,7 +339,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       const res = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ collectionName, chatId: gameId, text: trimmed, ...(replyPayload ? { replyTo: replyPayload } : {}) }),
+        body: JSON.stringify({ collectionName, chatId: gameId, text: trimmed, ...(imageToSend ? { image: imageToSend } : {}), ...(replyPayload ? { replyTo: replyPayload } : {}) }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || 'Failed to send message.');
@@ -490,6 +513,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const [showEmoji, setShowEmoji] = useState(false);
   const [forwardText, setForwardText] = useState<string | null>(null);
+  const [forwardImage, setForwardImage] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
   const onListScroll = () => {
     const el = listRef.current;
@@ -633,6 +657,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         >
                           {m.forwarded && <span className={`flex items-center gap-0.5 text-[9.5px] font-extrabold italic mb-0.5 ${mine ? 'text-white/70' : 'text-slate-400'}`}><span className="material-symbols-outlined text-[12px]">forward</span>Forwarded</span>}
                           {m.replyTo && quoteBlock(m.replyTo, mine)}
+                          {m.image && <img src={m.image} alt="Photo" onClick={() => setLightboxSrc(m.image!)} className="block rounded-xl mb-1 max-h-64 w-auto max-w-full object-cover" loading="lazy" />}
                           {m.text}
                           <span className={`flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 ${mine ? 'text-white/70' : 'text-slate-400'}`}>
                             {timeOf(m.createdAt)}{m.editedAt ? ' · edited' : ''}
@@ -658,6 +683,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <div key={p.tempId} className="flex justify-end">
                 <div className="max-w-[78%] px-3 pt-1.5 pb-1 rounded-[17px] rounded-br-[6px] break-words text-[13px] font-semibold text-white shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]" style={{ background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' }}>
                   {p.replyTo && quoteBlock(p.replyTo, true)}
+                  {p.image && <img src={p.image} alt="Photo" className="block rounded-xl mb-1 max-h-64 w-auto max-w-full object-cover" />}
                   {p.text}
                   <span className="flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 text-white/70"><MessageStatusTicks status="sending" onDark /></span>
                 </div>
@@ -683,6 +709,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             ))}
           </div>
         )}
+        {(attachedImage || imageBusy) && (
+          <div className="px-3 pt-2 bg-white border-t border-slate-100 shrink-0">
+            <div className="relative inline-block">
+              {attachedImage ? <img src={attachedImage} alt="Photo to send" className="h-24 w-auto rounded-xl border border-slate-200" /> : <div className="h-24 w-24 rounded-xl bg-slate-100 flex items-center justify-center text-[11px] font-bold text-slate-500">Preparing…</div>}
+              {attachedImage && (
+                <button onClick={() => setAttachedImage(null)} className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-800 text-white flex items-center justify-center shadow" aria-label="Remove photo"><span className="material-symbols-outlined text-[16px]">close</span></button>
+              )}
+            </div>
+          </div>
+        )}
         {replyTarget && (
           <div className="px-3 pt-2 bg-white border-t border-slate-100 shrink-0">
             <div className="flex items-center gap-2 rounded-xl bg-teal-50 border-l-[3px] border-teal-600 px-2.5 py-1.5">
@@ -695,6 +731,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         )}
         <div className="px-2.5 py-2.5 bg-white border-t border-slate-100 flex items-center gap-2 shrink-0" style={{ paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' }}>
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePickImage} />
+          <button onClick={() => fileInputRef.current?.click()} disabled={imageBusy} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-slate-500 disabled:opacity-40" aria-label="Attach a photo">
+            <span className="material-symbols-outlined text-[24px]">image</span>
+          </button>
           <button onClick={() => setShowEmoji((v) => !v)} className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${showEmoji ? 'bg-teal-50 text-teal-700' : 'text-slate-500'}`} aria-label="Emoji">
             <span className="material-symbols-outlined text-[24px]">mood</span>
           </button>
@@ -710,7 +750,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           />
           <button
             onClick={handleSend}
-            disabled={sending || !text.trim()}
+            disabled={sending || imageBusy || (!text.trim() && !attachedImage)}
             className="w-10 h-10 bg-teal-700 text-white rounded-full disabled:opacity-40 shrink-0 flex items-center justify-center shadow-[0_4px_12px_rgba(15,118,110,0.3)]"
             aria-label="Send"
           >
@@ -718,7 +758,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </button>
         </div>
 
-        {forwardText !== null && <ForwardPicker text={forwardText} excludeKey={collectionName === 'directChats' ? `dm:${(otherUids || [])[0] || ''}` : collectionName === 'groups' ? `group:${gameId}` : ''} onClose={() => setForwardText(null)} />}
+        {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
+        {forwardText !== null && <ForwardPicker text={forwardText} image={forwardImage} excludeKey={collectionName === 'directChats' ? `dm:${(otherUids || [])[0] || ''}` : collectionName === 'groups' ? `group:${gameId}` : ''} onClose={() => { setForwardText(null); setForwardImage(null); }} />}
 
         {/* Press and hold a message: react, copy, and (yours) edit or delete — (theirs) report, mute or block */}
         {menuMessage && (
@@ -730,9 +771,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 ))}
               </div>
               <div className="border-t border-slate-100 pt-1">
-                <button onClick={() => { setReplyTarget({ id: menuMessage.id, displayName: menuMessage.userId === myUid ? 'You' : menuMessage.displayName, text: menuMessage.text.slice(0, 140) }); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">reply</span>Reply</button>
-                <button onClick={() => { setForwardText(menuMessage.text); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">forward</span>Forward</button>
-                <button onClick={() => { navigator.clipboard?.writeText(menuMessage.text).catch(() => {}); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">content_copy</span>Copy</button>
+                <button onClick={() => { setReplyTarget({ id: menuMessage.id, displayName: menuMessage.userId === myUid ? 'You' : menuMessage.displayName, text: (menuMessage.text || (menuMessage.image ? '📷 Photo' : '')).slice(0, 140) }); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">reply</span>Reply</button>
+                <button onClick={() => { setForwardText(menuMessage.text); setForwardImage(menuMessage.image || null); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">forward</span>Forward</button>
+                <button disabled={!menuMessage.text} onClick={() => { navigator.clipboard?.writeText(menuMessage.text).catch(() => {}); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">content_copy</span>Copy</button>
                 {menuMessage.userId === myUid ? (
                   <>
                     <button onClick={() => startEdit(menuMessage)} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">edit</span>Edit</button>

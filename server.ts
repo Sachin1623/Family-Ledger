@@ -13942,8 +13942,13 @@ async function startServer() {
     const collectionName = String(req.body?.collectionName || '');
     const chatId = String(req.body?.chatId || '');
     const text = String(req.body?.text || '').trim().slice(0, 500);
+    // A photo (already shrunk to a small JPEG on the phone) may be sent with or without text. Kept in the message itself,
+    // like every other image in the app, so it has to stay small.
+    const imageRaw = String(req.body?.image || '');
+    const image = imageRaw.startsWith('data:image/jpeg;base64,') && imageRaw.length <= 450000 ? imageRaw : null;
+    const previewText = text || (image ? '📷 Photo' : '');
     const surface = CHAT_SURFACES[collectionName];
-    if (!surface || !chatId || !text) return res.status(400).json({ error: 'collectionName, chatId, and text are required.' });
+    if (!surface || !chatId || (!text && !image)) return res.status(400).json({ error: 'collectionName, chatId, and text or a photo are required.' });
 
     try {
       let recipients: string[] = [];
@@ -14010,6 +14015,7 @@ async function startServer() {
         createdAt: nowIso,
         ...(replyTo ? { replyTo } : {}),
         ...(req.body?.forwarded === true ? { forwarded: true } : {}),
+        ...(image ? { image } : {}),
       });
 
       if (surface.kind === 'dm' && otherUid) {
@@ -14026,7 +14032,7 @@ async function startServer() {
         await db.collection('directChats').doc(chatId).set({
           participants: [decoded.uid, otherUid],
           lastMessageAt: nowIso,
-          lastMessageText: text,
+          lastMessageText: previewText,
           lastMessageBy: decoded.uid,
           [`unreadFor.${otherUid}`]: admin.firestore.FieldValue.increment(1),
           [`unreadFor.${decoded.uid}`]: 0,
@@ -14050,7 +14056,7 @@ async function startServer() {
         else if (surface.kind === 'dm') { data.chatId = chatId; data.otherUid = decoded.uid; }
         else data.gameId = chatId;
         const pushTitle = surface.kind === 'dm' ? displayName : title;
-        const pushBody = surface.kind === 'dm' ? text.slice(0, 100) : `${displayName}: ${text.slice(0, 100)}`;
+        const pushBody = surface.kind === 'dm' ? previewText.slice(0, 100) : `${displayName}: ${previewText.slice(0, 100)}`;
         sent = await sendPush(tokens, pushTitle, pushBody, data);
 
         // `?chat=1` tells the destination screen to auto-open the chat panel itself (not just

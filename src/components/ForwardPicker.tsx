@@ -21,7 +21,7 @@ interface Target {
 
 // "Forward" — pick up to 10 other chats (people and groups) and send the message text to each. Only mounted while open,
 // so its lists are read only when you actually forward something.
-export default function ForwardPicker({ text, excludeKey, onClose }: { text: string; excludeKey: string; onClose: () => void }) {
+export default function ForwardPicker({ text, image, excludeKey, onClose }: { text: string; image?: string | null; excludeKey: string; onClose: () => void }) {
   const { user } = useAuth();
   const [picked, setPicked] = useState<string[]>([]);
   const [search, setSearch] = useState('');
@@ -72,7 +72,7 @@ export default function ForwardPicker({ text, excludeKey, onClose }: { text: str
           const res = await fetch('/api/chat/send', {
             method: 'POST',
             headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collectionName: tg.collectionName, chatId: tg.chatId, text, forwarded: true }),
+            body: JSON.stringify({ collectionName: tg.collectionName, chatId: tg.chatId, text, ...(image ? { image } : {}), forwarded: true }),
           });
           if (res.ok) ok += 1;
         } catch (err) {
@@ -102,7 +102,7 @@ export default function ForwardPicker({ text, excludeKey, onClose }: { text: str
           <span className="material-symbols-outlined text-[18px] text-slate-400">search</span>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people and groups…" className="flex-1 min-w-0 bg-transparent outline-none text-[13px] font-semibold" />
         </div>
-        <p className="mt-2 text-[11px] font-semibold text-slate-500 truncate px-1">“{text.length > 90 ? `${text.slice(0, 90)}…` : text}”</p>
+        <p className="mt-2 text-[11px] font-semibold text-slate-500 truncate px-1">{image ? '📷 Photo' : ''}{image && text ? ' · ' : ''}{text ? `“${text.length > 90 ? `${text.slice(0, 90)}…` : text}”` : ''}</p>
       </div>
       <div className="flex-1 overflow-y-auto">
         {shown.length === 0 && <p className="p-6 text-sm text-slate-500 italic text-center">No chats to show.</p>}
