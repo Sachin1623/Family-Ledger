@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -764,28 +765,23 @@ export default function SweepGame() {
         />
       )}
 
-      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_35%,#1b6b52_0%,#0e3f2f_55%,#06241b_100%)]">
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
         <div aria-hidden className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
 
-        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
-          <button onClick={() => navigate('/games/sweep')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-          </button>
-          <div className="leading-tight">
-            <h1 className="text-[15px] font-black">Sweep · Deal {game.dealNumber}</h1>
-            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">ROOM {game.code}</span>
-          </div>
-          <ReactionButton onSend={handleSendQuickReaction} />
-          <div className="flex-1" />
-          <div className="flex items-center gap-1">
-            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-            <VoiceChatButton voice={voice} />
-            <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
-            <button onClick={handleEndGame} className="p-1.5 text-red-300 shrink-0" aria-label="Leave game">
-              <span className="material-symbols-outlined text-[22px] block">logout</span>
-            </button>
-          </div>
-        </header>
+        <GameHeader
+          title={`Sweep · Deal ${game.dealNumber}`}
+          subtitle={`Room ${game.code}`}
+          backTo="/games/sweep"
+          actions={
+            <>
+              <ReactionButton onSend={handleSendQuickReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} />
+              <GameLeaveButton onClick={handleEndGame} />
+            </>
+          }
+        />
 
         {/* score strip */}
         <div className="relative shrink-0 mx-3 mt-2 rounded-2xl bg-black/35 border border-white/12 px-3 py-2">

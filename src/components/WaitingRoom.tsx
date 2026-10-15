@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import ShareGameButton from './ShareGameButton';
 import PresenceDot from './PresenceDot';
+import { GameShell, GameHeader } from './GameShell';
 
 export interface WaitingPlayer {
   uid: string;
@@ -92,7 +92,6 @@ export default function WaitingRoom({
   deleteLabel?: string;
   error?: string | null;
 }) {
-  const navigate = useNavigate();
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);
   const isHost = !!myUid && hostUid === myUid;
@@ -173,20 +172,8 @@ export default function WaitingRoom({
     : startBlocked ? startBlocked : startBusy ? 'Starting…' : `${startLabel}${minToStart !== maxPlayers ? ` · ${players.length} players` : ''}`;
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
-        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
-        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
-          <button onClick={() => navigate(backTo)} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-          </button>
-          <div className="leading-tight">
-            <h1 className="text-[15px] font-black">{title}</h1>
-            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">{(modeLabel ? `${modeLabel} · ` : '') + 'WAITING FOR PLAYERS'}</span>
-          </div>
-          <div className="flex-1" />
-          <div className="flex items-center gap-1">{headerActions}</div>
-        </header>
+    <GameShell>
+        <GameHeader title={title} subtitle={(modeLabel ? `${modeLabel} · ` : '') + 'Waiting for players'} backTo={backTo} actions={headerActions} />
 
         <main className="relative flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-4 space-y-3 max-w-md mx-auto w-full">
           {isPlayer && !isHost && host && (
@@ -257,7 +244,6 @@ export default function WaitingRoom({
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </GameShell>
   );
 }

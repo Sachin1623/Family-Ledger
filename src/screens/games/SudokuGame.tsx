@@ -1,4 +1,5 @@
 import React from 'react';
+import { GameHeader, GameLeaveButton } from '../../components/GameShell';
 import { useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -299,30 +300,25 @@ export default function SudokuGame() {
       {showHelp && <GameHelpModal content={SUDOKU_HELP} onClose={() => setShowHelp(false)} />}
 
       {/* Full-screen game table (covers the app header and tab bar), same look as the other games. */}
-      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_25%,#0f4d46_0%,#0a2c3d_55%,#06141f_100%)]">
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
         <div aria-hidden className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
 
-        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
-          <button onClick={() => navigate('/games/sudoku')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-          </button>
-          <h1 className="text-[15px] font-black flex items-center">
-            Sudoku
-            <span className="ml-2 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase text-white" style={{ background: accent }}>{game.difficulty}</span>
-          </h1>
-          <div className="flex-1" />
-          {!completion && (
-            <button onClick={handleRestart} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Restart puzzle">
-              <span className="material-symbols-outlined text-[18px]">restart_alt</span>
-            </button>
-          )}
-          <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
-          {!completion && (
-            <button onClick={handleQuit} className="p-1.5 text-red-300 shrink-0" aria-label="Quit puzzle">
-              <span className="material-symbols-outlined text-[22px] block">logout</span>
-            </button>
-          )}
-        </header>
+        <GameHeader
+          title="Sudoku"
+          subtitle={<span className="inline-block px-2 py-px rounded-full text-white" style={{ background: accent }}>{game.difficulty}</span>}
+          backTo="/games/sudoku"
+          actions={
+            <>
+              {!completion && (
+                <button onClick={handleRestart} className="p-1.5 shrink-0" aria-label="Restart puzzle">
+                  <span className="material-symbols-outlined text-[20px] block">restart_alt</span>
+                </button>
+              )}
+              <HelpButton onClick={() => setShowHelp(true)} />
+              {!completion && <GameLeaveButton onClick={handleQuit} label="Quit puzzle" />}
+            </>
+          }
+        />
 
         {/* stat chips */}
         <div className="relative shrink-0 flex justify-center gap-2 px-3 pt-3">

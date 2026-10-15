@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { GameHeader } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -672,34 +673,33 @@ export default function ChessGame() {
       )}
 
       {/* Full-screen table (covers the app header and tab bar) */}
-      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1a2540_0%,#0b1020_60%,#070a14_100%)]">
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
         <div aria-hidden className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
 
-        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
-          <button onClick={() => navigate('/games/chess')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-          </button>
-          <div className="leading-tight">
-            <h1 className="text-[15px] font-black">Chess</h1>
-            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">{`MOVE ${movesPlayed + (turnColor === 'w' && !isFinished ? 1 : 0)}`}</span>
-          </div>
-          <ReactionButton onSend={handleSendReaction} />
-          <div className="flex-1" />
-          <div className="flex items-center gap-1">
+        <GameHeader
+          title="Chess"
+          subtitle={<>{`MOVE ${movesPlayed + (turnColor === 'w' && !isFinished ? 1 : 0)}`}</>}
+          backTo="/games/chess"
+          actions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
+
             <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
             <VoiceChatButton voice={voice} />
-            <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            <HelpButton onClick={() => setShowHelp(true)} />
             {isFinished ? (
-              <button onClick={() => setShowResultPanel(true)} className="p-1.5 text-amber-300 shrink-0" aria-label="Show result">
+              <button onClick={() => setShowResultPanel(true)} className="p-1.5 !text-amber-300 shrink-0" aria-label="Show result">
                 <span className="material-symbols-outlined text-[22px] block">emoji_events</span>
               </button>
             ) : isPlayer && game.status === 'active' ? (
-              <button onClick={handleEndGame} className="p-1.5 text-red-300 shrink-0" aria-label="Leave game">
+              <button onClick={handleEndGame} className="p-1.5 !text-red-300 shrink-0" aria-label="Leave game">
                 <span className="material-symbols-outlined text-[22px] block">logout</span>
               </button>
             ) : null}
-          </div>
-        </header>
+
+            </>
+          }
+        />
 
         {error && <p className="relative text-xs font-bold text-red-300 px-4 pt-1">{error}</p>}
 

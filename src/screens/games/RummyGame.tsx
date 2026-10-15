@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { GameShell, GameHeader, GameLeaveButton, GameStatusBar } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1000,17 +1001,17 @@ export default function RummyGame() {
 
       {showExitMenu && (
         <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowExitMenu(false)}>
-          <div className="w-full max-w-xs bg-white rounded-3xl shadow-2xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider text-center pb-1">Leave this game?</p>
-            <button onClick={handleGoToLobby} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-on-surface text-left px-4">
+          <div className="w-full max-w-xs bg-[#0f1630] border border-[#243052] text-white rounded-3xl shadow-2xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+            <p className="text-xs font-bold text-white/50 uppercase tracking-wider text-center pb-1">Leave this game?</p>
+            <button onClick={handleGoToLobby} className="w-full py-3 bg-[#121a2e] border border-[#1f2a47] rounded-2xl text-sm font-bold text-white text-left px-4">
               <span className="block">Go to Lobby</span>
-              <span className="block text-[10px] font-medium text-text-muted mt-0.5">Keeps your seat — come back anytime</span>
+              <span className="block text-[10px] font-medium text-white/50 mt-0.5">Keeps your seat — come back anytime</span>
             </button>
-            <button onClick={handleQuitAndGoToLobby} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-error text-left px-4">
+            <button onClick={handleQuitAndGoToLobby} className="w-full py-3 bg-[#121a2e] border border-[#1f2a47] rounded-2xl text-sm font-bold text-red-300 text-left px-4">
               <span className="block">Quit &amp; Go to Lobby</span>
-              <span className="block text-[10px] font-medium text-text-muted mt-0.5">Drops out of this game (you cannot rejoin)</span>
+              <span className="block text-[10px] font-medium text-white/50 mt-0.5">Drops out of this game (you cannot rejoin)</span>
             </button>
-            <button onClick={() => setShowExitMenu(false)} className="w-full py-2.5 text-sm font-bold text-text-muted">
+            <button onClick={() => setShowExitMenu(false)} className="w-full py-2.5 text-sm font-bold text-white/50">
               Cancel
             </button>
           </div>
@@ -1020,7 +1021,7 @@ export default function RummyGame() {
       {/* Full-screen table (covers the app header and tab bar), built for a phone held sideways: a slim
           header, the felt table with every control on it, and the whole hand below in as many rows as
           it takes to keep every card readable. */}
-      <div className="fixed inset-0 z-[150] flex flex-col bg-surface overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <GameShell>
         {!portraitHintDismissed && (
           <div className="hidden portrait:flex absolute inset-0 z-[160] flex-col items-center justify-center gap-4 bg-primary/95 text-white text-center p-8">
             <motion.span
@@ -1043,25 +1044,24 @@ export default function RummyGame() {
           </div>
         )}
 
-        <header className="shrink-0 px-2 py-1 flex items-center gap-2 bg-white border-b border-border-subtle">
-          <div className="flex flex-col leading-tight">
-            <h1 className="font-black text-primary text-xs">27-Hand Rummy</h1>
-            <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{game.code}</span>
-          </div>
-          <ReactionButton onSend={handleSendReaction} />
-          <p className={`flex-1 min-w-0 truncate text-center text-[11px] font-bold ${isMyTurn ? 'text-primary' : 'text-text-muted'}`}>{turnStatusText}</p>
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={handleDrop} disabled={busy || me?.dropped} className="p-1.5 text-error shrink-0 disabled:opacity-30" aria-label="Drop">
-              <span className="material-symbols-outlined text-[20px] block">flag</span>
-            </button>
-            <button onClick={() => setShowExitMenu(true)} className="p-1.5 text-text-muted shrink-0" aria-label="Exit Game">
-              <span className="material-symbols-outlined text-[20px] block">logout</span>
-            </button>
-            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-            <VoiceChatButton voice={voice} />
-            <HelpButton onClick={() => setShowHelp(true)} />
-          </div>
-        </header>
+        <GameHeader
+          title="27-Hand Rummy"
+          subtitle={game.code}
+          onBack={() => setShowExitMenu(true)}
+          actions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} />
+              <button onClick={handleDrop} disabled={busy || me?.dropped} className="p-1.5 !text-amber-300 shrink-0 disabled:opacity-30" aria-label="Drop">
+                <span className="material-symbols-outlined text-[20px] block">flag</span>
+              </button>
+              <GameLeaveButton onClick={() => setShowExitMenu(true)} label="Exit game" />
+            </>
+          }
+        />
+        <GameStatusBar text={turnStatusText} mine={isMyTurn} />
 
         <div className="flex-1 min-h-0 flex flex-col gap-1.5 p-2">
           {/* Felt table: wooden rim, green baize with a soft spotlight. Three bands: the seats along the
@@ -1224,7 +1224,7 @@ export default function RummyGame() {
             chip={discardChip}
           />
         </div>
-      </div>
+      </GameShell>
     </div>
   );
 }

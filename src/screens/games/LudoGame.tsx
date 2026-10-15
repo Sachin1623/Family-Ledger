@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import { GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -980,47 +981,40 @@ export default function LudoGame() {
 
         {showExitMenuLudo && (
           <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowExitMenuLudo(false)}>
-            <div className="w-full max-w-xs bg-white rounded-3xl shadow-2xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider text-center pb-1">Leave this game?</p>
-              <button onClick={() => navigate('/games/ludo')} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-on-surface text-left px-4">
+            <div className="w-full max-w-xs bg-[#0f1630] border border-[#243052] text-white rounded-3xl shadow-2xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+              <p className="text-xs font-bold text-white/50 uppercase tracking-wider text-center pb-1">Leave this game?</p>
+              <button onClick={() => navigate('/games/ludo')} className="w-full py-3 bg-[#121a2e] border border-[#1f2a47] rounded-2xl text-sm font-bold text-white text-left px-4">
                 <span className="block">Go to Lobby</span>
-                <span className="block text-[10px] font-medium text-text-muted mt-0.5">The game carries on — come back anytime</span>
+                <span className="block text-[10px] font-medium text-white/50 mt-0.5">The game carries on — come back anytime</span>
               </button>
-              <button onClick={() => { setShowExitMenuLudo(false); handleEndGame(); }} className="w-full py-3 bg-surface rounded-2xl text-sm font-bold text-error text-left px-4">
+              <button onClick={() => { setShowExitMenuLudo(false); handleEndGame(); }} className="w-full py-3 bg-[#121a2e] border border-[#1f2a47] rounded-2xl text-sm font-bold text-red-300 text-left px-4">
                 <span className="block">End game for everyone</span>
-                <span className="block text-[10px] font-medium text-text-muted mt-0.5">This can't be undone</span>
+                <span className="block text-[10px] font-medium text-white/50 mt-0.5">This can't be undone</span>
               </button>
-              <button onClick={() => setShowExitMenuLudo(false)} className="w-full py-2.5 text-sm font-bold text-text-muted">Cancel</button>
+              <button onClick={() => setShowExitMenuLudo(false)} className="w-full py-2.5 text-sm font-bold text-white/50">Cancel</button>
             </div>
           </div>
         )}
 
         {/* Full-screen table (covers the app header and tab bar): a dark game backdrop, the board in a
             wooden frame with each player's badge at their corner, and the dice dock underneath. */}
-        <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_22%,#1d4e7a_0%,#0e2f4d_48%,#071a2c_100%)]">
+        <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
           <div aria-hidden className="pointer-events-none absolute inset-0 opacity-50 [background-image:radial-gradient(rgba(255,255,255,0.16)_1px,transparent_1.5px)] [background-size:26px_26px]" />
 
-          <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
-            <button onClick={() => navigate('/games/ludo')} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
-              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-            </button>
-            <div className="leading-tight">
-              <h1 className="text-[15px] font-black">Ludo</h1>
-              <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">ROOM {game.code}</span>
-            </div>
-            <ReactionButton onSend={handleSendReaction} />
-            <div className="flex-1" />
-            <div className="flex items-center gap-1">
-              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-              <VoiceChatButton voice={voice} />
-              <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
-              {isPlayer && game.status === 'active' && (
-                <button onClick={() => setShowExitMenuLudo(true)} className="p-1.5 text-red-300" aria-label="Leave game">
-                  <span className="material-symbols-outlined text-[22px] block">logout</span>
-                </button>
-              )}
-            </div>
-          </header>
+          <GameHeader
+            title="Ludo"
+            subtitle={`Room ${game.code}`}
+            backTo="/games/ludo"
+            actions={
+              <>
+                <ReactionButton onSend={handleSendReaction} />
+                <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+                <VoiceChatButton voice={voice} />
+                <HelpButton onClick={() => setShowHelp(true)} />
+                {isPlayer && game.status === 'active' && <GameLeaveButton onClick={() => setShowExitMenuLudo(true)} />}
+              </>
+            }
+          />
 
           <div className="relative shrink-0 flex justify-center pt-1.5">
             <span

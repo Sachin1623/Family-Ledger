@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { GameShell, GameHeader, GameLeaveButton, GameStatusBar, GAME_CARD, GAME_LABEL, GAME_BTN_PRIMARY } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -646,65 +647,48 @@ export default function SpadePledgeGame() {
         />
       )}
 
-      <div className="fixed inset-x-0 top-[calc(60px+env(safe-area-inset-top))] bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 flex flex-col bg-surface overflow-hidden">
-        <div className="shrink-0">
-          <header className="p-2 flex items-center gap-2 bg-white border-b border-border-subtle">
-            <div className="flex flex-col leading-tight">
-              <h1 className="font-black text-primary text-xs">Spade Pledge</h1>
-              <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{table.code} · {FORMAT_LABEL[table.format]}</span>
-            </div>
-            <ReactionButton onSend={handleSendReaction} />
-            <div className="flex items-center gap-1.5 ml-auto">
+      <GameShell>
+        <GameHeader
+          title="Spade Pledge"
+          subtitle={`${table.code} · ${FORMAT_LABEL[table.format]}`}
+          backTo="/games/spade-pledge"
+          actions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
               <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
               <VoiceChatButton voice={voice} />
               <HelpButton onClick={() => setShowHelp(true)} />
-              <button
-                onClick={handleLeaveGame}
-                aria-label="Quit Match"
-                className="w-8 h-8 flex items-center justify-center rounded-full text-text-muted hover:bg-surface"
-              >
-                <span className="material-symbols-outlined text-[18px]">logout</span>
-              </button>
-            </div>
-          </header>
-
-          <div className="p-2 max-w-xl mx-auto w-full space-y-2">
-            {table.groups.some((g) => g.bags >= 5) && (
-              <p className="text-[10px] font-bold text-warning px-1 flex items-center gap-1">
-                <span className="material-symbols-outlined text-[13px]">warning</span>
-                {BAG_PENALTY_THRESHOLD} bags triggers a -{BAG_PENALTY} point penalty — {table.groups.some((g) => g.bags > 8) ? 'the next overtrick could tip it' : 'watch your overtricks'}.
-              </p>
-            )}
-
-            <div className="bg-white rounded-xl border border-border-subtle p-2 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <p className={`text-[11px] font-bold ${(isMyBidTurn || isMyPlayTurn) ? 'text-primary' : 'text-text-muted'}`}>{turnStatusText}</p>
-                <div className="flex items-center gap-2">
-                  {deal.spadesBroken && <span className="text-[9px] font-bold text-text-muted uppercase">♠ broken</span>}
-                  {remainingSec !== null && (
-                    <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-full ${timerWarning ? 'bg-error/10 text-error animate-pulse' : 'text-text-muted'}`}>
-                      {remainingSec}s
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+              <GameLeaveButton onClick={handleLeaveGame} label="Quit match" />
+            </>
+          }
+        />
+        <GameStatusBar
+          text={turnStatusText}
+          mine={isMyBidTurn || isMyPlayTurn}
+          seconds={remainingSec}
+          warn={timerWarning}
+          right={deal.spadesBroken ? <span className="text-[9px] font-black text-white/50 uppercase shrink-0">♠ broken</span> : undefined}
+        />
+        {table.groups.some((g) => g.bags >= 5) && (
+          <p className="relative shrink-0 mx-3 mt-2 text-[10px] font-bold text-amber-300 flex items-center gap-1">
+            <span className="material-symbols-outlined text-[13px]">warning</span>
+            {BAG_PENALTY_THRESHOLD} bags triggers a -{BAG_PENALTY} point penalty — {table.groups.some((g) => g.bags > 8) ? 'the next overtrick could tip it' : 'watch your overtricks'}.
+          </p>
+        )}
 
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="p-2 max-w-xl mx-auto w-full pb-4 min-h-full flex flex-col gap-3">
             {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
 
             {me?.isBot && (
-              <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-center justify-between gap-2">
-                <p className="text-[11px] font-bold text-warning">
+              <div className={`${GAME_CARD} p-3 flex items-center justify-between gap-2`}>
+                <p className="text-[11px] font-bold text-amber-300">
                   A bot is playing your seat — you missed 2 turns in a row.
                 </p>
                 <button
                   onClick={handleReclaimSeat}
                   disabled={busy}
-                  className="px-3 py-1.5 bg-warning text-white rounded-lg text-[11px] font-bold shrink-0 disabled:opacity-50"
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-black shrink-0 disabled:opacity-50 ${GAME_BTN_PRIMARY}`}
                 >
                   I'm back — take control
                 </button>
@@ -785,8 +769,8 @@ export default function SpadePledgeGame() {
 
             {/* Bidding sheet */}
             {isMyBidTurn && (
-              <div className="bg-white rounded-2xl border border-border-subtle p-3 space-y-2">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">How many tricks will you win?</p>
+              <div className={`${GAME_CARD} p-3 space-y-2`}>
+                <p className={GAME_LABEL}>HOW MANY TRICKS WILL YOU WIN?</p>
                 <div className="grid grid-cols-7 gap-1.5">
                   {Array.from({ length: MAX_BID - MIN_BID + 1 }).map((_, i) => {
                     const n = MIN_BID + i;
@@ -795,7 +779,7 @@ export default function SpadePledgeGame() {
                         key={n}
                         onClick={() => handleBid(n)}
                         disabled={busy}
-                        className="py-3 rounded-lg text-sm font-black bg-primary/10 text-primary disabled:opacity-40 active:scale-95"
+                        className="py-3 rounded-lg text-sm font-black bg-[#0c1230] border border-[#2c3a63] text-amber-300 disabled:opacity-40 active:scale-95"
                       >
                         {n}
                       </button>
@@ -807,8 +791,8 @@ export default function SpadePledgeGame() {
 
             {/* Your hand */}
             <div className="space-y-1.5">
-              <p className="text-[10px] font-bold text-text-muted uppercase px-1">
-                Your Hand ({handSorted.length}){isMyPlayTurn ? ' — tap a card to play it' : ''}
+              <p className={`${GAME_LABEL} px-1`}>
+                YOUR HAND ({handSorted.length}){isMyPlayTurn ? ' — tap a card to play it' : ''}
               </p>
               {/* One row, whatever the card count: every card but the last shares the row's leftover
                   width (so they overlap as needed), the last one is shown in full; with few cards left
@@ -850,7 +834,7 @@ export default function SpadePledgeGame() {
             </div>
           </div>
         </div>
-      </div>
+      </GameShell>
     </div>
   );
 }

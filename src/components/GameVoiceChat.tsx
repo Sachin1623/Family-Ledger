@@ -486,7 +486,7 @@ export const VoiceChatButton: React.FC<{ voice: GameVoiceState; className?: stri
         className={`relative p-2 shrink-0 ${className || ''}`}
         aria-label="Voice chat"
       >
-        <span className="material-symbols-outlined text-[20px] block" style={voice.joined ? { color: 'var(--color-primary)' } : undefined}>
+        <span className="material-symbols-outlined text-[20px] block" style={voice.joined ? { color: 'var(--game-accent, var(--color-primary))' } : undefined}>
           {voice.joined ? (voice.micMuted ? 'mic_off' : 'mic') : 'mic_off'}
         </span>
         {voice.peersInVoice.length > 0 && (

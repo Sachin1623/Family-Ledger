@@ -51,7 +51,7 @@ export function PlayingCard({
   const { rank, suit } = parseCard(cardId);
   const red = !isJoker && SUIT_RED[suit];
   const state = selected
-    ? 'border-primary ring-2 ring-primary/70 bg-primary/10 shadow-md'
+    ? 'border-amber-400 ring-2 ring-amber-300/80 bg-amber-50 shadow-md'
     : highlight
     ? 'border-warning ring-2 ring-warning/60 bg-white shadow-md'
     : 'border-slate-300 bg-white shadow';
@@ -245,7 +245,7 @@ export function HandArea({
     <div
       ref={boxRef}
       data-loose-area=""
-      className={`flex-1 min-h-0 flex flex-col justify-around rounded-lg px-1 py-1 transition-colors ${isDragging ? 'border border-dashed border-primary bg-primary/5' : 'border border-transparent'}`}
+      className={`flex-1 min-h-0 flex flex-col justify-around rounded-lg px-1 py-1 transition-colors ${isDragging ? 'border border-dashed border-amber-300 bg-amber-300/10' : 'border border-transparent'}`}
     >
       {fit.rows.map((row, ri) => {
         // Consecutive loose cards form one cluster; each group is its own cluster.
@@ -261,14 +261,14 @@ export function HandArea({
         return (
           <div key={ri} className="flex justify-center items-start" style={{ gap: GROUP_GAP }}>
             {clusters.map((cl, ci) => (
-              <div key={cl.group ? `g${cl.group.idx}` : `l${ci}`} data-group-idx={cl.group?.idx} className={`relative flex flex-col rounded-md transition-colors ${isDragging && cl.group ? 'bg-primary/10 ring-1 ring-primary/40' : ''}`}>
+              <div key={cl.group ? `g${cl.group.idx}` : `l${ci}`} data-group-idx={cl.group?.idx} className={`relative flex flex-col rounded-md transition-colors ${isDragging && cl.group ? 'bg-amber-300/10 ring-1 ring-amber-300/40' : ''}`}>
                 <div className="flex">{cl.cards.map((c, i) => renderCard(c, i, i === 0, `${c}-${ri}-${ci}-${i}`))}</div>
                 <div className={`mt-1 h-1 rounded-full ${cl.group ? (cl.group.valid ? 'bg-success' : 'bg-text-muted/40') : 'bg-text-muted/25'}`} />
                 {cl.group?.label && (
-                  <span className={`text-center text-[9px] font-black leading-none mt-0.5 ${cl.group.valid ? 'text-success' : 'text-text-muted'}`}>{cl.group.label}</span>
+                  <span className={`text-center text-[9px] font-black leading-none mt-0.5 ${cl.group.valid ? 'text-emerald-400' : 'text-white/60'}`}>{cl.group.label}</span>
                 )}
                 {!cl.group && looseLabelFor && (
-                  <span className="text-center text-[9px] font-black leading-none mt-0.5 text-text-muted">{looseLabelFor(cl.cards)}</span>
+                  <span className="text-center text-[9px] font-black leading-none mt-0.5 text-white/60">{looseLabelFor(cl.cards)}</span>
                 )}
                 {cl.group && onUngroup && (
                   <button
@@ -283,7 +283,7 @@ export function HandArea({
                   <button
                     onClick={() => onAddSelected(cl.group!.idx)}
                     aria-label="Add selected cards here"
-                    className="absolute -bottom-2 -right-2 z-20 flex items-center gap-0.5 h-4 min-w-[16px] px-1 rounded-full bg-primary text-white text-[9px] font-black shadow"
+                    className="absolute -bottom-2 -right-2 z-20 flex items-center gap-0.5 h-4 min-w-[16px] px-1 rounded-full bg-amber-300 text-[#1a1300] text-[9px] font-black shadow"
                   >
                     <span className="material-symbols-outlined text-[10px] leading-none">add</span>
                     {selectedCount}
@@ -311,7 +311,7 @@ export function TablePill({
   tone?: 'primary' | 'light' | 'success' | 'warn';
 }) {
   const tones: Record<string, string> = {
-    primary: 'bg-primary text-white',
+    primary: 'bg-amber-300 text-[#1a1300]',
     light: 'bg-white text-slate-900 border border-slate-300',
     success: 'bg-success text-white',
     warn: 'bg-amber-100 text-amber-800 border border-amber-300',
