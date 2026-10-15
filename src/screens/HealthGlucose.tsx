@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { useConfirm, HealthInsightsCard, SegTabs } from '../components/HealthKit';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -117,6 +118,7 @@ async function loadLogoAsPngDataUrl(): Promise<string | null> {
 export default function HealthGlucose() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+  const [confirm, confirmDialog] = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<'log' | 'dashboard'>('log');
 
@@ -218,6 +220,12 @@ export default function HealthGlucose() {
   // each of which then opens as its own floating window with its own Save — rather than one long
   // combined sheet, so changing just one thing doesn't require scrolling past the others.
   const [settingsPanel, setSettingsPanel] = useState<'menu' | 'target' | 'sharing' | 'delegates' | 'reminders' | null>(null);
+
+  // `?panel=delegates` (from the Care circle) opens the Delegates settings straight away.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('panel') === 'delegates') setSettingsPanel('delegates');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [targetForm, setTargetForm] = useState<GlucoseTargetMap>(targets);
   const [shareForm, setShareForm] = useState<GlucoseShareSettings>(shareSettings);
   const [delegateForm, setDelegateForm] = useState<GlucoseDelegateSettings>(delegateSettings);
@@ -569,8 +577,8 @@ export default function HealthGlucose() {
     }
   };
 
-  const handleDelete = (id: string) => {
-    if (!window.confirm(t('health.confirmDeleteEntry'))) return;
+  const handleDelete = async (id: string) => {
+    if (!(await confirm({ title: t('health.confirmDeleteEntry'), danger: true }))) return;
     fireWrite(deleteDoc(doc(db, 'glucoseLogs', id)), 'delete glucose log');
   };
 
@@ -664,9 +672,9 @@ export default function HealthGlucose() {
 
   const [exportingPdf, setExportingPdf] = useState(false);
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     if (filteredLogs.length === 0) return;
-    if (!window.confirm(t('health.confirmClearHistory'))) return;
+    if (!(await confirm({ title: t('health.confirmClearHistory'), danger: true, confirmLabel: 'Clear' }))) return;
     filteredLogs.forEach((log) => fireWrite(deleteDoc(doc(db, 'glucoseLogs', log.id)), 'clear glucose log'));
   };
 
@@ -1058,6 +1066,7 @@ export default function HealthGlucose() {
     // App.tsx) — without that this would silently collapse to auto height and go right back to
     // relying on the outer page scroll.
     <div className="flex flex-col h-full bg-surface overflow-hidden">
+      {confirmDialog}
       <div className="shrink-0 p-3 md:p-8 pb-1.5 max-w-xl mx-auto w-full space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -1075,28 +1084,7 @@ export default function HealthGlucose() {
         </div>
 
         {/* Log Entry / Dashboard tabs */}
-        <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
-          <button
-            type="button"
-            onClick={() => setTab('log')}
-            className={clsx(
-              'flex-1 py-1.5 rounded-lg text-xs font-bold transition-all',
-              tab === 'log' ? 'bg-primary text-white' : 'text-text-muted',
-            )}
-          >
-            {t('health.logEntry')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('dashboard')}
-            className={clsx(
-              'flex-1 py-1.5 rounded-lg text-xs font-bold transition-all',
-              tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted',
-            )}
-          >
-            {t('health.dashboard')}
-          </button>
-        </div>
+        <SegTabs tabs={[{ id: 'log', label: 'Log' }, { id: 'dashboard', label: 'Insights' }]} value={tab} onChange={setTab} />
       </div>
 
       {tab === 'log' && (
@@ -1399,6 +1387,18 @@ export default function HealthGlucose() {
               </div>
             </div>
             </div>
+
+            <HealthInsightsCard
+              readings={filteredLogs.map((l) => ({
+                value: l.value,
+                ok: isGlucoseInRange(l.value, targetForWindow(viewedTargets, glucoseWindowOf(l))),
+                windowLabel: t(GLUCOSE_WINDOWS.find((w) => w.key === glucoseWindowOf(l))?.labelKey || 'health.random'),
+                at: l.loggedAt,
+              }))}
+              avgLabel={String(average || '—')}
+              highestLabel={filteredLogs.length > 0 ? String(Math.max(...filteredLogs.map((l) => l.value))) : '—'}
+              unit="mg/dL"
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">

@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { useConfirm, HealthInsightsCard, SegTabs } from '../components/HealthKit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -69,6 +70,7 @@ function newTimeSlotId(): string {
 export default function HealthBloodPressure() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+  const [confirm, confirmDialog] = useConfirm();
   const [tab, setTab] = useState<'log' | 'dashboard'>('log');
 
   const [membershipsValue] = useCollection(
@@ -148,6 +150,12 @@ export default function HealthBloodPressure() {
   const reminders: BpReminderSettings = profile?.bpReminders || DEFAULT_BP_REMINDERS;
 
   const [settingsPanel, setSettingsPanel] = useState<'menu' | 'target' | 'sharing' | 'delegates' | 'reminders' | null>(null);
+
+  // `?panel=delegates` (from the Care circle) opens the Delegates settings straight away.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('panel') === 'delegates') setSettingsPanel('delegates');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [targetForm, setTargetForm] = useState<BpTarget>(target);
   const [shareForm, setShareForm] = useState<BpShareSettings>(shareSettings);
   const [delegateForm, setDelegateForm] = useState<BpDelegateSettings>(delegateSettings);
@@ -427,8 +435,8 @@ export default function HealthBloodPressure() {
     }
   };
 
-  const handleDelete = (id: string) => {
-    if (!window.confirm(t('bp.confirmDeleteEntry'))) return;
+  const handleDelete = async (id: string) => {
+    if (!(await confirm({ title: t('bp.confirmDeleteEntry'), danger: true }))) return;
     fireWrite(deleteDoc(doc(db, 'bloodPressureLogs', id)), 'delete BP log');
   };
 
@@ -506,9 +514,9 @@ export default function HealthBloodPressure() {
   const chartRef = useRef<HTMLDivElement | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     if (filteredLogs.length === 0) return;
-    if (!window.confirm(t('bp.confirmClearHistory'))) return;
+    if (!(await confirm({ title: t('bp.confirmClearHistory'), danger: true, confirmLabel: 'Clear' }))) return;
     filteredLogs.forEach((log) => fireWrite(deleteDoc(doc(db, 'bloodPressureLogs', log.id)), 'clear BP log'));
   };
 
@@ -637,6 +645,7 @@ export default function HealthBloodPressure() {
     // fix). Relies on AuthenticatedLayout's <main> carrying h-full (see App.tsx) — without that,
     // h-full here would silently collapse to auto height.
     <div className="flex flex-col h-full bg-surface overflow-hidden">
+      {confirmDialog}
       <div className="shrink-0 p-3 md:p-8 pb-1.5 max-w-xl mx-auto w-full space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -653,22 +662,7 @@ export default function HealthBloodPressure() {
           </button>
         </div>
 
-        <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
-          <button
-            type="button"
-            onClick={() => setTab('log')}
-            className={clsx('flex-1 py-1.5 rounded-lg text-xs font-bold transition-all', tab === 'log' ? 'bg-primary text-white' : 'text-text-muted')}
-          >
-            {t('health.logEntry')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('dashboard')}
-            className={clsx('flex-1 py-1.5 rounded-lg text-xs font-bold transition-all', tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted')}
-          >
-            {t('health.dashboard')}
-          </button>
-        </div>
+        <SegTabs tabs={[{ id: 'log', label: 'Log' }, { id: 'dashboard', label: 'Insights' }]} value={tab} onChange={setTab} />
       </div>
 
       {tab === 'log' && (
@@ -891,6 +885,22 @@ export default function HealthBloodPressure() {
               </select>
             </div>
             </div>
+
+            <HealthInsightsCard
+              readings={filteredLogs.map((l) => {
+                const hour = new Date(l.loggedAt).getHours();
+                return {
+                  value: l.systolic,
+                  ok: bpRangeStatus(l.systolic, l.diastolic, viewedTarget) === 'inRange',
+                  windowLabel: hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : hour < 21 ? 'Evening' : 'Night',
+                  at: l.loggedAt,
+                };
+              })}
+              avgLabel={avgSystolic ? `${avgSystolic}/${avgDiastolic}` : '—'}
+              highestLabel={filteredLogs.length > 0 ? (() => { const h = filteredLogs.reduce((m, l) => (l.systolic > m.systolic ? l : m), filteredLogs[0]); return `${h.systolic}/${h.diastolic}`; })() : '—'}
+              unit="mmHg"
+              rangeNoun="normal"
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4">

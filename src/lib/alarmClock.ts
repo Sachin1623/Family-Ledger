@@ -62,10 +62,31 @@ function isSupported() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 }
 
+// An every-N-days alarm whose first day is MORE than N days away used to ring at its time EVERY day until that
+// first day arrived: the native scheduler only looks N days ahead for a matching occurrence, finds none, and falls
+// back to "next time-of-day". (That is how a baby's "overdue" vaccine alarm rang weeks before the visit was due.)
+// For such an alarm, arm it as a single ring on its first day instead (the 100-year interval trick vaccine
+// reminders already use for one-shots); the next reconcile pass — every app open — re-arms the true repeat once the
+// first day is within reach.
+function guardFarStart(opts: AlarmClockSchedule): AlarmClockSchedule {
+  try {
+    if (!opts.intervalDays || opts.intervalDays <= 1 || !opts.startDate) return opts;
+    const [y, m, d] = opts.startDate.split('-').map(Number);
+    if (!y || !m || !d) return opts;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daysAway = Math.round((new Date(y, m - 1, d).getTime() - today.getTime()) / 86400000);
+    if (daysAway > opts.intervalDays) return { ...opts, intervalDays: 36500 };
+  } catch {
+    // fall through to the schedule as given
+  }
+  return opts;
+}
+
 export async function scheduleAlarm(opts: AlarmClockSchedule) {
   if (!isSupported()) return;
   try {
-    await native.schedule(opts);
+    await native.schedule(guardFarStart(opts));
   } catch (err) {
     console.error('Failed to schedule alarm:', err);
   }

@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { StatusChip } from '../components/HealthKit';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, documentId, query, where, writeBatch } from 'firebase/firestore';
@@ -536,6 +537,24 @@ export default function BabyVaccinations() {
           <p className="text-[11px] text-primary leading-relaxed">{t('babyVax.scheduleDisclaimer')}</p>
         </div>
 
+        {activeProfile && (() => {
+          const next = overdueVisits[0] || upcomingVisits[0];
+          if (!next) return null;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const days = Math.round((new Date(next.dueDate + 'T00:00:00').getTime() - today.getTime()) / 86400000);
+          const late = days < 0;
+          return (
+            <div className={clsx('rounded-3xl p-4 border', late ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200')}>
+              <p className={clsx('text-[10px] font-extrabold tracking-[0.12em]', late ? 'text-red-700' : 'text-blue-700')}>{late ? 'OVERDUE' : 'NEXT VACCINE'}</p>
+              <p className="text-lg font-black text-slate-900 mt-0.5">{next.visitLabel}</p>
+              <p className="text-[11px] font-bold text-slate-500">{late ? `${-days} day${days === -1 ? '' : 's'} overdue` : days === 0 ? 'Due today' : `Due ${next.dueDate} · in ${days} day${days === 1 ? '' : 's'}`}</p>
+              <p className="text-[10.5px] font-semibold text-slate-500 mt-1">{next.doses.filter((d) => d.status === 'pending').map((d) => `${d.vaccineName}${d.doseNumber ? `·${d.doseNumber}` : ''}`).join(', ')}</p>
+              <button type="button" onClick={() => navigate(`/baby-vaccinations/log-visit/${next.profileId}/${next.visitKey}`)} className="mt-3 w-full py-2.5 rounded-xl bg-teal-700 text-white text-xs font-black">Log this visit</button>
+            </div>
+          );
+        })()}
+
         {/* Each status gets its own bordered "card" — one visible box per group, with an internal
             divider between its own tiles — instead of loose individual tiles floating on the page
             background, so where a section starts and ends is unambiguous at a glance. */}
@@ -588,7 +607,7 @@ export default function BabyVaccinations() {
                     >
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-bold text-primary">{v.visitLabel}</p>
-                        <p className="text-[11px] text-text-muted font-bold">{v.dueDate}</p>
+                        <StatusChip tone="blue">{v.dueDate}</StatusChip>
                       </div>
                       <p className="text-[11px] text-text-muted mt-0.5">{v.doses.filter((d) => d.status === 'pending').map((d) => `${d.vaccineName}·${d.doseNumber}`).join(', ')}</p>
                       <p className="text-[10px] font-bold text-primary mt-2">

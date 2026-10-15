@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { useConfirm, PersonSwitcher, SegTabs, ProgressRing, StatusChip } from '../components/HealthKit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -332,8 +333,9 @@ const MedicineCard: React.FC<MedicineCardProps> = ({
 export default function HealthMedicines() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+  const [confirm, confirmDialog] = useConfirm();
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<'medicines' | 'log' | 'dashboard'>('medicines');
+  const [tab, setTab] = useState<'today' | 'medicines' | 'log' | 'dashboard'>('today');
 
   const [membershipsValue] = useCollection(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
@@ -467,6 +469,12 @@ export default function HealthMedicines() {
   // --- Settings menu (Sharing / Delegates — no Target Range or standalone Reminders here; see
   // medicines.ts's top-of-file comment for why reminders live on each medicine instead) ---
   const [settingsPanel, setSettingsPanel] = useState<'menu' | 'sharing' | 'delegates' | null>(null);
+
+  // `?panel=delegates` (from the Care circle) opens the Delegates settings straight away.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('panel') === 'delegates') setSettingsPanel('delegates');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [shareForm, setShareForm] = useState<MedicineShareSettings>(shareSettings);
   const [delegateForm, setDelegateForm] = useState<MedicineDelegateSettings>(delegateSettings);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -743,8 +751,8 @@ export default function HealthMedicines() {
   const handleTogglePause = (med: Medicine) => {
     fireWrite(updateDoc(doc(db, 'medicines', med.id), { active: !med.active }), 'toggle medicine pause');
   };
-  const handleDeleteMedicine = (med: Medicine) => {
-    if (!window.confirm(t('medicine.confirmDeleteMedicine'))) return;
+  const handleDeleteMedicine = async (med: Medicine) => {
+    if (!(await confirm({ title: t('medicine.confirmDeleteMedicine'), danger: true }))) return;
     fireWrite(deleteDoc(doc(db, 'medicines', med.id)), 'delete medicine');
   };
 
@@ -796,8 +804,8 @@ export default function HealthMedicines() {
   // Deleting an incident never deletes or orphans its medicines — they move to the General
   // bucket (incidentId: null), same "close it, don't destroy what's under it" reasoning already
   // applied elsewhere in this app (e.g. discontinuing a goal never touches its funds).
-  const handleDeleteIncident = (inc: MedicalIncident) => {
-    if (!window.confirm(t('medicine.confirmDeleteIncident'))) return;
+  const handleDeleteIncident = async (inc: MedicalIncident) => {
+    if (!(await confirm({ title: t('medicine.confirmDeleteIncident'), danger: true }))) return;
     const batch = writeBatch(db);
     batch.delete(doc(db, 'medicalIncidents', inc.id));
     manageMedicines.filter((m) => m.incidentId === inc.id).forEach((m) => batch.update(doc(db, 'medicines', m.id), { incidentId: null }));
@@ -1220,7 +1228,7 @@ export default function HealthMedicines() {
     appliedForUidRef.current = forUidParam;
     if (delegatorUids.includes(forUidParam)) {
       setManageUid(forUidParam);
-      setTab('medicines');
+      setTab('today');
     } else {
       setViewUid(forUidParam);
       setTab('dashboard');
@@ -1344,10 +1352,10 @@ export default function HealthMedicines() {
       }));
   }, [dueInstances]);
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     const logged = filteredInstances.filter((i) => i.log);
     if (logged.length === 0) return;
-    if (!window.confirm(t('medicine.confirmClearHistory'))) return;
+    if (!(await confirm({ title: t('medicine.confirmClearHistory'), danger: true, confirmLabel: 'Clear' }))) return;
     logged.forEach((i) => fireWrite(deleteDoc(doc(db, 'medicineLogs', i.log!.id)), 'clear medicine log'));
   };
 
@@ -1573,6 +1581,7 @@ export default function HealthMedicines() {
     // live in a shrink-0 region above, each tab gets its own overflow-y-auto scroll region below.
     // Relies on AuthenticatedLayout's <main> carrying h-full (see App.tsx) for h-full to resolve.
     <div className="flex flex-col h-full bg-surface overflow-hidden">
+      {confirmDialog}
       <div className="shrink-0 p-3 md:p-8 pb-1.5 max-w-xl mx-auto w-full space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -1591,133 +1600,107 @@ export default function HealthMedicines() {
           </div>
         </div>
 
-        <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1">
-          <button type="button" onClick={() => setTab('medicines')} className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', tab === 'medicines' ? 'bg-primary text-white' : 'text-text-muted')}>
-            {t('medicine.medicinesTab')}
-          </button>
-          <button type="button" onClick={() => setTab('log')} className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', tab === 'log' ? 'bg-primary text-white' : 'text-text-muted')}>
-            {t('medicine.logTab')}
-          </button>
-          <button type="button" onClick={() => setTab('dashboard')} className={clsx('flex-1 py-2 rounded-lg text-xs font-bold transition-all', tab === 'dashboard' ? 'bg-primary text-white' : 'text-text-muted')}>
-            {t('health.dashboard')}
-          </button>
-        </div>
+        <SegTabs
+          tabs={[
+            { id: 'today', label: 'Today' },
+            { id: 'medicines', label: t('medicine.medicinesTab') },
+            { id: 'log', label: 'History' },
+            { id: 'dashboard', label: 'Insights' },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
 
-        {(tab === 'medicines' || tab === 'log') && delegatorsForMe.length > 0 && (
-          <div className="space-y-1">
-            <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('medicine.managingFor')}</label>
-            <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
-              {[
-                { userId: 'me', displayName: t('health.myself'), photoURL: profile?.photoURL || user?.photoURL || '' },
-                ...delegatorsForMe,
-              ].map((d) => {
-                const isActive = d.userId === manageUid;
-                return (
-                  <button
-                    key={d.userId}
-                    type="button"
-                    onClick={() => setManageUid(d.userId)}
-                    className="flex flex-col items-center gap-0.5 shrink-0 w-12"
-                  >
-                    {d.photoURL ? (
-                      <img src={d.photoURL} alt="" className={clsx('w-9 h-9 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
-                    ) : (
-                      <div className={clsx('w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
-                        {d.displayName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <span className={clsx('text-[9px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{d.displayName}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {(tab === 'today' || tab === 'medicines' || tab === 'log') && delegatorsForMe.length > 0 && (
+          <PersonSwitcher
+            people={[{ userId: 'me', displayName: t('health.myself'), photoURL: profile?.photoURL || user?.photoURL || '' }, ...delegatorsForMe]}
+            activeId={manageUid}
+            onChange={setManageUid}
+          />
         )}
       </div>
+
+      {tab === 'today' && (() => {
+        const nowHM = new Date().toTimeString().slice(0, 5);
+        const doneCount = dueTodayAll.length - pendingDueToday.length;
+        const nextDose = pendingDueToday[0];
+        const dayPart = (time: string) => (time < '12:00' ? 'Morning' : time < '17:00' ? 'Afternoon' : time < '21:00' ? 'Evening' : 'Night');
+        return (
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
+            <div className="space-y-3">
+              {dueTodayAll.length === 0 ? (
+                <div className="rounded-3xl bg-white border border-slate-200 p-6 text-center space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-teal-50 text-teal-700 mx-auto flex items-center justify-center">
+                    <span className="material-symbols-outlined text-[28px]">medication</span>
+                  </div>
+                  <p className="text-sm font-black text-slate-800">{t('medicine.noDosesDue')}</p>
+                  <button type="button" onClick={() => openAddMedicine()} className="px-5 py-2.5 rounded-2xl text-xs font-black text-white bg-teal-700">＋ Add medicine</button>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-3xl bg-white border border-slate-200 p-3.5 flex items-center gap-3 shadow-sm">
+                    <ProgressRing done={doneCount} total={dueTodayAll.length} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-black text-slate-900">{pendingDueToday.length === 0 ? 'All done for today' : 'On track today'}</p>
+                      <p className="text-[11px] font-bold text-slate-500">{pendingDueToday.length} left · {doneCount} done</p>
+                    </div>
+                    {nextDose && <StatusChip tone="teal">next {formatDoseTimeDisplay(nextDose.doseTime.time)}</StatusChip>}
+                  </div>
+
+                  {dueTodayGrouped.map(([time, items]) => {
+                    const anyPending = items.some(({ medicine, doseTime }) => !dueTodayAllLogsById.has(medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr)));
+                    const dueNow = anyPending && time <= nowHM;
+                    return (
+                      <div key={time} className="space-y-2">
+                        <p className="text-[10px] font-black tracking-[0.1em] text-slate-500 px-1 uppercase">
+                          {dayPart(time)} · {formatDoseTimeDisplay(time)}{dueNow && <span className="text-teal-700"> · due now</span>}
+                        </p>
+                        {items.map(({ medicine, doseTime }) => {
+                          const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr);
+                          const log = dueTodayAllLogsById.get(id);
+                          const photo = medicine.photoFront || medicine.photoBack || (medicine as any).photo;
+                          return (
+                            <div key={id} className={clsx('rounded-2xl bg-white border p-2.5 flex items-center gap-2.5', !log && dueNow ? 'border-2 border-teal-600 shadow-[0_6px_18px_rgba(15,118,110,0.15)]' : 'border-slate-200', log && 'opacity-90')}>
+                              {photo ? (
+                                <button type="button" onClick={() => setViewingPhoto({ front: medicine.photoFront ?? (medicine as any).photo ?? null, back: medicine.photoBack ?? null })} className="shrink-0" aria-label={t('medicine.viewPhoto')}>
+                                  <img src={photo} alt="" className="w-11 h-11 object-cover rounded-xl border border-slate-200" />
+                                </button>
+                              ) : (
+                                <span className="shrink-0 w-11 h-11 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center">
+                                  <span className="material-symbols-outlined text-[22px]">medication</span>
+                                </span>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="font-black text-slate-900 text-[13px] truncate">{medicine.name}{medicine.dosage ? <span className="text-slate-500 font-bold"> · {medicine.dosage}</span> : null}</p>
+                                <p className="text-[10px] font-bold text-slate-500 truncate">{foodTimingLabel(doseTime.foodTiming)} · {incidentNameFor(medicine)}</p>
+                              </div>
+                              {log ? (
+                                <div className="shrink-0 flex flex-col items-end gap-0.5">
+                                  <StatusChip tone={log.status === 'taken' ? 'ok' : 'warn'}>{log.status === 'taken' ? '✓ ' + t('medicine.doseStatusTaken') : t('medicine.doseStatusSkipped')}</StatusChip>
+                                  <button type="button" onClick={() => handleUndoDose(medicine, doseTime, todayStr)} className="text-[10px] font-bold text-slate-400 underline">{t('medicine.undo')}</button>
+                                </div>
+                              ) : (
+                                <div className="shrink-0 flex items-center gap-1.5">
+                                  <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="px-3.5 py-2 rounded-xl bg-teal-700 text-white text-[11px] font-black" aria-label={t('medicine.markTaken')}>Take</button>
+                                  <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-[11px] font-black" aria-label={t('medicine.markSkipped')}>Skip</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {tab === 'medicines' && (
         <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
           <div className="space-y-4">
-            {dueTodayAll.length > 0 && (
-              <div className="rounded-2xl overflow-hidden shadow-sm border border-warning/30 bg-warning/5">
-                <div className="flex items-center gap-2 px-3 py-2.5 bg-warning/10">
-                  <span className="material-symbols-outlined text-[18px] text-warning shrink-0">notifications_active</span>
-                  <span className="flex-1 min-w-0 text-sm font-bold text-primary truncate">{t('medicine.dueTodayTitle')}</span>
-                  <span className="shrink-0 text-[10px] font-black rounded-full px-2 py-0.5 bg-warning/20 text-warning">{pendingDueToday.length}</span>
-                </div>
-                <div className="p-2.5 space-y-3">
-                  {dueTodayGrouped.map(([time, items]) => (
-                    <div key={time} className="space-y-2">
-                      <p className="text-[10px] font-black text-text-muted uppercase tracking-wider px-1">{formatDoseTimeDisplay(time)}</p>
-                      {items.map(({ medicine, doseTime }) => {
-                        const id = medicineLogId(manageTargetUid, medicine.id, doseTime.id, todayStr);
-                        const log = dueTodayAllLogsById.get(id);
-                        return (
-                          <div
-                            key={id}
-                            className={clsx(
-                              'rounded-2xl border border-l-[5px] shadow-sm p-2.5 flex items-center gap-2.5',
-                              !log && 'bg-white border-border-subtle border-l-border-subtle',
-                              log?.status === 'taken' && 'bg-success/5 border-success/20 border-l-success',
-                              log?.status === 'skipped' && 'bg-warning/5 border-warning/20 border-l-warning',
-                            )}
-                          >
-                            {(medicine.photoFront || medicine.photoBack || (medicine as any).photo) ? (
-                              <button
-                                type="button"
-                                onClick={() => setViewingPhoto({
-                                  front: medicine.photoFront ?? (medicine as any).photo ?? null,
-                                  back: medicine.photoBack ?? null,
-                                })}
-                                className="shrink-0"
-                                aria-label={t('medicine.viewPhoto')}
-                              >
-                                <img src={medicine.photoFront || medicine.photoBack || (medicine as any).photo} alt="" className="w-9 h-9 object-cover rounded-full border border-border-subtle" />
-                              </button>
-                            ) : (
-                              <span className="shrink-0 w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
-                                <span className="material-symbols-outlined text-[18px]">medication</span>
-                              </span>
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <p className="font-bold text-primary text-sm truncate">{medicine.name}{medicine.dosage ? <span className="text-text-muted font-semibold"> · {medicine.dosage}</span> : null}</p>
-                              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">{incidentNameFor(medicine)}</p>
-                              <p className="text-[13px] font-bold text-text truncate">{foodTimingLabel(doseTime.foodTiming)}</p>
-                            </div>
-                            {log ? (
-                              <div className="shrink-0 flex flex-col items-end gap-0.5">
-                                <span className={clsx('text-[11px] font-black flex items-center gap-1', log.status === 'taken' ? 'text-success' : 'text-warning')}>
-                                  <span className="material-symbols-outlined text-[16px]">{log.status === 'taken' ? 'check_circle' : 'block'}</span>
-                                  {log.status === 'taken' ? t('medicine.doseStatusTaken') : t('medicine.doseStatusSkipped')}
-                                </span>
-                                <button type="button" onClick={() => handleUndoDose(medicine, doseTime, todayStr)} className="text-[10px] font-bold text-text-muted underline">
-                                  {t('medicine.undo')}
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="shrink-0 flex items-center gap-2.5">
-                                <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'taken', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markTaken')}>
-                                  <span className="w-9 h-9 rounded-full bg-success/15 text-success flex items-center justify-center">
-                                    <span className="material-symbols-outlined text-[20px]">check</span>
-                                  </span>
-                                  <span className="text-[9px] font-bold text-success">{t('medicine.doseStatusTaken')}</span>
-                                </button>
-                                <button type="button" onClick={() => handleMarkDose(medicine, doseTime, 'skipped', todayStr)} className="flex flex-col items-center gap-0.5" aria-label={t('medicine.markSkipped')}>
-                                  <span className="w-9 h-9 rounded-full bg-surface-container-high text-text-muted flex items-center justify-center">
-                                    <span className="material-symbols-outlined text-[20px]">close</span>
-                                  </span>
-                                  <span className="text-[9px] font-bold text-text-muted">{t('medicine.doseStatusSkipped')}</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
             <button
               type="button"
               onClick={openAddIncident}
@@ -1991,8 +1974,8 @@ export default function HealthMedicines() {
                             {canDelete && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  if (!window.confirm(t('medicine.confirmUndoDose'))) return;
+                                onClick={async () => {
+                                  if (!(await confirm({ title: t('medicine.confirmUndoDose'), danger: true }))) return;
                                   fireWrite(deleteDoc(doc(db, 'medicineLogs', i.log!.id)), 'delete medicine log');
                                 }}
                                 className="p-1 text-text-muted hover:text-error transition-colors"

@@ -111,7 +111,7 @@ export function groupDosesIntoVisits(doseList: VaccineDose[], profilesById: Map<
 // (the native overdue alarm repeats every 3 days until something cancels that exact id).
 function idsForVisit(profileId: string, visitKey: string): { alarmIds: number[]; notifIds: number[] } {
   const baseKey = `vax_${profileId}_${visitKey}`;
-  const alarmIds = ['_leave', '_dueday', '_overdue'].map((s) => hashId(`${baseKey}${s}`));
+  const alarmIds = ['_leave', '_dueday', '_overdue', ...Array.from({ length: 6 }, (_, i) => `_overdue_${i}`)].map((s) => hashId(`${baseKey}${s}`));
   const notifIds: number[] = [];
   [3, 2, 1].forEach((d) => {
     notifIds.push(hashId(`${baseKey}_notice_${d}`), hashId(`${baseKey}_book_${d}`));
@@ -291,7 +291,18 @@ async function runSchedule(
           overdueStart.setHours(10, 0, 0, 0);
           const overdueBody = `${doseNames}. Schedule an appointment.`;
           if (platform === 'android') {
-            alarmJobs.push({ kind: 'recurring', id: hashId(`${baseKey}_overdue`), title: `${label} is overdue`, body: overdueBody, startDate: toLocalDateString(overdueStart) });
+            const daysAway = (overdueStart.getTime() - now.getTime()) / 86400000;
+            if (daysAway > 3) {
+              // The visit isn't even due yet: a native every-3-days alarm whose first day is more than 3 days
+              // ahead would ring EVERY day until then. Arm the first few overdue rings as exact one-offs
+              // instead; once the first one is within reach, the next reconcile re-arms the true repeat.
+              for (let i = 0; i < 6; i++) {
+                const occ = new Date(overdueStart.getTime() + i * 3 * 86400000);
+                alarmJobs.push({ kind: 'oneShot', id: hashId(`${baseKey}_overdue_${i}`), title: `${label} is overdue`, body: overdueBody, at: occ });
+              }
+            } else {
+              alarmJobs.push({ kind: 'recurring', id: hashId(`${baseKey}_overdue`), title: `${label} is overdue`, body: overdueBody, startDate: toLocalDateString(overdueStart) });
+            }
           } else {
             // iOS's LocalNotifications `every` cron only supports day/week/month/year, not an
             // arbitrary N-day interval — approximated with a bounded batch of one-shot occurrences,

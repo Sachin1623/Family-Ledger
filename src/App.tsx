@@ -78,6 +78,7 @@ import MembersChat from './screens/MembersChat';
 import Friends from './screens/Friends';
 import MyProgress from './screens/MyProgress';
 import Health from './screens/Health';
+import CareCircle from './screens/CareCircle';
 import HealthGlucose from './screens/HealthGlucose';
 import HealthBloodPressure from './screens/HealthBloodPressure';
 import HealthMedicines from './screens/HealthMedicines';
@@ -396,6 +397,7 @@ export default function App() {
               <Route path="/health/glucose" element={<AuthenticatedLayout><HealthGlucose /></AuthenticatedLayout>} />
               <Route path="/health/blood-pressure" element={<AuthenticatedLayout><HealthBloodPressure /></AuthenticatedLayout>} />
               <Route path="/health/medicines" element={<AuthenticatedLayout><HealthMedicines /></AuthenticatedLayout>} />
+              <Route path="/health/care-circle" element={<AuthenticatedLayout><CareCircle /></AuthenticatedLayout>} />
               <Route path="/baby-vaccinations" element={<AuthenticatedLayout><BabyVaccinations /></AuthenticatedLayout>} />
               <Route path="/baby-vaccinations/add-child" element={<AuthenticatedLayout><AddBabyProfile /></AuthenticatedLayout>} />
               <Route path="/baby-vaccinations/edit-profile/:profileId" element={<AuthenticatedLayout><AddBabyProfile /></AuthenticatedLayout>} />

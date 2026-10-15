@@ -305,6 +305,14 @@ class AlarmScheduler {
                 int sy = Integer.parseInt(parts[0]);
                 int sm = Integer.parseInt(parts[1]);
                 int sd = Integer.parseInt(parts[2]);
+                // Start date still ahead: the next ring is simply the first day at the alarm's time. (Without this,
+                // a start more than intervalDays away matched nothing below and fell through to ringing daily.)
+                Calendar startCal = Calendar.getInstance();
+                startCal.set(sy, sm - 1, sd, hour, minute, 0);
+                startCal.set(Calendar.MILLISECOND, 0);
+                if (startCal.getTimeInMillis() > now.getTimeInMillis()) {
+                    return startCal.getTimeInMillis();
+                }
                 for (int i = 0; i <= intervalDays; i++) {
                     Calendar candidate = (Calendar) cal.clone();
                     candidate.add(Calendar.DAY_OF_YEAR, i);
