@@ -48,7 +48,22 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
       const base64Data = await blobToBase64(blob);
       console.log(`shareOrDownloadFile: writing ${filename} (${(base64Data.length / 1024).toFixed(0)}KB base64)`);
       const written = await Filesystem.writeFile({ path: filename, data: base64Data, directory: Directory.Cache });
-      await Share.share({ title: filename, ...(text ? { text } : {}), url: written.uri });
+      // The native Share plugin keeps an "a share is open" flag that is only cleared when the system share sheet reports
+      // back; after a sheet is dismissed in some ways (tapping outside, switching apps) it can stay set for a while and
+      // the next share is refused with "Can't share while sharing is in progress". Give it a moment and try again
+      // instead of showing that error straight away.
+      const shareNow = () => Share.share({ title: filename, ...(text ? { text } : {}), url: written.uri });
+      let attempt = 0;
+      for (;;) {
+        try {
+          await shareNow();
+          break;
+        } catch (e: any) {
+          if (!/in progress/i.test(String(e?.message || '')) || attempt >= 3) throw e;
+          attempt += 1;
+          await new Promise((r) => setTimeout(r, 900));
+        }
+      }
       return;
     } catch (err: any) {
       // Share.share rejects with a message (no `name`) when the user dismisses the native sheet —
@@ -56,6 +71,9 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
       // and chose not to use it).
       if (typeof err?.message === 'string' && /cancel/i.test(err.message)) return;
       console.error('Native file share failed:', err);
+      if (/in progress/i.test(String(err?.message || ''))) {
+        throw new Error('Another share window is still open on your phone. Close it (or switch away and back to the app), then tap Share again.');
+      }
       // Deliberately NOT falling through to the web-only path below on native — that path is
       // exactly what the comment above it already documents as unreliable inside a Capacitor
       // WebView (no Downloads-folder integration for blob: URLs, inconsistent File-capable
