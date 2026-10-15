@@ -183,7 +183,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // effect below then removes this placeholder the moment `messages` (the live listener) actually
   // contains that id, so there's never a visible moment with BOTH a "shadow" pending bubble and
   // the real confirmed message on screen at once.
-  interface PendingMessage { tempId: string; text: string; realId: string | null }
+  interface PendingMessage { tempId: string; text: string; realId: string | null; at: number }
   const [pending, setPending] = useState<PendingMessage[]>([]);
 
   useEffect(() => {
@@ -192,6 +192,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const mutedUsers: string[] = profile?.mutedUsers || [];
   const mutedGameChats: string[] = profile?.mutedGameChats || [];
+  // The live listener can deliver the real message BEFORE the send request returns (so before a placeholder is tagged
+  // with its real id) — for those moments both the placeholder and the real message would show. Pair each placeholder
+  // with a message of mine that has the same text and arrived after it was sent, and hide the placeholder at once.
+  const visiblePending = useMemo(() => {
+    const used = new Set<string>();
+    return pending.filter((p) => {
+      const match = messages.find((m) => !used.has(m.id) && m.userId === myUid && m.text === p.text && new Date(m.createdAt).getTime() >= p.at - 120000);
+      if (match) { used.add(match.id); return false; }
+      return true;
+    });
+  }, [pending, messages, myUid]);
+
   const chatKey = `${collectionName}:${gameId}`;
   const chatMuted = mutedGameChats.includes(chatKey);
 
@@ -269,7 +281,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     const trimmed = raw.trim();
     if (!trimmed || sending || !user) return;
     const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setPending((p) => [...p, { tempId, text: trimmed, realId: null }]);
+    setPending((p) => [...p, { tempId, text: trimmed, realId: null, at: Date.now() }]);
     setText('');
     setSending(true);
     try {
@@ -521,7 +533,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </React.Fragment>
             );
           })}
-          {pending.map((p) => (
+          {visiblePending.map((p) => (
             <div key={p.tempId} className="flex justify-end">
               <div className="max-w-[78%] items-end flex flex-col gap-0.5">
                 <div className="px-3 py-2 rounded-[18px] rounded-br-md break-words text-[13px] font-semibold bg-[#0b3b4f] text-white shadow-[0_1px_1.5px_rgba(0,0,0,0.06)]">{p.text}</div>
