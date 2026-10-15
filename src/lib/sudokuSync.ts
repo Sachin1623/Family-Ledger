@@ -4,6 +4,7 @@
 import { auth, db } from './firebase';
 import { doc, runTransaction } from 'firebase/firestore';
 import { checkLeaderboard } from './leaderboardCheck';
+import { addToDayScores } from './leaderboardPeriods';
 import { readPendingScores, removePendingScore, SudokuScoreRecord } from './sudoku';
 
 async function syncOneScore(uid: string, userName: string, userPhoto: string, record: SudokuScoreRecord) {
@@ -29,6 +30,8 @@ async function syncOneScore(uid: string, userName: string, userPhoto: string, re
       totalScore,
       bestScore,
       gamesPlayed,
+      // Per-day totals (last 8 days) behind the Today / This week boards.
+      dayScores: addToDayScores(current?.dayScores, record.score, record.completedAt, 'sum'),
       updatedAt: new Date().toISOString(),
     });
   });

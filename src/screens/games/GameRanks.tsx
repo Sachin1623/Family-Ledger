@@ -234,165 +234,167 @@ export default function GameRanks() {
     return { headToHeadRanked: combined, myHeadToHeadRank: combined.findIndex((e) => e.uid === user.uid) + 1 };
   }, [headToHead, myRecord, user, t]);
 
+  // Current winning streak (most recent games first, within the chosen period) and the closest rival — the
+  // opponent whose head-to-head with you is nearest to level — for the "Next up" bar.
+  const winStreak = useMemo(() => {
+    if (!user) return 0;
+    const mine = finishedInPeriod
+      .filter((g) => (g.players || []).some((p: any) => p.uid === user.uid))
+      .sort((a, b) => String(b.finishedAt || '').localeCompare(String(a.finishedAt || '')));
+    let n = 0;
+    for (const g of mine) {
+      if (getOutcome(g, user.uid, meta.resultMode) === 'win') n += 1;
+      else break;
+    }
+    return n;
+  }, [finishedInPeriod, user, meta.resultMode]);
+
+  const rival = useMemo(() => {
+    const pool = headToHead.filter((s) => s.gamesPlayed >= 2);
+    if (pool.length === 0) return null;
+    // From YOUR side: your wins against them are their losses.
+    return [...pool].sort((a, b) => Math.abs(a.losses - a.wins) - Math.abs(b.losses - b.wins) || b.gamesPlayed - a.gamesPlayed)[0];
+  }, [headToHead]);
+
+  const winPct = myRecord.gamesPlayed > 0 ? Math.round((myRecord.wins / myRecord.gamesPlayed) * 100) : 0;
+  const winDeg = myRecord.gamesPlayed > 0 ? (myRecord.wins / myRecord.gamesPlayed) * 360 : 0;
+  const lossDeg = myRecord.gamesPlayed > 0 ? (myRecord.losses / myRecord.gamesPlayed) * 360 : 0;
+  const gameName = t(meta.gameLabelKey);
+
+  const avatar = (s: { photoURL?: string; displayName?: string }, tone = 'from-[#6f86b3] to-[#3a4a75]') => (
+    <div className={clsx('w-[30px] h-[30px] rounded-full bg-gradient-to-br flex items-center justify-center text-[11px] font-black overflow-hidden shrink-0', tone)}>
+      {s.photoURL ? <img src={s.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (s.displayName || '?').slice(0, 1).toUpperCase()}
+    </div>
+  );
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <button onClick={() => navigate(meta.backTo)} className="text-xs font-bold text-primary flex items-center gap-1">
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          {t(meta.gameLabelKey)}
-        </button>
+      <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#2a2250_0%,#0e1230_55%,#070a18_100%)]">
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1.5px)] [background-size:24px_24px]" />
 
-        <div>
-          <h1 className="text-2xl font-black text-primary">{t('gameRanks.titleTemplate', { game: t(meta.gameLabelKey) })}</h1>
-          <p className="text-sm text-text-muted mt-1">{t('gameRanks.subtitle')}</p>
+        <header className="relative shrink-0 flex items-center gap-2 px-3 pt-2">
+          <button onClick={() => navigate(meta.backTo)} className="w-8 h-8 rounded-full bg-white/12 flex items-center justify-center" aria-label="Back">
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          </button>
+          <div className="leading-tight">
+            <h1 className="text-[15px] font-black">{t('gameRanks.titleTemplate', { game: gameName })}</h1>
+            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">{t('gameRanks.subtitle').toUpperCase()}</span>
+          </div>
+        </header>
+
+        <div className="relative shrink-0 px-3 pt-3">
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+            {PERIODS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setPeriod(p.id)}
+                className={clsx('flex-1 whitespace-nowrap px-3 py-1.5 rounded-full text-[11px] font-extrabold border shrink-0', period === p.id ? 'bg-gradient-to-r from-amber-300 to-amber-200 text-[#1a1300] border-transparent' : 'bg-[#121a2e] text-white/55 border-[#1f2a47]')}
+              >
+                {t(p.labelKey)}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-1">
-          {PERIODS.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setPeriod(p.id)}
-              className={clsx(
-                'px-3.5 py-2 rounded-xl text-xs font-bold border shrink-0',
-                period === p.id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-              )}
-            >
-              {t(p.labelKey)}
-            </button>
-          ))}
-        </div>
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 flex items-center justify-around text-center">
-          <div>
-            <p className="text-2xl font-black text-success">{myRecord.wins}</p>
-            <p className="text-[10px] font-bold text-text-muted uppercase">{t('gameRanks.wins')}</p>
-          </div>
-          <div>
-            <p className="text-2xl font-black text-error">{myRecord.losses}</p>
-            <p className="text-[10px] font-bold text-text-muted uppercase">{t('gameRanks.losses')}</p>
-          </div>
-          {meta.resultMode === 'color' && (
-            <div>
-              <p className="text-2xl font-black text-text-muted">{myRecord.draws}</p>
-              <p className="text-[10px] font-bold text-text-muted uppercase">{t('gameRanks.draws')}</p>
+        <main className={clsx('relative flex-1 min-h-0 overflow-y-auto px-3 pt-3 space-y-3 max-w-md mx-auto w-full', rival ? 'pb-36' : 'pb-8')}>
+          {/* my record */}
+          <div className="rounded-[1.1rem] bg-[#121a2e] border border-[#1f2a47] p-3 flex items-center gap-3.5">
+            <div className="w-[84px] h-[84px] rounded-full shrink-0 flex items-center justify-center" style={{ background: myRecord.gamesPlayed > 0 ? `conic-gradient(#3ddc84 0deg ${winDeg}deg, #ff6b78 ${winDeg}deg ${winDeg + lossDeg}deg, #8a96b4 ${winDeg + lossDeg}deg 360deg)` : '#1f2a47' }}>
+              <div className="w-[60px] h-[60px] rounded-full bg-[#0e1230] flex flex-col items-center justify-center">
+                <p className="text-[17px] font-black leading-none">{winPct}%</p>
+                <p className="text-[8px] font-extrabold tracking-[0.1em] text-white/50 mt-0.5">{t('gameRanks.wins').toUpperCase()}</p>
+              </div>
             </div>
-          )}
-          <div>
-            <p className="text-2xl font-black text-primary">{myRecord.gamesPlayed}</p>
-            <p className="text-[10px] font-bold text-text-muted uppercase">{t('gameRanks.games')}</p>
-          </div>
-        </div>
-
-        {teamCapable && (
-          <section className="space-y-2">
-            <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">{t('gameRanks.partners')}</h2>
-            <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-              {loading && <p className="p-6 text-sm text-text-muted text-center">{t('common.loading')}</p>}
-              {!loading && partners.length === 0 && (
-                <p className="p-6 text-sm text-text-muted italic text-center">{t('gameRanks.noTeammateGames')}</p>
+            <div className="flex-1 grid grid-cols-3 gap-1.5 text-center">
+              <div className="rounded-xl bg-[#0e1230] py-2"><p className="text-[17px] font-black text-emerald-400">{myRecord.wins}</p><p className="text-[8px] font-extrabold tracking-[0.08em] text-white/50">{t('gameRanks.wins').toUpperCase()}</p></div>
+              <div className="rounded-xl bg-[#0e1230] py-2"><p className="text-[17px] font-black text-red-400">{myRecord.losses}</p><p className="text-[8px] font-extrabold tracking-[0.08em] text-white/50">{t('gameRanks.losses').toUpperCase()}</p></div>
+              {meta.resultMode === 'color' ? (
+                <div className="rounded-xl bg-[#0e1230] py-2"><p className="text-[17px] font-black">{myRecord.draws}</p><p className="text-[8px] font-extrabold tracking-[0.08em] text-white/50">{t('gameRanks.draws').toUpperCase()}</p></div>
+              ) : (
+                <div className="rounded-xl bg-[#0e1230] py-2"><p className="text-[17px] font-black">{myRecord.gamesPlayed}</p><p className="text-[8px] font-extrabold tracking-[0.08em] text-white/50">{t('gameRanks.games').toUpperCase()}</p></div>
               )}
-              {partners.map((s, idx) => (
-                <div key={s.uid} className="p-4 flex items-center gap-3">
-                  <span className="w-6 text-center text-sm font-black text-text-muted">{idx + 1}</span>
-                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs overflow-hidden shrink-0">
-                    {s.photoURL ? (
-                      <img src={s.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      s.displayName?.slice(0, 1) || '?'
-                    )}
-                  </div>
+            </div>
+          </div>
+          <p className="text-center text-[11px] font-bold text-white/55">
+            {winStreak >= 2 && <>🔥 {winStreak}-game winning streak · </>}{myRecord.gamesPlayed} {t('gameRanks.games').toLowerCase()}
+          </p>
+
+          {teamCapable && (
+            <section className="space-y-1.5">
+              <h2 className="text-[10px] font-black tracking-[0.14em] text-amber-300 px-1">{t('gameRanks.partners').toUpperCase()}</h2>
+              {loading && <p className="p-4 text-sm text-white/60 text-center">{t('common.loading')}</p>}
+              {!loading && partners.length === 0 && <p className="p-4 text-sm text-white/50 italic text-center">{t('gameRanks.noTeammateGames')}</p>}
+              {partners.map((s) => (
+                <div key={s.uid} className="flex items-center gap-2.5 rounded-2xl bg-[#121a2e] border border-[#1f2a47] px-3 py-2">
+                  <span className="w-6 text-center text-base">🤝</span>
+                  {avatar(s)}
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-on-surface truncate">{s.displayName}</p>
-                    <p className="text-[10px] text-text-muted">
-                      {t('gameRanks.gamesAsTeammates', { count: s.gamesPlayed })}
-                    </p>
+                    <p className="text-xs font-extrabold truncate">{s.displayName}</p>
+                    <p className="text-[9px] font-bold text-white/50">{t('gameRanks.gamesAsTeammates', { count: s.gamesPlayed })}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-xs font-black">
-                      <span className="text-success">{s.wins}W</span> - <span className="text-error">{s.losses}L</span>
-                      {s.draws > 0 && <> - <span className="text-text-muted">{s.draws}D</span></>}
+                    <p className="text-[13px] font-black tabular-nums">
+                      <span className="text-emerald-400">{s.wins}W</span> – <span className="text-red-400">{s.losses}L</span>
+                      {s.draws > 0 && <> – <span className="text-white/55">{s.draws}D</span></>}
                     </p>
-                    <p className="text-[10px] text-text-muted">
-                      {t('gameRanks.percentTogether', { percent: s.gamesPlayed > 0 ? Math.round((s.wins / s.gamesPlayed) * 100) : 0 })}
-                    </p>
+                    <p className="text-[9px] font-bold text-white/50">{t('gameRanks.percentTogether', { percent: s.gamesPlayed > 0 ? Math.round((s.wins / s.gamesPlayed) * 100) : 0 })}</p>
                   </div>
                 </div>
               ))}
-            </div>
-          </section>
-        )}
+            </section>
+          )}
 
-        {/* Your own rank at a glance, right above the full ranked list below — same row styling
-            as every row in that list, so it reads as "here's where you'd be if you scrolled to
-            find yourself," not a separate/different kind of summary. */}
-        {myHeadToHeadRank > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">{t('gameRanks.yourRank')}</h2>
-            <div className="bg-primary/5 rounded-2xl border-2 border-primary/20 p-4 flex items-center gap-3">
-              <span className="w-6 text-center text-sm font-black text-primary">{myHeadToHeadRank}</span>
-              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs overflow-hidden shrink-0">
-                {user?.photoURL ? (
-                  <img src={user.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  (user?.displayName || 'Y').slice(0, 1)
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold text-on-surface truncate">{t('gameRanks.you')}</p>
-                <p className="text-[10px] text-text-muted">{t('gameRanks.gamesTogether', { count: myRecord.gamesPlayed })}</p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-xs font-black">
-                  <span className="text-success">{myRecord.wins}W</span> - <span className="text-error">{myRecord.losses}L</span>
-                </p>
-              </div>
-            </div>
-          </section>
-        )}
-
-        <section className="space-y-2">
-          <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">
-            {teamCapable ? t('gameRanks.opponents') : t('gameRanks.headToHead')}
-          </h2>
-          <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-            {loading && <p className="p-6 text-sm text-text-muted text-center">{t('common.loading')}</p>}
-            {!loading && headToHead.length === 0 && (
-              <p className="p-6 text-sm text-text-muted italic text-center">{t('gameRanks.noFinishedGames')}</p>
-            )}
+          <section className="space-y-1.5">
+            <h2 className="text-[10px] font-black tracking-[0.14em] text-amber-300 px-1">{(teamCapable ? t('gameRanks.opponents') : t('gameRanks.headToHead')).toUpperCase()}</h2>
+            {loading && <p className="p-4 text-sm text-white/60 text-center">{t('common.loading')}</p>}
+            {!loading && headToHead.length === 0 && <p className="p-4 text-sm text-white/50 italic text-center">{t('gameRanks.noFinishedGames')}</p>}
             {headToHeadRanked.map((s, idx) => {
-              const isMe = user && s.uid === user.uid;
+              const isMe = !!user && s.uid === user.uid;
+              // From YOUR side: your wins against them are their losses, and vice versa.
+              const mine = s.losses;
+              const theirs = s.wins;
+              const lead = mine - theirs;
+              const share = s.gamesPlayed > 0 ? Math.round(((isMe ? s.wins : mine) / s.gamesPlayed) * 100) : 0;
               return (
-                <div key={s.uid} className={clsx('p-4 flex items-center gap-3', isMe && 'bg-primary/5')}>
-                  <span className="w-6 text-center text-sm font-black text-text-muted">{idx + 1}</span>
-                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs overflow-hidden shrink-0">
-                    {s.photoURL ? (
-                      <img src={s.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      s.displayName?.slice(0, 1) || '?'
-                    )}
-                  </div>
+                <div key={s.uid} className={clsx('flex items-center gap-2.5 rounded-2xl px-3 py-2 border', isMe ? 'border-amber-300 bg-[#1d1a14] shadow-[0_0_14px_rgba(245,196,81,0.2)]' : 'border-[#1f2a47] bg-[#121a2e]')}>
+                  <span className={clsx('w-6 text-center text-sm font-black', isMe ? 'text-amber-300' : 'text-white/50')}>{idx + 1}</span>
+                  {avatar(s)}
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-on-surface truncate">{isMe ? t('gameRanks.you') : s.displayName}</p>
-                    <p className="text-[10px] text-text-muted">
-                      {t('gameRanks.gamesTogether', { count: s.gamesPlayed })}
+                    <p className="text-xs font-extrabold truncate">{isMe ? t('gameRanks.you') : s.displayName}</p>
+                    <p className="text-[9px] font-bold text-white/50 flex items-center gap-1.5 flex-wrap">
+                      {isMe ? t('gameRanks.gamesTogether', { count: s.gamesPlayed }) : lead > 0 ? `You lead ${mine}–${theirs}` : lead < 0 ? `You trail ${mine}–${theirs}` : `Level at ${mine}–${theirs}`}
+                      {!isMe && lead > 0 && <span className="px-1.5 py-px rounded-md bg-emerald-400/15 text-emerald-400 text-[8px] font-black">WINNING</span>}
+                      {!isMe && lead < 0 && <span className="px-1.5 py-px rounded-md bg-red-400/15 text-red-400 text-[8px] font-black">REVENGE?</span>}
                     </p>
+                    <div className="h-1 rounded-full bg-[#1f2a47] overflow-hidden mt-1">
+                      <div className={clsx('h-full rounded-full', !isMe && lead < 0 ? 'bg-gradient-to-r from-red-400 to-red-300' : 'bg-gradient-to-r from-emerald-400 to-emerald-200')} style={{ width: `${share}%` }} />
+                    </div>
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs font-black">
-                      <span className="text-success">{s.wins}W</span> - <span className="text-error">{s.losses}L</span>
-                    </p>
-                    {!isMe && (
-                      <p className="text-[10px] text-text-muted">
-                        {t('gameRanks.percentForThem', { percent: s.gamesPlayed > 0 ? Math.round((s.wins / s.gamesPlayed) * 100) : 0 })}
-                      </p>
-                    )}
-                  </div>
+                  <p className={clsx('text-[13px] font-black tabular-nums shrink-0', isMe && 'text-amber-300')}>{isMe ? `${s.wins}–${s.losses}` : `${mine}–${theirs}`}</p>
                 </div>
               );
             })}
-          </div>
-        </section>
-      </main>
+          </section>
+        </main>
+
+        {rival && (() => {
+          const lead = rival.losses - rival.wins;
+          const n = Math.abs(lead);
+          return (
+            <div className="absolute left-2.5 right-2.5 bottom-[max(0.75rem,env(safe-area-inset-bottom))] max-w-md mx-auto rounded-[1.1rem] border-[1.5px] border-emerald-400 bg-[#0f2a22] p-3 shadow-[0_8px_24px_rgba(0,0,0,0.65)]">
+              <p className="text-[10px] font-extrabold tracking-[0.1em] text-emerald-400">NEXT UP</p>
+              <p className="text-xs font-bold mt-0.5">
+                {lead > 0 ? <>{rival.displayName} is {n} win{n === 1 ? '' : 's'} behind you — <span className="text-emerald-300">challenge them</span></>
+                  : lead < 0 ? <>{rival.displayName} leads you by {n} — <span className="text-emerald-300">time for revenge</span></>
+                  : <>You and {rival.displayName} are level — <span className="text-emerald-300">settle it</span></>}
+              </p>
+              <button onClick={() => navigate(meta.backTo)} className="mt-2 w-full py-2.5 rounded-xl text-xs font-black text-emerald-950 bg-gradient-to-r from-emerald-500 to-emerald-300 shadow-[0_4px_0_#0a7a57] active:translate-y-0.5">
+                ▶ New {gameName} game
+              </button>
+            </div>
+          );
+        })()}
+      </div>
     </div>
   );
 }

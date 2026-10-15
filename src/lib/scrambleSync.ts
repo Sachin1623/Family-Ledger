@@ -4,6 +4,7 @@
 import { auth, db } from './firebase';
 import { doc, runTransaction } from 'firebase/firestore';
 import { checkLeaderboard } from './leaderboardCheck';
+import { addToDayScores } from './leaderboardPeriods';
 import { readPendingScores, removePendingScore, ScrambleScoreRecord } from './scramble';
 
 async function syncOneScore(uid: string, userName: string, userPhoto: string, record: ScrambleScoreRecord) {
@@ -24,6 +25,8 @@ async function syncOneScore(uid: string, userName: string, userPhoto: string, re
       bestScore,
       gamesPlayed,
       dictionaryVersion: record.dictionaryVersion,
+      // Best match per day (last 8 days) behind the Today / This week boards.
+      dayScores: addToDayScores(current?.dayScores, record.score, record.completedAt, 'max'),
       updatedAt: new Date().toISOString(),
     });
   });

@@ -6,12 +6,15 @@ import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { ScrambleWordLength, ScrambleTimerMode, WORD_LENGTHS, TIMER_MODES, TIMER_MODE_LABEL } from '../../lib/scramble';
+import LeaderboardArena, { ArenaEntry } from '../../components/LeaderboardArena';
+import { LeaderboardPeriod, PERIOD_LABEL, periodValue } from '../../lib/leaderboardPeriods';
 
 export default function ScrambleLeaderboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [wordLength, setWordLength] = useState<ScrambleWordLength>(6);
   const [timerMode, setTimerMode] = useState<ScrambleTimerMode>('3min');
+  const [period, setPeriod] = useState<LeaderboardPeriod>('all');
 
   // Single-field where() only — no orderBy — so this needs no composite index. Filtered to the
   // other axis and sorted client-side, same pattern used throughout this app — kept as the FULL
@@ -20,82 +23,52 @@ export default function ScrambleLeaderboard() {
   const [entriesValue, loading] = useCollection(
     query(collection(db, 'scrambleLeaderboard'), where('wordLength', '==', wordLength)),
   );
-  const allEntries = (entriesValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [])
+  const entries: ArenaEntry[] = (entriesValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [])
     .filter((e) => e.timerMode === timerMode)
-    .sort((a, b) => (b.bestScore ?? 0) - (a.bestScore ?? 0));
-  const entries = allEntries.slice(0, 50);
-  const myRank = allEntries.findIndex((e) => e.userId === user?.uid) + 1; // 0 if I have no entry yet
-  const myEntry = myRank > 0 ? allEntries[myRank - 1] : null;
+    .map((e) => ({
+      id: e.id,
+      userId: e.userId,
+      userName: e.userName,
+      userPhoto: e.userPhoto,
+      // Today / This week: the best single match inside that period (stored per day on the same document).
+      value: period === 'all' ? e.bestScore ?? 0 : periodValue(e.dayScores, period, 'max'),
+      sub: period === 'all' ? `${e.gamesPlayed} match${e.gamesPlayed !== 1 ? 'es' : ''}` : `best match ${PERIOD_LABEL[period].toLowerCase()}`,
+    }))
+    .filter((e) => period === 'all' || e.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const pill = (on: boolean) => clsx('flex-1 py-1.5 rounded-full text-[11px] font-extrabold border', on ? 'bg-gradient-to-r from-amber-300 to-amber-200 text-[#1a1300] border-transparent' : 'bg-[#121a2e] text-white/55 border-[#1f2a47]');
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <button onClick={() => navigate('/games/scramble')} className="text-xs font-bold text-primary flex items-center gap-1">
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          Scramble
-        </button>
-
-        <div>
-          <h1 className="text-2xl font-black text-primary">Leaderboard</h1>
-          <p className="text-sm text-text-muted mt-1">Best single-match scores across all FamilyLedger players.</p>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-1.5">
+    <LeaderboardArena
+      title="Leaderboard"
+      subtitle={`Scramble · best single match · ${PERIOD_LABEL[period]}`}
+      backTo="/games/scramble"
+      entries={entries}
+      loading={loading}
+      myUid={user?.uid}
+      playLabel={`Play ${wordLength}-letter · ${TIMER_MODE_LABEL[timerMode]}`}
+      onPlay={() => navigate('/games/scramble')}
+      emptyText={period === 'all' ? 'No scores yet — be the first!' : `Nobody has played ${PERIOD_LABEL[period].toLowerCase()} yet — be the first!`}
+      filters={
+        <>
+          <div className="flex gap-2">
+            {(['today', 'week', 'all'] as LeaderboardPeriod[]).map((p) => (
+              <button key={p} onClick={() => setPeriod(p)} className={pill(period === p)}>{PERIOD_LABEL[p]}</button>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
             {WORD_LENGTHS.map((n) => (
-              <button
-                key={n}
-                onClick={() => setWordLength(n)}
-                className={clsx(
-                  'w-9 h-9 rounded-lg text-xs font-bold border',
-                  wordLength === n ? 'text-white border-transparent bg-primary' : 'bg-white text-text-muted border-border-subtle',
-                )}
-              >
-                {n}
-              </button>
+              <button key={n} onClick={() => setWordLength(n)} className={pill(wordLength === n)}>{n}</button>
             ))}
           </div>
           <div className="flex gap-2">
             {TIMER_MODES.map((m) => (
-              <button
-                key={m}
-                onClick={() => setTimerMode(m)}
-                className={clsx(
-                  'flex-1 py-2 rounded-xl text-xs font-bold border',
-                  timerMode === m ? 'text-white border-transparent bg-primary' : 'bg-white text-text-muted border-border-subtle',
-                )}
-              >
-                {TIMER_MODE_LABEL[m]}
-              </button>
+              <button key={m} onClick={() => setTimerMode(m)} className={pill(timerMode === m)}>{TIMER_MODE_LABEL[m]}</button>
             ))}
           </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-          {loading && <p className="p-6 text-sm text-text-muted text-center">Loading…</p>}
-          {!loading && entries.length === 0 && <p className="p-6 text-sm text-text-muted italic text-center">No scores yet — be the first!</p>}
-          {entries.map((entry, idx) => {
-            const isMe = entry.userId === user?.uid;
-            return (
-              <div key={entry.id} className={clsx('p-4 flex items-center gap-3', isMe && 'bg-primary/5')}>
-                <span className="w-6 text-center text-sm font-black text-text-muted">{idx + 1}</span>
-                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs overflow-hidden shrink-0">
-                  {entry.userPhoto ? (
-                    <img src={entry.userPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    entry.userName?.slice(0, 1) || '?'
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-on-surface truncate">{entry.userName}{isMe && ' (You)'}</p>
-                  <p className="text-[10px] text-text-muted">{entry.gamesPlayed} game{entry.gamesPlayed !== 1 ? 's' : ''}</p>
-                </div>
-                <p className="text-sm font-black text-primary shrink-0">{(entry.bestScore ?? 0).toLocaleString()}</p>
-              </div>
-            );
-          })}
-        </div>
-      </main>
-    </div>
+        </>
+      }
+    />
   );
 }
