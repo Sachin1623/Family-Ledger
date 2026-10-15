@@ -234,7 +234,24 @@ export default function Rummy13Game() {
   const [handSnap] = useDocument(
     dealId && user && deal?.status === 'active' ? doc(db, 'rummy13Deals', dealId, 'hands', user.uid) : null,
   );
-  const handCards: string[] = handSnap?.exists() ? (handSnap.data().cards || []) : [];
+  const serverHandCards: string[] = handSnap?.exists() ? (handSnap.data().cards || []) : [];
+  // Instant feedback: a card you just drew shows in your hand as soon as the server answers (or at once when it is the
+  // visible top discard), and a card you just discarded leaves at once, instead of both waiting for the database to push
+  // the new hand back. Cleared as soon as the real hand catches up, or if the move is rejected.
+  const [optimisticDrawn, setOptimisticDrawn] = useState<string | null>(null);
+  const [optimisticGone, setOptimisticGone] = useState<string | null>(null);
+  useEffect(() => {
+    if (optimisticDrawn && serverHandCards.includes(optimisticDrawn)) setOptimisticDrawn(null);
+    if (optimisticGone && !serverHandCards.includes(optimisticGone)) setOptimisticGone(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handSnap]);
+  const handCards: string[] = useMemo(() => {
+    let cards = serverHandCards;
+    if (optimisticGone) cards = cards.filter((c) => c !== optimisticGone);
+    if (optimisticDrawn && !cards.includes(optimisticDrawn)) cards = [...cards, optimisticDrawn];
+    return cards;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handSnap, optimisticDrawn, optimisticGone]);
   const handSorted = useMemo(() => sortHandForDisplay(handCards), [handCards]);
 
   const [groupsMembersValue] = useCollection(
@@ -435,15 +452,23 @@ export default function Rummy13Game() {
 
   const handleDrawStock = () =>
     call('/api/rummy13/draw', { source: 'stock' })
-      .then((json) => setLastDrawnCard(json?.drawnCard || null))
+      .then((json) => {
+        setLastDrawnCard(json?.drawnCard || null);
+        if (json?.drawnCard) setOptimisticDrawn(json.drawnCard);
+      })
       .catch(() => {});
-  const handleDrawDiscard = () =>
-    call('/api/rummy13/draw', { source: 'discard' })
+  const handleDrawDiscard = () => {
+    // The top discard is already public, so it can show in your hand the instant you tap.
+    const top = deal?.discardPile?.[deal.discardPile.length - 1] || null;
+    if (top) setOptimisticDrawn(top);
+    return call('/api/rummy13/draw', { source: 'discard' })
       .then((json) => setLastDrawnCard(json?.drawnCard || null))
-      .catch(() => {});
+      .catch(() => setOptimisticDrawn(null));
+  };
 
   const handleQuickDiscard = async (cardId: string) => {
-    await call('/api/rummy13/discard', { cardId }).catch(() => {});
+    setOptimisticGone(cardId);
+    await call('/api/rummy13/discard', { cardId }).catch(() => setOptimisticGone(null));
     setHandGroups((gs) => gs.map((g) => g.filter((c) => c !== cardId)).filter((g) => g.length > 0));
     setSelectedForGroup([]);
   };
