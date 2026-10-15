@@ -106,7 +106,7 @@ export default function Tools() {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { user, profile } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   // null = the Tools home (category cards); otherwise the opened category.
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -119,7 +119,8 @@ export default function Tools() {
     if (cat && TOOL_CATEGORIES.some((c) => c.key === cat)) setActiveCategory(cat);
   }, [searchParams]);
 
-  // Tapping the Tools tab again (a fresh navigation to /tools with no ?category) returns to the Tools home.
+  // Opening a category is a normal navigation (/tools?category=…), so the header's back arrow returns to this
+  // Tools home. Tapping the Tools tab again (a fresh navigation to /tools with no ?category) returns to the Tools home.
   const location = useLocation();
   useEffect(() => {
     if (!new URLSearchParams(location.search).get('category')) {
@@ -127,12 +128,6 @@ export default function Tools() {
       setQuery('');
     }
   }, [location.key]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const goHome = () => {
-    setActiveCategory(null);
-    setQuery('');
-    if (searchParams.get('category')) setSearchParams({}, { replace: true });
-  };
 
   const open = (tool: ToolEntry) => (tool.to === '/calculator' ? openCalculator() : navigate(tool.to));
 
@@ -180,7 +175,7 @@ export default function Tools() {
       <button
         key={key}
         type="button"
-        onClick={() => setActiveCategory(key)}
+        onClick={() => navigate(`/tools?category=${key}`)}
         className={clsx('relative overflow-hidden rounded-3xl text-left text-white shadow-md active:scale-[0.985] transition-transform', size === 'full' ? 'p-4 min-h-[112px]' : size === 'half' ? 'p-3.5 min-h-[104px]' : 'p-3.5 min-h-[84px]')}
         style={{ background: `linear-gradient(135deg, ${st.from}, ${st.to})` }}
       >
@@ -239,10 +234,6 @@ export default function Tools() {
           </>
         ) : (
           <>
-            <button type="button" onClick={goHome} className="flex items-center gap-1 text-xs font-black text-primary">
-              <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-              {t('tools.title')}
-            </button>
             {activeStyle && (
               <div className="relative overflow-hidden rounded-3xl p-4 text-white shadow-md" style={{ background: `linear-gradient(135deg, ${activeStyle.from}, ${activeStyle.to})` }}>
                 <h1 className="text-xl font-black">{activeCat.label}</h1>

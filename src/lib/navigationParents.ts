@@ -135,6 +135,9 @@ const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
 ];
 
 export function getParentPath(pathname: string, search?: string): string {
+  // An opened Tools category (/tools?category=…) goes back to the Tools home (the category cards); the
+  // Tools home itself then falls through to its own parent below.
+  if (pathname === '/tools' && new URLSearchParams(search || '').get('category')) return '/tools';
   // Group Expenses' and Manage Group's back destinations depend on how they were reached, unlike
   // everything else here (which is a pure function of the path alone): the generic patterns below
   // always resolve to the group's Analysis page, which is correct when you drilled in from there
