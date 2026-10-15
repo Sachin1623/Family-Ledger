@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { renderWinCard, WinCardOptions } from '../lib/winShareImage';
 import { shareOrDownloadFile } from '../lib/fileShare';
+import { useAuth } from '../context/AuthContext';
 
 // One-tap "boast about this win": draws the brag card on the fly, then hands it to the phone's own
 // share sheet (WhatsApp / Instagram / Facebook / anything installed) together with a ready-made
@@ -14,6 +15,7 @@ export default function ShareWinButton({
   caption: string;
   className?: string;
 }) {
+  const { user, profile } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +23,8 @@ export default function ShareWinButton({
     setBusy(true);
     setError(null);
     try {
-      const blob = await renderWinCard(card);
+      // The person tapping Share is the winner — their own profile picture goes big on the card.
+      const blob = await renderWinCard({ ...card, winnerPhotoURL: card.winnerPhotoURL ?? (profile?.photoURL || user?.photoURL || undefined) });
       const slug = card.gameName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       await shareOrDownloadFile(blob, `familyledger-${slug}-win.png`, 'image/png', caption);
     } catch (err: any) {

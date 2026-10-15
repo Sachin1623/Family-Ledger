@@ -28,10 +28,119 @@ export interface WinCardOptions {
   detail?: string;           // e.g. "Won in 22 hands · first to 300"
   art?: GameArtKind;         // defaults from the game name
   hero?: WinHero;            // a big picture of the result (winning hand / Ludo board)
+  winnerPhotoURL?: string;   // the winner's profile picture, drawn big in a gold ring (initial letter if it can't be loaded)
+}
+
+// The game's name, big and bold in gold — the card is shared on its own, so what was played has to read at a glance.
+function drawGameName(ctx: CanvasRenderingContext2D, name: string, y: number, size: number) {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(255, 170, 40, 0.7)';
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = '#FFD24D';
+  ctx.font = `900 ${size}px ${FONT}`;
+  (ctx as any).letterSpacing = '6px';
+  ctx.fillText(fitText(ctx, name.toUpperCase(), W - 140, size, '900', 28), W / 2, y);
+  (ctx as any).letterSpacing = '0px';
+  ctx.restore();
+}
+
+// Loads a profile picture for the canvas. Resolves null on any failure (blocked, offline, no CORS) so the card
+// still renders — with the winner's initial in its place.
+function loadPhoto(url?: string): Promise<HTMLImageElement | null> {
+  if (!url) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = setTimeout(() => resolve(null), 4000);
+    img.onload = () => { clearTimeout(timer); resolve(img); };
+    img.onerror = () => { clearTimeout(timer); resolve(null); };
+    img.src = url;
+  });
+}
+
+// The two things people look at first on a shared win: WHO (profile picture in a gold ring) and HOW MUCH (the
+// winner's score as a big gold badge). Left and right of the trophy, so they read before anything else.
+function drawWinnerBadges(ctx: CanvasRenderingContext2D, opts: WinCardOptions, photo: HTMLImageElement | null, cy: number) {
+  // avatar
+  const ax = 190;
+  const r = 84;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255, 190, 60, 0.85)';
+  ctx.shadowBlur = 34;
+  ctx.beginPath();
+  ctx.arc(ax, cy, r + 10, 0, Math.PI * 2);
+  ctx.fillStyle = '#FFC93C';
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(ax, cy, r, 0, Math.PI * 2);
+  ctx.clip();
+  if (photo) {
+    const side = Math.min(photo.naturalWidth || photo.width, photo.naturalHeight || photo.height);
+    ctx.drawImage(photo, ((photo.naturalWidth || photo.width) - side) / 2, ((photo.naturalHeight || photo.height) - side) / 2, side, side, ax - r, cy - r, r * 2, r * 2);
+  } else {
+    const g = ctx.createLinearGradient(ax - r, cy - r, ax + r, cy + r);
+    g.addColorStop(0, '#6F86B3');
+    g.addColorStop(1, '#2E3F6B');
+    ctx.fillStyle = g;
+    ctx.fillRect(ax - r, cy - r, r * 2, r * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.font = `900 92px ${FONT}`;
+    ctx.fillText((opts.winnerLabel.trim()[0] || '?').toUpperCase(), ax, cy + 32);
+  }
+  ctx.restore();
+
+  // score badge
+  const win = opts.standings.find((x) => x.isWinner) ?? opts.standings[0];
+  if (!win) return;
+  const bx = W - 190;
+  let big = '';
+  let unit = '';
+  if (win.score !== undefined) {
+    big = win.score.toLocaleString('en-US');
+    unit = (opts.scoreUnit ?? 'pts').toUpperCase();
+  } else if (win.label) {
+    const m = win.label.match(/^([\d][\d,.]*)\s*(.*)$/);
+    if (m) {
+      big = m[1];
+      unit = (m[2] || '').toUpperCase();
+    } else {
+      big = win.label;
+    }
+  }
+  if (!big) return;
+  const bw = 250;
+  const bh = unit ? 152 : 112;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255, 190, 60, 0.7)';
+  ctx.shadowBlur = 28;
+  roundRectPath(ctx, bx - bw / 2, cy - bh / 2, bw, bh, 34);
+  const bg = ctx.createLinearGradient(0, cy - bh / 2, 0, cy + bh / 2);
+  bg.addColorStop(0, '#FFE08A');
+  bg.addColorStop(1, '#F5A623');
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.restore();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#3A2300';
+  const numSize = big.length > 7 ? 44 : big.length > 5 ? 62 : 80;
+  ctx.font = `900 ${numSize}px ${FONT}`;
+  ctx.fillText(fitText(ctx, big, bw - 28, numSize, '900', 28), bx, unit ? cy + 8 : cy + numSize * 0.35);
+  if (unit) {
+    ctx.font = `800 28px ${FONT}`;
+    ctx.fillStyle = 'rgba(58, 35, 0, 0.8)';
+    (ctx as any).letterSpacing = '4px';
+    ctx.fillText(fitText(ctx, unit, bw - 28, 28, '800', 18), bx, cy + 52);
+    (ctx as any).letterSpacing = '0px';
+  }
 }
 
 export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
   await fontsReady();
+  const photo = await loadPhoto(opts.winnerPhotoURL);
   const { canvas, ctx } = newPosterCanvas();
   const hero = opts.hero;
 
@@ -151,6 +260,7 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
     ctx.fillStyle = '#FFFFFF';
     ctx.font = `120px ${EMOJI_FONT}`;
     ctx.fillText('🏆', W / 2, 252);
+    drawWinnerBadges(ctx, opts, photo, 196);
 
     ctx.save();
     ctx.shadowColor = 'rgba(255, 170, 40, 0.55)';
@@ -164,17 +274,20 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
 
     ctx.fillStyle = '#FFFFFF';
     ctx.fillText(fitText(ctx, opts.winnerLabel, W - 160, 54, '800'), W / 2, 428);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.font = `600 30px ${FONT}`;
-    ctx.fillText(`conquered ${opts.gameName}${opts.detail ? ` · ${opts.detail}` : ''}`, W / 2, 470);
+    drawGameName(ctx, opts.gameName, 484, 52);
+    if (opts.detail) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.font = `600 26px ${FONT}`;
+      ctx.fillText(fitText(ctx, opts.detail, W - 140, 26, '600', 20), W / 2, 520);
+    }
 
-    drawWinHero(ctx, { x: 60, y: 496, w: W - 120, h: 340 }, hero);
+    drawWinHero(ctx, { x: 60, y: 536, w: W - 120, h: 304 }, hero);
 
     const rows = opts.standings.slice(0, 3);
     drawStandings(rows, 856, rows.length <= 2 ? 78 : 62);
   } else {
     // ---- Classic layout: the game's own artwork either side of the trophy ----
-    drawGameArt(ctx, opts.art ?? artForGame(opts.gameName));
+    drawWinnerBadges(ctx, opts, photo, 300);
 
     ctx.fillStyle = '#FFFFFF';
     ctx.font = `230px ${EMOJI_FONT}`;
@@ -192,13 +305,11 @@ export async function renderWinCard(opts: WinCardOptions): Promise<Blob> {
 
     ctx.fillStyle = '#FFFFFF';
     ctx.fillText(fitText(ctx, opts.winnerLabel, W - 160, 60, '800'), W / 2, 556);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.font = `600 36px ${FONT}`;
-    ctx.fillText(`conquered ${opts.gameName}`, W / 2, 604);
+    drawGameName(ctx, opts.gameName, 618, 62);
 
     const rows = opts.standings.slice(0, 4);
     const rowH = rows.length <= 2 ? 112 : rows.length === 3 ? 96 : 80;
-    const bottom = drawStandings(rows, 640, rowH);
+    const bottom = drawStandings(rows, 650, rowH);
     if (opts.detail) {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
       ctx.font = `600 30px ${FONT}`;

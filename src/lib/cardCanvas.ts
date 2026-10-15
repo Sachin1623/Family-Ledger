@@ -181,7 +181,17 @@ export function paintLogoBadge(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = '#FFFFFF';
   ctx.fill();
   ctx.restore();
-  drawLogo(ctx, W / 2 - 150, 38, 0.75);
+  // Centre the artwork itself (icon + wordmark), not its 400-wide drawing box — the wordmark is much shorter than
+  // the box, so placing the box at a fixed offset left the logo sitting to the left of the badge's middle.
+  const scale = 0.75;
+  ctx.save();
+  ctx.font = `900 44px ${FONT}`;
+  (ctx as any).letterSpacing = '-1px';
+  const right = 110 + Math.max(ctx.measureText('Family').width, ctx.measureText('Ledger').width);
+  (ctx as any).letterSpacing = '0px';
+  ctx.restore();
+  const artCentre = (10 + right) / 2;
+  drawLogo(ctx, W / 2 - artCentre * scale, 38, scale);
   ctx.textAlign = 'center';
 }
 
