@@ -2,7 +2,7 @@ import Health from './Health';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { collection, query as query_, where } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, doc, query as query_, updateDoc, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -92,6 +92,21 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
   },
 ];
 
+// Poster look for the Games page: each game its own colour, a big emoji, a one-line blurb and a tag.
+type GameKind = 'solo' | 'cards' | 'board';
+const GAME_POSTERS: Record<string, { from: string; to: string; short: string; tag: string; kind: GameKind }> = {
+  'game-sudoku': { from: '#16a34a', to: '#0f5c2a', short: '1,500+ puzzles · offline', tag: 'SOLO', kind: 'solo' },
+  'game-scramble': { from: '#2563eb', to: '#1a3d8f', short: 'Solo or race up to 4', tag: 'SOLO · ONLINE', kind: 'solo' },
+  'game-chess': { from: '#475569', to: '#1e293b', short: '2 players, online', tag: 'ONLINE', kind: 'board' },
+  'game-ludo': { from: '#dc2626', to: '#7f1d1d', short: 'Up to 4 players', tag: 'ONLINE', kind: 'board' },
+  'game-rummy': { from: '#7c3aed', to: '#4c1d95', short: '3 decks, 2 jokers', tag: 'ONLINE', kind: 'cards' },
+  'game-rummy13': { from: '#be185d', to: '#6b0f3a', short: 'Single deal or Pool 101/201', tag: 'ONLINE', kind: 'cards' },
+  'game-business': { from: '#0f766e', to: '#0e4f5c', short: 'Indian city board', tag: 'ONLINE', kind: 'board' },
+  'game-sweep': { from: '#d97706', to: '#78350f', short: '2 or 4 players', tag: 'ONLINE', kind: 'cards' },
+  'game-sequence': { from: '#0891b2', to: '#0b4f66', short: 'Line up 5 chips', tag: 'ONLINE', kind: 'board' },
+  'game-spadePledge': { from: '#334155', to: '#0f172a', short: 'Bid and take tricks', tag: 'ONLINE', kind: 'cards' },
+};
+
 // How each category looks on the Tools home: a colour, an emoji, one line of what's inside.
 const CATEGORY_STYLE: Record<string, { from: string; to: string; emoji: string; blurb: string }> = {
   health: { from: '#0f766e', to: '#0e4f5c', emoji: '💚', blurb: 'Medicines, glucose, BP, baby vaccines' },
@@ -110,6 +125,7 @@ export default function Tools() {
   // null = the Tools home (category cards); otherwise the opened category.
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [gameFilter, setGameFilter] = useState<'all' | GameKind>('all');
   // Deep-link from the header menu's category shortcuts (?category=games, etc.) — keyed on the
   // live searchParams object, not mount-only, since navigating here again while already on /tools
   // (clicking a different header-menu shortcut) doesn't remount this component. See
@@ -165,6 +181,53 @@ export default function Tools() {
       <span className="material-symbols-outlined text-slate-300 text-[20px]">chevron_right</span>
     </div>
   );
+
+  const toggleFavorite = async (e: React.MouseEvent, key: string) => {
+    e.stopPropagation();
+    if (!user) return;
+    await updateDoc(doc(db, 'users', user.uid), { favorites: favorites.includes(key) ? arrayRemove(key) : arrayUnion(key) }).catch((err) => console.error('Failed to toggle favorite:', err));
+  };
+
+  const posterGrid = (tools: ToolEntry[]) => {
+    const shown = tools.filter((tool) => gameFilter === 'all' || GAME_POSTERS[tool.favKey || '']?.kind === gameFilter);
+    return (
+      <>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+          {([['all', 'All'], ['solo', 'Solo'], ['cards', 'Cards'], ['board', 'Board']] as const).map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setGameFilter(id)} className={clsx('shrink-0 px-4 py-2 rounded-full text-[11px] font-extrabold border-[1.5px] transition-colors', gameFilter === id ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200')}>{label}</button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {shown.map((tool) => {
+            const st = GAME_POSTERS[tool.favKey || ''];
+            if (!st) return row(tool);
+            const fav = !!tool.favKey && favorites.includes(tool.favKey);
+            return (
+              <div
+                key={tool.to}
+                role="button"
+                tabIndex={0}
+                onClick={() => open(tool)}
+                onKeyDown={(e) => { if (e.key === 'Enter') open(tool); }}
+                className="relative overflow-hidden rounded-[1.4rem] p-3.5 min-h-[132px] text-white shadow-md cursor-pointer active:scale-[0.97] transition-transform"
+                style={{ background: `linear-gradient(135deg, ${st.from}, ${st.to})` }}
+              >
+                <p className="text-[14px] font-black leading-tight pr-6">{t(tool.titleKey)}</p>
+                <p className="text-[10px] font-bold text-white/85 mt-1 max-w-[6.2rem] leading-snug">{st.short}</p>
+                <span className="inline-block mt-2.5 text-[8.5px] font-black bg-white/20 px-2 py-1 rounded-full">{st.tag}</span>
+                <span className="absolute right-1.5 bottom-0.5 text-[46px] leading-none drop-shadow-[0_4px_8px_rgba(0,0,0,0.4)]">{tool.icon}</span>
+                {tool.favKey && (
+                  <button type="button" onClick={(e) => toggleFavorite(e, tool.favKey!)} className="absolute right-1.5 top-1.5 p-1.5" aria-label={fav ? 'Remove from favorites' : 'Add to favorites'}>
+                    <span className="material-symbols-outlined text-[20px] block" style={{ color: fav ? '#fbbf24' : 'rgba(255,255,255,0.6)', fontVariationSettings: `'FILL' ${fav ? 1 : 0}` }}>star</span>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  };
 
   const card = (key: string, size: 'full' | 'half' | 'slim') => {
     const cat = TOOL_CATEGORIES.find((c) => c.key === key);
@@ -241,7 +304,7 @@ export default function Tools() {
                 <span className="absolute right-3 bottom-0 text-[52px] leading-none drop-shadow-[0_4px_10px_rgba(0,0,0,0.35)]">{activeStyle.emoji}</span>
               </div>
             )}
-            {activeCat.key === 'health' ? <Health embedded /> : <div className="space-y-2">{activeCat.tools.map((tool) => row(tool))}</div>}
+            {activeCat.key === 'health' ? <Health embedded /> : activeCat.key === 'games' ? posterGrid(activeCat.tools) : <div className="space-y-2">{activeCat.tools.map((tool) => row(tool))}</div>}
           </>
         )}
       </main>
