@@ -486,7 +486,7 @@ export const VoiceChatButton: React.FC<{ voice: GameVoiceState; className?: stri
         className={`relative p-2 shrink-0 ${className || ''}`}
         aria-label="Voice chat"
       >
-        <span className="material-symbols-outlined text-[20px] block" style={voice.joined ? { color: 'var(--game-accent, var(--color-primary))' } : undefined}>
+        <span className="material-symbols-outlined text-[20px] block" style={voice.joined ? { color: 'var(--game-accent, #f5c451)' } : undefined}>
           {voice.joined ? (voice.micMuted ? 'mic_off' : 'mic') : 'mic_off'}
         </span>
         {voice.peersInVoice.length > 0 && (
@@ -498,7 +498,7 @@ export const VoiceChatButton: React.FC<{ voice: GameVoiceState; className?: stri
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-10 z-50 w-72 bg-white rounded-2xl border border-border-subtle shadow-xl p-3 space-y-3">
+          <div className="absolute right-0 top-10 z-50 w-72 bg-white text-on-surface rounded-2xl border border-border-subtle shadow-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-black text-primary uppercase tracking-wider">Voice Chat</h3>
               <button onClick={() => setOpen(false)} className="text-text-muted">

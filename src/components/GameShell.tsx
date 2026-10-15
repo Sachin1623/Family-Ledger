@@ -50,7 +50,7 @@ export function GameHeader({
         {subtitle && <span className="block text-[8px] font-bold tracking-[0.14em] text-white/60 uppercase truncate">{subtitle}</span>}
       </div>
       <div className="flex-1" />
-      <div className="flex items-center gap-0.5 shrink-0 [&_.text-primary]:!text-white [&_.text-text-muted]:!text-white">{actions}</div>
+      <div className="flex items-center gap-0.5 shrink-0 [&>button.text-primary]:!text-white">{actions}</div>
     </header>
   );
 }
