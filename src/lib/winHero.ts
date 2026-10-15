@@ -13,6 +13,7 @@ export interface HeroGroup {
 export type WinHero =
   | { kind: 'hand'; groups: HeroGroup[]; wildRanks?: string[]; caption?: string }
   | { kind: 'ludo'; winnerColor: string; caption?: string }
+  | { kind: 'sudoku'; board: number[]; givens: number[]; difficulty: string; time: string; stars: number; caption?: string }
   | { kind: 'chess'; fen: string; winnerColor: 'w' | 'b'; lastMove?: { from: string; to: string } | null; reason: string; moves: number; caption?: string }
   | { kind: 'sequence'; board: (number | null)[]; sequences: { cells: number[]; side: number }[]; winnerSide: number; needed: number; caption?: string };
 
@@ -436,6 +437,66 @@ function drawChessHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<Win
   ctx.fillText(`IN ${hero.moves} MOVES`, rx - 2, cy + 86);
 }
 
+// ---- Sudoku: the finished grid (the puzzle's own numbers in white, the ones you filled in gold) ----
+function drawSudokuHero(ctx: CanvasRenderingContext2D, a: Area, hero: Extract<WinHero, { kind: 'sudoku' }>) {
+  const size = Math.min(a.h - 6, 282);
+  const cs = size / 9;
+  const ox = a.x + a.w / 2 - size / 2 - 150;
+  const oy = a.y + (a.h - size) / 2;
+
+  ctx.save();
+  roundRectPath(ctx, ox - 8, oy - 8, size + 16, size + 16, 14);
+  ctx.fillStyle = '#1B3A5C';
+  ctx.fill();
+  roundRectPath(ctx, ox, oy, size, size, 6);
+  ctx.clip();
+  ctx.fillStyle = '#F6F8FC';
+  ctx.fillRect(ox, oy, size, size);
+  for (let i = 0; i < 81; i++) {
+    const r = Math.floor(i / 9);
+    const c = i % 9;
+    const x = ox + c * cs;
+    const y = oy + r * cs;
+    if ((Math.floor(r / 3) + Math.floor(c / 3)) % 2 === 1) {
+      ctx.fillStyle = '#E3EAF5';
+      ctx.fillRect(x, y, cs, cs);
+    }
+    const v = hero.board[i];
+    if (!v) continue;
+    const given = hero.givens[i] === v;
+    ctx.textAlign = 'center';
+    ctx.font = `${given ? 800 : 900} ${Math.round(cs * 0.62)}px ${FONT}`;
+    ctx.fillStyle = given ? '#13294B' : '#C27A00';
+    ctx.fillText(String(v), x + cs / 2, y + cs * 0.72);
+  }
+  // grid lines: thin per cell, thick per 3x3 box
+  for (let k = 0; k <= 9; k++) {
+    const thick = k % 3 === 0;
+    ctx.fillStyle = thick ? '#1B3A5C' : 'rgba(27, 58, 92, 0.28)';
+    const w = thick ? 3 : 1;
+    ctx.fillRect(ox + k * cs - w / 2, oy, w, size);
+    ctx.fillRect(ox, oy + k * cs - w / 2, size, w);
+  }
+  ctx.restore();
+
+  // right: how it went
+  const rx = ox + size + 60;
+  const cy = a.y + a.h / 2;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#FFE58A';
+  ctx.font = `900 64px ${FONT}`;
+  ctx.fillText('SOLVED', rx - 4, cy - 30);
+  ctx.fillStyle = '#FFD24D';
+  ctx.font = `900 46px ${FONT}`;
+  ctx.fillText('★'.repeat(hero.stars) + '☆'.repeat(Math.max(0, 3 - hero.stars)), rx - 2, cy + 22);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `800 34px ${FONT}`;
+  ctx.fillText(hero.time, rx - 2, cy + 66);
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.font = `700 24px ${FONT}`;
+  ctx.fillText(hero.difficulty.toUpperCase(), rx - 2, cy + 98);
+}
+
 export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: WinHero) {
   // panel
   ctx.save();
@@ -447,7 +508,7 @@ export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: Win
   ctx.stroke();
   ctx.restore();
 
-  const caption = hero.caption ?? (hero.kind === 'hand' ? 'THE WINNING HAND' : hero.kind === 'sequence' ? 'THE WINNING BOARD' : hero.kind === 'chess' ? 'THE FINAL POSITION' : 'ALL FOUR HOME');
+  const caption = hero.caption ?? (hero.kind === 'hand' ? 'THE WINNING HAND' : hero.kind === 'sequence' ? 'THE WINNING BOARD' : hero.kind === 'chess' ? 'THE FINAL POSITION' : hero.kind === 'sudoku' ? 'THE SOLVED GRID' : 'ALL FOUR HOME');
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255, 229, 138, 0.95)';
   ctx.font = `800 22px ${FONT}`;
@@ -459,5 +520,6 @@ export function drawWinHero(ctx: CanvasRenderingContext2D, area: Area, hero: Win
   if (hero.kind === 'hand') drawHandHero(ctx, inner, hero);
   else if (hero.kind === 'sequence') drawSequenceHero(ctx, inner, hero);
   else if (hero.kind === 'chess') drawChessHero(ctx, inner, hero);
+  else if (hero.kind === 'sudoku') drawSudokuHero(ctx, inner, hero);
   else drawLudoHero(ctx, inner, hero);
 }

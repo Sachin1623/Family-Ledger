@@ -524,6 +524,7 @@ export default function SudokuGame() {
                   {...(() => {
                     const w = buildWinShare({
                       gameName: 'Sudoku',
+                      hero: { kind: 'sudoku' as const, board: game.board, givens: game.givens, difficulty: game.difficulty, time: formatTime(game.elapsedSeconds), stars: completion.stars },
                       winnerLabel: profile?.displayName || user?.displayName || 'Me',
                       standings: [{ name: profile?.displayName || user?.displayName || 'Me', label: `${completion.score.toLocaleString()} pts`, isWinner: true }],
                       detail: `${game.difficulty.charAt(0).toUpperCase()}${game.difficulty.slice(1)} · ${formatTime(game.elapsedSeconds)} · ${'★'.repeat(completion.stars)}`,
