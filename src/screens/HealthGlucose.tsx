@@ -1,5 +1,5 @@
 import { isIosApp } from '../lib/platform';
-import { useConfirm, HealthInsightsCard, SegTabs } from '../components/HealthKit';
+import { useConfirm, HealthInsightsCard, SegTabs, PersonSwitcher } from '../components/HealthKit';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -1053,6 +1053,11 @@ export default function HealthGlucose() {
     }
   };
 
+  const recentOwn = useMemo(
+    () => [...logs].sort((a, b) => (b.loggedAt || '').localeCompare(a.loggedAt || '')).slice(0, 4),
+    [logs],
+  );
+
   return (
     // h-full (not min-h-screen) + overflow-hidden: this page manages its own two regions instead
     // of leaving everything to the app-wide scroll container (#route-scroll, see App.tsx) — the
@@ -1089,111 +1094,88 @@ export default function HealthGlucose() {
 
       {tab === 'log' && (
         <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-8 pb-24 max-w-xl mx-auto w-full">
-          <form onSubmit={handleSubmit} className="space-y-1.5">
+          <form onSubmit={handleSubmit} className="space-y-3 pt-1">
             {editingLog && (
-              <div className="flex items-center justify-between gap-2 bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
-                <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
+              <div className="flex items-center justify-between gap-2 bg-teal-50 border border-teal-200 rounded-2xl px-3 py-2">
+                <span className="text-[11px] font-black text-teal-800 flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px]">edit</span>
                   {t('health.editingEntry')}
                 </span>
-                <button type="button" onClick={handleCancelEdit} className="text-[11px] font-bold text-text-muted">
+                <button type="button" onClick={handleCancelEdit} className="text-[11px] font-black text-slate-500">
                   {t('common.cancel')}
                 </button>
               </div>
             )}
+
             {(editingLog || delegatorsForMe.length > 0) && (
-              <div className="space-y-0.5">
-                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">
-                  {editingLog ? t('health.assignTo') : t('health.enteringFor')}
-                </label>
-                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
-                  {[
+              <div className="space-y-1">
+                <p className="text-[9.5px] font-extrabold tracking-[0.1em] text-slate-400 px-1">{(editingLog ? t('health.assignTo') : t('health.enteringFor')).toUpperCase()}</p>
+                <PersonSwitcher
+                  people={[
                     { userId: 'me', displayName: t('health.myself'), photoURL: profile?.photoURL || user?.photoURL || '' },
                     ...delegatorsForMe,
-                    // The entry's current owner might not (or no longer) be in delegatorsForMe —
-                    // e.g. the delegate grant was revoked after this was logged — but must still
-                    // appear as a selectable chip so editing never lands on a value with no chip.
-                    ...(editingLog && editingLog.userId !== user?.uid && !delegatorsForMe.some((d) => d.userId === editingLog.userId)
-                      ? [resolveSharer(editingLog.userId)]
-                      : []),
-                  ].map((d) => {
-                    const isActive = d.userId === enteringForUid;
-                    return (
-                      <button
-                        key={d.userId}
-                        type="button"
-                        onClick={() => setEnteringForUid(d.userId)}
-                        className="flex flex-col items-center gap-0.5 shrink-0 w-12"
-                      >
-                        {d.photoURL ? (
-                          <img src={d.photoURL} alt="" className={clsx('w-9 h-9 rounded-full object-cover', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')} />
-                        ) : (
-                          <div className={clsx('w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs', isActive ? 'border-2 border-primary' : 'border-2 border-transparent opacity-60')}>
-                            {d.displayName.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <span className={clsx('text-[9px] font-bold truncate w-full text-center', isActive ? 'text-primary' : 'text-text-muted')}>{d.displayName}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                    ...(editingLog && editingLog.userId !== user?.uid && !delegatorsForMe.some((d) => d.userId === editingLog.userId) ? [resolveSharer(editingLog.userId)] : []),
+                  ]}
+                  activeId={enteringForUid}
+                  onChange={setEnteringForUid}
+                />
               </div>
             )}
-            <div className="space-y-0.5">
-              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.selectMealType')}</label>
-              <div className="grid grid-cols-4 gap-1.5">
+
+            {/* The reading — big, with instant feedback against the target range for the chosen window */}
+            <div className="rounded-3xl bg-white border border-slate-200 shadow-sm px-4 py-4 text-center">
+              <p className="text-[9.5px] font-extrabold tracking-[0.12em] text-slate-400">{editingLog ? 'EDIT READING' : 'NEW READING'}</p>
+              <p className="mt-1 leading-none">
+                <span className={clsx('text-[52px] font-black tracking-tight', valueInput ? 'text-slate-900' : 'text-slate-300')}>{valueInput || '0'}</span>
+                <span className="text-sm font-extrabold text-slate-400 ml-1.5">mg/dL</span>
+              </p>
+              <div className="h-7 mt-2 flex items-center justify-center">
+                {hasValidValue ? (
+                  <span className={clsx('inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black bg-slate-50 border border-slate-200', rangeInfo(parsedValue, liveWindowTarget, t).cls)}>
+                    {rangeInfo(parsedValue, liveWindowTarget, t).icon} {rangeInfo(parsedValue, liveWindowTarget, t).text}
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-bold text-slate-400">{t('health.enterGlucoseValue')}</span>
+                )}
+              </div>
+            </div>
+
+            {/* When in the day */}
+            <div className="space-y-1.5">
+              <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
                 {MEAL_TYPES.map((m) => (
                   <button
                     key={m.value}
                     type="button"
                     onClick={() => {
                       setMealType(m.value);
-                      // Random has no before/after concept — clears any timing already picked so a
-                      // stale value never silently gets saved once the section below is hidden.
                       if (m.value === 'random') setTiming('before');
                     }}
-                    className={clsx(
-                      'py-1.5 rounded-xl border text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 transition-all',
-                      mealType === m.value ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                    )}
+                    className={clsx('shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-full text-[11px] font-extrabold border-[1.5px] transition-colors', mealType === m.value ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200')}
                   >
-                    <span className="text-lg leading-none">{m.icon}</span>
+                    <span className="text-sm leading-none">{m.icon}</span>
                     {t(m.labelKey)}
                   </button>
                 ))}
               </div>
-            </div>
-
-            {mealType !== 'random' && (
-              <div className="space-y-0.5">
-                <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.testingTiming')}</label>
+              {mealType !== 'random' && (
                 <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setTiming('before')}
-                    className={clsx(
-                      'flex-1 py-1.5 rounded-xl text-xs font-bold border transition-all',
-                      timing === 'before' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                    )}
-                  >
-                    {t('health.beforeMeal')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTiming('after')}
-                    className={clsx(
-                      'flex-1 py-1.5 rounded-xl text-xs font-bold border transition-all',
-                      timing === 'after' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                    )}
-                  >
-                    {t('health.afterMeal')}
-                  </button>
+                  {(['before', 'after'] as const).map((tm) => (
+                    <button
+                      key={tm}
+                      type="button"
+                      onClick={() => setTiming(tm)}
+                      className={clsx('flex-1 py-2 rounded-2xl text-[11px] font-extrabold border-[1.5px] transition-colors', timing === tm ? 'bg-teal-700 text-white border-teal-700' : 'bg-white text-slate-600 border-slate-200')}
+                    >
+                      {tm === 'before' ? t('health.beforeMeal') : t('health.afterMeal')}
+                    </button>
+                  ))}
                   {timing === 'after' && (
                     <select
                       value={postMealHours}
                       onChange={(e) => setPostMealHours(Number(e.target.value))}
                       title={t('health.postMealDuration')}
-                      className="shrink-0 w-16 bg-white border border-border-subtle rounded-xl text-xs font-bold text-primary outline-none text-center"
+                      className="shrink-0 w-[4.5rem] bg-white border-[1.5px] border-slate-200 rounded-2xl text-[11px] font-extrabold text-slate-700 outline-none text-center"
                     >
                       {POST_MEAL_HOUR_OPTIONS.map((hr) => (
                         <option key={hr} value={hr}>+{hr}hr</option>
@@ -1201,53 +1183,49 @@ export default function HealthGlucose() {
                     </select>
                   )}
                 </div>
-              </div>
-            )}
-
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-1.5 space-y-0.5">
-              <label className="text-[10px] text-text-muted font-bold uppercase tracking-wider">{t('health.enterGlucoseValue')}</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  value={valueInput}
-                  onChange={(e) => setValueInput(e.target.value)}
-                  placeholder="0"
-                  className="flex-1 min-w-0 text-xl font-black text-primary bg-surface rounded-xl border border-border-subtle text-center py-1 outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <div className="shrink-0 text-left space-y-0.5">
-                  <div className="text-[11px] font-bold text-text-muted">mg/dL</div>
-                  {hasValidValue && (
-                    <div className={clsx('text-[10px] font-bold flex items-center gap-1 whitespace-nowrap', rangeInfo(parsedValue, liveWindowTarget, t).cls)}>
-                      {rangeInfo(parsedValue, liveWindowTarget, t).icon} {rangeInfo(parsedValue, liveWindowTarget, t).text}
-                    </div>
-                  )}
-                </div>
-              </div>
+              )}
             </div>
 
-            <div className="space-y-0.5">
-              <label className="text-[10px] text-text-muted px-1 font-bold uppercase tracking-wider">{t('health.dateAndTime')}</label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={loggedDate}
-                  max={todayLocalDateString()}
-                  onChange={(e) => setLoggedDate(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-1 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <input
-                  type="time"
-                  value={loggedTime}
-                  onChange={(e) => setLoggedTime(e.target.value)}
-                  className="flex-1 min-w-0 bg-white p-1 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
+            {/* Keypad — no system keyboard needed for the number */}
+            <div className="grid grid-cols-3 gap-2">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() =>
+                    setValueInput((v) => {
+                      if (k === '⌫') return v.slice(0, -1);
+                      if (k === 'C') return '';
+                      return v.length >= 3 ? v : v === '0' ? k : v + k;
+                    })
+                  }
+                  className="py-3 rounded-2xl bg-white border border-slate-200 text-[18px] font-extrabold text-slate-800 active:bg-slate-100 active:scale-[0.97] transition-transform"
+                  aria-label={k === '⌫' ? 'Delete' : k === 'C' ? 'Clear' : k}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={loggedDate}
+                max={todayLocalDateString()}
+                onChange={(e) => setLoggedDate(e.target.value)}
+                className="flex-1 min-w-0 bg-white px-2.5 py-2 rounded-2xl border-[1.5px] border-slate-200 text-[12px] font-extrabold text-slate-700 outline-none focus:border-teal-600"
+              />
+              <input
+                type="time"
+                value={loggedTime}
+                onChange={(e) => setLoggedTime(e.target.value)}
+                className="flex-1 min-w-0 bg-white px-2.5 py-2 rounded-2xl border-[1.5px] border-slate-200 text-[12px] font-extrabold text-slate-700 outline-none focus:border-teal-600"
+              />
             </div>
 
             <div className="space-y-0.5">
               {mealType === 'random' && (
-                <label className="text-[10px] text-error px-1 font-bold uppercase tracking-wider">{t('health.notesRequiredForRandom')}</label>
+                <p className="text-[10px] text-red-600 px-1 font-extrabold tracking-wide">{t('health.notesRequiredForRandom')}</p>
               )}
               <textarea
                 value={notes}
@@ -1255,20 +1233,40 @@ export default function HealthGlucose() {
                 placeholder={t('health.notesPlaceholder')}
                 rows={1}
                 required={mealType === 'random'}
-                className={clsx(
-                  'w-full bg-white p-2 rounded-xl border text-xs outline-none focus:ring-2 focus:ring-primary/20 resize-none',
-                  notesRequiredForRandom ? 'border-error' : 'border-border-subtle',
-                )}
+                className={clsx('w-full bg-white px-3 py-2.5 rounded-2xl border-[1.5px] text-xs font-semibold outline-none focus:border-teal-600 resize-none', notesRequiredForRandom ? 'border-red-400' : 'border-slate-200')}
               />
             </div>
 
             <button
               type="submit"
               disabled={saving || !hasValidValue}
-              className="w-full py-2 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+              className="w-full py-3.5 bg-teal-700 text-white text-[14px] font-black rounded-2xl shadow-[0_6px_16px_rgba(15,118,110,0.3)] disabled:opacity-40 disabled:shadow-none"
             >
               {saving ? t('common.saving') : editingLog ? t('health.updateLogEntry') : t('health.saveLogEntry')}
             </button>
+
+            {/* Recent readings */}
+            {recentOwn.length > 0 && (
+              <div className="pt-1 space-y-1.5">
+                <p className="text-[9.5px] font-extrabold tracking-[0.12em] text-slate-400 px-1">RECENT</p>
+                <div className="rounded-3xl bg-white border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                  {recentOwn.map((l) => {
+                    const ok = isGlucoseInRange(l.value, targetForWindow(targets, glucoseWindowOf(l)));
+                    const win = t(GLUCOSE_WINDOWS.find((w) => w.key === glucoseWindowOf(l))?.labelKey || 'health.random');
+                    return (
+                      <div key={l.id} className="flex items-center gap-3 px-3.5 py-2.5">
+                        <span className={clsx('w-2.5 h-2.5 rounded-full shrink-0', ok ? 'bg-emerald-500' : 'bg-amber-500')} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] font-black text-slate-900">{l.value} <span className="text-[10px] font-bold text-slate-400">mg/dL</span></p>
+                          <p className="text-[10px] font-semibold text-slate-400 truncate">{win} · {new Date(l.loggedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</p>
+                        </div>
+                        <span className={clsx('text-[9px] font-extrabold px-2 py-0.5 rounded-full', ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{ok ? 'in range' : 'out of range'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </form>
         </div>
       )}
