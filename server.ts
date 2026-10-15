@@ -13897,6 +13897,43 @@ async function startServer() {
     chessGames: { kind: 'game', label: 'Chess', routeSegment: 'chess' },
   };
 
+  // One emoji reaction per person per message (`reactions.{uid}`), tapped again to remove. Written through the server so
+  // anyone IN the chat can react to any message in it, without opening up the comment documents to client edits.
+  app.post('/api/chat/react', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const collectionName = String(req.body?.collectionName || '');
+    const chatId = String(req.body?.chatId || '');
+    const commentId = String(req.body?.commentId || '');
+    const emoji = req.body?.emoji == null ? null : String(req.body.emoji);
+    const surface = CHAT_SURFACES[collectionName];
+    if (!surface || !chatId || !commentId || (emoji !== null && (emoji.length === 0 || emoji.length > 8))) {
+      return res.status(400).json({ error: 'collectionName, chatId, commentId and a short emoji (or null) are required.' });
+    }
+    try {
+      let allowed = false;
+      if (surface.kind === 'group') {
+        allowed = (await db.collection('members').doc(`${decoded.uid}_${chatId}`).get()).exists;
+      } else if (surface.kind === 'dm') {
+        const parts = chatId.split('_');
+        allowed = parts.length === 2 && parts.includes(decoded.uid);
+      } else {
+        const gameSnap = await db.collection(collectionName).doc(chatId).get();
+        allowed = gameSnap.exists && (gameSnap.data()!.playerUids || []).includes(decoded.uid);
+      }
+      if (!allowed) return res.status(403).json({ error: 'Not part of this chat.' });
+      const commentRef = db.collection(collectionName).doc(chatId).collection('comments').doc(commentId);
+      const commentSnap = await commentRef.get();
+      if (!commentSnap.exists) return res.status(404).json({ error: 'Message not found.' });
+      await commentRef.update({ [`reactions.${decoded.uid}`]: emoji === null ? admin.firestore.FieldValue.delete() : emoji });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('chat react error:', error);
+      return res.status(500).json({ error: 'Unable to save reaction.' });
+    }
+  });
+
   app.post('/api/chat/send', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });

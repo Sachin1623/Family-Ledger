@@ -1,7 +1,8 @@
 import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { addDoc, arrayRemove, arrayUnion, collection, deleteDoc, doc, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
+import { isPresenceOnline, lastSeenLabel } from '../lib/presence';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 
@@ -13,6 +14,7 @@ interface ChatMessage {
   text: string;
   createdAt: string;
   editedAt?: string;
+  reactions?: Record<string, string>; // uid → emoji, one per person
 }
 
 // Bare icon, matching the Help/Leave pair's "only icons" header treatment — the small dot is a
@@ -101,16 +103,17 @@ export function useGameChat(collectionName: string, gameId: string | undefined) 
 // WhatsApp's own convention: a clock while still in flight, one gray check once durably written,
 // two gray checks once every other participant's device has received it, two BLUE checks once
 // they've actually opened the chat and read it.
-const MessageStatusTicks: React.FC<{ status: 'sending' | 'sent' | 'delivered' | 'read' }> = ({ status }) => {
+const MessageStatusTicks: React.FC<{ status: 'sending' | 'sent' | 'delivered' | 'read'; onDark?: boolean }> = ({ status, onDark }) => {
+  const dim = onDark ? 'text-white/70' : 'text-text-muted/60';
   if (status === 'sending') {
-    return <span className="material-symbols-outlined text-[12px] text-text-muted/60" aria-label="Sending">schedule</span>;
+    return <span className={`material-symbols-outlined text-[11px] ${dim}`} aria-label="Sending">schedule</span>;
   }
   if (status === 'sent') {
-    return <span className="material-symbols-outlined text-[14px] text-text-muted/60" aria-label="Sent">done</span>;
+    return <span className={`material-symbols-outlined text-[13px] ${dim}`} aria-label="Sent">done</span>;
   }
   return (
     <span
-      className={`material-symbols-outlined text-[14px] ${status === 'read' ? 'text-primary' : 'text-text-muted/60'}`}
+      className={`material-symbols-outlined text-[13px] ${status === 'read' ? (onDark ? 'text-sky-300' : 'text-primary') : dim}`}
       aria-label={status === 'read' ? 'Read' : 'Delivered'}
     >
       done_all
@@ -395,11 +398,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
-  // ── Look of the conversation ────────────────────────────────────────────────────────────────────
-  // Group chats (more than one other person) give every sender their own tint and show names; a one-to-one chat
-  // stays plain white-vs-navy. Day separators and a time on each bubble, like any messenger.
+  // ── Look of the conversation (cosy theme) ───────────────────────────────────────────────────────
+  // Teal header with the person's photo and live status, a faintly patterned wallpaper, small avatars beside the other
+  // person's messages, reactions on any message, an emoji picker, and a jump-to-latest arrow when scrolled up.
   const isGroupChat = (otherUids?.length || 0) > 1;
-  const initial = (title || '?').trim().slice(0, 1).toUpperCase();
+  const dmOtherUid = collectionName === 'directChats' && otherUids?.length === 1 ? otherUids[0] : null;
+  const [otherUserSnap] = useDocument(dmOtherUid ? doc(db, 'users', dmOtherUid) : null);
+  const otherUser = otherUserSnap?.data() as any;
+  const displayTitle = (title || '').replace(/^Chat with /, '') || 'Chat';
+  const headerPhoto: string | undefined = otherUser?.photoURL;
+  const online = isPresenceOnline(otherUser);
+  const headerSub = dmOtherUid
+    ? online ? 'Online' : lastSeenLabel(otherUser) === 'Never active' ? '' : `Last seen ${lastSeenLabel(otherUser)}`
+    : isGroupChat ? `${(otherUids?.length || 0) + 1} people` : '';
   const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const dayLabel = (iso: string) => {
     const d = new Date(iso);
@@ -410,22 +421,78 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   };
 
+  // Reactions: one emoji per person per message, saved through the server (it checks you're in the chat).
+  const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  const EMOJIS = ['😀', '😁', '😂', '🤣', '😊', '😍', '🥰', '😘', '😎', '🤔', '😅', '😉', '🙂', '🙃', '😴', '😢', '😭', '😡', '🥳', '🤩', '😇', '🤗', '😋', '😬', '👍', '👎', '👏', '🙌', '🙏', '💪', '🤝', '👌', '❤️', '🧡', '💛', '💚', '💙', '💜', '🔥', '🎉', '✅', '❌', '⭐', '💯', '🍕', '☕', '🎂', '🚗'];
+  const [reactionOverrides, setReactionOverrides] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    setReactionOverrides((o) => {
+      const next: Record<string, string | null> = {};
+      let changed = false;
+      (Object.entries(o) as [string, string | null][]).forEach(([id, v]) => {
+        const server = messages.find((m) => m.id === id)?.reactions?.[myUid] ?? null;
+        if (server === v) changed = true; else next[id] = v;
+      });
+      return changed ? next : o;
+    });
+  }, [messages, myUid]);
+  const reactionsOf = (m: ChatMessage): Record<string, string> => {
+    const base: Record<string, string> = { ...(m.reactions || {}) };
+    if (m.id in reactionOverrides) {
+      const v = reactionOverrides[m.id];
+      if (v) base[myUid] = v; else delete base[myUid];
+    }
+    return base;
+  };
+  const reactTo = async (m: ChatMessage, emoji: string) => {
+    setMenuForId(null);
+    if (!user) return;
+    const current = reactionsOf(m)[myUid] || null;
+    const next = current === emoji ? null : emoji; // tapping your own reaction again removes it
+    setReactionOverrides((o) => ({ ...o, [m.id]: next }));
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/chat/react', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collectionName, chatId: gameId, commentId: m.id, emoji: next }),
+      });
+      if (!res.ok) throw new Error('react failed');
+    } catch (err) {
+      console.error('Failed to react:', err);
+      setReactionOverrides((o) => { const { [m.id]: _drop, ...rest } = o; return rest; });
+    }
+  };
+
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [showJump, setShowJump] = useState(false);
+  const onListScroll = () => {
+    const el = listRef.current;
+    if (el) setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight > 260);
+  };
+  const menuMessage = menuForId ? messages.find((x) => x.id === menuForId) || null : null;
+
   return (
     <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm hidden sm:block" onClick={onClose} />
       <div className="relative w-full h-full sm:h-[640px] sm:max-w-md bg-white sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] sm:pt-0">
-        <div className="px-3 py-2.5 border-b border-slate-200 flex items-center gap-2.5 shrink-0 bg-white">
-          <button onClick={onClose} className="w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-700 shrink-0" aria-label="Back">
+        <div className="px-3 py-2.5 flex items-center gap-2.5 shrink-0 text-white" style={{ background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' }}>
+          <button onClick={onClose} className="w-9 h-9 rounded-full hover:bg-white/15 flex items-center justify-center shrink-0" aria-label="Back">
             <span className="material-symbols-outlined text-[22px]">arrow_back</span>
           </button>
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-700 to-slate-800 text-white font-black flex items-center justify-center shrink-0">{initial}</div>
+          <div className="relative shrink-0">
+            <div className="w-10 h-10 rounded-full bg-white/20 overflow-hidden flex items-center justify-center font-black">
+              {headerPhoto ? <img src={headerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : displayTitle.slice(0, 1).toUpperCase()}
+            </div>
+            {dmOtherUid && online && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#0f766e]" />}
+          </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[14.5px] font-black text-slate-900 truncate leading-tight">{title}</h2>
-            <p className="text-[10.5px] font-bold text-slate-500 leading-tight">{isGroupChat ? `${(otherUids?.length || 0) + 1} people` : chatMuted ? 'Muted' : 'Tap ⋮ on a message for options'}</p>
+            <h2 className="text-[14.5px] font-black truncate leading-tight">{displayTitle}</h2>
+            {headerSub && <p className={`text-[10.5px] font-bold leading-tight ${online ? 'text-emerald-200' : 'text-teal-100/80'}`}>{headerSub}</p>}
           </div>
           <button
             onClick={toggleMuteChat}
-            className={`w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center ${chatMuted ? 'text-red-600' : 'text-slate-500'}`}
+            className={`w-9 h-9 rounded-full hover:bg-white/15 flex items-center justify-center ${chatMuted ? 'text-red-200' : 'text-white/90'}`}
             aria-label={chatMuted ? 'Unmute this chat' : 'Mute this chat'}
             title={chatMuted ? 'Unmute this chat' : 'Mute this chat'}
           >
@@ -433,128 +500,137 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </button>
         </div>
 
-        <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5 bg-gradient-to-b from-[#eef4f5] to-[#f6f9f9]">
-          {loading && <p className="text-sm text-slate-500 text-center">Loading…</p>}
-          {!loading && messages.length === 0 && (
-            <p className="text-sm text-slate-500 italic text-center py-6">No messages yet — say hi!</p>
-          )}
-          {messages.map((m, idx) => {
-            const mine = m.userId === myUid;
-            const isMuted = mutedUsers.includes(m.userId);
-            const isEditing = editingId === m.id;
-            const showDay = idx === 0 || new Date(messages[idx - 1].createdAt).toDateString() !== new Date(m.createdAt).toDateString();
-            const prev = messages[idx - 1];
-            const firstOfRun = !prev || prev.userId !== m.userId || showDay;
-            const tint = SENDER_TINTS[hashIndex(m.userId, SENDER_TINTS.length)];
-            return (
-              <React.Fragment key={m.id}>
-                {showDay && (
-                  <div className="flex justify-center py-1.5">
-                    <span className="text-[9.5px] font-extrabold text-slate-500 bg-slate-200/80 rounded-full px-3 py-0.5">{dayLabel(m.createdAt)}</span>
-                  </div>
-                )}
-                <div className={`flex ${mine ? 'justify-end' : 'justify-start'} gap-1.5`}>
-                  {!mine && isGroupChat && (
-                    <div className="w-6 h-6 rounded-full shrink-0 self-end overflow-hidden text-white text-[9px] font-black flex items-center justify-center" style={{ backgroundColor: tint.name }}>
-                      {m.photoURL ? <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (m.displayName || '?').slice(0, 1).toUpperCase()}
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={listRef}
+            onScroll={onListScroll}
+            className="absolute inset-0 overflow-y-auto px-2.5 py-3 space-y-[3px]"
+            style={{ backgroundColor: '#eaf3f2', backgroundImage: 'radial-gradient(rgba(15,118,110,0.09) 1.5px, transparent 1.5px)', backgroundSize: '22px 22px' }}
+          >
+            {loading && <p className="text-sm text-slate-500 text-center">Loading…</p>}
+            {!loading && messages.length === 0 && <p className="text-sm text-slate-500 italic text-center py-6">No messages yet — say hi!</p>}
+            {messages.map((m, idx) => {
+              const mine = m.userId === myUid;
+              const isMuted = mutedUsers.includes(m.userId);
+              const isEditing = editingId === m.id;
+              const prev = messages[idx - 1];
+              const next = messages[idx + 1];
+              const showDay = idx === 0 || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
+              const firstOfRun = !prev || prev.userId !== m.userId || showDay;
+              const lastOfRun = !next || next.userId !== m.userId || new Date(next.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
+              const tint = SENDER_TINTS[hashIndex(m.userId, SENDER_TINTS.length)];
+              const rx = reactionsOf(m);
+              const rxCounts = Object.values(rx).reduce<Record<string, number>>((acc, e) => { acc[e] = (acc[e] || 0) + 1; return acc; }, {});
+              return (
+                <React.Fragment key={m.id}>
+                  {showDay && (
+                    <div className="flex justify-center py-1.5">
+                      <span className="text-[9.5px] font-extrabold text-slate-500 bg-white/80 rounded-full px-3 py-0.5 shadow-sm">{dayLabel(m.createdAt)}</span>
                     </div>
                   )}
-                  <div className={`max-w-[78%] ${mine ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
-                    {!mine && (isGroupChat ? firstOfRun : false) && (
-                      <div className="flex items-center gap-1 px-1">
-                        <p className="text-[10px] font-black" style={{ color: tint.name }}>{m.displayName}</p>
-                        {isMuted && <span className="text-[9px] font-bold text-slate-400 uppercase">Muted</span>}
-                      </div>
-                    )}
-                    {mine && isEditing && (
-                      <div className="w-full min-w-[220px] space-y-1.5">
-                        <input
-                          type="text"
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(); if (e.key === 'Escape') cancelEdit(); }}
-                          maxLength={500}
-                          autoFocus
-                          className="w-full text-sm px-3 py-2 rounded-2xl border border-teal-600/50 outline-none bg-white"
-                        />
-                        <div className="flex justify-end gap-2">
-                          <button onClick={cancelEdit} className="text-[10px] font-black text-slate-500 px-2 py-1">Cancel</button>
-                          <button onClick={handleSaveEdit} disabled={!editText.trim()} className="text-[10px] font-black text-white bg-teal-700 px-3 py-1 rounded-full disabled:opacity-40">Save</button>
-                        </div>
-                      </div>
-                    )}
-                    {!isEditing && (
-                      <div className={`flex items-end gap-1 ${mine ? 'justify-end' : 'justify-start'}`}>
-                        {mine && (
-                          <button onClick={() => setMenuForId(menuForId === m.id ? null : m.id)} className="mb-1 shrink-0 text-slate-400" aria-label="Message options">
-                            <span className="material-symbols-outlined text-[15px] block">more_vert</span>
-                          </button>
+                  {firstOfRun && idx > 0 && !showDay && <div className="h-1.5" />}
+                  <div className={`flex ${mine ? 'justify-end' : 'justify-start'} gap-1.5 items-end`}>
+                    {!mine && (
+                      <div className="w-6 shrink-0">
+                        {lastOfRun && (
+                          <div className="w-6 h-6 rounded-full overflow-hidden text-white text-[9px] font-black flex items-center justify-center" style={{ backgroundColor: isGroupChat ? tint.name : '#0f766e' }}>
+                            {m.photoURL ? <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (m.displayName || '?').slice(0, 1).toUpperCase()}
+                          </div>
                         )}
+                      </div>
+                    )}
+                    <div className={`max-w-[78%] flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                      {!mine && isGroupChat && firstOfRun && (
+                        <p className="text-[10px] font-black px-1 mb-0.5" style={{ color: tint.name }}>{m.displayName}{isMuted && <span className="ml-1 text-[9px] font-bold text-slate-400 uppercase">Muted</span>}</p>
+                      )}
+                      {mine && isEditing ? (
+                        <div className="w-full min-w-[220px] space-y-1.5">
+                          <input
+                            type="text"
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(); if (e.key === 'Escape') cancelEdit(); }}
+                            maxLength={500}
+                            autoFocus
+                            className="w-full text-sm px-3 py-2 rounded-2xl border border-teal-600/50 outline-none bg-white"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button onClick={cancelEdit} className="text-[10px] font-black text-slate-500 px-2 py-1">Cancel</button>
+                            <button onClick={handleSaveEdit} disabled={!editText.trim()} className="text-[10px] font-black text-white bg-teal-700 px-3 py-1 rounded-full disabled:opacity-40">Save</button>
+                          </div>
+                        </div>
+                      ) : (
                         <div
-                          className={`px-3 py-2 rounded-[18px] break-words text-[13px] font-semibold leading-snug shadow-[0_1px_1.5px_rgba(0,0,0,0.06)] ${
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setMenuForId(m.id)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') setMenuForId(m.id); }}
+                          className={`px-3 pt-1.5 pb-1 break-words text-[13px] font-semibold leading-snug shadow-[0_1px_1.5px_rgba(0,0,0,0.08)] cursor-pointer active:brightness-95 ${
                             mine
-                              ? 'bg-[#0b3b4f] text-white rounded-br-md'
-                              : `${isGroupChat ? '' : 'bg-white border border-slate-200 text-slate-900'} rounded-bl-md text-slate-900 ${isMuted ? 'opacity-50' : ''}`
+                              ? `text-white rounded-[17px] ${firstOfRun ? 'rounded-tr-[6px]' : ''} ${lastOfRun ? 'rounded-br-[6px]' : ''}`
+                              : `${isGroupChat ? '' : 'bg-white'} text-slate-900 rounded-[17px] ${firstOfRun ? 'rounded-tl-[6px]' : ''} ${lastOfRun ? 'rounded-bl-[6px]' : ''} ${isMuted ? 'opacity-50' : ''}`
                           }`}
-                          style={!mine && isGroupChat ? { backgroundColor: tint.bg, border: `1px solid ${tint.border}` } : undefined}
+                          style={mine ? { background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' } : isGroupChat ? { backgroundColor: tint.bg, border: `1px solid ${tint.border}` } : undefined}
                         >
                           {m.text}
-                          <span className={`block text-right text-[9px] font-bold mt-0.5 ${mine ? 'text-white/60' : 'text-slate-400'}`}>
+                          <span className={`flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 ${mine ? 'text-white/70' : 'text-slate-400'}`}>
                             {timeOf(m.createdAt)}{m.editedAt ? ' · edited' : ''}
+                            {mine && <MessageStatusTicks status={getMessageStatus(m)} onDark />}
                           </span>
                         </div>
-                        {!mine && (
-                          <button onClick={() => setMenuForId(menuForId === m.id ? null : m.id)} className="mb-1 shrink-0 text-slate-400" aria-label="Message options">
-                            <span className="material-symbols-outlined text-[15px] block">more_vert</span>
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {!mine && menuForId === m.id && (
-                      <div className="flex gap-1.5 px-1 pt-0.5 flex-wrap justify-start">
-                        <button onClick={() => { reportMessage(m); setMenuForId(null); }} className="text-[10px] font-black text-red-600 px-2 py-1 bg-red-50 rounded-full">Report</button>
-                        <button onClick={() => { toggleMuteUser(m.userId); setMenuForId(null); }} className="text-[10px] font-black text-slate-600 px-2 py-1 bg-slate-100 rounded-full">{isMuted ? 'Unmute' : 'Mute'} {m.displayName}</button>
-                        <button onClick={() => { blockUser(m.userId); setMenuForId(null); }} className="text-[10px] font-black text-red-600 px-2 py-1 bg-red-50 rounded-full">Block {m.displayName}</button>
-                      </div>
-                    )}
-                    {mine && menuForId === m.id && !isEditing && (
-                      <div className="flex gap-1.5 px-1 pt-0.5 justify-end">
-                        <button onClick={() => startEdit(m)} className="text-[10px] font-black text-teal-700 px-2 py-1 bg-teal-50 rounded-full">Edit</button>
-                        <button onClick={() => { handleDeleteMessage(m.id); setMenuForId(null); }} className="text-[10px] font-black text-red-600 px-2 py-1 bg-red-50 rounded-full">Delete</button>
-                      </div>
-                    )}
-                    {mine && !isEditing && (
-                      <div className="self-end flex items-center gap-0.5 px-1 -mt-0.5">
-                        <MessageStatusTicks status={getMessageStatus(m)} />
-                      </div>
-                    )}
+                      )}
+                      {Object.keys(rxCounts).length > 0 && (
+                        <div className={`flex gap-1 -mt-1.5 z-[1] ${mine ? 'mr-1' : 'ml-1'}`}>
+                          {Object.entries(rxCounts).map(([e, n]) => (
+                            <button key={e} onClick={() => reactTo(m, e)} className={`flex items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-extrabold bg-white shadow border ${rx[myUid] === e ? 'border-teal-500' : 'border-slate-200'}`}>
+                              {e}{n > 1 && <span className="text-[9.5px] text-slate-500">{n}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </React.Fragment>
-            );
-          })}
-          {visiblePending.map((p) => (
-            <div key={p.tempId} className="flex justify-end">
-              <div className="max-w-[78%] items-end flex flex-col gap-0.5">
-                <div className="px-3 py-2 rounded-[18px] rounded-br-md break-words text-[13px] font-semibold bg-[#0b3b4f] text-white shadow-[0_1px_1.5px_rgba(0,0,0,0.06)]">{p.text}</div>
-                <div className="self-end flex items-center gap-0.5 px-1">
-                  <MessageStatusTicks status="sending" />
+                </React.Fragment>
+              );
+            })}
+            {visiblePending.map((p) => (
+              <div key={p.tempId} className="flex justify-end">
+                <div className="max-w-[78%] px-3 pt-1.5 pb-1 rounded-[17px] rounded-br-[6px] break-words text-[13px] font-semibold text-white shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]" style={{ background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' }}>
+                  {p.text}
+                  <span className="flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 text-white/70"><MessageStatusTicks status="sending" onDark /></span>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          {showJump && (
+            <button
+              onClick={() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })}
+              className="absolute right-3 bottom-3 w-10 h-10 rounded-full bg-white shadow-lg flex items-center justify-center text-slate-600 active:scale-95"
+              aria-label="Jump to latest"
+            >
+              <span className="material-symbols-outlined text-[24px]">keyboard_arrow_down</span>
+            </button>
+          )}
         </div>
 
-        <div
-          className="px-3 py-2.5 bg-white border-t border-slate-100 flex items-center gap-2 shrink-0"
-          style={{ paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' }}
-        >
+        {showEmoji && (
+          <div className="bg-white border-t border-slate-100 px-2 py-2 grid grid-cols-8 gap-1 shrink-0 max-h-[148px] overflow-y-auto">
+            {EMOJIS.map((e) => (
+              <button key={e} onClick={() => setText((t) => (t + e).slice(0, 500))} className="text-[22px] py-1 rounded-lg active:bg-slate-100">{e}</button>
+            ))}
+          </div>
+        )}
+        <div className="px-2.5 py-2.5 bg-white border-t border-slate-100 flex items-center gap-2 shrink-0" style={{ paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' }}>
+          <button onClick={() => setShowEmoji((v) => !v)} className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${showEmoji ? 'bg-teal-50 text-teal-700' : 'text-slate-500'}`} aria-label="Emoji">
+            <span className="material-symbols-outlined text-[24px]">mood</span>
+          </button>
           <input
             type="text"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-            placeholder={`Message${title && title !== 'Game Chat' ? ` ${title}` : ''}…`}
+            onFocus={() => setShowEmoji(false)}
+            placeholder={`Message${displayTitle && displayTitle !== 'Game Chat' ? ` ${displayTitle}` : ''}…`}
             maxLength={500}
             className="flex-1 min-w-0 bg-slate-100 px-4 py-2.5 rounded-full text-[13px] font-semibold outline-none focus:ring-2 focus:ring-teal-600/20"
           />
@@ -567,6 +643,34 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <span className="material-symbols-outlined text-[20px] block">send</span>
           </button>
         </div>
+
+        {/* Tap a message: react, copy, and (yours) edit or delete — (theirs) report, mute or block */}
+        {menuMessage && (
+          <div className="absolute inset-0 z-10 flex items-end justify-center bg-black/35" onClick={() => setMenuForId(null)}>
+            <div className="w-full bg-white rounded-t-3xl p-3 space-y-2 shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+              <div className="flex justify-between px-1">
+                {REACTIONS.map((e) => (
+                  <button key={e} onClick={() => reactTo(menuMessage, e)} className={`text-[28px] w-11 h-11 rounded-full flex items-center justify-center active:scale-90 transition-transform ${reactionsOf(menuMessage)[myUid] === e ? 'bg-teal-50' : ''}`}>{e}</button>
+                ))}
+              </div>
+              <div className="border-t border-slate-100 pt-1">
+                <button onClick={() => { navigator.clipboard?.writeText(menuMessage.text).catch(() => {}); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">content_copy</span>Copy</button>
+                {menuMessage.userId === myUid ? (
+                  <>
+                    <button onClick={() => startEdit(menuMessage)} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">edit</span>Edit</button>
+                    <button onClick={() => { const id = menuMessage.id; setMenuForId(null); handleDeleteMessage(id); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-red-600 active:bg-red-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px]">delete</span>Delete</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => { const mm = menuMessage; setMenuForId(null); reportMessage(mm); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-red-600 active:bg-red-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px]">flag</span>Report</button>
+                    <button onClick={() => { const mm = menuMessage; setMenuForId(null); toggleMuteUser(mm.userId); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">volume_off</span>{mutedUsers.includes(menuMessage.userId) ? 'Unmute' : 'Mute'} {menuMessage.displayName}</button>
+                    <button onClick={() => { const mm = menuMessage; setMenuForId(null); blockUser(mm.userId); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-red-600 active:bg-red-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px]">block</span>Block {menuMessage.displayName}</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
