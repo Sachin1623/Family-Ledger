@@ -135,6 +135,16 @@ interface ChatPanelProps {
   otherUids?: string[];
 }
 
+const SENDER_TINTS = [
+  { bg: '#e6eefc', border: '#d3e0f7', name: '#2b6fd6' },
+  { bg: '#e3f4f1', border: '#cbe8e2', name: '#0f8a7a' },
+  { bg: '#fdeee4', border: '#f5d9c6', name: '#c2410c' },
+  { bg: '#f3e8fd', border: '#e4d1f7', name: '#7c3aed' },
+  { bg: '#fde8f1', border: '#f6cfe1', name: '#be185d' },
+  { bg: '#eef5dc', border: '#dbe8b8', name: '#4d7c0f' },
+];
+const hashIndex = (key: string, mod: number) => Math.abs([...key].reduce((a, c) => a + c.charCodeAt(0), 0)) % mod;
+
 // Same bottom-sheet-on-mobile / centered-card-on-larger-screens shell as GameHelpModal, so it
 // feels native to the rest of the games screens rather than introducing a third modal style.
 // Moderation (report/mute/block a sender, mute this whole chat) lives entirely in here, reading
@@ -254,8 +264,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // Posted through the server (not a direct Firestore write) so the other participants can get a
   // push notification in the same request — see /api/chat/send in server.ts. The message itself
   // still shows up here purely via the live `comments` listener in useGameChat, same as before.
-  const handleSend = async () => {
-    const trimmed = text.trim();
+  const handleSend = () => sendText(text);
+  const sendText = async (raw: string) => {
+    const trimmed = raw.trim();
     if (!trimmed || sending || !user) return;
     const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setPending((p) => [...p, { tempId, text: trimmed, realId: null }]);
@@ -372,156 +383,149 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
   };
 
+  // ── Look of the conversation ────────────────────────────────────────────────────────────────────
+  // Group chats (more than one other person) give every sender their own tint and show names; a one-to-one chat
+  // stays plain white-vs-navy. Day separators and a time on each bubble, like any messenger.
+  const isGroupChat = (otherUids?.length || 0) > 1;
+  const initial = (title || '?').trim().slice(0, 1).toUpperCase();
+  const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const dayLabel = (iso: string) => {
+    const d = new Date(iso);
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+  const QUICK_REPLIES = ['👍', 'Sounds good', 'On my way', 'Thanks!'];
+
   return (
     <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] h-[70vh] sm:h-[600px] overflow-hidden">
-        <div className="p-4 border-b border-border-subtle flex items-center justify-between shrink-0">
-          <h2 className="text-base font-black text-primary">{title}</h2>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={toggleMuteChat}
-              className={`p-1.5 hover:bg-surface rounded-full ${chatMuted ? 'text-error' : 'text-text-muted'}`}
-              aria-label={chatMuted ? 'Unmute this chat' : 'Mute this chat'}
-              title={chatMuted ? 'Unmute this chat' : 'Mute this chat'}
-            >
-              <span className="material-symbols-outlined text-[20px]">{chatMuted ? 'notifications_off' : 'notifications'}</span>
-            </button>
-            <button onClick={onClose} className="p-1.5 hover:bg-surface rounded-full text-text-muted">
-              <span className="material-symbols-outlined text-[20px]">close</span>
-            </button>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm hidden sm:block" onClick={onClose} />
+      <div className="relative w-full h-full sm:h-[640px] sm:max-w-md bg-white sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] sm:pt-0">
+        <div className="px-3 py-2.5 border-b border-slate-200 flex items-center gap-2.5 shrink-0 bg-white">
+          <button onClick={onClose} className="w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-700 shrink-0" aria-label="Back">
+            <span className="material-symbols-outlined text-[22px]">arrow_back</span>
+          </button>
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-700 to-slate-800 text-white font-black flex items-center justify-center shrink-0">{initial}</div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[14.5px] font-black text-slate-900 truncate leading-tight">{title}</h2>
+            <p className="text-[10.5px] font-bold text-slate-500 leading-tight">{isGroupChat ? `${(otherUids?.length || 0) + 1} people` : chatMuted ? 'Muted' : 'Tap ⋮ on a message for options'}</p>
           </div>
+          <button
+            onClick={toggleMuteChat}
+            className={`w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center ${chatMuted ? 'text-red-600' : 'text-slate-500'}`}
+            aria-label={chatMuted ? 'Unmute this chat' : 'Mute this chat'}
+            title={chatMuted ? 'Unmute this chat' : 'Mute this chat'}
+          >
+            <span className="material-symbols-outlined text-[20px]">{chatMuted ? 'notifications_off' : 'notifications'}</span>
+          </button>
         </div>
 
-        <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-          {loading && <p className="text-sm text-text-muted text-center">Loading…</p>}
+        <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5 bg-gradient-to-b from-[#eef4f5] to-[#f6f9f9]">
+          {loading && <p className="text-sm text-slate-500 text-center">Loading…</p>}
           {!loading && messages.length === 0 && (
-            <p className="text-sm text-text-muted italic text-center">No messages yet — say hi!</p>
+            <p className="text-sm text-slate-500 italic text-center py-6">No messages yet — say hi!</p>
           )}
-          {messages.map((m) => {
+          {messages.map((m, idx) => {
             const mine = m.userId === myUid;
             const isMuted = mutedUsers.includes(m.userId);
             const isEditing = editingId === m.id;
+            const showDay = idx === 0 || new Date(messages[idx - 1].createdAt).toDateString() !== new Date(m.createdAt).toDateString();
+            const prev = messages[idx - 1];
+            const firstOfRun = !prev || prev.userId !== m.userId || showDay;
+            const tint = SENDER_TINTS[hashIndex(m.userId, SENDER_TINTS.length)];
             return (
-              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] ${mine ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
-                  {!mine && (
-                    <div className="flex items-center gap-1 px-1">
-                      <p className="text-[10px] font-bold text-text-muted">{m.displayName}</p>
-                      {isMuted && <span className="text-[9px] font-bold text-text-muted/60 uppercase">Muted</span>}
-                      <button
-                        onClick={() => setMenuForId(menuForId === m.id ? null : m.id)}
-                        className="text-text-muted/70 hover:text-text-muted"
-                        aria-label="Message options"
-                      >
-                        <span className="material-symbols-outlined text-[14px] block">more_vert</span>
-                      </button>
+              <React.Fragment key={m.id}>
+                {showDay && (
+                  <div className="flex justify-center py-1.5">
+                    <span className="text-[9.5px] font-extrabold text-slate-500 bg-slate-200/80 rounded-full px-3 py-0.5">{dayLabel(m.createdAt)}</span>
+                  </div>
+                )}
+                <div className={`flex ${mine ? 'justify-end' : 'justify-start'} gap-1.5`}>
+                  {!mine && isGroupChat && (
+                    <div className="w-6 h-6 rounded-full shrink-0 self-end overflow-hidden text-white text-[9px] font-black flex items-center justify-center" style={{ backgroundColor: tint.name }}>
+                      {m.photoURL ? <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (m.displayName || '?').slice(0, 1).toUpperCase()}
                     </div>
                   )}
-                  {!mine &&
-                    (
-                    <p
-                      className={`text-sm px-3 py-2 rounded-2xl break-words bg-surface text-on-surface rounded-bl-sm ${isMuted ? 'opacity-50' : ''}`}
-                    >
-                      {m.text}
-                      {m.editedAt && <span className="text-[10px] italic ml-1 text-text-muted/60">(edited)</span>}
-                    </p>
-                  )}
-                  {mine && isEditing && (
-                    <div className="w-full min-w-[200px] space-y-1.5">
-                      <input
-                        type="text"
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(); if (e.key === 'Escape') cancelEdit(); }}
-                        maxLength={500}
-                        autoFocus
-                        className="w-full text-sm px-3 py-2 rounded-2xl border border-primary/40 outline-none"
-                      />
-                      <div className="flex justify-end gap-2">
-                        <button onClick={cancelEdit} className="text-[10px] font-bold text-text-muted px-2 py-1">
-                          Cancel
-                        </button>
-                        <button
-                          onClick={handleSaveEdit}
-                          disabled={!editText.trim()}
-                          className="text-[10px] font-bold text-white bg-primary px-2.5 py-1 rounded-full disabled:opacity-40"
-                        >
-                          Save
-                        </button>
+                  <div className={`max-w-[78%] ${mine ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
+                    {!mine && (isGroupChat ? firstOfRun : false) && (
+                      <div className="flex items-center gap-1 px-1">
+                        <p className="text-[10px] font-black" style={{ color: tint.name }}>{m.displayName}</p>
+                        {isMuted && <span className="text-[9px] font-bold text-slate-400 uppercase">Muted</span>}
                       </div>
-                    </div>
-                  )}
-                  {/* Own message: the 3-dot options button sits INLINE with the bubble, same
-                      row, immediately to its left — not stacked in a separate row above it. */}
-                  {mine && !isEditing && (
-                    <div className="flex items-end justify-end gap-1">
-                      <button
-                        onClick={() => setMenuForId(menuForId === m.id ? null : m.id)}
-                        className="mb-1 shrink-0 text-text-muted/70 hover:text-text-muted"
-                        aria-label="Message options"
-                      >
-                        <span className="material-symbols-outlined text-[14px] block">more_vert</span>
-                      </button>
-                      <p className="text-sm px-3 py-2 rounded-2xl break-words bg-primary text-white rounded-br-sm">
-                        {m.text}
-                        {m.editedAt && <span className="text-[10px] italic ml-1 text-white/60">(edited)</span>}
-                      </p>
-                    </div>
-                  )}
-                  {!mine && menuForId === m.id && (
-                    <div className="flex gap-1.5 px-1 pt-0.5 flex-wrap justify-start">
-                      <button
-                        onClick={() => { reportMessage(m); setMenuForId(null); }}
-                        className="text-[10px] font-bold text-error px-2 py-1 bg-error/10 rounded-full"
-                      >
-                        Report
-                      </button>
-                      <button
-                        onClick={() => { toggleMuteUser(m.userId); setMenuForId(null); }}
-                        className="text-[10px] font-bold text-text-muted px-2 py-1 bg-surface rounded-full"
-                      >
-                        {isMuted ? 'Unmute' : 'Mute'} {m.displayName}
-                      </button>
-                      <button
-                        onClick={() => { blockUser(m.userId); setMenuForId(null); }}
-                        className="text-[10px] font-bold text-error px-2 py-1 bg-error/10 rounded-full"
-                      >
-                        Block {m.displayName}
-                      </button>
-                    </div>
-                  )}
-                  {mine && menuForId === m.id && !isEditing && (
-                    <div className="flex gap-1.5 px-1 pt-0.5 justify-end">
-                      <button
-                        onClick={() => startEdit(m)}
-                        className="text-[10px] font-bold text-primary px-2 py-1 bg-primary/10 rounded-full"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => { handleDeleteMessage(m.id); setMenuForId(null); }}
-                        className="text-[10px] font-bold text-error px-2 py-1 bg-error/10 rounded-full"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                  {mine && !isEditing && (
-                    <div className="self-end flex items-center gap-0.5 px-1">
-                      <MessageStatusTicks status={getMessageStatus(m)} />
-                    </div>
-                  )}
+                    )}
+                    {mine && isEditing && (
+                      <div className="w-full min-w-[220px] space-y-1.5">
+                        <input
+                          type="text"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(); if (e.key === 'Escape') cancelEdit(); }}
+                          maxLength={500}
+                          autoFocus
+                          className="w-full text-sm px-3 py-2 rounded-2xl border border-teal-600/50 outline-none bg-white"
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button onClick={cancelEdit} className="text-[10px] font-black text-slate-500 px-2 py-1">Cancel</button>
+                          <button onClick={handleSaveEdit} disabled={!editText.trim()} className="text-[10px] font-black text-white bg-teal-700 px-3 py-1 rounded-full disabled:opacity-40">Save</button>
+                        </div>
+                      </div>
+                    )}
+                    {!isEditing && (
+                      <div className={`flex items-end gap-1 ${mine ? 'justify-end' : 'justify-start'}`}>
+                        {mine && (
+                          <button onClick={() => setMenuForId(menuForId === m.id ? null : m.id)} className="mb-1 shrink-0 text-slate-400" aria-label="Message options">
+                            <span className="material-symbols-outlined text-[15px] block">more_vert</span>
+                          </button>
+                        )}
+                        <div
+                          className={`px-3 py-2 rounded-[18px] break-words text-[13px] font-semibold leading-snug shadow-[0_1px_1.5px_rgba(0,0,0,0.06)] ${
+                            mine
+                              ? 'bg-[#0b3b4f] text-white rounded-br-md'
+                              : `${isGroupChat ? '' : 'bg-white border border-slate-200 text-slate-900'} rounded-bl-md text-slate-900 ${isMuted ? 'opacity-50' : ''}`
+                          }`}
+                          style={!mine && isGroupChat ? { backgroundColor: tint.bg, border: `1px solid ${tint.border}` } : undefined}
+                        >
+                          {m.text}
+                          <span className={`block text-right text-[9px] font-bold mt-0.5 ${mine ? 'text-white/60' : 'text-slate-400'}`}>
+                            {timeOf(m.createdAt)}{m.editedAt ? ' · edited' : ''}
+                          </span>
+                        </div>
+                        {!mine && (
+                          <button onClick={() => setMenuForId(menuForId === m.id ? null : m.id)} className="mb-1 shrink-0 text-slate-400" aria-label="Message options">
+                            <span className="material-symbols-outlined text-[15px] block">more_vert</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {!mine && menuForId === m.id && (
+                      <div className="flex gap-1.5 px-1 pt-0.5 flex-wrap justify-start">
+                        <button onClick={() => { reportMessage(m); setMenuForId(null); }} className="text-[10px] font-black text-red-600 px-2 py-1 bg-red-50 rounded-full">Report</button>
+                        <button onClick={() => { toggleMuteUser(m.userId); setMenuForId(null); }} className="text-[10px] font-black text-slate-600 px-2 py-1 bg-slate-100 rounded-full">{isMuted ? 'Unmute' : 'Mute'} {m.displayName}</button>
+                        <button onClick={() => { blockUser(m.userId); setMenuForId(null); }} className="text-[10px] font-black text-red-600 px-2 py-1 bg-red-50 rounded-full">Block {m.displayName}</button>
+                      </div>
+                    )}
+                    {mine && menuForId === m.id && !isEditing && (
+                      <div className="flex gap-1.5 px-1 pt-0.5 justify-end">
+                        <button onClick={() => startEdit(m)} className="text-[10px] font-black text-teal-700 px-2 py-1 bg-teal-50 rounded-full">Edit</button>
+                        <button onClick={() => { handleDeleteMessage(m.id); setMenuForId(null); }} className="text-[10px] font-black text-red-600 px-2 py-1 bg-red-50 rounded-full">Delete</button>
+                      </div>
+                    )}
+                    {mine && !isEditing && (
+                      <div className="self-end flex items-center gap-0.5 px-1 -mt-0.5">
+                        <MessageStatusTicks status={getMessageStatus(m)} />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </React.Fragment>
             );
           })}
           {pending.map((p) => (
             <div key={p.tempId} className="flex justify-end">
-              <div className="max-w-[80%] items-end flex flex-col gap-0.5">
-                <p className="text-sm px-3 py-2 rounded-2xl break-words bg-primary/60 text-white rounded-br-sm">
-                  {p.text}
-                </p>
+              <div className="max-w-[78%] items-end flex flex-col gap-0.5">
+                <div className="px-3 py-2 rounded-[18px] rounded-br-md break-words text-[13px] font-semibold bg-[#0b3b4f]/60 text-white">{p.text}</div>
                 <div className="self-end flex items-center gap-0.5 px-1">
                   <MessageStatusTicks status="sending" />
                 </div>
@@ -530,23 +534,30 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           ))}
         </div>
 
+        {!text && !loading && (
+          <div className="px-3 pt-2 pb-1 flex gap-1.5 overflow-x-auto no-scrollbar bg-white border-t border-slate-100 shrink-0">
+            {QUICK_REPLIES.map((q) => (
+              <button key={q} onClick={() => sendText(q)} disabled={sending} className="shrink-0 text-[11px] font-extrabold text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 disabled:opacity-50">{q}</button>
+            ))}
+          </div>
+        )}
         <div
-          className="p-3 border-t border-border-subtle flex items-center gap-2 shrink-0"
-          style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+          className="px-3 py-2.5 bg-white border-t border-slate-100 flex items-center gap-2 shrink-0"
+          style={{ paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' }}
         >
           <input
             type="text"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-            placeholder="Message…"
+            placeholder={`Message${title && title !== 'Game Chat' ? ` ${title}` : ''}…`}
             maxLength={500}
-            className="flex-1 bg-surface p-2.5 rounded-xl border border-border-subtle text-sm outline-none"
+            className="flex-1 min-w-0 bg-slate-100 px-4 py-2.5 rounded-full text-[13px] font-semibold outline-none focus:ring-2 focus:ring-teal-600/20"
           />
           <button
             onClick={handleSend}
             disabled={sending || !text.trim()}
-            className="p-2.5 bg-primary text-white rounded-xl disabled:opacity-40 shrink-0"
+            className="w-10 h-10 bg-teal-700 text-white rounded-full disabled:opacity-40 shrink-0 flex items-center justify-center shadow-[0_4px_12px_rgba(15,118,110,0.3)]"
             aria-label="Send"
           >
             <span className="material-symbols-outlined text-[20px] block">send</span>
