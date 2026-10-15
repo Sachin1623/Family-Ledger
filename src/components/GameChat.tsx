@@ -397,7 +397,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
     return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   };
-  const QUICK_REPLIES = ['👍', 'Sounds good', 'On my way', 'Thanks!'];
 
   return (
     <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -534,13 +533,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           ))}
         </div>
 
-        {!text && !loading && (
-          <div className="px-3 pt-2 pb-1 flex gap-1.5 overflow-x-auto no-scrollbar bg-white border-t border-slate-100 shrink-0">
-            {QUICK_REPLIES.map((q) => (
-              <button key={q} onClick={() => setText(q)} className="shrink-0 text-[11px] font-extrabold text-teal-700 bg-teal-50 rounded-full px-3 py-1.5">{q}</button>
-            ))}
-          </div>
-        )}
         <div
           className="px-3 py-2.5 bg-white border-t border-slate-100 flex items-center gap-2 shrink-0"
           style={{ paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' }}
