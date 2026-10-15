@@ -524,7 +524,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           {pending.map((p) => (
             <div key={p.tempId} className="flex justify-end">
               <div className="max-w-[78%] items-end flex flex-col gap-0.5">
-                <div className="px-3 py-2 rounded-[18px] rounded-br-md break-words text-[13px] font-semibold bg-[#0b3b4f]/60 text-white">{p.text}</div>
+                <div className="px-3 py-2 rounded-[18px] rounded-br-md break-words text-[13px] font-semibold bg-[#0b3b4f] text-white shadow-[0_1px_1.5px_rgba(0,0,0,0.06)]">{p.text}</div>
                 <div className="self-end flex items-center gap-0.5 px-1">
                   <MessageStatusTicks status="sending" />
                 </div>
