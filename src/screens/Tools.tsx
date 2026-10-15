@@ -1,4 +1,5 @@
 import Health from './Health';
+import FinanceHome from '../components/FinanceHome';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -299,7 +300,7 @@ export default function Tools() {
                 <span className="absolute right-3 bottom-0 text-[52px] leading-none drop-shadow-[0_4px_10px_rgba(0,0,0,0.35)]">{activeStyle.emoji}</span>
               </div>
             )}
-            {activeCat.key === 'health' ? <Health embedded /> : activeCat.key === 'games' ? posterGrid(activeCat.tools) : <div className="space-y-2">{activeCat.tools.map((tool) => row(tool))}</div>}
+            {activeCat.key === 'health' ? <Health embedded /> : activeCat.key === 'finance' ? <FinanceHome /> : activeCat.key === 'games' ? posterGrid(activeCat.tools) : <div className="space-y-2">{activeCat.tools.map((tool) => row(tool))}</div>}
           </>
         )}
       </main>
