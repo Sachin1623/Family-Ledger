@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { GameShell, GameHeader, GameLeaveButton, GameStatusBar } from '../../components/GameShell';
+import { GameShell, GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1061,7 +1061,6 @@ export default function RummyGame() {
             </>
           }
         />
-        <GameStatusBar text={turnStatusText} mine={isMyTurn} />
 
         <div className="flex-1 min-h-0 flex flex-col gap-1.5 p-2">
           {/* Felt table: wooden rim, green baize with a soft spotlight. Three bands: the seats along the
