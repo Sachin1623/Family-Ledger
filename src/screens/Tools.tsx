@@ -176,11 +176,11 @@ export default function Tools() {
         key={key}
         type="button"
         onClick={() => navigate(`/tools?category=${key}`)}
-        className={clsx('relative overflow-hidden rounded-3xl text-left text-white shadow-md active:scale-[0.985] transition-transform', size === 'full' ? 'p-4 min-h-[112px]' : size === 'half' ? 'p-3.5 min-h-[104px]' : 'p-3.5 min-h-[84px]')}
+        className={clsx('relative block w-full overflow-hidden rounded-3xl text-left text-white shadow-md active:scale-[0.985] transition-transform', size === 'full' ? 'p-4 pr-28 min-h-[112px]' : size === 'half' ? 'p-3.5 min-h-[104px]' : 'p-3.5 pr-24 min-h-[84px]')}
         style={{ background: `linear-gradient(135deg, ${st.from}, ${st.to})` }}
       >
         <p className={clsx('font-black', size === 'full' ? 'text-[17px]' : 'text-[15px]')}>{cat.label}</p>
-        <p className="text-[10.5px] font-bold text-white/85 mt-0.5 max-w-[10.5rem] leading-snug">{size === 'half' ? `${cat.tools.length} tools` : st.blurb}</p>
+        <p className="text-[10.5px] font-bold text-white/85 mt-0.5 leading-snug">{size === 'half' ? `${cat.tools.length} tools` : st.blurb}</p>
         {size !== 'half' && (
           <span className="inline-block mt-2 text-[9.5px] font-black bg-white/20 px-2.5 py-1 rounded-full">{live || `${cat.tools.length} tools`}</span>
         )}
