@@ -45,10 +45,50 @@ export const ChatButton: React.FC<{ onClick: () => void; hasUnseen?: boolean; cl
 // of the four game screens need to know this feature exists.
 export function useGameChat(collectionName: string, gameId: string | undefined) {
   const { user, profile } = useAuth();
-  const [messagesValue, loading] = useCollection(
+  const [messagesValue, loading, feedError] = useCollection(
     gameId ? query(collection(db, collectionName, gameId, 'comments'), orderBy('createdAt', 'asc')) : null,
   );
-  const allMessages: ChatMessage[] = messagesValue?.docs.map((d) => ({ id: d.id, ...d.data() } as ChatMessage)) || [];
+  const liveMessages: ChatMessage[] = messagesValue?.docs.map((d) => ({ id: d.id, ...d.data() } as ChatMessage)) || [];
+
+  // Safety net for a live feed that is not delivering (seen on iOS: messages were saved on the server but the live listener
+  // stayed empty, so sent messages never appeared and vanished on leaving the chat). If the feed is still loading, still
+  // answering from the phone's own cache, or errored for a few seconds, ask the server for the messages every few
+  // seconds instead. Costs nothing while the live feed is healthy.
+  const feedStuck = !!feedError || loading || !!messagesValue?.metadata.fromCache;
+  const [polled, setPolled] = useState<ChatMessage[]>([]);
+  const [stuckLong, setStuckLong] = useState(false);
+  useEffect(() => {
+    if (!feedStuck) { setStuckLong(false); return; }
+    const t = setTimeout(() => setStuckLong(true), 4000);
+    return () => clearTimeout(t);
+  }, [feedStuck]);
+  useEffect(() => {
+    if (!stuckLong || !user || !gameId) return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch('/api/chat/history', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collectionName, chatId: gameId }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && Array.isArray(json.messages)) setPolled(json.messages as ChatMessage[]);
+      } catch { /* try again on the next tick */ }
+    };
+    pull();
+    const iv = setInterval(pull, 4000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [stuckLong, user?.uid, gameId, collectionName]);
+  const allMessages: ChatMessage[] = useMemo(() => {
+    if (polled.length === 0) return liveMessages;
+    const byId = new Map<string, ChatMessage>();
+    polled.forEach((m) => byId.set(m.id, m));
+    liveMessages.forEach((m) => byId.set(m.id, m));
+    return Array.from(byId.values()).sort((x, y) => (x.createdAt < y.createdAt ? -1 : x.createdAt > y.createdAt ? 1 : 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [polled, messagesValue]);
 
   const blockedUsers: string[] = profile?.blockedUsers || [];
   const mutedUsers: string[] = profile?.mutedUsers || [];

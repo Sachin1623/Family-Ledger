@@ -13897,6 +13897,38 @@ async function startServer() {
     chessGames: { kind: 'game', label: 'Chess', routeSegment: 'chess' },
   };
 
+  // Fallback for phones whose live chat feed is not delivering (seen on iOS: messages were saved but the live listener
+  // stayed empty). Returns the latest messages of a chat the caller belongs to; the app polls it only while the live feed
+  // looks stuck, so it costs nothing when the live feed works.
+  app.post('/api/chat/history', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const collectionName = String(req.body?.collectionName || '');
+    const chatId = String(req.body?.chatId || '');
+    const surface = CHAT_SURFACES[collectionName];
+    if (!surface || !chatId) return res.status(400).json({ error: 'collectionName and chatId are required.' });
+    try {
+      if (surface.kind === 'group') {
+        const member = await db.collection('members').doc(`${decoded.uid}_${chatId}`).get();
+        if (!member.exists) return res.status(403).json({ error: 'Not a member of this group.' });
+      } else if (surface.kind === 'dm') {
+        const parts = chatId.split('_');
+        if (parts.length !== 2 || !parts.includes(decoded.uid)) return res.status(403).json({ error: 'Not part of this conversation.' });
+      } else {
+        const gameSnap = await db.collection(collectionName).doc(chatId).get();
+        if (!gameSnap.exists) return res.status(404).json({ error: 'Game not found.' });
+        if (!(gameSnap.data()?.playerUids || []).includes(decoded.uid)) return res.status(403).json({ error: 'Not part of this game.' });
+      }
+      const snap = await db.collection(collectionName).doc(chatId).collection('comments').orderBy('createdAt', 'desc').limit(150).get();
+      const messages = snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse();
+      return res.json({ ok: true, messages });
+    } catch (error) {
+      console.error('chat/history error:', error);
+      return res.status(500).json({ error: 'Unable to load chat.' });
+    }
+  });
+
   // One emoji reaction per person per message (`reactions.{uid}`), tapped again to remove. Written through the server so
   // anyone IN the chat can react to any message in it, without opening up the comment documents to client edits.
   app.post('/api/chat/react', async (req, res) => {
