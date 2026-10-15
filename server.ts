@@ -14009,6 +14009,7 @@ async function startServer() {
         text,
         createdAt: nowIso,
         ...(replyTo ? { replyTo } : {}),
+        ...(req.body?.forwarded === true ? { forwarded: true } : {}),
       });
 
       if (surface.kind === 'dm' && otherUid) {

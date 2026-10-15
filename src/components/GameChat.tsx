@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { addDoc, arrayRemove, arrayUnion, collection, deleteDoc, doc, orderBy, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { isPresenceOnline, lastSeenLabel } from '../lib/presence';
+import ForwardPicker from './ForwardPicker';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 
@@ -16,6 +17,7 @@ interface ChatMessage {
   editedAt?: string;
   reactions?: Record<string, string>; // uid → emoji, one per person
   replyTo?: { id: string; displayName: string; text: string };
+  forwarded?: boolean;
 }
 
 // Bare icon, matching the Help/Leave pair's "only icons" header treatment — the small dot is a
@@ -487,6 +489,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const [showEmoji, setShowEmoji] = useState(false);
+  const [forwardText, setForwardText] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
   const onListScroll = () => {
     const el = listRef.current;
@@ -628,6 +631,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           }`}
                           style={mine ? { background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' } : isGroupChat ? { backgroundColor: tint.bg, border: `1px solid ${tint.border}` } : undefined}
                         >
+                          {m.forwarded && <span className={`flex items-center gap-0.5 text-[9.5px] font-extrabold italic mb-0.5 ${mine ? 'text-white/70' : 'text-slate-400'}`}><span className="material-symbols-outlined text-[12px]">forward</span>Forwarded</span>}
                           {m.replyTo && quoteBlock(m.replyTo, mine)}
                           {m.text}
                           <span className={`flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 ${mine ? 'text-white/70' : 'text-slate-400'}`}>
@@ -714,6 +718,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </button>
         </div>
 
+        {forwardText !== null && <ForwardPicker text={forwardText} excludeKey={collectionName === 'directChats' ? `dm:${(otherUids || [])[0] || ''}` : collectionName === 'groups' ? `group:${gameId}` : ''} onClose={() => setForwardText(null)} />}
+
         {/* Press and hold a message: react, copy, and (yours) edit or delete — (theirs) report, mute or block */}
         {menuMessage && (
           <div className="absolute inset-0 z-10 flex items-end justify-center bg-black/35" onClick={() => setMenuForId(null)}>
@@ -725,6 +731,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
               <div className="border-t border-slate-100 pt-1">
                 <button onClick={() => { setReplyTarget({ id: menuMessage.id, displayName: menuMessage.userId === myUid ? 'You' : menuMessage.displayName, text: menuMessage.text.slice(0, 140) }); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">reply</span>Reply</button>
+                <button onClick={() => { setForwardText(menuMessage.text); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">forward</span>Forward</button>
                 <button onClick={() => { navigator.clipboard?.writeText(menuMessage.text).catch(() => {}); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">content_copy</span>Copy</button>
                 {menuMessage.userId === myUid ? (
                   <>
