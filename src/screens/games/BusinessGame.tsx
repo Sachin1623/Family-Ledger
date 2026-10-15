@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { doc, updateDoc, getDoc, collection, query, where, documentId } from 'firebase/firestore';
@@ -1566,18 +1567,10 @@ export default function BusinessGame() {
   // ---- Waiting room ----
   if (game.status === 'waiting') {
     return (
-      <div className="flex flex-col min-h-screen bg-surface">
+      <>
         <ReactionOverlay reactions={floatingReactions} />
-        <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <h1 className="font-black text-primary">Business</h1>
-          <ReactionButton onSend={handleSendReaction} />
-          <div className="flex items-center gap-1.5 ml-auto">
-            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-            <VoiceChatButton voice={voice} />
-            <HelpButton onClick={() => setShowHelp(true)} />
-          </div>
-          {showHelp && <GameHelpModal content={BUSINESS_HELP} onClose={() => setShowHelp(false)} />}
-          {showChat && user && (
+        {showHelp && <GameHelpModal content={BUSINESS_HELP} onClose={() => setShowHelp(false)} />}
+        {showChat && user && (
             <ChatPanel
               collectionName="businessGames"
               gameId={gameId!}
@@ -1590,105 +1583,40 @@ export default function BusinessGame() {
               onClose={() => setShowChat(false)}
             />
           )}
-        </header>
-        <main className="flex-1 p-4 max-w-xl mx-auto w-full space-y-5 pb-24">
-          <div className="bg-white rounded-2xl border border-border-subtle p-5 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Share code</p>
-              <p className="text-2xl font-black text-primary tracking-widest">{game.code}</p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button onClick={handleCopyCode} className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">content_copy</span> Copy
-              </button>
-              <ShareGameButton
-                gameLabel="Business"
-                code={game.code}
-                path={`/games/business/${gameId}`}
-                className="px-3 py-2 bg-[#25D366] text-white rounded-xl text-xs font-bold flex items-center gap-1"
-              />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-            {game.players.map((p) => (
-              <div key={p.uid} className="p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                  {p.isBot ? '🤖' : p.photoURL ? (
-                    <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    p.displayName?.slice(0, 1) || '?'
-                  )}
-                </div>
-                <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
-                {p.uid === game.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
-              </div>
-            ))}
-            {Array.from({ length: Math.max(0, 2 - game.players.length) }).map((_, i) => (
-              <div key={i} className="p-4 flex items-center gap-3 opacity-40">
-                <div className="w-9 h-9 rounded-full border-2 border-dashed border-border-subtle" />
-                <p className="text-sm text-text-muted italic">Waiting for player…</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="bg-white rounded-2xl border border-border-subtle p-4 space-y-1">
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">House Rules</p>
-            <p className="text-xs text-text-muted">
-              {[
-                game.houseRules.freeParkingJackpot && 'Free Parking Jackpot',
-                game.houseRules.doubleRentFullSet && 'Double Rent on Full Set',
-                game.houseRules.doubleSalaryOnExactGo && 'Double Salary on Exact GO',
-                game.houseRules.doublesExtraTurn && 'Bonus for Rolling Doubles',
-              ].filter(Boolean).join(' · ') || 'None enabled'}
-            </p>
-          </div>
-
-          {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-          {!isPlayer && game.players.length < 6 && (
-            <button onClick={handleJoinGame} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
-              Join Game
-            </button>
-          )}
-
-          {isPlayer && (
-            <button
-              onClick={() => setShowInvite((v) => !v)}
-              className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">group_add</span>
-              Invite Group Members
-            </button>
-          )}
-
-          {showInvite && <InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
-
-          {isPlayer && user.uid === game.hostUid && game.players.length < 6 && (
-            <button
-              onClick={handleFillBot}
-              className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-              Fill Empty Seat with Bot
-            </button>
-          )}
-
-          {isPlayer && user.uid === game.hostUid ? (
-            <button onClick={handleStart} disabled={busy || game.players.length < 2} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
-              {game.players.length < 2 ? 'Need at least 2 players' : busy ? 'Starting…' : 'Start Game'}
-            </button>
-          ) : isPlayer ? (
-            <p className="text-center text-sm text-text-muted italic">Waiting for the host to start the game…</p>
-          ) : null}
-
-          {isPlayer && user.uid === game.hostUid && (
-            <button onClick={handleDeleteGame} className="w-full py-2.5 text-error/70 font-bold text-sm">
-              Delete Game
-            </button>
-          )}
-        </main>
-      </div>
+        <WaitingRoom
+          title="Business"
+          modeLabel={undefined}
+          backTo="/games/business"
+          headerActions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton className="!text-white" onClick={() => setShowHelp(true)} />
+            </>
+          }
+          code={game.code}
+          shareLabel="Business"
+          sharePath={`/games/business/${gameId}`}
+          players={game.players.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, isBot: p.isBot }))}
+          maxPlayers={6}
+          minToStart={2}
+          hostUid={game.hostUid}
+          myUid={user?.uid}
+          isPlayer={isPlayer}
+          onJoin={handleJoinGame}
+          joinLabel="Join game"
+          onStart={handleStart}
+          startLabel="Start game"
+          startBusy={busy}
+          onFillBot={handleFillBot}
+          addingBot={busy}
+          invitePicker={<InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p: any) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+          onDelete={handleDeleteGame}
+          deleteLabel="Delete game"
+          error={error}
+        />
+      </>
     );
   }
 

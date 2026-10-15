@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { doc, updateDoc, collection, query, where } from 'firebase/firestore';
@@ -446,17 +447,8 @@ export default function SweepGame() {
   // ---- Waiting room ----
   if (game.status === 'waiting') {
     return (
-      <div className="flex flex-col min-h-screen bg-surface">
+      <>
         <ReactionOverlay reactions={floatingReactions} />
-        <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <h1 className="font-black text-primary">Sweep</h1>
-          <ReactionButton onSend={handleSendQuickReaction} />
-          <div className="flex items-center gap-1.5 ml-auto">
-            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-            <VoiceChatButton voice={voice} />
-            <HelpButton onClick={() => setShowHelp(true)} />
-          </div>
-        </header>
         {showHelp && <GameHelpModal content={SWEEP_HELP} onClose={() => setShowHelp(false)} />}
         {showChat && user && (
           <ChatPanel
@@ -471,151 +463,73 @@ export default function SweepGame() {
             onClose={() => setShowChat(false)}
           />
         )}
-        <main className="flex-1 p-4 max-w-xl mx-auto w-full space-y-5 pb-24">
-          <div className="bg-white rounded-2xl border border-border-subtle p-5 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Share code</p>
-              <p className="text-2xl font-black text-primary tracking-widest">{game.code}</p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button onClick={handleCopyCode} className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">content_copy</span> Copy
-              </button>
-              <ShareGameButton
-                gameLabel="Sweep"
-                code={game.code}
-                path={`/games/sweep/${gameId}`}
-                className="px-3 py-2 bg-[#25D366] text-white rounded-xl text-xs font-bold flex items-center gap-1"
-              />
-            </div>
-          </div>
-
-          {game.playerCount === 4 ? (
-            <div className="space-y-2">
-              <p className="text-xs text-text-muted px-1">
-                Partners play opposite each other. {isHost ? 'Tap a player to move them to the other team.' : 'The host can rearrange teams before starting.'}
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {([0, 1] as const).map((t) => (
-                  <div key={t} className="bg-white rounded-2xl border border-border-subtle overflow-hidden">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-center py-1.5" style={{ color: TEAM_COLOR[t], background: `${TEAM_COLOR[t]}14` }}>
-                      {TEAM_LABEL[t]}
-                    </p>
-                    <div className="divide-y divide-border-subtle min-h-[92px]">
-                      {game.players.filter((p) => p.team === t).map((p) => (
-                        <button
-                          key={p.uid}
-                          onClick={isHost ? () => handleSetTeam(p.uid, t === 0 ? 1 : 0) : undefined}
-                          disabled={!isHost || busy}
-                          className="w-full p-3 flex items-center gap-2 text-left disabled:opacity-100"
-                        >
-                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 overflow-hidden" style={{ background: TEAM_COLOR[t] }}>
-                            {p.isBot ? '🤖' : p.photoURL ? (
-                              <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              p.displayName?.slice(0, 1) || '?'
-                            )}
-                          </div>
-                          <span className="text-xs font-bold text-on-surface truncate">{p.displayName}</span>
-                          {p.uid === game.hostUid && <span className="ml-auto text-[9px] font-bold text-primary uppercase shrink-0">Host</span>}
-                        </button>
-                      ))}
+        <WaitingRoom
+          title="Sweep"
+          modeLabel={`${game.playerCount} players`}
+          backTo="/games/sweep"
+          headerActions={
+            <>
+              <ReactionButton onSend={handleSendQuickReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton className="!text-white" onClick={() => setShowHelp(true)} />
+            </>
+          }
+          code={game.code}
+          shareLabel="Sweep"
+          sharePath={`/games/sweep/${gameId}`}
+          players={game.players.map((p: any) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, isBot: p.isBot, ringColor: TEAM_COLOR[p.team], sub: TEAM_LABEL[p.team] }))}
+          maxPlayers={game.playerCount}
+          minToStart={game.playerCount}
+          hostUid={game.hostUid}
+          myUid={user?.uid}
+          isPlayer={isPlayer}
+          note={`Sweep bonus: ${game.sweepPoints} points. Game plays to a net score of 100.`}
+          startBlocked={game.playerCount === 4 && game.players.length === game.playerCount && !teamsBalanced ? 'Teams must be 2-2' : undefined}
+          customSeats={
+            game.playerCount === 4 ? (
+              <div className="space-y-2">
+                <p className="text-[11px] font-bold text-white/60 px-1">Partners play opposite each other. {isHost ? 'Tap a player to move them to the other team.' : 'The host can rearrange teams before starting.'}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([0, 1] as const).map((t) => (
+                    <div key={t} className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] overflow-hidden">
+                      <p className="text-[10px] font-black tracking-wider text-center py-1.5" style={{ color: TEAM_COLOR[t], background: `${TEAM_COLOR[t]}22` }}>{TEAM_LABEL[t]}</p>
+                      <div className="min-h-[92px] divide-y divide-[#1f2a47]">
+                        {game.players.filter((p) => p.team === t).map((p) => (
+                          <button key={p.uid} onClick={isHost ? () => handleSetTeam(p.uid, t === 0 ? 1 : 0) : undefined} disabled={!isHost || busy} className="w-full p-3 flex items-center gap-2 text-left disabled:opacity-100">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-black shrink-0 overflow-hidden" style={{ background: TEAM_COLOR[t] }}>
+                              {p.isBot ? '🤖' : p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
+                            </div>
+                            <span className="text-xs font-extrabold truncate">{p.displayName}</span>
+                            {p.uid === game.hostUid && <span className="ml-auto text-[9px] font-black text-amber-300 uppercase shrink-0">Host</span>}
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                  ))}
+                </div>
+                {Array.from({ length: Math.max(0, game.playerCount - game.players.length) }).map((_, i) => (
+                  <div key={i} className="rounded-2xl border-[1.5px] border-dashed border-[#2c3a63] p-3 flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full border-2 border-dashed border-[#3a4a75]" />
+                    <p className="text-sm font-bold text-[#5d6c92]">Open seat</p>
                   </div>
                 ))}
               </div>
-              {Array.from({ length: Math.max(0, game.playerCount - game.players.length) }).map((_, i) => (
-                <div key={i} className="bg-white rounded-2xl border border-dashed border-border-subtle p-3 flex items-center gap-3 opacity-50">
-                  <div className="w-7 h-7 rounded-full border-2 border-dashed border-border-subtle" />
-                  <p className="text-sm text-text-muted italic">Waiting for player…</p>
-                </div>
-              ))}
-              {!teamsBalanced && game.players.length === game.playerCount && (
-                <p className="text-xs font-bold text-warning px-1">Teams must be split 2-2 before starting.</p>
-              )}
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-              {game.players.map((p) => (
-                <div key={p.uid} className="p-4 flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden" style={{ background: TEAM_COLOR[p.team] }}>
-                    {p.isBot ? '🤖' : p.photoURL ? (
-                      <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      p.displayName?.slice(0, 1) || '?'
-                    )}
-                  </div>
-                  <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
-                  {p.uid === game.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
-                </div>
-              ))}
-              {Array.from({ length: Math.max(0, game.playerCount - game.players.length) }).map((_, i) => (
-                <div key={i} className="p-4 flex items-center gap-3 opacity-40">
-                  <div className="w-9 h-9 rounded-full border-2 border-dashed border-border-subtle" />
-                  <p className="text-sm text-text-muted italic">Waiting for player…</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <p className="text-xs text-text-muted px-1">Sweep bonus: {game.sweepPoints} points. Game plays to a net score of 100.</p>
-
-          {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-          {!isPlayer && game.players.length < game.playerCount && (
-            <button onClick={handleJoinGame} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
-              Join Game
-            </button>
-          )}
-
-          {isPlayer && (
-            <button
-              onClick={() => setShowInvite((v) => !v)}
-              className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">group_add</span>
-              Invite Group Members
-            </button>
-          )}
-
-          {showInvite && <InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
-
-          {isPlayer && user.uid === game.hostUid && game.players.length < game.playerCount && (
-            <button
-              onClick={handleFillBot}
-              disabled={busy}
-              className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-              Fill Empty Seat with Bot
-            </button>
-          )}
-
-          {isPlayer && user.uid === game.hostUid ? (
-            <button
-              onClick={handleStart}
-              disabled={busy || game.players.length < game.playerCount || (game.playerCount === 4 && !teamsBalanced)}
-              className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50"
-            >
-              {game.players.length < game.playerCount
-                ? `Need ${game.playerCount} players`
-                : game.playerCount === 4 && !teamsBalanced
-                ? 'Teams must be 2-2'
-                : busy
-                ? 'Starting…'
-                : 'Start Game'}
-            </button>
-          ) : isPlayer ? (
-            <p className="text-center text-sm text-text-muted italic">Waiting for the host to start the game…</p>
-          ) : null}
-
-          {isPlayer && user.uid === game.hostUid && (
-            <button onClick={handleDeleteGame} className="w-full py-2.5 text-error/70 font-bold text-sm">
-              Delete Game
-            </button>
-          )}
-        </main>
-      </div>
+            ) : undefined
+          }
+          onJoin={handleJoinGame}
+          joinLabel="Join game"
+          onStart={handleStart}
+          startLabel="Start game"
+          startBusy={busy}
+          onFillBot={handleFillBot}
+          addingBot={busy}
+          invitePicker={<InvitePicker groupIds={groupIds} alreadyIn={game.players.map((p: any) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+          onDelete={handleDeleteGame}
+          deleteLabel="Delete game"
+          error={error}
+        />
+      </>
     );
   }
 

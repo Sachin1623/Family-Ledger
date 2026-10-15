@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { doc, updateDoc, collection, query, where } from 'firebase/firestore';
@@ -554,6 +555,56 @@ export default function ChessGame() {
     return { dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, color: ['#fbbf24', '#f87171', '#60a5fa', '#4ade80', '#fff', '#c084fc'][i % 6], delay: (i % 7) * 0.04, rot: (i * 57) % 360 };
   });
 
+  if (game.status === 'waiting') {
+    return (
+      <>
+        <ReactionOverlay reactions={floatingReactions} />
+        {showHelp && <GameHelpModal content={CHESS_HELP} onClose={() => setShowHelp(false)} />}
+        {showChat && user && (
+          <ChatPanel
+            collectionName="chessGames"
+            gameId={gameId!}
+            messages={chatMessages}
+            loading={chatLoading}
+            myUid={user.uid}
+            myDisplayName={profile?.displayName || user.displayName || 'Player'}
+            myPhotoURL={profile?.photoURL || user.photoURL || ''}
+            otherUids={players.filter((p) => p.uid !== user.uid).map((p) => p.uid)}
+            onClose={() => setShowChat(false)}
+          />
+        )}
+        <WaitingRoom
+          title="Chess"
+          backTo="/games/chess"
+          headerActions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            </>
+          }
+          code={game.code}
+          shareLabel="Chess"
+          sharePath={`/games/chess/${gameId}`}
+          players={players.map((p) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, ringColor: p.color === 'w' ? '#f1f5f9' : '#475569', sub: `Plays ${COLOR_LABEL[p.color]}` }))}
+          maxPlayers={2}
+          minToStart={2}
+          hostUid={game.hostUid}
+          myUid={user?.uid}
+          isPlayer={isPlayer}
+          autoStart
+          joinLabel="Join game"
+          onJoin={handleJoin}
+          invitePicker={<InvitePicker groupIds={groupIds} alreadyIn={players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+          onDelete={handleDeleteGame}
+          deleteLabel="Delete game"
+          error={error}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
@@ -630,7 +681,7 @@ export default function ChessGame() {
           </button>
           <div className="leading-tight">
             <h1 className="text-[15px] font-black">Chess</h1>
-            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">{game.status === 'waiting' ? 'WAITING FOR OPPONENT' : `MOVE ${movesPlayed + (turnColor === 'w' && !isFinished ? 1 : 0)}`}</span>
+            <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">{`MOVE ${movesPlayed + (turnColor === 'w' && !isFinished ? 1 : 0)}`}</span>
           </div>
           <ReactionButton onSend={handleSendReaction} />
           <div className="flex-1" />
@@ -652,42 +703,6 @@ export default function ChessGame() {
 
         {error && <p className="relative text-xs font-bold text-red-300 px-4 pt-1">{error}</p>}
 
-        {game.status === 'waiting' && (
-          <div className="relative flex-1 overflow-y-auto px-4 py-4">
-            <div className="mx-auto max-w-md bg-white text-on-surface rounded-3xl p-5 space-y-4 shadow-2xl">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-black text-primary">Waiting for opponent</p>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={handleCopyCode} className="text-xs font-bold text-primary flex items-center gap-1 px-3 py-1.5 bg-primary/5 rounded-full">
-                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                    {game.code}
-                  </button>
-                  <ShareGameButton gameLabel="Chess" code={game.code} path={`/games/chess/${gameId}`} className="text-xs font-bold text-white flex items-center gap-1 px-3 py-1.5 bg-[#25D366] rounded-full" />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {players.map((p) => (
-                  <div key={p.uid} className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold" style={{ backgroundColor: p.color === 'w' ? '#f3f4f6' : '#1f2937', color: p.color === 'w' ? '#1f2937' : '#f3f4f6' }}>
-                    {p.displayName} · {COLOR_LABEL[p.color]}
-                  </div>
-                ))}
-              </div>
-              {!isPlayer && players.length < 2 && (
-                <button onClick={handleJoin} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">Join Game</button>
-              )}
-              {isPlayer && (
-                <button onClick={() => setShowInvite((v) => !v)} className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]">group_add</span>
-                  Invite Group Members
-                </button>
-              )}
-              {showInvite && <InvitePicker groupIds={groupIds} alreadyIn={players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
-              {game.hostUid === user?.uid && (
-                <button onClick={handleDeleteGame} className="w-full py-2.5 text-error/70 font-bold text-sm">Delete Game</button>
-              )}
-            </div>
-          </div>
-        )}
 
         {(game.status === 'active' || isFinished) && (
           <div className="relative flex-1 min-h-0 flex flex-col px-3 pt-2 pb-2 gap-2">

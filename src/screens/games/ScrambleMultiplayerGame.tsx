@@ -1,4 +1,5 @@
 import React from 'react';
+import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -372,6 +373,50 @@ export default function ScrambleMultiplayerGame() {
     navigate('/games/scramble-multiplayer');
   };
 
+  if (game.status === 'waiting') {
+    return (
+      <>
+        {showHelp && <GameHelpModal content={SCRAMBLE_HELP} onClose={() => setShowHelp(false)} />}
+        <WaitingRoom
+          title="Scramble race"
+          modeLabel={`${game.wordLength}-letter · ${game.totalWords} words · ${MATCH_TIMER_LABEL[game.matchTimerMode]}`}
+          backTo="/games/scramble-multiplayer"
+          headerActions={
+            <>
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            </>
+          }
+          code={game.code}
+          shareLabel="Scramble"
+          sharePath={`/games/scramble-multiplayer/${gameId}`}
+          players={players.map((p) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL }))}
+          maxPlayers={4}
+          minToStart={2}
+          hostUid={game.hostUid}
+          myUid={user?.uid}
+          isPlayer={isPlayer}
+          joinLabel="Join game"
+          onJoin={handleJoinGame}
+          onStart={handleStart}
+          startLabel="Start race"
+          startBusy={starting}
+          invitePicker={
+            <InvitePicker
+              groupIds={groupIds}
+              alreadyIn={players.map((p) => p.uid)}
+              onInvite={async (uids, poke) => {
+                await callApi('/api/scramble/invite', { gameId, inviteeUids: uids, poke });
+              }}
+              extraCandidates={friendCandidates}
+            />
+          }
+          error={error}
+        />
+      </>
+    );
+  }
+
   const tileFace = 'bg-gradient-to-b from-[#fff3c9] to-[#f1d27a] text-[#3a2a00] shadow-[0_5px_0_#b88a1d,0_9px_14px_rgba(0,0,0,0.45)]';
   const wordFrac = Math.max(0, Math.min(1, perWordRemaining / perWordSeconds));
   const wordUrgent = perWordRemaining <= 5;
@@ -416,7 +461,7 @@ export default function ScrambleMultiplayerGame() {
           <div className="leading-tight">
             <h1 className="text-[15px] font-black">Scramble</h1>
             <span className="text-[8px] font-bold tracking-[0.14em] text-white/60">
-              {game.status === 'waiting' ? 'WAITING FOR PLAYERS' : game.status === 'finished' ? 'MATCH OVER' : `RACE · WORD ${Math.min(game.totalWords, (myProgress?.roundIndex ?? 0) + 1)} OF ${game.totalWords}`}
+              {game.status === 'finished' ? 'MATCH OVER' : `RACE · WORD ${Math.min(game.totalWords, (myProgress?.roundIndex ?? 0) + 1)} OF ${game.totalWords}`}
             </span>
           </div>
           <div className="flex-1" />
@@ -432,67 +477,6 @@ export default function ScrambleMultiplayerGame() {
         {error && <p className="relative text-xs font-bold text-red-300 px-4 pt-1">{error}</p>}
 
         <main className="relative flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-6 flex flex-col gap-3 max-w-md mx-auto w-full">
-          {game.status === 'waiting' && (
-            <div className="rounded-3xl bg-white text-on-surface p-5 space-y-4 shadow-2xl">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Share code</p>
-                  <p className="text-2xl font-black text-primary tracking-widest">{game.code}</p>
-                  <p className="text-[10px] text-text-muted mt-1">{game.wordLength}-letter · {game.totalWords} words · {MATCH_TIMER_LABEL[game.matchTimerMode]}</p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button onClick={() => navigator.clipboard?.writeText(game.code)} className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">content_copy</span> Copy
-                  </button>
-                  <ShareGameButton gameLabel="Scramble" code={game.code} path={`/games/scramble-multiplayer/${gameId}`} className="px-3 py-2 bg-[#25D366] text-white rounded-xl text-xs font-bold flex items-center gap-1" />
-                </div>
-              </div>
-              <div className="rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-                {players.map((p) => (
-                  <div key={p.uid} className="p-3 flex items-center gap-3">
-                    <div className="relative w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0">
-                      {p.photoURL ? <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : p.displayName?.slice(0, 1) || '?'}
-                      <PresenceDot uid={p.uid} className="absolute -bottom-0.5 -right-0.5 w-2 h-2" />
-                    </div>
-                    <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
-                    {p.uid === game.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
-                  </div>
-                ))}
-                {Array.from({ length: Math.max(0, 2 - players.length) }).map((_, i) => (
-                  <div key={i} className="p-3 flex items-center gap-3 opacity-40">
-                    <div className="w-9 h-9 rounded-full border-2 border-dashed border-border-subtle" />
-                    <p className="text-sm text-text-muted italic">Waiting for player…</p>
-                  </div>
-                ))}
-              </div>
-              {!isPlayer && user && players.length < 4 && (
-                <button onClick={handleJoinGame} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">Join Game</button>
-              )}
-              {isPlayer && (
-                <button onClick={() => setShowInvite((v) => !v)} className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]">group_add</span>
-                  Invite Group Members
-                </button>
-              )}
-              {isPlayer && showInvite && (
-                <InvitePicker
-                  groupIds={groupIds}
-                  alreadyIn={players.map((p) => p.uid)}
-                  onInvite={async (uids, poke) => {
-                    await callApi('/api/scramble/invite', { gameId, inviteeUids: uids, poke });
-                  }}
-                  extraCandidates={friendCandidates}
-                />
-              )}
-              {isHost ? (
-                <button onClick={handleStart} disabled={starting || players.length < 2} className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">
-                  {starting ? 'Starting…' : players.length < 2 ? 'Need 2+ players' : 'Start Game'}
-                </button>
-              ) : (
-                <p className="text-center text-xs text-text-muted">Waiting for the host to start the game…</p>
-              )}
-            </div>
-          )}
 
           {game.status === 'active' && (
             <>

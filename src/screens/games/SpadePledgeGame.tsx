@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -381,18 +382,9 @@ export default function SpadePledgeGame() {
     const partner = isPartnership && partnerSeatIndex !== null ? table.players.find((p) => p.seatIndex === partnerSeatIndex) : null;
 
     return (
-      <div className="flex flex-col min-h-screen bg-surface">
+      <>
         <ReactionOverlay reactions={floatingReactions} />
-        <header className="p-4 flex items-center gap-3 bg-white border-b border-border-subtle">
-          <h1 className="font-black text-primary">Spade Pledge</h1>
-          <ReactionButton onSend={handleSendReaction} />
-          <div className="flex items-center gap-1 ml-auto">
-            <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
-            <VoiceChatButton voice={voice} />
-            <HelpButton onClick={() => setShowHelp(true)} />
-          </div>
-          {showHelp && <GameHelpModal content={SPADE_PLEDGE_HELP} onClose={() => setShowHelp(false)} />}
-        </header>
+        {showHelp && <GameHelpModal content={SPADE_PLEDGE_HELP} onClose={() => setShowHelp(false)} />}
         {showChat && user && (
           <ChatPanel
             collectionName="spadePledgeTables"
@@ -406,107 +398,44 @@ export default function SpadePledgeGame() {
             onClose={() => setShowChat(false)}
           />
         )}
-        <main className="flex-1 p-4 max-w-xl mx-auto w-full space-y-5 pb-24">
-          <div className="bg-white rounded-2xl border border-border-subtle p-5 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                Share code · {FORMAT_LABEL[table.format]}
-              </p>
-              <p className="text-2xl font-black text-primary tracking-widest">{table.code}</p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button onClick={handleCopyCode} className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">content_copy</span> Copy
-              </button>
-              <ShareGameButton
-                gameLabel="Spade Pledge"
-                code={table.code}
-                path={`/games/spadePledge/${tableId}`}
-                className="px-3 py-2 bg-[#25D366] text-white rounded-xl text-xs font-bold flex items-center gap-1"
-              />
-            </div>
-          </div>
-
-          {isPartnership && (
-            <p className="text-xs text-text-muted italic px-1 text-center">
-              {partner ? `You + ${partner.displayName} are partners.` : 'Partners sit opposite each other — waiting for more seats to fill.'}
-            </p>
-          )}
-
-          <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle overflow-hidden">
-            {table.players.map((p) => (
-              <div key={p.uid} className="p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                  {p.isBot ? '🤖' : p.photoURL ? (
-                    <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    p.displayName?.slice(0, 1) || '?'
-                  )}
-                </div>
-                <p className="text-sm font-bold text-on-surface">{p.displayName}</p>
-                {p.uid === table.hostUid && <span className="ml-auto text-[10px] font-bold text-primary uppercase">Host</span>}
-              </div>
-            ))}
-            {Array.from({ length: Math.max(0, 4 - table.players.length) }).map((_, i) => (
-              <div key={i} className="p-4 flex items-center gap-3 opacity-40">
-                <div className="w-9 h-9 rounded-full border-2 border-dashed border-border-subtle" />
-                <p className="text-sm text-text-muted italic">Waiting for player…</p>
-              </div>
-            ))}
-          </div>
-
-          {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-          {!isPlayer && table.players.length < 4 && (
-            <button onClick={handleJoinTable} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">
-              Join Table
-            </button>
-          )}
-
-          {isPlayer && table.players.length < 4 && (
-            <button
-              onClick={() => setShowInvite((v) => !v)}
-              className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">group_add</span>
-              Invite Group Members
-            </button>
-          )}
-
-          {showInvite && (
-            <InvitePicker groupIds={groupIds} alreadyIn={table.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />
-          )}
-
-          {isPlayer && user.uid === table.hostUid && table.players.length < 4 && (
-            <button
-              onClick={handleFillBot}
-              disabled={addingBot}
-              className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-              {addingBot ? 'Adding…' : 'Fill Empty Seat with Bot'}
-            </button>
-          )}
-
-          {isPlayer && user.uid === table.hostUid ? (
-            <button
-              onClick={handleStart}
-              disabled={busy || table.players.length !== 4}
-              className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl disabled:opacity-50"
-            >
-              {table.players.length !== 4 ? 'Need exactly 4 players' : busy ? 'Starting…' : 'Start Table'}
-            </button>
-          ) : isPlayer ? (
-            <p className="text-center text-sm text-text-muted italic">Waiting for the host to start the table…</p>
-          ) : null}
-
-          {isPlayer && user.uid === table.hostUid && (
-            <button onClick={handleDeleteTable} className="w-full py-2.5 text-error/70 font-bold text-sm">
-              Delete Table
-            </button>
-          )}
-        </main>
-      </div>
+        <WaitingRoom
+          title="Spade Pledge"
+          modeLabel={FORMAT_LABEL[table.format]}
+          backTo="/games/spadePledge"
+          headerActions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            </>
+          }
+          code={table.code}
+          shareLabel="Spade Pledge"
+          sharePath={`/games/spadePledge/${tableId}`}
+          players={table.players.map((p) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, isBot: p.isBot, seatIndex: p.seatIndex, sub: isPartnership ? `Team ${p.seatIndex % 2 === 0 ? 'A' : 'B'}` : undefined }))}
+          maxPlayers={4}
+          minToStart={4}
+          hostUid={table.hostUid}
+          myUid={user?.uid}
+          isPlayer={isPlayer}
+          layout="table"
+          tableLabels={(rel) => (isPartnership ? (rel === 0 ? { label: 'You', sub: 'Your team' } : rel === 2 ? { label: 'Partner', sub: 'across from you' } : { label: 'Opponent', sub: 'other team' }) : { label: rel === 0 ? 'You' : 'Player' })}
+          note={isPartnership ? (partner ? `You + ${partner.displayName} are partners.` : 'Partners sit opposite each other.') : undefined}
+          onJoin={handleJoinTable}
+          joinLabel="Join table"
+          onStart={handleStart}
+          startLabel="Start table"
+          startBusy={busy}
+          onFillBot={handleFillBot}
+          fillBotLabel="Fill with bots"
+          addingBot={addingBot}
+          invitePicker={<InvitePicker groupIds={groupIds} alreadyIn={table.players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+          onDelete={handleDeleteTable}
+          deleteLabel="Delete table"
+          error={error}
+        />
+      </>
     );
   }
 

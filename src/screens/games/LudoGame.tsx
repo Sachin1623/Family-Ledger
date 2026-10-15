@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1277,6 +1278,108 @@ export default function LudoGame() {
     );
   }
 
+  if (game.status === 'waiting') {
+    return (
+      <>
+        <ReactionOverlay reactions={floatingReactions} />
+        {showHelp && <GameHelpModal content={LUDO_HELP} onClose={() => setShowHelp(false)} />}
+        {showChat && user && (
+          <ChatPanel
+            collectionName="ludoGames"
+            gameId={gameId!}
+            messages={chatMessages}
+            loading={chatLoading}
+            myUid={user.uid}
+            myDisplayName={profile?.displayName || user.displayName || 'Player'}
+            myPhotoURL={profile?.photoURL || user.photoURL || ''}
+            otherUids={players.filter((p) => p.uid !== user.uid).map((p) => p.uid)}
+            onClose={() => setShowChat(false)}
+          />
+        )}
+        <WaitingRoom
+          title="Ludo"
+          backTo="/games/ludo"
+          headerActions={
+            <>
+              <ReactionButton onSend={handleSendReaction} />
+              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} />
+              <VoiceChatButton voice={voice} />
+              <HelpButton onClick={() => setShowHelp(true)} className="!text-white" />
+            </>
+          }
+          code={game.code}
+          shareLabel="Ludo"
+          sharePath={`/games/ludo/${gameId}`}
+          players={players.map((p) => ({ uid: p.uid, displayName: p.displayName, photoURL: p.photoURL, isBot: p.isBot, ringColor: COLOR_HEX[p.color], sub: p.color.charAt(0).toUpperCase() + p.color.slice(1) }))}
+          maxPlayers={4}
+          minToStart={2}
+          hostUid={game.hostUid}
+          myUid={user?.uid}
+          isPlayer={isPlayer}
+          joinLabel="Join game"
+          joinDisabled={!selectedJoinColor}
+          onJoin={handleJoin}
+          onStart={handleStart}
+          startLabel="Start game"
+          onFillBot={handleFillBot}
+          invitePicker={<InvitePicker groupIds={groupIds} alreadyIn={players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />}
+          onDelete={handleDeleteGame}
+          deleteLabel="Delete game"
+          error={error}
+          afterSeats={
+            <div className="space-y-3">
+              {!isPlayer && players.length < 4 && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-black tracking-[0.14em] text-amber-300 px-1">CHOOSE YOUR COLOUR</p>
+                  <div className="flex gap-2">
+                    {COLORS.map((c) => {
+                      const disabled = !availableJoinColors.includes(c);
+                      return (
+                        <button key={c} type="button" disabled={disabled} onClick={() => setSelectedJoinColor(c)} aria-label={c} className={clsx('flex-1 h-11 rounded-xl border-2 transition-all', disabled ? 'opacity-20 cursor-not-allowed' : 'active:scale-95', selectedJoinColor === c && !disabled && 'ring-2 ring-offset-2 ring-offset-[#0c1230] ring-amber-300')} style={{ backgroundColor: COLOR_HEX[c], borderColor: selectedJoinColor === c ? '#fff' : 'transparent' }} />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {isPlayer && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-black tracking-[0.14em] text-amber-300 px-1">YOUR COLOUR</p>
+                  <div className="flex gap-2">
+                    {COLORS.map((c) => {
+                      const disabled = c !== myPlayer!.color && !availableJoinColors.includes(c);
+                      return (
+                        <button key={c} type="button" disabled={disabled} onClick={() => handleChangeColor(c)} aria-label={c} className={clsx('flex-1 h-11 rounded-xl border-2 transition-all', disabled ? 'opacity-20 cursor-not-allowed' : 'active:scale-95', myPlayer!.color === c && 'ring-2 ring-offset-2 ring-offset-[#0c1230] ring-amber-300')} style={{ backgroundColor: COLOR_HEX[c], borderColor: myPlayer!.color === c ? '#fff' : 'transparent' }} />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {isPlayer && players.length === 4 && (() => {
+                const partnerSeatIndex = (myPlayer!.seatIndex + 2) % 4;
+                const partner = players.find((p) => p.seatIndex === partnerSeatIndex);
+                if (!partner) return null;
+                const myTeam = myPlayer!.team;
+                const bothTeamed = myTeam != null && partner.team === myTeam;
+                return (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-black tracking-[0.14em] text-amber-300 px-1">PARTNER MODE (OPTIONAL)</p>
+                    <button type="button" onClick={handleChangeTeam} className={clsx('w-full py-3 px-3 rounded-2xl border-2 flex items-center gap-2 text-left transition-all', myTeam != null ? 'border-amber-300 bg-[#2a1d05]' : 'border-[#2c3a63] bg-[#0c1230] active:scale-95')}>
+                      <span className="text-lg shrink-0">🤝</span>
+                      <span className="min-w-0">
+                        <span className="block text-[12px] font-extrabold">{bothTeamed ? `Teamed up with ${partner.displayName}` : myTeam != null ? `Waiting for ${partner.displayName} to accept` : `Team up with ${partner.displayName}`}</span>
+                        <span className="block text-[10px] font-bold text-white/50">Teammates can't capture each other's pawns · seated opposite</span>
+                      </span>
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          }
+        />
+      </>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
@@ -1316,149 +1419,6 @@ export default function LudoGame() {
 
         {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
 
-        {game.status === 'waiting' && (
-          <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-bold text-primary">Waiting for players ({players.length}/4)</p>
-              <div className="flex items-center gap-1.5">
-                <button onClick={handleCopyCode} className="text-xs font-bold text-primary flex items-center gap-1 px-3 py-1.5 bg-primary/5 rounded-full">
-                  <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                  {game.code}
-                </button>
-                <ShareGameButton
-                  gameLabel="Ludo"
-                  code={game.code}
-                  path={`/games/ludo/${gameId}`}
-                  className="text-xs font-bold text-white flex items-center gap-1 px-3 py-1.5 bg-[#25D366] rounded-full"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {players.map((p) => (
-                <div key={p.uid} className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-bold" style={{ backgroundColor: COLOR_HEX[p.color] }}>
-                  {p.isBot && '🤖 '}{p.displayName}
-                </div>
-              ))}
-            </div>
-
-            {!isPlayer && players.length < 4 && (
-              <div className="space-y-2">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Choose your color</p>
-                <div className="flex gap-2">
-                  {COLORS.map((c) => {
-                    const disabled = !availableJoinColors.includes(c);
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => setSelectedJoinColor(c)}
-                        aria-label={c}
-                        className={clsx(
-                          'flex-1 h-10 rounded-xl border-2 transition-all',
-                          disabled ? 'opacity-20 cursor-not-allowed' : 'active:scale-95',
-                          selectedJoinColor === c && !disabled && 'ring-2 ring-offset-2 ring-primary',
-                        )}
-                        style={{ backgroundColor: COLOR_HEX[c], borderColor: selectedJoinColor === c ? '#fff' : 'transparent' }}
-                      />
-                    );
-                  })}
-                </div>
-                <button onClick={handleJoin} disabled={!selectedJoinColor} className="w-full py-3 bg-primary text-white font-bold rounded-2xl disabled:opacity-40">
-                  Join Game
-                </button>
-              </div>
-            )}
-
-            {isPlayer && (
-              <div className="space-y-2">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Your color</p>
-                <div className="flex gap-2">
-                  {COLORS.map((c) => {
-                    const disabled = c !== myPlayer!.color && !availableJoinColors.includes(c);
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => handleChangeColor(c)}
-                        aria-label={c}
-                        className={clsx(
-                          'flex-1 h-10 rounded-xl border-2 transition-all',
-                          disabled ? 'opacity-20 cursor-not-allowed' : 'active:scale-95',
-                          myPlayer!.color === c && 'ring-2 ring-offset-2 ring-primary',
-                        )}
-                        style={{ backgroundColor: COLOR_HEX[c], borderColor: myPlayer!.color === c ? '#fff' : 'transparent' }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {isPlayer && players.length === 4 && (() => {
-              const partnerSeatIndex = (myPlayer!.seatIndex + 2) % 4;
-              const partner = players.find((p) => p.seatIndex === partnerSeatIndex);
-              if (!partner) return null;
-              const myTeam = myPlayer!.team;
-              const bothTeamed = myTeam != null && partner.team === myTeam;
-              return (
-                <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                    Partner mode (optional) — teammates can't capture each other's pawns
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleChangeTeam}
-                    className={clsx(
-                      'w-full py-2.5 px-3 rounded-xl border-2 flex items-center gap-2 text-left transition-all',
-                      myTeam != null ? 'border-primary bg-primary/5' : 'border-border-subtle active:scale-95',
-                    )}
-                  >
-                    <span className="text-base shrink-0">🤝</span>
-                    <span className="min-w-0">
-                      <p className="text-[11px] font-bold text-primary">
-                        {bothTeamed ? `Teamed up with ${partner.displayName}` : myTeam != null ? `Waiting for ${partner.displayName} to accept` : `Team up with ${partner.displayName}`}
-                      </p>
-                      <p className="text-[9px] text-text-muted">Partners are always seated opposite each other on the board</p>
-                    </span>
-                  </button>
-                </div>
-              );
-            })()}
-
-            {isPlayer && (
-              <button onClick={() => setShowInvite((v) => !v)} className="w-full py-2.5 border border-border-subtle text-primary font-bold rounded-xl text-sm flex items-center justify-center gap-2">
-                <span className="material-symbols-outlined text-[18px]">group_add</span>
-                Invite Group Members
-              </button>
-            )}
-
-            {showInvite && (
-              <InvitePicker groupIds={groupIds} alreadyIn={players.map((p) => p.uid)} onInvite={handleInvite} extraCandidates={friendCandidates} />
-            )}
-
-            {game.hostUid === user?.uid && players.length < 4 && (
-              <button onClick={handleFillBot} className="w-full py-2.5 border border-border-subtle text-text-muted font-bold rounded-xl text-sm flex items-center justify-center gap-2">
-                <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                Fill Empty Seat with Bot
-              </button>
-            )}
-
-            {game.hostUid === user?.uid && (
-              <button onClick={handleStart} disabled={players.length < 2} className="w-full py-3 bg-primary text-white font-bold rounded-2xl disabled:opacity-40">
-                Start Game {players.length < 2 && '(need 2+ players)'}
-              </button>
-            )}
-
-            {game.hostUid === user?.uid && (
-              <button onClick={handleDeleteGame} className="w-full py-2.5 text-error/70 font-bold text-sm">
-                Delete Game
-              </button>
-            )}
-          </div>
-        )}
 
       </main>
     </div>
