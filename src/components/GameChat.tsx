@@ -537,7 +537,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         {!text && !loading && (
           <div className="px-3 pt-2 pb-1 flex gap-1.5 overflow-x-auto no-scrollbar bg-white border-t border-slate-100 shrink-0">
             {QUICK_REPLIES.map((q) => (
-              <button key={q} onClick={() => sendText(q)} disabled={sending} className="shrink-0 text-[11px] font-extrabold text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 disabled:opacity-50">{q}</button>
+              <button key={q} onClick={() => setText(q)} className="shrink-0 text-[11px] font-extrabold text-teal-700 bg-teal-50 rounded-full px-3 py-1.5">{q}</button>
             ))}
           </div>
         )}
