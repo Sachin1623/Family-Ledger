@@ -28,7 +28,8 @@ const agoLabel = (iso?: string) => {
   return days <= 0 ? `today ${time}` : days === 1 ? `yesterday ${time}` : `${days} days ago`;
 };
 
-export default function Health() {
+// `embedded` = shown as the Health tab inside Tools (no page title / outer page chrome of its own).
+export default function Health({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -73,12 +74,16 @@ export default function Health() {
   const left = dosesToday.total - dosesToday.done;
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900">{t('health.title')}</h1>
-          <p className="text-[12px] font-semibold text-slate-500">{dateLabel}</p>
-        </div>
+    <div className={embedded ? '' : 'flex flex-col min-h-screen bg-surface'}>
+      <main className={embedded ? 'space-y-3' : 'flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24'}>
+        {!embedded ? (
+          <div>
+            <h1 className="text-2xl font-black text-slate-900">{t('health.title')}</h1>
+            <p className="text-[12px] font-semibold text-slate-500">{dateLabel}</p>
+          </div>
+        ) : (
+          <p className="text-[12px] font-semibold text-slate-500 px-1">{dateLabel}</p>
+        )}
 
         {dosesToday.hasMeds && (
           <button onClick={() => navigate('/health/medicines')} className="w-full text-left rounded-3xl p-4 text-white shadow-md flex items-center gap-3" style={{ background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' }}>

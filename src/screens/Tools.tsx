@@ -1,3 +1,4 @@
+import Health from './Health';
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -77,7 +78,6 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
     // itself only ever this exact 3-tracker list, so this skips a redundant hop. Icons/i18n keys/
     // favKeys match Health.tsx's own HEALTH_TRACKERS exactly.
     tools: [
-      { to: '/health', favKey: 'health-home', icon: '💚', titleKey: 'health.title', descKey: 'health.subtitle' },
       { to: '/health/glucose', favKey: 'glucose-tracker', icon: '🩸', titleKey: 'health.glucoseTracker', descKey: 'health.glucoseTrackerDesc' },
       { to: '/health/blood-pressure', favKey: 'bp-tracker', icon: '❤️', titleKey: 'bp.tracker', descKey: 'bp.trackerDesc' },
       { to: '/health/medicines', favKey: 'medicine-tracker', icon: '💊', titleKey: 'medicine.tracker', descKey: 'medicine.trackerDesc' },
@@ -122,6 +122,9 @@ export default function Tools() {
           ))}
         </div>
 
+        {activeCategory === 'health' ? (
+          <Health embedded />
+        ) : (
         <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden">
           {activeTools.map((tool) => (
             <div
@@ -145,6 +148,7 @@ export default function Tools() {
             </div>
           ))}
         </div>
+        )}
       </main>
     </div>
   );
