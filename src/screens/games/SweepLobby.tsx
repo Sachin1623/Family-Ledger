@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { generateGameCode } from '../../lib/sweep';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { SWEEP_HELP } from '../../lib/gameHelp';
+import { GameLobbyShell, GoldButton, SectionLabel, CodeJoin, LobbyGameCard, IconAction, NewGameSheet, OptionCard, PillPicker, CardPicker, SwitchRow, turnChipFor, lobbyStats } from '../../components/GameLobbyKit';
 
 const SWEEP_POINT_OPTIONS = [25, 50] as const;
 
@@ -16,6 +17,7 @@ export default function SweepLobby() {
   const [playerCount, setPlayerCount] = useState<2 | 4>(4);
   const [sweepPoints, setSweepPoints] = useState<25 | 50>(25);
   const [creating, setCreating] = useState(false);
+  const [showNew, setShowNew] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,143 +137,47 @@ export default function SweepLobby() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-primary">Sweep</h1>
-            <p className="text-sm text-text-muted mt-1">Online multiplayer, 2 or 4 players — capture and build houses to 100.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <HelpButton onClick={() => setShowHelp(true)} />
-            <button
-              onClick={() => navigate('/games/ranks/sweep')}
-              className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1"
-            >
-              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-              Ranks
-            </button>
-          </div>
-        </div>
+    <GameLobbyShell
+      title="Sweep"
+      emoji="🧹"
+      tagline="Capture the table, build houses, sweep it clean. 2 or 4 players."
+      gradient={['#7a5a1d', '#3a2a0a']}
+      stats={lobbyStats(myGames, user?.uid, 'seat')}
+      ranksPath="/games/ranks/sweep"
+      help={{ content: SWEEP_HELP }}
+      error={showNew ? null : error}
+    >
+      <GoldButton onClick={() => setShowNew(true)}>＋ New game</GoldButton>
 
-        {showHelp && <GameHelpModal content={SWEEP_HELP} onClose={() => setShowHelp(false)} />}
+      <CodeJoin value={joinCode} onChange={setJoinCode} onJoin={handleJoinByCode} joining={joining} />
 
-        {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-4">
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Players</p>
-            <div className="flex gap-2">
-              {([2, 4] as const).map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setPlayerCount(n)}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border ${
-                    playerCount === n ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'
-                  }`}
-                >
-                  {n} Players{n === 4 ? ' (2 teams)' : ''}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Sweep Bonus</p>
-            <div className="flex gap-2">
-              {SWEEP_POINT_OPTIONS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setSweepPoints(n)}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border ${
-                    sweepPoints === n ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'
-                  }`}
-                >
-                  {n} pts
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={handleCreate}
-          disabled={creating}
-          className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-        >
-          <span className="material-symbols-outlined">add_circle</span>
-          {creating ? 'Creating…' : 'New Game'}
-        </button>
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
-          <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Join by Code</p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              placeholder="e.g. K7XQ2R"
-              maxLength={6}
-              className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none tracking-widest font-bold uppercase"
+      <section className="space-y-2">
+        <SectionLabel>{`Your games · ${myGames.length}`}</SectionLabel>
+        {loading && <p className="text-sm text-white/60 px-1">Loading…</p>}
+        {!loading && myGames.length === 0 && <p className="text-sm text-white/50 italic px-1">Nothing in progress — start one above.</p>}
+        <div className="space-y-2">
+          {myGames.map((g) => (
+            <LobbyGameCard
+              key={g.id}
+              players={(g.players || []).map((p: any) => ({ uid: p.uid, photoURL: p.photoURL, displayName: p.displayName, isBot: p.isBot }))}
+              title={g.status === 'waiting' ? 'Waiting for players' : `${g.playerCount}-player game`}
+              subtitle={`Code ${g.code} · ${g.playerCount} players`}
+              chip={turnChipFor(g, user?.uid, 'seat')}
+              onClick={() => navigate(`/games/sweep/${g.id}`)}
+              actions={g.hostUid === user?.uid && g.status !== 'active' ? <IconAction icon="delete" label="Delete" onClick={(e) => handleDelete(e, g.id)} disabled={deletingId === g.id} /> : null}
             />
-            <button
-              onClick={handleJoinByCode}
-              disabled={joining || !joinCode.trim()}
-              className="px-5 py-2 bg-primary/10 text-primary rounded-xl text-sm font-bold disabled:opacity-50"
-            >
-              {joining ? '…' : 'Join'}
-            </button>
-          </div>
+          ))}
         </div>
+      </section>
 
-        <section className="space-y-2">
-          <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">Your Games</h2>
-          {loading && <p className="text-sm text-text-muted px-1">Loading…</p>}
-          {!loading && myGames.length === 0 && <p className="text-sm text-text-muted italic px-1">No games in progress.</p>}
-          <div className="space-y-2">
-            {myGames.map((g) => (
-              <div
-                key={g.id}
-                onClick={() => navigate(`/games/sweep/${g.id}`)}
-                className="bg-white rounded-2xl border border-border-subtle p-4 flex items-center justify-between cursor-pointer hover:shadow-sm transition-all"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex -space-x-2">
-                    {(g.players || []).map((p: any) => (
-                      <div key={p.uid} className="w-8 h-8 rounded-full border-2 border-white bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                        {p.photoURL ? (
-                          <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          p.displayName?.slice(0, 1) || '?'
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-on-surface truncate">
-                      {g.status === 'waiting' ? 'Waiting for players' : 'In progress'}
-                    </p>
-                    <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">
-                      Code: {g.code} · {g.playerCount}p
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {g.hostUid === user?.uid && g.status !== 'active' && g.status !== 'bidding' && (
-                    <button
-                      onClick={(e) => handleDelete(e, g.id)}
-                      disabled={deletingId === g.id}
-                      className="p-2 text-error/70 disabled:opacity-40"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
-                  )}
-                  <span className="material-symbols-outlined text-text-muted">chevron_right</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
-    </div>
+      <NewGameSheet open={showNew} onClose={() => setShowNew(false)} title="New game" subtitle="Sweep" createLabel="Create game" creating={creating} onCreate={handleCreate} error={error}>
+        <OptionCard label="Players">
+          <CardPicker options={[{ id: '2', emoji: '👤', label: '2 players', sub: 'head to head' }, { id: '4', emoji: '🤝', label: '4 players', sub: '2 teams of 2' }]} value={String(playerCount) as '2' | '4'} onChange={(v) => setPlayerCount(Number(v) as 2 | 4)} />
+        </OptionCard>
+        <OptionCard label="Sweep bonus">
+          <PillPicker options={SWEEP_POINT_OPTIONS} value={sweepPoints} onChange={setSweepPoints} format={(n) => `${n} pts`} />
+        </OptionCard>
+      </NewGameSheet>
+    </GameLobbyShell>
   );
 }

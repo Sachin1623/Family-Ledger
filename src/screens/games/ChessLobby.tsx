@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { generateGameCode } from '../../lib/chess';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { CHESS_HELP } from '../../lib/gameHelp';
+import { GameLobbyShell, GoldButton, SectionLabel, CodeJoin, LobbyGameCard, IconAction, turnChipFor, lobbyStats } from '../../components/GameLobbyKit';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -122,110 +123,41 @@ export default function ChessLobby() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-primary">Chess</h1>
-            <p className="text-sm text-text-muted mt-1">Online multiplayer, 2 players.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <HelpButton onClick={() => setShowHelp(true)} />
-            <button
-              onClick={() => navigate('/games/ranks/chess')}
-              className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1"
-            >
-              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-              Ranks
-            </button>
-          </div>
-        </div>
+    <GameLobbyShell
+      title="Chess"
+      emoji="♞"
+      tagline="Online duel for 2 players. Share a code or invite family."
+      gradient={['#2b3f7a', '#162250']}
+      stats={lobbyStats(myGames, user?.uid, 'chess')}
+      ranksPath="/games/ranks/chess"
+      help={{ content: CHESS_HELP }}
+      error={error}
+    >
+      <GoldButton onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : '＋ New game'}</GoldButton>
 
-        {showHelp && <GameHelpModal content={CHESS_HELP} onClose={() => setShowHelp(false)} />}
+      <CodeJoin value={joinCode} onChange={setJoinCode} onJoin={handleJoinByCode} joining={joining} />
 
-        {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-        <button
-          onClick={handleCreate}
-          disabled={creating}
-          className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-        >
-          <span className="material-symbols-outlined">add_circle</span>
-          {creating ? 'Creating…' : 'New Game'}
-        </button>
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
-          <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Join by Code</p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              placeholder="e.g. K7XQ2R"
-              maxLength={6}
-              className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none tracking-widest font-bold uppercase"
-            />
-            <button
-              onClick={handleJoinByCode}
-              disabled={joining || !joinCode.trim()}
-              className="px-5 py-2 bg-primary/10 text-primary rounded-xl text-sm font-bold disabled:opacity-50"
-            >
-              {joining ? '…' : 'Join'}
-            </button>
-          </div>
-        </div>
-
-        <section className="space-y-2">
-          <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">Your Games</h2>
-          {loading && <p className="text-sm text-text-muted px-1">Loading…</p>}
-          {!loading && myGames.length === 0 && <p className="text-sm text-text-muted italic px-1">No games in progress.</p>}
-          <div className="space-y-2">
-            {myGames.map((g) => (
-              <div
+      <section className="space-y-2">
+        <SectionLabel>{`Your games · ${myGames.length}`}</SectionLabel>
+        {loading && <p className="text-sm text-white/60 px-1">Loading…</p>}
+        {!loading && myGames.length === 0 && <p className="text-sm text-white/50 italic px-1">No games in progress — start one above.</p>}
+        <div className="space-y-2">
+          {myGames.map((g) => {
+            const other = (g.players || []).find((p: any) => p.uid !== user?.uid);
+            return (
+              <LobbyGameCard
                 key={g.id}
+                players={(g.players || []).map((p: any) => ({ uid: p.uid, photoURL: p.photoURL, displayName: p.displayName }))}
+                title={g.status === 'waiting' ? 'Open table' : `vs ${other?.displayName || 'Opponent'}`}
+                subtitle={g.status === 'waiting' ? `Code ${g.code} · tap to share` : `Move ${Math.ceil((g.history?.length || 0) / 2) + 1} · code ${g.code}`}
+                chip={turnChipFor(g, user?.uid, 'chess')}
                 onClick={() => navigate(`/games/chess/${g.id}`)}
-                className="bg-white rounded-2xl border border-border-subtle p-4 flex items-center justify-between cursor-pointer hover:shadow-sm transition-all"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex -space-x-2">
-                    {(g.players || []).map((p: any) => (
-                      <div
-                        key={p.uid}
-                        className="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold overflow-hidden"
-                        style={{ backgroundColor: p.color === 'w' ? '#f3f4f6' : '#1f2937', color: p.color === 'w' ? '#1f2937' : '#f3f4f6' }}
-                      >
-                        {p.photoURL ? (
-                          <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          p.displayName?.slice(0, 1) || '?'
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-on-surface truncate">
-                      {g.status === 'waiting' ? 'Waiting for opponent' : 'In progress'}
-                    </p>
-                    <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">Code: {g.code}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {g.hostUid === user?.uid && g.status !== 'active' && (
-                    <button
-                      onClick={(e) => handleDelete(e, g.id)}
-                      disabled={deletingId === g.id}
-                      className="p-2 text-error/70 disabled:opacity-40"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
-                  )}
-                  <span className="material-symbols-outlined text-text-muted">chevron_right</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
-    </div>
+                actions={g.hostUid === user?.uid && g.status !== 'active' ? <IconAction icon="delete" label="Delete game" onClick={(e) => handleDelete(e, g.id)} disabled={deletingId === g.id} /> : null}
+              />
+            );
+          })}
+        </div>
+      </section>
+    </GameLobbyShell>
   );
 }

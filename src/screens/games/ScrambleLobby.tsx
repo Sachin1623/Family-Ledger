@@ -18,6 +18,7 @@ import {
 import { WORD_LENGTHS, ScrambleWordLength } from '../../lib/scramble';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { SCRAMBLE_HELP } from '../../lib/gameHelp';
+import { GameLobbyShell, GoldButton, SectionLabel, CodeJoin, LobbyGameCard, IconAction, NewGameSheet, OptionCard, PillPicker, CardPicker, SwitchRow, turnChipFor, lobbyStats } from '../../components/GameLobbyKit';
 
 export default function ScrambleLobby() {
   const navigate = useNavigate();
@@ -27,6 +28,7 @@ export default function ScrambleLobby() {
   const [timerMode, setTimerMode] = useState<ScramblePerWordTimer>('30s');
   const [matchTimerMode, setMatchTimerMode] = useState<ScrambleMatchTimer>('5min');
   const [creating, setCreating] = useState(false);
+  const [showNew, setShowNew] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,179 +135,53 @@ export default function ScrambleLobby() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-primary">Scramble — Multiplayer</h1>
-            <p className="text-sm text-text-muted mt-1">Online, 2-4 players — race through the same word sequence.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => navigate('/games/scramble/leaderboard')}
-              className="flex items-center gap-1.5 px-3 py-2 bg-primary/5 text-primary rounded-xl text-xs font-bold"
-            >
-              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-              Leaderboard
-            </button>
-            <HelpButton onClick={() => setShowHelp(true)} />
-          </div>
-        </div>
+    <GameLobbyShell
+      title="Scramble Race"
+      emoji="🔤"
+      tagline="Race the family through the same word list. 2–4 players."
+      gradient={['#2b5a7a', '#12283a']}
+      stats={lobbyStats(myGames, user?.uid, 'none')}
+      ranksPath="/games/scramble/leaderboard"
+      help={{ content: SCRAMBLE_HELP }}
+      error={showNew ? null : error}
+    >
+      <GoldButton onClick={() => setShowNew(true)}>＋ New game</GoldButton>
 
-        {showHelp && <GameHelpModal content={SCRAMBLE_HELP} onClose={() => setShowHelp(false)} />}
+      <CodeJoin value={joinCode} onChange={setJoinCode} onJoin={handleJoinByCode} joining={joining} />
 
-        {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-4">
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Word Length</p>
-            <div className="flex flex-wrap gap-2">
-              {WORD_LENGTHS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setWordLength(n)}
-                  className={clsx(
-                    'w-9 h-9 rounded-lg text-xs font-bold border',
-                    wordLength === n ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Words in Match</p>
-            <div className="flex gap-2">
-              {TOTAL_WORDS_OPTIONS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setTotalWords(n)}
-                  className={clsx(
-                    'flex-1 py-2.5 rounded-xl text-sm font-bold border',
-                    totalWords === n ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Per-Word Timer (display only)</p>
-            <div className="flex gap-2">
-              {PER_WORD_TIMER_OPTIONS.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setTimerMode(m)}
-                  className={clsx(
-                    'flex-1 py-2.5 rounded-xl text-sm font-bold border',
-                    timerMode === m ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {PER_WORD_TIMER_LABEL[m]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Match Timer</p>
-            <div className="flex gap-2">
-              {MATCH_TIMER_OPTIONS.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMatchTimerMode(m)}
-                  className={clsx(
-                    'flex-1 py-2.5 rounded-xl text-sm font-bold border',
-                    matchTimerMode === m ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {MATCH_TIMER_LABEL[m]}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={handleCreate}
-          disabled={creating}
-          className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-        >
-          <span className="material-symbols-outlined">add_circle</span>
-          {creating ? 'Creating…' : 'New Game'}
-        </button>
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
-          <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Join by Code</p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              placeholder="e.g. K7XQ2R"
-              maxLength={6}
-              className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none tracking-widest font-bold uppercase"
+      <section className="space-y-2">
+        <SectionLabel>{`Your games · ${myGames.length}`}</SectionLabel>
+        {loading && <p className="text-sm text-white/60 px-1">Loading…</p>}
+        {!loading && myGames.length === 0 && <p className="text-sm text-white/50 italic px-1">Nothing in progress — start one above.</p>}
+        <div className="space-y-2">
+          {myGames.map((g) => (
+            <LobbyGameCard
+              key={g.id}
+              players={(g.players || []).map((p: any) => ({ uid: p.uid, photoURL: p.photoURL, displayName: p.displayName }))}
+              title={g.status === 'waiting' ? 'Waiting for players' : 'Race in progress'}
+              subtitle={`Code ${g.code} · ${g.wordLength}-letter · ${g.totalWords} words`}
+              chip={turnChipFor(g, user?.uid, 'none')}
+              onClick={() => navigate(`/games/scramble-multiplayer/${g.id}`)}
+              actions={g.hostUid === user?.uid && g.status !== 'active' ? <IconAction icon="delete" label="Delete game" onClick={(e) => handleDelete(e, g.id)} disabled={deletingId === g.id} /> : null}
             />
-            <button
-              onClick={handleJoinByCode}
-              disabled={joining || !joinCode.trim()}
-              className="px-5 py-2 bg-primary/10 text-primary rounded-xl text-sm font-bold disabled:opacity-50"
-            >
-              {joining ? '…' : 'Join'}
-            </button>
-          </div>
+          ))}
         </div>
+      </section>
 
-        <section className="space-y-2">
-          <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">Your Games</h2>
-          {loading && <p className="text-sm text-text-muted px-1">Loading…</p>}
-          {!loading && myGames.length === 0 && <p className="text-sm text-text-muted italic px-1">No games in progress.</p>}
-          <div className="space-y-2">
-            {myGames.map((g) => (
-              <div
-                key={g.id}
-                onClick={() => navigate(`/games/scramble-multiplayer/${g.id}`)}
-                className="bg-white rounded-2xl border border-border-subtle p-4 flex items-center justify-between cursor-pointer hover:shadow-sm transition-all"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex -space-x-2">
-                    {(g.players || []).map((p: any) => (
-                      <div key={p.uid} className="w-8 h-8 rounded-full border-2 border-white bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                        {p.photoURL ? (
-                          <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          p.displayName?.slice(0, 1) || '?'
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-on-surface truncate">
-                      {g.status === 'waiting' ? 'Waiting for players' : 'In progress'}
-                    </p>
-                    <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">
-                      Code: {g.code} · {g.wordLength}-letter · {g.totalWords} words
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {g.hostUid === user?.uid && g.status === 'waiting' && (
-                    <button
-                      onClick={(e) => handleDelete(e, g.id)}
-                      disabled={deletingId === g.id}
-                      className="p-2 text-error/70 disabled:opacity-40"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
-                  )}
-                  <span className="material-symbols-outlined text-text-muted">chevron_right</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
-    </div>
+      <NewGameSheet open={showNew} onClose={() => setShowNew(false)} title="New game" subtitle="Scramble race" createLabel="Create game" creating={creating} onCreate={handleCreate} error={error}>
+        <OptionCard label="Word length">
+          <PillPicker options={WORD_LENGTHS as readonly ScrambleWordLength[]} value={wordLength} onChange={setWordLength} />
+        </OptionCard>
+        <OptionCard label="Words in match">
+          <PillPicker options={TOTAL_WORDS_OPTIONS as readonly number[]} value={totalWords as number} onChange={(n) => setTotalWords(n as (typeof TOTAL_WORDS_OPTIONS)[number])} />
+        </OptionCard>
+        <OptionCard label="Per-word timer (display only)">
+          <PillPicker options={PER_WORD_TIMER_OPTIONS as readonly ScramblePerWordTimer[]} value={timerMode} onChange={setTimerMode} format={(m) => PER_WORD_TIMER_LABEL[m]} />
+        </OptionCard>
+        <OptionCard label="Match timer">
+          <PillPicker options={MATCH_TIMER_OPTIONS as readonly ScrambleMatchTimer[]} value={matchTimerMode} onChange={setMatchTimerMode} format={(m) => MATCH_TIMER_LABEL[m]} />
+        </OptionCard>
+      </NewGameSheet>
+    </GameLobbyShell>
   );
 }

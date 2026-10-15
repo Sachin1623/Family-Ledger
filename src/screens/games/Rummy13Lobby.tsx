@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { generateGameCode, type Rummy13Format } from '../../lib/rummy13';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { RUMMY13_HELP } from '../../lib/gameHelp';
+import { GameLobbyShell, GoldButton, SectionLabel, CodeJoin, LobbyGameCard, IconAction, NewGameSheet, OptionCard, PillPicker, CardPicker, SwitchRow, turnChipFor, lobbyStats } from '../../components/GameLobbyKit';
 
 const FORMATS: { id: Rummy13Format; label: string; sub: string }[] = [
   { id: 'single', label: 'Single Deal', sub: 'One hand, winner takes it' },
@@ -23,6 +24,7 @@ export default function Rummy13Lobby() {
   const [format, setFormat] = useState<Rummy13Format>('pool101');
   const [maxPlayers, setMaxPlayers] = useState(4);
   const [creating, setCreating] = useState(false);
+  const [showNew, setShowNew] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,147 +134,54 @@ export default function Rummy13Lobby() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-primary">13-Card Rummy</h1>
-            <p className="text-sm text-text-muted mt-1">Online multiplayer, 2-6 players. Classic Indian Rummy.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <HelpButton onClick={() => setShowHelp(true)} />
-            <button
-              onClick={() => navigate('/games/ranks/rummy13')}
-              className="px-3 py-2 bg-primary/10 text-primary rounded-xl text-xs font-bold flex items-center gap-1"
-            >
-              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-              Ranks
-            </button>
-          </div>
-        </div>
+    <GameLobbyShell
+      title="13-Card Rummy"
+      emoji="🃏"
+      tagline="Classic Indian Rummy. Single deal or Pool 101 / 201."
+      gradient={['#1d5a3a', '#0f2f24']}
+      stats={lobbyStats(myTables, user?.uid, 'none')}
+      ranksPath="/games/ranks/rummy13"
+      help={{ content: RUMMY13_HELP }}
+      error={showNew ? null : error}
+    >
+      <GoldButton onClick={() => setShowNew(true)}>＋ New table</GoldButton>
 
-        {showHelp && <GameHelpModal content={RUMMY13_HELP} onClose={() => setShowHelp(false)} />}
+      <CodeJoin value={joinCode} onChange={setJoinCode} onJoin={handleJoinByCode} joining={joining} />
 
-        {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Format</label>
-            <div className="grid grid-cols-3 gap-1.5">
-              {FORMATS.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFormat(f.id)}
-                  className={clsx(
-                    'p-2.5 rounded-xl border text-center transition-all',
-                    format === f.id ? 'border-primary bg-primary/5' : 'border-border-subtle',
-                  )}
-                >
-                  <p className={clsx('text-xs font-black', format === f.id ? 'text-primary' : 'text-on-surface')}>{f.label}</p>
-                  <p className="text-[9px] text-text-muted mt-0.5 leading-tight">{f.sub}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Players</label>
-            <div className="flex gap-1.5">
-              {PLAYER_COUNTS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setMaxPlayers(n)}
-                  className={clsx(
-                    'flex-1 py-2 rounded-xl border text-sm font-black transition-all',
-                    maxPlayers === n ? 'border-primary bg-primary/5 text-primary' : 'border-border-subtle text-text-muted',
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={handleCreate}
-            disabled={creating}
-            className="w-full py-3.5 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined">add_circle</span>
-            {creating ? 'Creating…' : 'New Table'}
-          </button>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
-          <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Join by Code</p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              placeholder="e.g. K7XQ2R"
-              maxLength={6}
-              className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none tracking-widest font-bold uppercase"
+      <section className="space-y-2">
+        <SectionLabel>{`Your tables · ${myTables.length}`}</SectionLabel>
+        {loading && <p className="text-sm text-white/60 px-1">Loading…</p>}
+        {!loading && myTables.length === 0 && <p className="text-sm text-white/50 italic px-1">Nothing in progress — start one above.</p>}
+        <div className="space-y-2">
+          {myTables.map((g) => (
+            <LobbyGameCard
+              key={g.id}
+              players={(g.players || []).map((p: any) => ({ uid: p.uid, photoURL: p.photoURL, displayName: p.displayName, isBot: p.isBot }))}
+              title={g.status === 'waiting' ? 'Waiting for players' : 'In progress'}
+              subtitle={`${FORMATS.find((f) => f.id === g.format)?.label || g.format} · code ${g.code}`}
+              chip={turnChipFor(g, user?.uid, 'none')}
+              onClick={() => navigate(`/games/rummy13/${g.id}`)}
+              actions={g.hostUid === user?.uid && g.status !== 'active' ? <IconAction icon="delete" label="Delete" onClick={(e) => handleDelete(e, g.id)} disabled={deletingId === g.id} /> : null}
             />
-            <button
-              onClick={handleJoinByCode}
-              disabled={joining || !joinCode.trim()}
-              className="px-5 py-2 bg-primary/10 text-primary rounded-xl text-sm font-bold disabled:opacity-50"
-            >
-              {joining ? '…' : 'Join'}
-            </button>
-          </div>
+          ))}
         </div>
+      </section>
 
-        <section className="space-y-2">
-          <h2 className="text-xs font-bold text-primary uppercase tracking-widest px-1">Your Tables</h2>
-          {loading && <p className="text-sm text-text-muted px-1">Loading…</p>}
-          {!loading && myTables.length === 0 && <p className="text-sm text-text-muted italic px-1">No tables in progress.</p>}
+      <NewGameSheet open={showNew} onClose={() => setShowNew(false)} title="New table" subtitle="13-Card Rummy" createLabel="Create table" creating={creating} onCreate={handleCreate} error={error}>
+        <OptionCard label="Format">
           <div className="space-y-2">
-            {myTables.map((g) => (
-              <div
-                key={g.id}
-                onClick={() => navigate(`/games/rummy13/${g.id}`)}
-                className="bg-white rounded-2xl border border-border-subtle p-4 flex items-center justify-between cursor-pointer hover:shadow-sm transition-all"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex -space-x-2">
-                    {(g.players || []).map((p: any) => (
-                      <div key={p.uid} className="w-8 h-8 rounded-full border-2 border-white bg-primary flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                        {p.photoURL ? (
-                          <img src={p.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          p.displayName?.slice(0, 1) || '?'
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-on-surface truncate">
-                      {g.status === 'waiting' ? 'Waiting for players' : 'In progress'}
-                    </p>
-                    <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">
-                      {FORMATS.find((f) => f.id === g.format)?.label || g.format} · Code: {g.code}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {g.hostUid === user?.uid && g.status !== 'active' && (
-                    <button
-                      onClick={(e) => handleDelete(e, g.id)}
-                      disabled={deletingId === g.id}
-                      className="p-2 text-error/70 disabled:opacity-40"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
-                  )}
-                  <span className="material-symbols-outlined text-text-muted">chevron_right</span>
-                </div>
-              </div>
+            {FORMATS.map((f) => (
+              <button key={f.id} onClick={() => setFormat(f.id)} className={clsx('w-full rounded-2xl p-3 text-left border-2 transition-all', format === f.id ? 'border-amber-300 bg-[#2a1d05] shadow-[0_0_14px_rgba(245,196,81,0.25)]' : 'border-[#2c3a63] bg-[#0c1230]')}>
+                <p className="text-xs font-black">{f.label}</p>
+                <p className="text-[10px] font-bold text-white/50">{f.sub}</p>
+              </button>
             ))}
           </div>
-        </section>
-      </main>
-    </div>
+        </OptionCard>
+        <OptionCard label="Players">
+          <PillPicker options={PLAYER_COUNTS as readonly number[]} value={maxPlayers} onChange={setMaxPlayers} />
+        </OptionCard>
+      </NewGameSheet>
+    </GameLobbyShell>
   );
 }

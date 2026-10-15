@@ -21,6 +21,7 @@ import {
 import { flushPendingScrambleScores } from '../../lib/scrambleSync';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { SCRAMBLE_HELP } from '../../lib/gameHelp';
+import { GameLobbyShell, GoldButton, SectionLabel, PillPicker } from '../../components/GameLobbyKit';
 
 const WORD_LENGTH_PREF_KEY = 'fl_scramble_pref_length';
 const TIMER_MODE_PREF_KEY = 'fl_scramble_pref_timer';
@@ -99,130 +100,76 @@ export default function ScrambleHome() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-2">
+    <GameLobbyShell
+      title="Scramble"
+      emoji="🔤"
+      tagline="Plays fully offline — scores sync when you're back online."
+      gradient={['#2b5a7a', '#12283a']}
+      stats={[{ label: `Best · ${wordLength}-letter`, value: best.bestScore > 0 ? best.bestScore.toLocaleString() : '—' }, { label: 'Played', value: best.gamesPlayed }]}
+      ranksPath="/games/scramble/leaderboard"
+      help={{ content: SCRAMBLE_HELP }}
+    >
+      {justFinished && (
+        <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-3 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black text-primary">Scramble</h1>
-            <p className="text-sm text-text-muted mt-1">Plays fully offline — scores sync when you're back online.</p>
+            <p className="text-[10px] font-extrabold tracking-[0.14em] text-emerald-300">LAST MATCH</p>
+            <p className="text-sm font-bold mt-0.5">
+              Scored <span className="font-black text-amber-300">{justFinished.score}</span>
+              {justFinished.brokeBest && <span className="ml-1 font-extrabold text-emerald-300">— new personal best! 🎉</span>}
+            </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <HelpButton onClick={() => setShowHelp(true)} />
-            <button
-              onClick={() => navigate('/games/scramble/leaderboard')}
-              className="flex items-center gap-1.5 px-3 py-2 bg-primary/5 text-primary rounded-xl text-xs font-bold"
-            >
-              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-              Leaderboard
-            </button>
-          </div>
+          <button onClick={() => setJustFinished(null)} className="p-1.5 text-white/60 shrink-0">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
         </div>
+      )}
 
-        {showHelp && <GameHelpModal content={SCRAMBLE_HELP} onClose={() => setShowHelp(false)} />}
-
-        <button
-          onClick={() => navigate('/games/scramble-multiplayer')}
-          className="w-full bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-center justify-between"
-        >
-          <div className="text-left">
-            <p className="text-sm font-bold text-primary">Play Multiplayer</p>
-            <p className="text-[11px] text-text-muted mt-0.5">Race up to 4 players through the same word sequence, live.</p>
+      {canResume && (
+        <div className="flex items-center gap-2.5 rounded-2xl border-[1.5px] border-amber-300 bg-gradient-to-r from-[#3b2a05] to-[#1a1300] px-3 py-2.5">
+          <span className="text-xl">⏱</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-black">Match in progress</p>
+            <p className="text-[10px] font-extrabold text-amber-300">{wordLength}-letter · {TIMER_MODE_LABEL[timerMode]}</p>
           </div>
-          <span className="material-symbols-outlined text-primary">chevron_right</span>
-        </button>
+          <button onClick={handlePlay} className="px-3.5 py-2 rounded-xl text-[11px] font-black bg-amber-300 text-[#1a1300]">Resume</button>
+          <button onClick={handleNewInstead} className="px-3 py-2 rounded-xl text-[11px] font-black bg-white/10 border border-white/15">New</button>
+        </div>
+      )}
 
-        {justFinished && (
-          <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-primary uppercase tracking-wider">Last match</p>
-              <p className="text-sm text-on-surface mt-0.5">
-                Scored <span className="font-black text-primary">{justFinished.score}</span>
-                {justFinished.brokeBest && <span className="ml-1 font-bold text-success">— new personal best! 🎉</span>}
-              </p>
+      <section className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] p-3.5 space-y-3">
+        <div>
+          <SectionLabel>Word length</SectionLabel>
+          <div className="mt-2"><PillPicker options={WORD_LENGTHS as readonly ScrambleWordLength[]} value={wordLength} onChange={setWordLength} /></div>
+        </div>
+        <div>
+          <SectionLabel>Timer</SectionLabel>
+          <div className="mt-2"><PillPicker options={TIMER_MODES as readonly ScrambleTimerMode[]} value={timerMode} onChange={setTimerMode} format={(m) => TIMER_MODE_LABEL[m]} /></div>
+        </div>
+        {overallBest && overallBest.bestScore > 0 && (
+          <div className="flex items-center gap-2 rounded-xl bg-black/25 px-2.5 py-1.5">
+            <div className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center text-[9px] font-black overflow-hidden shrink-0">
+              {overallBest.userPhoto ? <img src={overallBest.userPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : overallBest.userName?.slice(0, 1) || '?'}
             </div>
-            <button onClick={() => setJustFinished(null)} className="p-1.5 text-text-muted shrink-0">
-              <span className="material-symbols-outlined text-[18px]">close</span>
-            </button>
+            <p className="text-[10px] font-bold text-white/60 flex-1 truncate">World best · <span className="text-white">{overallBest.userName}</span>{overallBest.userId === user?.uid && ' (You)'}</p>
+            <span className="text-[11px] font-black text-amber-300 shrink-0">{overallBest.bestScore.toLocaleString()}</span>
           </div>
         )}
+      </section>
 
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-4">
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Word Length</p>
-            <div className="flex flex-wrap gap-2">
-              {WORD_LENGTHS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setWordLength(n)}
-                  className={clsx(
-                    'w-10 h-10 rounded-xl text-sm font-bold border',
-                    wordLength === n ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Timer</p>
-            <div className="flex gap-2">
-              {TIMER_MODES.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setTimerMode(m)}
-                  className={clsx(
-                    'flex-1 py-2.5 rounded-xl text-sm font-bold border',
-                    timerMode === m ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle',
-                  )}
-                >
-                  {TIMER_MODE_LABEL[m]}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {!canResume && <GoldButton onClick={handlePlay}>▶ Play {wordLength}-letter · {TIMER_MODE_LABEL[timerMode]}</GoldButton>}
 
-        <div className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
-          <div className="flex items-center justify-between text-[11px] text-text-muted">
-            {best.bestScore > 0 && (
-              <span>My best: <span className="font-bold text-primary">{best.bestScore.toLocaleString()}</span></span>
-            )}
-            <span>Played: <span className="font-bold text-on-surface">{best.gamesPlayed}</span></span>
-          </div>
-          {overallBest && overallBest.bestScore > 0 && (
-            <div className="flex items-center gap-2 bg-surface rounded-xl px-2.5 py-1.5">
-              <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary text-[9px] font-bold overflow-hidden shrink-0">
-                {overallBest.userPhoto ? (
-                  <img src={overallBest.userPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  overallBest.userName?.slice(0, 1) || '?'
-                )}
-              </div>
-              <p className="text-[10px] text-text-muted flex-1 truncate">
-                Overall best: <span className="font-bold text-on-surface">{overallBest.userName}</span>
-                {overallBest.userId === user?.uid && ' (You)'}
-              </p>
-              <span className="text-[11px] font-black text-primary shrink-0">{overallBest.bestScore.toLocaleString()}</span>
-            </div>
-          )}
+      <button onClick={() => navigate('/games/scramble-multiplayer')} className="w-full flex items-center gap-3 rounded-2xl bg-[#121a2e] border border-[#1f2a47] px-3.5 py-3 text-left">
+        <span className="text-2xl">🏁</span>
+        <span className="flex-1">
+          <span className="block text-sm font-black">Race the family</span>
+          <span className="block text-[10px] font-bold text-white/55">Up to 4 players, the same words, live.</span>
+        </span>
+        <span className="material-symbols-outlined text-white/50">chevron_right</span>
+      </button>
 
-          {canResume ? (
-            <div className="flex gap-2">
-              <button onClick={handlePlay} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-primary">
-                Resume
-              </button>
-              <button onClick={handleNewInstead} className="px-4 py-2.5 rounded-xl text-sm font-bold text-text-muted border border-border-subtle">
-                New
-              </button>
-            </div>
-          ) : (
-            <button onClick={handlePlay} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-primary">
-              Play
-            </button>
-          )}
-        </div>
-      </main>
-    </div>
+      <button onClick={() => navigate('/games/scramble/leaderboard')} className="w-full flex items-center gap-2 rounded-2xl bg-[#121a2e] border border-[#1f2a47] px-3 py-3 text-xs font-extrabold">
+        🏅 <span>Leaderboard</span> <span className="ml-auto text-white/50">Today · This week · All time ›</span>
+      </button>
+    </GameLobbyShell>
   );
 }

@@ -16,6 +16,7 @@ import {
 import { flushPendingSudokuScores } from '../../lib/sudokuSync';
 import { GameHelpModal, HelpButton } from '../../components/GameHelpModal';
 import { SUDOKU_HELP } from '../../lib/gameHelp';
+import { GameLobbyShell, GoldButton, SectionLabel, CodeJoin, LobbyGameCard, IconAction, NewGameSheet, OptionCard, PillPicker, CardPicker, SwitchRow, turnChipFor, lobbyStats } from '../../components/GameLobbyKit';
 
 const DIFFICULTIES: { id: Difficulty; label: string; color: string }[] = [
   { id: 'easy', label: 'Easy', color: '#0F7A38' },
@@ -79,102 +80,72 @@ export default function SudokuHome() {
 
   const handleResume = (difficulty: Difficulty) => navigate(`/games/sudoku/play/${difficulty}`);
 
+  const totalPlayed = DIFFICULTIES.reduce((n, d) => n + getCompletedCount(d.id), 0);
+  const overallBest = Math.max(0, ...DIFFICULTIES.map((d) => Math.max(best[d.id].bestScore, myLeaderboardEntry[d.id]?.bestScore ?? 0)));
+  const inProgress = DIFFICULTIES.filter((d) => !!loadActiveGame(d.id)).length;
+  const TINT: Record<string, { card: string; dot: string }> = {
+    easy: { card: 'border-green-600/40 bg-[#0f2a1c]', dot: 'bg-green-600/25' },
+    medium: { card: 'border-amber-600/40 bg-[#2a1d0a]', dot: 'bg-amber-600/25' },
+    hard: { card: 'border-red-600/40 bg-[#2a1013]', dot: 'bg-red-600/25' },
+  };
+
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h1 className="text-2xl font-black text-primary">Sudoku</h1>
-            <p className="text-sm text-text-muted mt-1">Plays fully offline — scores sync when you're back online.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <HelpButton onClick={() => setShowHelp(true)} />
-            <button
-              onClick={() => navigate('/games/sudoku/leaderboard')}
-              className="flex items-center gap-1.5 px-3 py-2 bg-primary/5 text-primary rounded-xl text-xs font-bold"
-            >
-              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-              Leaderboard
-            </button>
-          </div>
-        </div>
-
-        {showHelp && <GameHelpModal content={SUDOKU_HELP} onClose={() => setShowHelp(false)} />}
-
-        <div className="space-y-3">
-          {DIFFICULTIES.map((d) => {
-            const activeGame = loadActiveGame(d.id);
-            const myBest = Math.max(best[d.id].bestScore, myLeaderboardEntry[d.id]?.bestScore ?? 0);
-            return (
-              <div key={d.id} className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }} />
-                    <p className="font-bold text-on-surface">{d.label}</p>
-                  </div>
-                  <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider">
-                    {bankSize(d.id).toLocaleString()} puzzles
+    <GameLobbyShell
+      title="Sudoku"
+      emoji="🔢"
+      tagline="Plays fully offline — scores sync when you're back online."
+      gradient={['#1d5a3a', '#0f2f24']}
+      stats={[{ label: 'Puzzles', value: totalPlayed }, { label: 'Best', value: overallBest.toLocaleString() }, { label: 'In progress', value: inProgress }]}
+      ranksPath="/games/sudoku/leaderboard"
+      help={{ content: SUDOKU_HELP }}
+    >
+      <section className="space-y-2.5">
+        <SectionLabel>Choose a difficulty</SectionLabel>
+        {DIFFICULTIES.map((d) => {
+          const activeGame = loadActiveGame(d.id);
+          const myBest = Math.max(best[d.id].bestScore, myLeaderboardEntry[d.id]?.bestScore ?? 0);
+          const world = overallBestByDifficulty[d.id];
+          return (
+            <div key={d.id} className={clsx('rounded-[1.1rem] border-[1.5px] p-3 space-y-2.5', TINT[d.id].card)}>
+              <div className="flex items-center gap-3">
+                <span className={clsx('w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0', TINT[d.id].dot)}>
+                  <span className="w-4 h-4 rounded-full" style={{ backgroundColor: d.color }} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black">{d.label}</p>
+                  <p className="text-[10px] font-bold text-white/60">
+                    {myBest > 0 ? <>My best {myBest.toLocaleString()}</> : 'Not tried yet'} · played {getCompletedCount(d.id)} · {bankSize(d.id).toLocaleString()} puzzles
                   </p>
                 </div>
-                <div className="flex items-center justify-between text-[11px] text-text-muted">
-                  {myBest > 0 && (
-                    <span>My best: <span className="font-bold text-primary">{myBest.toLocaleString()}</span></span>
-                  )}
-                  <span>Played: <span className="font-bold text-on-surface">{getCompletedCount(d.id)}</span></span>
-                </div>
-                {overallBestByDifficulty[d.id] && (
-                  <div className="flex items-center gap-2 bg-surface rounded-xl px-2.5 py-1.5">
-                    <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary text-[9px] font-bold overflow-hidden shrink-0">
-                      {overallBestByDifficulty[d.id].userPhoto ? (
-                        <img
-                          src={overallBestByDifficulty[d.id].userPhoto}
-                          alt=""
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        overallBestByDifficulty[d.id].userName?.slice(0, 1) || '?'
-                      )}
-                    </div>
-                    <p className="text-[10px] text-text-muted flex-1 truncate">
-                      Overall best: <span className="font-bold text-on-surface">{overallBestByDifficulty[d.id].userName}</span>
-                      {overallBestByDifficulty[d.id].userId === user?.uid && ' (You)'}
-                    </p>
-                    <span className="text-[11px] font-black text-primary shrink-0">
-                      {(overallBestByDifficulty[d.id].bestScore ?? 0).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-                {activeGame ? (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleResume(d.id)}
-                      className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
-                      style={{ backgroundColor: d.color }}
-                    >
-                      Resume
-                    </button>
-                    <button
-                      onClick={() => handlePlay(d.id)}
-                      className="px-4 py-2.5 rounded-xl text-sm font-bold text-text-muted border border-border-subtle"
-                    >
-                      New
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => handlePlay(d.id)}
-                    className={clsx('w-full py-2.5 rounded-xl text-sm font-bold text-white')}
-                    style={{ backgroundColor: d.color }}
-                  >
-                    Play
-                  </button>
+                {!activeGame && (
+                  <button onClick={() => handlePlay(d.id)} className="px-4 py-2 rounded-xl text-xs font-black bg-white text-[#0c1230] shrink-0">Play</button>
                 )}
               </div>
-            );
-          })}
-        </div>
-      </main>
-    </div>
+              {world && (
+                <div className="flex items-center gap-2 rounded-xl bg-black/25 px-2.5 py-1.5">
+                  <div className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center text-[9px] font-black overflow-hidden shrink-0">
+                    {world.userPhoto ? <img src={world.userPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : world.userName?.slice(0, 1) || '?'}
+                  </div>
+                  <p className="text-[10px] font-bold text-white/60 flex-1 truncate">World best · <span className="text-white">{world.userName}</span>{world.userId === user?.uid && ' (You)'}</p>
+                  <span className="text-[11px] font-black text-amber-300 shrink-0">{(world.bestScore ?? 0).toLocaleString()}</span>
+                </div>
+              )}
+              {activeGame && (
+                <div className="flex gap-2 items-center rounded-xl border border-amber-300/60 bg-gradient-to-r from-[#3b2a05] to-[#1a1300] px-2.5 py-2">
+                  <span className="text-lg">⏱</span>
+                  <p className="flex-1 text-[11px] font-extrabold">Puzzle in progress</p>
+                  <button onClick={() => handleResume(d.id)} className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-amber-300 text-[#1a1300]">Resume</button>
+                  <button onClick={() => handlePlay(d.id)} className="px-3 py-1.5 rounded-lg text-[11px] font-black bg-white/10 border border-white/15">New</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      <button onClick={() => navigate('/games/sudoku/leaderboard')} className="w-full flex items-center gap-2 rounded-2xl bg-[#121a2e] border border-[#1f2a47] px-3 py-3 text-xs font-extrabold">
+        🏅 <span>Leaderboard</span> <span className="ml-auto text-white/50">Today · This week · All time ›</span>
+      </button>
+    </GameLobbyShell>
   );
 }
