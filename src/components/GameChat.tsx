@@ -15,6 +15,7 @@ interface ChatMessage {
   createdAt: string;
   editedAt?: string;
   reactions?: Record<string, string>; // uid → emoji, one per person
+  replyTo?: { id: string; displayName: string; text: string };
 }
 
 // Bare icon, matching the Help/Leave pair's "only icons" header treatment — the small dot is a
@@ -175,6 +176,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     return () => popModalBackHandler(handler);
   }, []);
   const [text, setText] = useState('');
+  // The message being answered (set from the press-and-hold menu); shown above the message box, sent with the message.
+  const [replyTarget, setReplyTarget] = useState<{ id: string; displayName: string; text: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [menuForId, setMenuForId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -186,7 +189,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // effect below then removes this placeholder the moment `messages` (the live listener) actually
   // contains that id, so there's never a visible moment with BOTH a "shadow" pending bubble and
   // the real confirmed message on screen at once.
-  interface PendingMessage { tempId: string; text: string; realId: string | null; at: number }
+  interface PendingMessage { tempId: string; text: string; realId: string | null; at: number; replyTo?: { id: string; displayName: string; text: string } | null }
   const [pending, setPending] = useState<PendingMessage[]>([]);
 
   useEffect(() => {
@@ -210,9 +213,26 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const chatKey = `${collectionName}:${gameId}`;
   const chatMuted = mutedGameChats.includes(chatKey);
 
+  // Stick to the bottom for new messages — unless you've scrolled up to read older ones, in which case a "Latest" button
+  // (with a count of what arrived) appears instead of yanking you down. Your own messages always scroll into view.
+  const [newBelow, setNewBelow] = useState(0);
+  const prevCountRef = useRef(0);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const added = messages.length - prevCountRef.current;
+    prevCountRef.current = messages.length;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 260;
+    const last = messages[messages.length - 1];
+    if (nearBottom || added <= 0 || last?.userId === myUid) {
+      el.scrollTo({ top: el.scrollHeight });
+    } else {
+      setNewBelow((n) => n + added);
+    }
+  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length, pending.length]);
+  }, [pending.length]);
 
   // Read receipts: while this panel is open (and every time a new message arrives while it's
   // still open), record "I've read up to now" for this chat — one doc per (chat, viewer), doc id
@@ -284,7 +304,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     const trimmed = raw.trim();
     if (!trimmed || sending || !user) return;
     const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setPending((p) => [...p, { tempId, text: trimmed, realId: null, at: Date.now() }]);
+    setPending((p) => [...p, { tempId, text: trimmed, realId: null, at: Date.now(), replyTo: replyTarget }]);
+    const replyPayload = replyTarget;
+    setReplyTarget(null);
     setText('');
     setSending(true);
     try {
@@ -292,7 +314,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       const res = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ collectionName, chatId: gameId, text: trimmed }),
+        body: JSON.stringify({ collectionName, chatId: gameId, text: trimmed, ...(replyPayload ? { replyTo: replyPayload } : {}) }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || 'Failed to send message.');
@@ -468,9 +490,30 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [showJump, setShowJump] = useState(false);
   const onListScroll = () => {
     const el = listRef.current;
-    if (el) setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight > 260);
+    if (!el) return;
+    const away = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowJump(away > 260);
+    if (away < 80) setNewBelow(0);
   };
   const menuMessage = menuForId ? messages.find((x) => x.id === menuForId) || null : null;
+
+  // The quoted message at the top of a reply; tapping it scrolls to the original (when it's still in the chat).
+  const jumpToMessage = (id: string) => {
+    const el = listRef.current?.querySelector(`[data-msg-id="${id}"]`) as HTMLElement | null;
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('ring-2', 'ring-amber-300');
+    setTimeout(() => el.classList.remove('ring-2', 'ring-amber-300'), 1400);
+  };
+  const quoteBlock = (q: { id: string; displayName: string; text: string }, onDarkBubble: boolean) => (
+    <div
+      onClick={(e) => { e.stopPropagation(); jumpToMessage(q.id); }}
+      className={`mb-1 rounded-lg border-l-[3px] px-2 py-1 cursor-pointer ${onDarkBubble ? 'bg-white/15 border-sky-300' : 'bg-black/5 border-teal-500'}`}
+    >
+      <p className={`text-[10px] font-black truncate ${onDarkBubble ? 'text-sky-200' : 'text-teal-700'}`}>{q.displayName || 'Message'}</p>
+      <p className={`text-[11.5px] font-semibold line-clamp-2 ${onDarkBubble ? 'text-white/85' : 'text-slate-600'}`}>{q.text}</p>
+    </div>
+  );
 
   // Press and hold a message (about half a second) to open its menu — a plain tap does nothing, so scrolling and
   // selecting never opens it by accident.
@@ -577,6 +620,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       ) : (
                         <div
                           {...holdHandlers(m.id)}
+                          data-msg-id={m.id}
                           className={`select-none [-webkit-touch-callout:none] px-3 pt-1.5 pb-1 break-words text-[13px] font-semibold leading-snug shadow-[0_1px_1.5px_rgba(0,0,0,0.08)] active:brightness-95 ${
                             mine
                               ? `text-white rounded-[17px] ${firstOfRun ? 'rounded-tr-[6px]' : ''} ${lastOfRun ? 'rounded-br-[6px]' : ''}`
@@ -584,6 +628,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           }`}
                           style={mine ? { background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' } : isGroupChat ? { backgroundColor: tint.bg, border: `1px solid ${tint.border}` } : undefined}
                         >
+                          {m.replyTo && quoteBlock(m.replyTo, mine)}
                           {m.text}
                           <span className={`flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 ${mine ? 'text-white/70' : 'text-slate-400'}`}>
                             {timeOf(m.createdAt)}{m.editedAt ? ' · edited' : ''}
@@ -608,6 +653,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {visiblePending.map((p) => (
               <div key={p.tempId} className="flex justify-end">
                 <div className="max-w-[78%] px-3 pt-1.5 pb-1 rounded-[17px] rounded-br-[6px] break-words text-[13px] font-semibold text-white shadow-[0_1px_1.5px_rgba(0,0,0,0.08)]" style={{ background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' }}>
+                  {p.replyTo && quoteBlock(p.replyTo, true)}
                   {p.text}
                   <span className="flex items-center justify-end gap-0.5 text-[9px] font-bold mt-0.5 text-white/70"><MessageStatusTicks status="sending" onDark /></span>
                 </div>
@@ -616,11 +662,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
           {showJump && (
             <button
-              onClick={() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })}
-              className="absolute right-3 bottom-3 w-10 h-10 rounded-full bg-white shadow-lg flex items-center justify-center text-slate-600 active:scale-95"
-              aria-label="Jump to latest"
+              onClick={() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }); setNewBelow(0); }}
+              className="absolute right-3 bottom-3 h-10 pl-3 pr-2.5 rounded-full bg-white shadow-lg flex items-center gap-1 text-[11px] font-black text-teal-700 active:scale-95"
+              aria-label="Go to latest message"
             >
-              <span className="material-symbols-outlined text-[24px]">keyboard_arrow_down</span>
+              {newBelow > 0 ? `${newBelow} new` : 'Latest'}
+              <span className="material-symbols-outlined text-[22px]">keyboard_arrow_down</span>
             </button>
           )}
         </div>
@@ -630,6 +677,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {EMOJIS.map((e) => (
               <button key={e} onClick={() => setText((t) => (t + e).slice(0, 500))} className="text-[22px] py-1 rounded-lg active:bg-slate-100">{e}</button>
             ))}
+          </div>
+        )}
+        {replyTarget && (
+          <div className="px-3 pt-2 bg-white border-t border-slate-100 shrink-0">
+            <div className="flex items-center gap-2 rounded-xl bg-teal-50 border-l-[3px] border-teal-600 px-2.5 py-1.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-black text-teal-700 truncate">Replying to {replyTarget.displayName}</p>
+                <p className="text-[11.5px] font-semibold text-slate-600 truncate">{replyTarget.text}</p>
+              </div>
+              <button onClick={() => setReplyTarget(null)} className="text-slate-400 shrink-0" aria-label="Cancel reply"><span className="material-symbols-outlined text-[20px] block">close</span></button>
+            </div>
           </div>
         )}
         <div className="px-2.5 py-2.5 bg-white border-t border-slate-100 flex items-center gap-2 shrink-0" style={{ paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' }}>
@@ -666,6 +724,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 ))}
               </div>
               <div className="border-t border-slate-100 pt-1">
+                <button onClick={() => { setReplyTarget({ id: menuMessage.id, displayName: menuMessage.userId === myUid ? 'You' : menuMessage.displayName, text: menuMessage.text.slice(0, 140) }); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">reply</span>Reply</button>
                 <button onClick={() => { navigator.clipboard?.writeText(menuMessage.text).catch(() => {}); setMenuForId(null); }} className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-extrabold text-slate-800 active:bg-slate-50 flex items-center gap-3"><span className="material-symbols-outlined text-[20px] text-slate-500">content_copy</span>Copy</button>
                 {menuMessage.userId === myUid ? (
                   <>

@@ -13996,12 +13996,19 @@ async function startServer() {
       }
 
       const nowIso = new Date().toISOString();
+      // A reply carries a small snapshot of the message it answers (so it still reads right if that message is edited
+      // or deleted later). Only kept when it points at a real message id and has text.
+      const rawReply = req.body?.replyTo;
+      const replyTo = rawReply && typeof rawReply === 'object' && rawReply.id && rawReply.text
+        ? { id: String(rawReply.id).slice(0, 64), displayName: String(rawReply.displayName || '').slice(0, 60), text: String(rawReply.text).slice(0, 140) }
+        : null;
       const commentRef = await db.collection(collectionName).doc(chatId).collection('comments').add({
         userId: decoded.uid,
         displayName,
         photoURL,
         text,
         createdAt: nowIso,
+        ...(replyTo ? { replyTo } : {}),
       });
 
       if (surface.kind === 'dm' && otherUid) {
