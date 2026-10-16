@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
-import { getAnalyticsConsent, setAnalyticsConsent } from '../lib/firebase';
+import { getStoredAnalyticsConsent, setAnalyticsConsent, isAndroidApp, looksLikeEurope } from '../lib/firebase';
 import { isIosApp } from '../lib/platform';
 import { trackFunnel } from '../lib/funnel';
 
@@ -15,7 +15,10 @@ import { trackFunnel } from '../lib/funnel';
 export default function ConsentBanner() {
   const { t } = useLanguage();
   const navigate = useNavigate();
-  const [decided, setDecided] = useState(() => getAnalyticsConsent() !== null);
+  const [decided, setDecided] = useState(() => getStoredAnalyticsConsent() !== null);
+  // The installed Android app (outside Europe) counts anonymous usage by default, so here this is a notice with a Turn off,
+  // not a request. Everywhere else it stays a real opt-in.
+  const asNotice = isAndroidApp() && !looksLikeEurope();
   if (isIosApp()) return null; // no analytics / cookie prompt inside the iOS app
 
   const choose = (consent: 'granted' | 'denied') => {
@@ -38,7 +41,7 @@ export default function ConsentBanner() {
             <div className="flex items-start gap-2.5">
               <span className="material-symbols-outlined text-primary shrink-0">cookie</span>
               <p className="text-xs text-on-surface leading-relaxed">
-                {t('consent.body')}{' '}
+                {t(asNotice ? 'consent.noticeBody' : 'consent.body')}{' '}
                 <button onClick={() => navigate('/privacy')} className="font-bold text-primary underline">
                   {t('consent.privacyLink')}
                 </button>
@@ -49,13 +52,13 @@ export default function ConsentBanner() {
                 onClick={() => choose('denied')}
                 className="flex-1 py-2.5 rounded-xl text-xs font-bold text-text-muted border border-border-subtle"
               >
-                {t('consent.decline')}
+                {t(asNotice ? 'consent.noticeOff' : 'consent.decline')}
               </button>
               <button
                 onClick={() => choose('granted')}
                 className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-primary"
               >
-                {t('consent.accept')}
+                {t(asNotice ? 'consent.noticeOk' : 'consent.accept')}
               </button>
             </div>
           </motion.div>

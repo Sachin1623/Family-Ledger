@@ -50,7 +50,7 @@ export default function PrivacyPolicy() {
             </p>
             <h3 className="font-semibold text-primary">F.1 Analytics</h3>
             <p>
-              We use Google Analytics (Firebase Analytics) to understand how the app is used and to find and fix problems — things like which screens are opened and how often, not the content of your expenses or messages. This only runs if you've opted in via the consent prompt shown the first time you use the app; declining it doesn't limit any feature. You can find your current choice, and change it, from Settings.
+              We use Google Analytics (Firebase Analytics) to understand how the app is used and to find and fix problems — things like which screens are opened and how often, not the content of your expenses or messages. In the installed Android app (outside Europe) this runs by default, using Firebase's Android analytics with a random app instance id — no name or email — and also helps us measure whether our ads lead to sign-ups; a notice shown the first time you open the app lets you turn it off, and you can change it later from Profile → Privacy. On the web, and for devices in Europe, it only runs if you've opted in via the consent prompt. Turning it off doesn't limit any feature. You can find your current choice, and change it, from Settings.
             </p>
             <h3 className="font-semibold text-primary">F.2 App Version Check and Device Information</h3>
             <p>

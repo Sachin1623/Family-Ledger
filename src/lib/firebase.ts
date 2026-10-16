@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { getAnalytics, isSupported, logEvent, setUserId, type Analytics } from 'firebase/analytics';
 import { Capacitor } from '@capacitor/core';
+import { FirebaseAnalytics } from '@capacitor-firebase/analytics';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -95,8 +96,25 @@ let analyticsInstance: Analytics | null = null;
 
 // The iPhone/iPad app never runs web analytics or shows the cookie prompt (App Store guideline 5.1.2:
 // no tracking, so nothing to ask permission for). Analytics stays a web / Android choice.
+// The installed Android app sends its events through Firebase's NATIVE analytics (the Android data stream, which is what Google Play and
+// Google Ads tie installs and sign-ups to). The web analytics below then stays out of the installed app, so nothing is counted twice.
+export function isAndroidApp(): boolean {
+  return Capacitor.getPlatform() === 'android';
+}
+
+// A rough "is this phone in Europe" check (time zone), so analytics there stays off until the person agrees. Wrong guesses only ever
+// err toward asking, which is the safe direction.
+export function looksLikeEurope(): boolean {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    return tz.startsWith('Europe/') || tz === 'Atlantic/Reykjavik' || tz === 'Atlantic/Azores' || tz === 'Atlantic/Madeira' || tz === 'Atlantic/Canary';
+  } catch {
+    return false;
+  }
+}
+
 function initAnalyticsSdk() {
-  if (isIosApp()) return;
+  if (isIosApp() || isAndroidApp()) return;
   isSupported()
     .then((supported) => {
       if (supported) analyticsInstance = getAnalytics(app);
@@ -104,14 +122,24 @@ function initAnalyticsSdk() {
     .catch(() => {});
 }
 
-export function getAnalyticsConsent(): 'granted' | 'denied' | null {
-  if (isIosApp()) return 'denied';
+// What the person chose, or null if they have not been asked / have not answered yet.
+export function getStoredAnalyticsConsent(): 'granted' | 'denied' | null {
   try {
     const v = localStorage.getItem(ANALYTICS_CONSENT_KEY);
     return v === 'granted' || v === 'denied' ? v : null;
   } catch {
     return null; // localStorage unavailable (private browsing etc.) — treated as "not yet decided"
   }
+}
+
+// What analytics should do right now. In the installed Android app, outside Europe, anonymous usage counts are ON until the person
+// turns them off (the first-run notice says so); everywhere else (web, Europe) they stay off until the person says yes.
+export function getAnalyticsConsent(): 'granted' | 'denied' | null {
+  if (isIosApp()) return 'denied';
+  const stored = getStoredAnalyticsConsent();
+  if (stored) return stored;
+  if (isAndroidApp() && !looksLikeEurope()) return 'granted';
+  return null;
 }
 
 export function setAnalyticsConsent(consent: 'granted' | 'denied') {
@@ -122,12 +150,25 @@ export function setAnalyticsConsent(consent: 'granted' | 'denied') {
     // Unable to persist — the banner will just ask again next visit, which is the safe direction
     // to fail in (never tracking without a fresh "yes" beats accidentally tracking without one).
   }
+  if (isAndroidApp()) {
+    FirebaseAnalytics.setEnabled({ enabled: consent === 'granted' }).catch(() => {});
+    return;
+  }
   if (consent === 'granted') initAnalyticsSdk();
 }
 
-if (getAnalyticsConsent() === 'granted') initAnalyticsSdk();
+if (isAndroidApp()) {
+  // Native analytics: collect only while consent is granted (on by default outside Europe, see getAnalyticsConsent).
+  FirebaseAnalytics.setEnabled({ enabled: getAnalyticsConsent() === 'granted' }).catch(() => {});
+} else if (getAnalyticsConsent() === 'granted') {
+  initAnalyticsSdk();
+}
 
 export function trackEvent(name: string, params?: Record<string, unknown>) {
+  if (isAndroidApp()) {
+    if (getAnalyticsConsent() === 'granted') FirebaseAnalytics.logEvent({ name, params: (params || {}) as any }).catch(() => {});
+    return;
+  }
   if (analyticsInstance) logEvent(analyticsInstance, name, params);
 }
 
