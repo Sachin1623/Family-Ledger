@@ -60,7 +60,7 @@ function chooseShareMode(network: 'instagram' | 'facebook'): Promise<'story' | '
     title.textContent = `Share on ${name}`;
     sheet.appendChild(title);
     sheet.appendChild(btn(`${name} Story`, network === 'instagram' ? 'Picture with a "Follow @family.ledger" sticker. Add a Mention sticker in Instagram to make it tappable.' : 'Picture with a "Like our page" sticker.', 'story', true));
-    sheet.appendChild(btn('Post or Reel', `Open ${name}'s normal composer — the caption is copied, just paste it.`, 'post', false));
+    sheet.appendChild(btn('Feed post', `Open ${name}'s normal composer — the caption is copied, just paste it.`, 'post', false));
     const cancel = document.createElement('button');
     cancel.style.cssText = 'display:block;width:100%;margin-top:8px;padding:12px;background:none;border:0;font-weight:700;color:#6b7c8a;font-size:14px';
     cancel.textContent = 'Cancel';
