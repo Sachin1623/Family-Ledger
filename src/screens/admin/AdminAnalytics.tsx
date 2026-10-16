@@ -18,6 +18,11 @@ interface GameStats {
 interface GameStatsSummary { totalGames: number; totalUniquePlayers: number; totalHours: number }
 
 
+// ---- Game trends — see /api/admin/analytics/games-trend ----
+interface TrendBucket { users: number; games: number; hours: number }
+interface GameTrend { key: string; label: string; today: TrendBucket; yesterday: TrendBucket; week: TrendBucket; prevWeek: TrendBucket; weekly: TrendBucket[] }
+interface GameTrends { generatedAt: string; timezone: string; weekLabels: string[]; games: GameTrend[]; overall: Omit<GameTrend, 'key' | 'label'> }
+
 // ---- Product analytics (goals, accounts, health tools, splits) — see /api/admin/analytics/product ----
 interface Metric {
   total: number;
@@ -152,7 +157,10 @@ function Chips({ items }: { items: { label: string; value: number }[] }) {
 }
 
 export default function AdminAnalytics() {
-  const [tab, setTab] = useState<'summary' | 'goals' | 'finance' | 'productivity' | 'health' | 'splits' | 'usage'>('summary');
+  const [tab, setTab] = useState<'summary' | 'goals' | 'finance' | 'productivity' | 'health' | 'splits' | 'usage' | 'games'>('summary');
+  const [gameTrends, setGameTrends] = useState<GameTrends | null>(null);
+  const [gameTrendsLoading, setGameTrendsLoading] = useState(false);
+  const [gameMetric, setGameMetric] = useState<'users' | 'games' | 'hours'>('hours');
   const [product, setProduct] = useState<ProductStats | null>(null);
   const [productLoading, setProductLoading] = useState(true);
   const [topGroups, setTopGroups] = useState<TopEntry[]>([]);
@@ -162,6 +170,19 @@ export default function AdminAnalytics() {
   const [gameStats, setGameStats] = useState<GameStats[]>([]);
   const [gameStatsSummary, setGameStatsSummary] = useState<GameStatsSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const loadGameTrends = (refresh = false) => {
+    setGameTrendsLoading(true);
+    adminGet(`/api/admin/analytics/games-trend${refresh ? '?refresh=1' : ''}`)
+      .then((data) => setGameTrends(data))
+      .catch((err) => setError(err.message))
+      .finally(() => setGameTrendsLoading(false));
+  };
+
+  useEffect(() => {
+    if (tab === 'games' && !gameTrends && !gameTrendsLoading) loadGameTrends();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const loadProduct = (refresh = false) => {
     setProductLoading(true);
@@ -209,6 +230,7 @@ export default function AdminAnalytics() {
     ['health', 'Health'],
     ['splits', 'Splits'],
     ['usage', 'Usage & Games'],
+    ['games', 'Game Trends'],
   ] as const;
 
   // Summary: one row per product area — total, today, this week vs last week.
@@ -259,7 +281,7 @@ export default function AdminAnalytics() {
         ))}
       </div>
 
-      {tab !== 'usage' && (
+      {tab !== 'usage' && tab !== 'games' && (
         <div className="flex items-center justify-between text-[11px] text-text-muted">
           <span>{product ? `Updated ${new Date(product.generatedAt).toLocaleTimeString()} · days are UTC, a "week" is a rolling 7 days` : ''}</span>
           <button onClick={() => loadProduct(true)} disabled={productLoading} className="font-bold text-primary underline disabled:opacity-50">
@@ -598,6 +620,178 @@ export default function AdminAnalytics() {
       </section>
         </div>
       )}
+
+      {/* ---------------- Game Trends ---------------- */}
+      {tab === 'games' && (
+        <GameTrendsView data={gameTrends} loading={gameTrendsLoading} metric={gameMetric} setMetric={setGameMetric} onRefresh={() => loadGameTrends(true)} />
+      )}
+    </div>
+  );
+}
+
+
+const GAME_METRICS = {
+  hours: { label: 'Hours played', unit: ' h', color: '#0f4761' },
+  users: { label: 'Unique players', unit: '', color: '#16A34A' },
+  games: { label: 'Games played', unit: '', color: '#7C3AED' },
+} as const;
+type GameMetricKey = keyof typeof GAME_METRICS;
+
+const fmtVal = (key: GameMetricKey, n: number) => (key === 'hours' ? (Math.round(n * 10) / 10).toLocaleString() : fmt(n));
+
+// Each metric on its own row: today vs yesterday, last 7 days vs the 7 before.
+function CompareRow({ label, cur, prev, kind, curLabel, prevLabel }: { label: string; cur: number; prev: number; kind: GameMetricKey; curLabel: string; prevLabel: string }) {
+  const unit = GAME_METRICS[kind].unit;
+  return (
+    <div className="bg-surface rounded-xl p-3">
+      <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{label}</p>
+      <div className="flex items-baseline gap-2 mt-0.5">
+        <span className="text-2xl font-black text-primary">{fmtVal(kind, cur)}{unit}</span>
+        <Delta cur={cur} prev={prev} />
+      </div>
+      <p className="text-[11px] text-text-muted">{curLabel} · {prevLabel} {fmtVal(kind, prev)}{unit}</p>
+    </div>
+  );
+}
+
+function GameTrendsView({ data, loading, metric, setMetric, onRefresh }: {
+  data: GameTrends | null; loading: boolean; metric: GameMetricKey; setMetric: (m: GameMetricKey) => void; onRefresh: () => void;
+}) {
+  const [picked, setPicked] = useState<string>('all');
+  if (loading && !data) return <p className="text-center text-text-muted py-10">Loading game trends…</p>;
+  if (!data) return null;
+
+  const all: GameTrend = { key: 'all', label: 'All games', ...data.overall };
+  const sel = picked === 'all' ? all : data.games.find((g) => g.key === picked) || all;
+
+  // Ranking by the chosen metric, this week (last 7 days). Most / least popular = unique players, then games, then hours.
+  const ranked = [...data.games].sort((a, b) => b.week[metric] - a.week[metric]);
+  const maxVal = Math.max(1, ...ranked.map((g) => g.week[metric]));
+  const popularity = [...data.games].sort((a, b) => b.week.users - a.week.users || b.week.games - a.week.games || b.week.hours - a.week.hours);
+  const top = popularity[0];
+  const bottom = popularity[popularity.length - 1];
+  const chartData = sel.weekly.map((w, i) => ({ x: data.weekLabels[i], Hours: w.hours, Players: w.users, Games: w.games }));
+  const m = GAME_METRICS[metric];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-[11px] text-text-muted max-w-xl">
+          Days are Indian (IST) days; a week is a rolling 7 days ending today, compared with the 7 before. A game counts on the day it started.
+          Hours are player-hours (game length × real players), finished games only, each capped at 3 hours. Bots are not counted. Solo Sudoku and Scramble keep no per-play record, so they are not included.
+        </p>
+        <button onClick={onRefresh} className="text-xs font-bold text-primary underline shrink-0">{loading ? 'Refreshing…' : 'Refresh'}</button>
+      </div>
+
+      {/* Most / least popular */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-success/30 bg-success/5 p-4">
+          <p className="text-[10px] font-black uppercase tracking-wider text-success">Most popular this week</p>
+          <p className="text-xl font-black text-primary mt-1">{top && top.week.users > 0 ? top.label : '—'}</p>
+          {top && <p className="text-[11px] text-text-muted">{fmt(top.week.users)} players · {fmt(top.week.games)} games · {fmtVal('hours', top.week.hours)} h</p>}
+        </div>
+        <div className="rounded-2xl border border-error/30 bg-error/5 p-4">
+          <p className="text-[10px] font-black uppercase tracking-wider text-error">Least popular this week</p>
+          <p className="text-xl font-black text-primary mt-1">{bottom ? bottom.label : '—'}</p>
+          {bottom && <p className="text-[11px] text-text-muted">{fmt(bottom.week.users)} players · {fmt(bottom.week.games)} games · {fmtVal('hours', bottom.week.hours)} h</p>}
+        </div>
+      </section>
+
+      {/* Compare games with each other */}
+      <section className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-lg font-bold text-primary">Games compared · last 7 days</h2>
+          <div className="flex bg-surface rounded-lg p-0.5">
+            {(Object.keys(GAME_METRICS) as GameMetricKey[]).map((k) => (
+              <button key={k} onClick={() => setMetric(k)} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${metric === k ? 'bg-white text-primary shadow-sm' : 'text-text-muted'}`}>
+                {GAME_METRICS[k].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-2">
+          {ranked.map((g, i) => (
+            <div key={g.key} className="flex items-center gap-2">
+              <span className="w-5 text-[11px] font-black text-text-muted text-right">{i + 1}</span>
+              <span className="w-36 sm:w-44 text-xs font-bold text-primary truncate">{g.label}</span>
+              <div className="flex-1 h-4 bg-surface rounded-full overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${(g.week[metric] / maxVal) * 100}%`, background: m.color }} />
+              </div>
+              <span className="w-20 text-right text-xs font-black text-primary">{fmtVal(metric, g.week[metric])}{m.unit}</span>
+              <span className="w-14 text-right"><Delta cur={g.week[metric]} prev={g.prevWeek[metric]} /></span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* One game (or all) in detail */}
+      <section className="bg-white rounded-2xl border border-border-subtle p-5 space-y-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-lg font-bold text-primary">{sel.label}</h2>
+          <select value={picked} onChange={(e) => setPicked(e.target.value)} className="h-9 px-3 rounded-lg border border-border-subtle bg-white text-sm font-bold text-primary">
+            <option value="all">All games</option>
+            {data.games.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+          </select>
+        </div>
+
+        {([['users', 'Unique players'], ['games', 'Games played'], ['hours', 'Hours played']] as const).map(([k, label]) => (
+          <div key={k} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <CompareRow label={`${label} · today`} cur={sel.today[k]} prev={sel.yesterday[k]} kind={k} curLabel="today" prevLabel="yesterday" />
+            <CompareRow label={`${label} · last 7 days`} cur={sel.week[k]} prev={sel.prevWeek[k]} kind={k} curLabel="last 7 days" prevLabel="the 7 before" />
+          </div>
+        ))}
+
+        <div>
+          <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">Week over week (8 weeks, ending each date)</p>
+          <div className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                <XAxis dataKey="x" fontSize={10} tick={{ fill: '#6B7280' }} />
+                <YAxis fontSize={10} tick={{ fill: '#6B7280' }} allowDecimals={false} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="Hours" stroke={GAME_METRICS.hours.color} strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="Players" stroke={GAME_METRICS.users.color} strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="Games" stroke={GAME_METRICS.games.color} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </section>
+
+      {/* Full comparison table */}
+      <section className="bg-white rounded-2xl border border-border-subtle p-5">
+        <h2 className="text-lg font-bold text-primary mb-3">All games · last 7 days vs the 7 before</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-text-muted border-b border-border-subtle">
+                <th className="p-2">Game</th>
+                <th className="p-2">Players</th><th className="p-2">Δ</th>
+                <th className="p-2">Games</th><th className="p-2">Δ</th>
+                <th className="p-2">Hours</th><th className="p-2">Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {popularity.map((g) => (
+                <tr key={g.key} className="border-b border-border-subtle last:border-0">
+                  <td className="p-2 font-bold text-primary whitespace-nowrap">{g.label}</td>
+                  <td className="p-2">{fmt(g.week.users)}</td><td className="p-2"><Delta cur={g.week.users} prev={g.prevWeek.users} /></td>
+                  <td className="p-2">{fmt(g.week.games)}</td><td className="p-2"><Delta cur={g.week.games} prev={g.prevWeek.games} /></td>
+                  <td className="p-2">{fmtVal('hours', g.week.hours)}</td><td className="p-2"><Delta cur={g.week.hours} prev={g.prevWeek.hours} /></td>
+                </tr>
+              ))}
+              <tr className="font-black bg-surface">
+                <td className="p-2 text-primary">All games</td>
+                <td className="p-2">{fmt(data.overall.week.users)}</td><td className="p-2"><Delta cur={data.overall.week.users} prev={data.overall.prevWeek.users} /></td>
+                <td className="p-2">{fmt(data.overall.week.games)}</td><td className="p-2"><Delta cur={data.overall.week.games} prev={data.overall.prevWeek.games} /></td>
+                <td className="p-2">{fmtVal('hours', data.overall.week.hours)}</td><td className="p-2"><Delta cur={data.overall.week.hours} prev={data.overall.prevWeek.hours} /></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

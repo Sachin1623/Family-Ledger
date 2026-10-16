@@ -4863,6 +4863,94 @@ async function startServer() {
     }
   });
 
+
+  // ---- Game trends: for every multiplayer game — unique players, games played and hours played — today vs yesterday,
+  // the last 7 days vs the 7 before, and 8 weekly buckets for a trend line. Days are Indian (IST) calendar days; a "week" is a
+  // rolling 7 days ending today, so this-week vs last-week is always like for like. A game counts on the day it STARTED (left the
+  // lobby). Hours = player-hours: the game's length times the number of real (non-bot) players, finished games only, each game
+  // capped at 3 hours so one abandoned table cannot distort a week. Solo Sudoku / Scramble are not here: they keep only running
+  // totals per player, no per-play record with a time.
+  const TREND_GAMES: Array<{ key: string; label: string; collection: string }> = [
+    ...GAME_COLLECTIONS.map((g) => ({ key: g.key, label: g.label, collection: g.collection })),
+    { key: 'rummy13', label: '13-Card Rummy', collection: 'rummy13Tables' },
+    { key: 'spadePledge', label: 'Spade Pledge', collection: 'spadePledgeTables' },
+  ];
+  let gameTrendCache: { at: number; data: any } | null = null;
+
+  app.get('/api/admin/analytics/games-trend', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const db = adminDb;
+    if (!req.query.refresh && gameTrendCache && Date.now() - gameTrendCache.at < 5 * 60 * 1000) return res.json(gameTrendCache.data);
+
+    try {
+      const IST_MS = 5.5 * 60 * 60 * 1000;
+      const DAY = 24 * 60 * 60 * 1000;
+      const istDayIndex = (ms: number) => Math.floor((ms + IST_MS) / DAY);
+      const todayIdx = istDayIndex(Date.now());
+      const WEEKS = 8;
+      const cutoffMs = (todayIdx - WEEKS * 7 + 1) * DAY - IST_MS; // start of the oldest bucket
+      const MAX_GAME_HOURS = 3;
+
+      interface Bucket { users: Set<string>; games: number; hours: number }
+      const newBucket = (): Bucket => ({ users: new Set(), games: 0, hours: 0 });
+      const mk = () => ({ today: newBucket(), yesterday: newBucket(), week: newBucket(), prevWeek: newBucket(), weekly: Array.from({ length: WEEKS }, newBucket) });
+      type Acc = ReturnType<typeof mk>;
+      const overall: Acc = mk();
+
+      const add = (acc: Acc, dayIdx: number, humans: string[], hours: number) => {
+        const apply = (b: Bucket) => { b.games += 1; b.hours += hours; humans.forEach((u) => b.users.add(u)); };
+        const age = todayIdx - dayIdx; // 0 = today
+        if (age === 0) apply(acc.today);
+        if (age === 1) apply(acc.yesterday);
+        if (age >= 0 && age <= 6) apply(acc.week);
+        if (age >= 7 && age <= 13) apply(acc.prevWeek);
+        if (age >= 0 && age < WEEKS * 7) apply(acc.weekly[WEEKS - 1 - Math.floor(age / 7)]);
+      };
+
+      const out = (b: Bucket) => ({ users: b.users.size, games: b.games, hours: Math.round(b.hours * 10) / 10 });
+      const outAcc = (a: Acc) => ({ today: out(a.today), yesterday: out(a.yesterday), week: out(a.week), prevWeek: out(a.prevWeek), weekly: a.weekly.map(out) });
+
+      const perGame = await Promise.all(
+        TREND_GAMES.map(async ({ key, label, collection }) => {
+          const acc = mk();
+          const snap = await db.collection(collection).where('createdAt', '>=', new Date(cutoffMs).toISOString()).select('createdAt', 'startedAt', 'finishedAt', 'status', 'playerUids').get();
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            if (!data.status || data.status === 'waiting') return; // never left the lobby
+            const startIso = data.startedAt || data.createdAt;
+            if (!startIso) return;
+            const startMs = new Date(startIso).getTime();
+            if (!(startMs >= cutoffMs)) return;
+            const humans: string[] = (data.playerUids || []).filter((u: string) => typeof u === 'string' && !u.startsWith('bot'));
+            if (humans.length === 0) return;
+            let hours = 0;
+            if (data.status === 'finished' && data.finishedAt) {
+              const h = (new Date(data.finishedAt).getTime() - startMs) / (60 * 60 * 1000);
+              if (h > 0) hours = Math.min(h, MAX_GAME_HOURS) * humans.length;
+            }
+            const dayIdx = istDayIndex(startMs);
+            add(acc, dayIdx, humans, hours);
+            add(overall, dayIdx, humans, hours);
+          });
+          return { key, label, ...outAcc(acc) };
+        }),
+      );
+
+      const weekLabels = Array.from({ length: WEEKS }, (_, i) => {
+        const endIdx = todayIdx - (WEEKS - 1 - i) * 7;
+        const d = new Date(endIdx * DAY);
+        return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
+      });
+      const data = { generatedAt: new Date().toISOString(), timezone: 'IST', weekLabels, games: perGame, overall: outAcc(overall) };
+      gameTrendCache = { at: Date.now(), data };
+      return res.json(data);
+    } catch (error) {
+      console.error('admin/analytics/games-trend error:', error);
+      return res.status(500).json({ error: 'Unable to load game trends.' });
+    }
+  });
+
   // ---- Product analytics: goals, accounts, every health tool, and splits — totals, today / this
   // week vs the one before, a 30-day daily series and a 12-week weekly series for each. One call
   // gathers everything (the Analytics tabs all read from it) and is cached for 5 minutes, since it
