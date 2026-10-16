@@ -15737,6 +15737,9 @@ async function startServer() {
   <div class="wrap">
     <p>${description}</p>
     <a class="cta" href="${playStoreUrl}">Get it on Google Play</a>
+    <p style="margin-top:28px;font-size:14px">Follow us:
+      <a href="https://www.instagram.com/family.ledger" style="color:#123A82;font-weight:700">Instagram @family.ledger</a> ·
+      <a href="https://www.facebook.com/profile.php?id=61594046441653" style="color:#123A82;font-weight:700">Facebook</a></p>
   </div>
 </body>
 </html>`);

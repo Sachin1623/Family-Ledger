@@ -66,4 +66,113 @@ public class AppSharePlugin extends Plugin {
             call.reject("Could not open the app: " + e.getMessage());
         }
     }
+
+    /**
+     * Opens Instagram's Story composer with the picture as the background and a sticker on top (the page handle). When a
+     * Facebook app id is supplied, Instagram shows a "from FamilyLedger" attribution on the story.
+     */
+    @PluginMethod
+    public void shareInstagramStory(PluginCall call) {
+        String backgroundFile = call.getString("backgroundFile");
+        String stickerFile = call.getString("stickerFile");
+        String appId = call.getString("appId");
+        String topColor = call.getString("topColor");
+        String bottomColor = call.getString("bottomColor");
+        if (backgroundFile == null || backgroundFile.isEmpty()) {
+            call.reject("backgroundFile is required.");
+            return;
+        }
+        Context context = getContext();
+        File bg = new File(context.getCacheDir(), backgroundFile);
+        if (!bg.exists()) {
+            call.reject("The image file was not found.");
+            return;
+        }
+        try {
+            String authority = context.getPackageName() + ".fileprovider";
+            Uri bgUri = FileProvider.getUriForFile(context, authority, bg);
+            Intent intent = new Intent("com.instagram.share.ADD_TO_STORY");
+            intent.setDataAndType(bgUri, "image/png");
+            intent.setPackage("com.instagram.android");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (appId != null && !appId.isEmpty()) {
+                intent.putExtra("source_application", appId);
+            }
+            if (topColor != null && !topColor.isEmpty()) intent.putExtra("top_background_color", topColor);
+            if (bottomColor != null && !bottomColor.isEmpty()) intent.putExtra("bottom_background_color", bottomColor);
+            context.grantUriPermission("com.instagram.android", bgUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (stickerFile != null && !stickerFile.isEmpty()) {
+                File sticker = new File(context.getCacheDir(), stickerFile);
+                if (sticker.exists()) {
+                    Uri stickerUri = FileProvider.getUriForFile(context, authority, sticker);
+                    intent.putExtra("interactive_asset_uri", stickerUri);
+                    context.grantUriPermission("com.instagram.android", stickerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
+            }
+            JSObject result = new JSObject();
+            if (intent.resolveActivity(context.getPackageManager()) == null) {
+                result.put("success", false);
+                result.put("reason", "not_installed");
+                call.resolve(result);
+                return;
+            }
+            getActivity().startActivity(intent);
+            result.put("success", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Could not open Instagram Stories: " + e.getMessage());
+        }
+    }
+
+    /** Opens Facebook's Story composer with the picture as background and a "Like our page" sticker on top. */
+    @PluginMethod
+    public void shareFacebookStory(PluginCall call) {
+        String backgroundFile = call.getString("backgroundFile");
+        String stickerFile = call.getString("stickerFile");
+        String appId = call.getString("appId");
+        String topColor = call.getString("topColor");
+        String bottomColor = call.getString("bottomColor");
+        if (backgroundFile == null || backgroundFile.isEmpty() || appId == null || appId.isEmpty()) {
+            call.reject("backgroundFile and appId are required.");
+            return;
+        }
+        Context context = getContext();
+        File bg = new File(context.getCacheDir(), backgroundFile);
+        if (!bg.exists()) {
+            call.reject("The image file was not found.");
+            return;
+        }
+        try {
+            String authority = context.getPackageName() + ".fileprovider";
+            Uri bgUri = FileProvider.getUriForFile(context, authority, bg);
+            Intent intent = new Intent("com.facebook.stories.ADD_TO_STORY");
+            intent.setDataAndType(bgUri, "image/png");
+            intent.setPackage("com.facebook.katana");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.putExtra("com.facebook.platform.extra.APPLICATION_ID", appId);
+            if (topColor != null && !topColor.isEmpty()) intent.putExtra("top_background_color", topColor);
+            if (bottomColor != null && !bottomColor.isEmpty()) intent.putExtra("bottom_background_color", bottomColor);
+            context.grantUriPermission("com.facebook.katana", bgUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (stickerFile != null && !stickerFile.isEmpty()) {
+                File sticker = new File(context.getCacheDir(), stickerFile);
+                if (sticker.exists()) {
+                    Uri stickerUri = FileProvider.getUriForFile(context, authority, sticker);
+                    intent.putExtra("interactive_asset_uri", stickerUri);
+                    context.grantUriPermission("com.facebook.katana", stickerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
+            }
+            JSObject result = new JSObject();
+            if (intent.resolveActivity(context.getPackageManager()) == null) {
+                result.put("success", false);
+                result.put("reason", "not_installed");
+                call.resolve(result);
+                return;
+            }
+            getActivity().startActivity(intent);
+            result.put("success", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Could not open Facebook Stories: " + e.getMessage());
+        }
+    }
 }

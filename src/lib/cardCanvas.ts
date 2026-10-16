@@ -17,9 +17,11 @@ export const WEB_URL = 'https://familyledger.thirteenapps.com';
 // text and are printed on the pictures instead.
 export const INSTAGRAM_HANDLE = 'family.ledger';
 export const FACEBOOK_PAGE_NAME = 'Family Ledger';
+export const FACEBOOK_PAGE_URL = 'https://www.facebook.com/profile.php?id=61594046441653';
+export const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}`;
 export const HASHTAG = '#FamilyLedger';
 export function followUsText(): string {
-  return `📸 Instagram @${INSTAGRAM_HANDLE}  ·  👍 Facebook ${FACEBOOK_PAGE_NAME}  ${HASHTAG}`;
+  return `Follow us 👇\n📸 Instagram: ${INSTAGRAM_URL}\n👍 Facebook: ${FACEBOOK_PAGE_URL}\n${HASHTAG}`;
 }
 
 // The text that accompanies every shared picture. An image itself can't be tapped, so the real,
@@ -223,6 +225,62 @@ export function drawQr(ctx: CanvasRenderingContext2D, text: string, x: number, y
   }
 }
 
+// Two brand pills — Instagram @handle and Facebook page — printed on every picture so the pages travel with it even when
+// nobody tags them.
+export function paintSocialPills(ctx: CanvasRenderingContext2D, x: number, y: number, totalW: number) {
+  const gap = 14;
+  const w = (totalW - gap) / 2;
+  const h = 50;
+  const pills: Array<{ label: string; mark: string; fill: (g: CanvasGradient) => void; x0: number }> = [
+    { label: `@${INSTAGRAM_HANDLE}`, mark: '◎', x0: x, fill: (g) => { g.addColorStop(0, '#F58529'); g.addColorStop(0.5, '#DD2A7B'); g.addColorStop(1, '#8134AF'); } },
+    { label: FACEBOOK_PAGE_NAME, mark: 'f', x0: x + w + gap, fill: (g) => { g.addColorStop(0, '#1877F2'); g.addColorStop(1, '#0B5ED7'); } },
+  ];
+  pills.forEach((p) => {
+    roundRectPath(ctx, p.x0, y, w, h, 27);
+    const g = ctx.createLinearGradient(p.x0, y, p.x0 + w, y);
+    p.fill(g);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'left';
+    ctx.font = `800 28px ${FONT}`;
+    ctx.fillText(p.mark, p.x0 + 20, y + 35);
+    ctx.textAlign = 'center';
+    ctx.fillText(fitText(ctx, p.label, w - 80, 28, '800', 18), p.x0 + w / 2 + 14, y + 35);
+  });
+}
+
+// A transparent sticker (the page handle on an Instagram-coloured pill) for the Instagram Stories share, placed over the picture.
+export async function makeHandleSticker(network: 'instagram' | 'facebook' = 'instagram'): Promise<Blob> {
+  await fontsReady();
+  const c = document.createElement('canvas');
+  c.width = 720;
+  c.height = 200;
+  const ctx = c.getContext('2d')!;
+  roundRectPath(ctx, 10, 20, 700, 160, 80);
+  const g = ctx.createLinearGradient(10, 0, 710, 0);
+  if (network === 'facebook') {
+    g.addColorStop(0, '#1877F2');
+    g.addColorStop(1, '#0B5ED7');
+  } else {
+    g.addColorStop(0, '#F58529');
+    g.addColorStop(0.5, '#DD2A7B');
+    g.addColorStop(1, '#8134AF');
+  }
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.stroke();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'center';
+  ctx.font = `700 34px ${FONT}`;
+  ctx.fillText(network === 'facebook' ? 'Like our page' : 'Follow us', 360, 78);
+  ctx.font = `800 62px ${FONT}`;
+  ctx.fillText(fitText(ctx, network === 'facebook' ? FACEBOOK_PAGE_NAME : `@${INSTAGRAM_HANDLE}`, 620, 62, '800', 36), 360, 148);
+  return canvasToPng(c);
+}
+
 // Bottom band shared by every picture: a Play Store QR (scan to install), the Play Store / website
 // text, and a green call-to-action pill.
 export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: string) {
@@ -254,6 +312,5 @@ export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: strin
   ctx.fillText(fitText(ctx, ios ? 'Free for the whole family' : 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.fillText(fitText(ctx, 'familyledger.thirteenapps.com', leftW, 28, '600', 20), leftX + leftW / 2, pillY + pillH + 92);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
-  ctx.fillText(fitText(ctx, `Instagram @${INSTAGRAM_HANDLE}  ·  Facebook ${FACEBOOK_PAGE_NAME}`, leftW, 24, '600', 16), leftX + leftW / 2, pillY + pillH + 126);
+  paintSocialPills(ctx, leftX, pillY + pillH + 106, leftW);
 }
