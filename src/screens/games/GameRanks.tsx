@@ -37,7 +37,7 @@ const GAME_META: Record<GameType, { gameLabelKey: string; collection: string; ba
   sweep: { gameLabelKey: 'games.sweep', collection: 'sweepGames', backTo: '/games/sweep', resultMode: 'team' },
   chess: { gameLabelKey: 'games.chess', collection: 'chessGames', backTo: '/games/chess', resultMode: 'color' },
   sequence: { gameLabelKey: 'games.sequence', collection: 'sequenceGames', backTo: '/games/sequence', resultMode: 'side' },
-  spadePledge: { gameLabelKey: 'games.spadePledge', collection: 'spadePledgeTables', backTo: '/games/spade-pledge', resultMode: 'team' },
+  spadePledge: { gameLabelKey: 'games.spadePledge', collection: 'spadePledgeTables', backTo: '/games/spadePledge', resultMode: 'team' },
 };
 
 type Outcome = 'win' | 'loss' | 'draw';

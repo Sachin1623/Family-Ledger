@@ -651,7 +651,7 @@ export default function SpadePledgeGame() {
         <GameHeader
           title="Spade Pledge"
           subtitle={`${table.code} · ${FORMAT_LABEL[table.format]}`}
-          backTo="/games/spade-pledge"
+          backTo="/games/spadePledge"
           actions={
             <>
               <ReactionButton onSend={handleSendReaction} />
