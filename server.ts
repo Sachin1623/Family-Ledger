@@ -182,6 +182,25 @@ async function emailHasExistingAccount(email: string): Promise<boolean | null> {
   }
 }
 
+// How an email signs in today: with a password, with Google, with Apple, or a mix. Lets the login screen say something true
+// ("this email uses Google") instead of "no account found" when someone tries a password on a Google-only account.
+type EmailSignInMethod = 'none' | 'password' | 'google' | 'apple' | 'other';
+async function emailSignInMethod(email: string): Promise<EmailSignInMethod | null> {
+  if (!adminAuth) return null;
+  try {
+    const user = await adminAuth.getUserByEmail(email);
+    const ids = (user.providerData || []).map((p) => p.providerId);
+    if (ids.includes('password')) return 'password';
+    if (ids.includes('google.com')) return 'google';
+    if (ids.includes('apple.com')) return 'apple';
+    return 'other';
+  } catch (err: any) {
+    if (err?.code === 'auth/user-not-found') return 'none';
+    console.error('Admin getUserByEmail error:', err);
+    return null;
+  }
+}
+
 // Verifies the caller's Firebase ID token from the Authorization header.
 // Returns the decoded token (with uid, email, email_verified, firebase.sign_in_provider)
 // or null if missing/invalid.
@@ -3559,15 +3578,28 @@ async function startServer() {
       return res.status(400).json({ error: 'Please provide a valid email address.' });
     }
 
-    const alreadyExists = await emailHasExistingAccount(email);
-    if (alreadyExists) {
+    const method = await emailSignInMethod(email);
+    if (method && method !== 'none') {
+      const providerName = method === 'google' ? 'Google' : method === 'apple' ? 'Apple' : null;
       return res.status(409).json({
-        error: 'This email is already registered. Please log in with your password.',
+        error: providerName
+          ? `This email already has an account that signs in with ${providerName}. Tap "Continue with ${providerName}", or use Forgot password to add a password.`
+          : 'This email is already registered. Please log in with your password.',
         userExists: true,
+        signInMethod: method,
       });
     }
 
     return sendOtpEmail(res, email, 'signup');
+  });
+
+  // Tells the login screen how an email signs in, so a failed password login can explain what to do. Reveals nothing beyond
+  // what /api/send-otp already does (whether the email has an account).
+  app.post('/api/email-sign-in-method', async (req, res) => {
+    const email = normalizeEmail(String(req.body?.email || ''));
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Please provide a valid email address.' });
+    const method = await emailSignInMethod(email);
+    return res.json({ method: method || 'unknown' });
   });
 
   app.post('/api/send-reset-otp', async (req, res) => {

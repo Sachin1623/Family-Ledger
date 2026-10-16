@@ -46,6 +46,8 @@ export default function Login() {
   const [otpSent, setOtpSent] = React.useState(false);
   const [otpVerified, setOtpVerified] = React.useState(false);
   const [loginError, setLoginError] = React.useState<string | null>(null);
+  // True when the email signs in with Google / Apple only — the error then offers a shortcut to add a password.
+  const [socialOnlyHint, setSocialOnlyHint] = React.useState(false);
   // Lazy initializer (not a useEffect) so a message passed via navigate('/login', { state: {
   // message } }) — e.g. Profile.tsx's account-deletion confirmation — shows immediately on the
   // very first render, with no blocking alert() anywhere in the chain that triggered it.
@@ -303,6 +305,7 @@ export default function Login() {
     setPassword("");
     setConfirmPassword("");
     setLoginError(null);
+    setSocialOnlyHint(false);
     setResetToken(null);
 
     if (newMode === "forgot") {
@@ -436,7 +439,30 @@ export default function Login() {
         error?.code === "auth/user-not-found" ||
         error?.code === "auth/invalid-credential"
       ) {
-        setLoginError(t('auth.errNoAccountFound'));
+        // Say what is actually true: a Google / Apple-only email has no password, an email with a password got it wrong, and only
+        // an email with no account at all is "not found".
+        let method = "unknown";
+        try {
+          const res = await fetch("/api/email-sign-in-method", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          method = (await res.json())?.method || "unknown";
+        } catch {
+          /* fall back to the generic message */
+        }
+        if (method === "google") {
+          setLoginError(t('auth.errGoogleOnlyAccount'));
+          setSocialOnlyHint(true);
+        } else if (method === "apple") {
+          setLoginError(t('auth.errAppleOnlyAccount'));
+          setSocialOnlyHint(true);
+        } else if (method === "password") {
+          setLoginError(t('auth.errWrongPassword'));
+        } else {
+          setLoginError(t('auth.errNoAccountFound'));
+        }
       } else if (error?.code === "auth/invalid-email") {
         setLoginError(t('auth.errInvalidEmail'));
       } else {
@@ -594,6 +620,7 @@ export default function Login() {
         if (payload.userExists) {
           switchMode("login");
           setLoginError(payload.error || t('auth.errEmailAlreadyRegisteredLogin'));
+          setSocialOnlyHint(payload.signInMethod === "google" || payload.signInMethod === "apple");
           return;
         }
         setLoginError(payload.error || t('auth.errUnableToSendVerificationCode'));
@@ -893,7 +920,14 @@ export default function Login() {
             <span className="material-symbols-outlined text-red-500 text-lg shrink-0">
               error
             </span>
-            <span>{loginError}</span>
+            <span>
+              {loginError}
+              {socialOnlyHint && (
+                <button type="button" onClick={() => switchMode("forgot")} className="block mt-2 font-bold underline text-red-800">
+                  {t('auth.addPasswordLink')}
+                </button>
+              )}
+            </span>
           </div>
         )}
 
