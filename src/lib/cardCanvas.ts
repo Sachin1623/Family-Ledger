@@ -13,14 +13,22 @@ export const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Em
 
 export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 export const WEB_URL = 'https://familyledger.thirteenapps.com';
+// FamilyLedger's own social pages. Instagram/Facebook share links cannot pre-tag a page, so the handles travel in the caption
+// text and are printed on the pictures instead.
+export const INSTAGRAM_HANDLE = 'family.ledger';
+export const FACEBOOK_PAGE_NAME = 'Family Ledger';
+export const HASHTAG = '#FamilyLedger';
+export function followUsText(): string {
+  return `📸 Instagram @${INSTAGRAM_HANDLE}  ·  👍 Facebook ${FACEBOOK_PAGE_NAME}  ${HASHTAG}`;
+}
 
 // The text that accompanies every shared picture. An image itself can't be tapped, so the real,
 // clickable links live here (and the QR code on the image carries the Play Store link too).
 // On the iPhone app we never mention Google Play / Android (App Store guideline 2.3.10 asks iOS apps
 // to stay focused on the iOS experience), so everything points at the website instead.
 export function installLinksText(): string {
-  if (isIosApp()) return `🌐 Try FamilyLedger free: ${WEB_URL}`;
-  return `📲 Install FamilyLedger free on Android: ${PLAY_STORE_URL}\n🌐 Or use it on the web: ${WEB_URL}`;
+  if (isIosApp()) return `🌐 Try FamilyLedger free: ${WEB_URL}\n${followUsText()}`;
+  return `📲 Install FamilyLedger free on Android: ${PLAY_STORE_URL}\n🌐 Or use it on the web: ${WEB_URL}\n${followUsText()}`;
 }
 
 export function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -246,4 +254,6 @@ export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: strin
   ctx.fillText(fitText(ctx, ios ? 'Free for the whole family' : 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.fillText(fitText(ctx, 'familyledger.thirteenapps.com', leftW, 28, '600', 20), leftX + leftW / 2, pillY + pillH + 92);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
+  ctx.fillText(fitText(ctx, `Instagram @${INSTAGRAM_HANDLE}  ·  Facebook ${FACEBOOK_PAGE_NAME}`, leftW, 24, '600', 16), leftX + leftW / 2, pillY + pillH + 126);
 }

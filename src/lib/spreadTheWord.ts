@@ -1,5 +1,6 @@
 import { logGrowthEvent } from './growthEvents';
 import { isIosApp } from './platform';
+import { followUsText, HASHTAG } from './cardCanvas';
 
 // Shared between Profile.tsx's "Spread the Word" card (which also tries an OS-share-sheet image
 // attempt first, via its own shareViaOsSheetWithBanner — that part stays Profile-only, since it
@@ -103,8 +104,8 @@ export function buildShareMessages(theme: SpreadTheme = 'money') {
   // the long version leans into that. Twitter/X gets the short one — its 280-char compose box would
   // just force a manual trim of the long version, and a mistimed trim can cut the link off entirely.
   const divider = '▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬';
-  const message = platformWording(`*${c.title}*\n_${c.tagline}_\n${divider}\n\n${c.intro}\n\n${c.features.join('\n')}\n\n${divider}\n👉 Try it — free on Android:\n${shareUrl}`);
-  const shortMessage = platformWording(`${c.short}\n${shareUrl}`);
+  const message = platformWording(`*${c.title}*\n_${c.tagline}_\n${divider}\n\n${c.intro}\n\n${c.features.join('\n')}\n\n${divider}\n👉 Try it — free on Android:\n${shareUrl}\n\n${followUsText()}`);
+  const shortMessage = platformWording(`${c.short}\n${shareUrl}\n${HASHTAG}`);
   return { shareUrl, webShareUrl, message, shortMessage };
 }
 
