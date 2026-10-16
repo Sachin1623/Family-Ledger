@@ -174,7 +174,11 @@ export default function AdminAnalytics() {
   const loadGameTrends = (refresh = false) => {
     setGameTrendsLoading(true);
     adminGet(`/api/admin/analytics/games-trend${refresh ? '?refresh=1' : ''}`)
-      .then((data) => setGameTrends(data))
+      .then((data) => {
+        // A server that does not have this report yet answers with the web page instead of data.
+        if (!data || !Array.isArray(data.games) || !data.overall) throw new Error('Game trends are not available from this server yet. It needs the latest version (restart the local server, or deploy).');
+        setGameTrends(data);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setGameTrendsLoading(false));
   };
