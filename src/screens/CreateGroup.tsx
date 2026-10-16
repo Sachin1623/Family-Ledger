@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { trackFunnel } from '../lib/funnel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db, trackEvent } from '../lib/firebase';
@@ -239,6 +240,7 @@ export default function CreateGroup() {
 
       // Invite-flow spec: every group (not just a user's first) gets the one-tap invite prompt
       // right after creation — see ManageGroup.tsx's `?justCreated=1` handling.
+      trackFunnel('group_created');
       navigate(`/groups/${groupRef.id}/manage?justCreated=1`);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'groups');

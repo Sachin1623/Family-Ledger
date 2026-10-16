@@ -9,6 +9,7 @@ import {
   trackEvent,
 } from "../lib/firebase";
 import { encryptPII } from "../lib/encryption";
+import { trackFunnel } from "../lib/funnel";
 import {
   signInWithPopup,
   signInWithCredential,
@@ -315,7 +316,12 @@ export default function Login() {
     }
   };
 
+  React.useEffect(() => {
+    trackFunnel('login_screen_view');
+  }, []);
+
   const handleGoogleSignIn = async () => {
+    trackFunnel('google_tap');
     setIsLoggingIn(true);
     setLoginError(null);
     setStatusMessage(null);
@@ -349,6 +355,7 @@ export default function Login() {
         isNewUser = !!getAdditionalUserInfo(result)?.isNewUser;
       }
       await createOrUpdateUserRecords(firebaseUser);
+      trackFunnel(isNewUser ? 'google_success_new' : 'google_success_existing');
       trackEvent(isNewUser ? 'sign_up' : 'login', { method: 'google' });
       navigate(from, { replace: true });
     } catch (error: any) {
@@ -362,7 +369,10 @@ export default function Login() {
         error.code !== "12501" &&
         error.errorMessage !== "The user canceled the sign-in flow."
       ) {
+        trackFunnel('google_error', String(error?.code || error?.errorCode || error?.message || 'unknown'));
         setLoginError(error?.message || t('auth.errGoogleSignInFailed'));
+      } else {
+        trackFunnel('google_cancel');
       }
     } finally {
       setIsLoggingIn(false);
@@ -375,6 +385,7 @@ export default function Login() {
   // yet, so a returning Apple user who signed up with a name keeps it even though later sign-ins
   // won't re-supply one.
   const handleAppleSignIn = async () => {
+    trackFunnel('apple_tap');
     setIsLoggingIn(true);
     setLoginError(null);
     setStatusMessage(null);
@@ -401,6 +412,7 @@ export default function Login() {
         isNewUser = !!getAdditionalUserInfo(result)?.isNewUser;
       }
       await createOrUpdateUserRecords(firebaseUser);
+      trackFunnel('apple_success');
       trackEvent(isNewUser ? 'sign_up' : 'login', { method: 'apple' });
       navigate(from, { replace: true });
     } catch (error: any) {
@@ -420,6 +432,7 @@ export default function Login() {
   };
 
   const handleEmailLogin = async () => {
+    trackFunnel('email_tap');
     setLoginError(null);
     setStatusMessage(null);
     setIsLoggingIn(true);
@@ -427,10 +440,12 @@ export default function Login() {
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       await createOrUpdateUserRecords(result.user);
+      trackFunnel('email_login_ok');
       trackEvent('login', { method: 'password' });
       navigate(from, { replace: true });
     } catch (error: any) {
       console.error("Email login error:", error);
+      trackFunnel('email_login_fail', String(error?.code || 'unknown'));
       if (maybeHandleDisabledAccount(error, email)) {
         // handled — recovery panel is open
       } else if (error?.code === "auth/wrong-password") {
@@ -501,6 +516,7 @@ export default function Login() {
         password,
       );
       await createOrUpdateUserRecords(result.user);
+      trackFunnel('email_signup_ok');
       trackEvent('sign_up', { method: 'password' });
       // We already proved ownership of this inbox via the OTP step above, so mark the
       // Firebase Auth account verified now — this lets /api/merge-account trust the

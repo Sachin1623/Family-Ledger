@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { getAnalyticsConsent, setAnalyticsConsent } from '../lib/firebase';
 import { isIosApp } from '../lib/platform';
+import { trackFunnel } from '../lib/funnel';
 
 // A genuine opt-in choice (Accept / Decline), not a dismissible toast — GDPR/ePrivacy require an
 // affirmative "yes" before analytics starts, not just a policy disclosure the user can ignore.
@@ -19,6 +20,7 @@ export default function ConsentBanner() {
 
   const choose = (consent: 'granted' | 'denied') => {
     setAnalyticsConsent(consent);
+    trackFunnel(consent === 'granted' ? 'consent_accept' : 'consent_decline');
     setDecided(true);
   };
 

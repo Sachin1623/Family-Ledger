@@ -159,6 +159,7 @@ function Chips({ items }: { items: { label: string; value: number }[] }) {
 export default function AdminAnalytics() {
   const [tab, setTab] = useState<'summary' | 'goals' | 'finance' | 'productivity' | 'health' | 'splits' | 'usage' | 'games'>('summary');
   const [gameTrends, setGameTrends] = useState<GameTrends | null>(null);
+  const [funnel, setFunnel] = useState<{ days: { date: string; events: Record<string, number>; errors: Record<string, number> }[] } | null>(null);
   const [gameTrendsLoading, setGameTrendsLoading] = useState(false);
   const [gameMetric, setGameMetric] = useState<'users' | 'games' | 'hours'>('hours');
   const [product, setProduct] = useState<ProductStats | null>(null);
@@ -184,6 +185,7 @@ export default function AdminAnalytics() {
   };
 
   useEffect(() => {
+    if (tab === 'usage' && !funnel) adminGet('/api/admin/analytics/funnel').then(setFunnel).catch(() => setFunnel({ days: [] }));
     if (tab === 'games' && !gameTrends && !gameTrendsLoading) loadGameTrends();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -625,6 +627,9 @@ export default function AdminAnalytics() {
         </div>
       )}
 
+      {/* ---------------- Sign-in funnel (anonymous counters) ---------------- */}
+      {tab === 'usage' && funnel && <SignInFunnel days={funnel.days} />}
+
       {/* ---------------- Game Trends ---------------- */}
       {tab === 'games' && (
         <GameTrendsView data={gameTrends} loading={gameTrendsLoading} metric={gameMetric} setMetric={setGameMetric} onRefresh={() => loadGameTrends(true)} />
@@ -797,5 +802,75 @@ function GameTrendsView({ data, loading, metric, setMetric, onRefresh }: {
         </div>
       </section>
     </div>
+  );
+}
+
+
+const FUNNEL_COLS: Array<[string, string]> = [
+  ['login_screen_view', 'Login screen'],
+  ['consent_accept', 'Analytics yes'],
+  ['consent_decline', 'Analytics no'],
+  ['google_tap', 'Google tapped'],
+  ['google_success_new', 'New via Google'],
+  ['google_success_existing', 'Returning via Google'],
+  ['google_cancel', 'Cancelled'],
+  ['google_error', 'Google errors'],
+  ['email_tap', 'Email tapped'],
+  ['email_signup_ok', 'Email signups'],
+  ['group_created', 'Groups created'],
+];
+
+// Anonymous counters from /api/funnel: where do people who open the app stop before they have an account.
+function SignInFunnel({ days }: { days: { date: string; events: Record<string, number>; errors: Record<string, number> }[] }) {
+  const sum = (key: string) => days.slice(0, 7).reduce((n, d) => n + (d.events[key] || 0), 0);
+  const views = sum('login_screen_view');
+  const taps = sum('google_tap');
+  const news = sum('google_success_new');
+  const errs = sum('google_error');
+  const groups = sum('group_created');
+  const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : '—');
+  const errorTotals: Record<string, number> = {};
+  days.slice(0, 7).forEach((d) => Object.entries(d.errors).forEach(([k, v]) => { errorTotals[k] = (errorTotals[k] || 0) + v; }));
+  const topErrors = Object.entries(errorTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  return (
+    <section className="bg-white rounded-2xl border border-border-subtle p-5 space-y-3 mb-6">
+      <h2 className="text-lg font-bold text-primary">Sign-in funnel · last 7 days</h2>
+      <p className="text-[11px] text-text-muted">
+        Anonymous counters (no user or device ids) of what happens on the login screen. Counting started when this was deployed, so earlier days are empty. Days are IST.
+      </p>
+      {days.length === 0 ? (
+        <p className="text-sm text-text-muted">No data yet.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatTile label="Saw login screen" value={fmt(views)} />
+            <StatTile label="Tapped Google" value={fmt(taps)} sub={`${pct(taps, views)} of views`} />
+            <StatTile label="New accounts (Google)" value={fmt(news)} sub={`${pct(news, taps)} of taps`} />
+            <StatTile label="Google errors" value={fmt(errs)} sub={`${pct(errs, taps)} of taps`} />
+            <StatTile label="Created a group" value={fmt(groups)} sub={`${pct(groups, news)} of new accounts`} />
+          </div>
+          {topErrors.length > 0 && <Chips items={topErrors.map(([k, v]) => ({ label: k.replace('__', ' · '), value: v }))} />}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-text-muted border-b border-border-subtle">
+                  <th className="p-2">Day</th>
+                  {FUNNEL_COLS.map(([, label]) => <th key={label} className="p-2 whitespace-nowrap">{label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {days.slice(0, 14).map((d) => (
+                  <tr key={d.date} className="border-b border-border-subtle last:border-0">
+                    <td className="p-2 font-bold text-primary whitespace-nowrap">{d.date.slice(5)}</td>
+                    {FUNNEL_COLS.map(([key]) => <td key={key} className="p-2">{d.events[key] || 0}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
   );
 }

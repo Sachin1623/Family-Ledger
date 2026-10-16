@@ -4896,6 +4896,47 @@ async function startServer() {
   });
 
 
+
+  // ---- Anonymous sign-in funnel (see src/lib/funnel.ts). One counter per event per Indian day, in funnelDaily/{yyyy-mm-dd}.
+  // No identifiers are stored. Whitelisted event names only, and a small per-IP rate limit so it cannot be used to spam writes.
+  const FUNNEL_EVENTS = new Set([
+    'login_screen_view', 'google_tap', 'google_success_new', 'google_success_existing', 'google_cancel', 'google_error',
+    'email_tap', 'email_login_ok', 'email_login_fail', 'email_signup_ok', 'apple_tap', 'apple_success',
+    'consent_accept', 'consent_decline', 'group_created',
+  ]);
+  const funnelHits = new Map<string, { n: number; resetAt: number }>();
+  app.post('/api/funnel', async (req, res) => {
+    const event = String(req.body?.event || '');
+    if (!FUNNEL_EVENTS.has(event) || !adminDb) return res.status(204).end();
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    const now = Date.now();
+    const hit = funnelHits.get(ip);
+    if (!hit || hit.resetAt < now) funnelHits.set(ip, { n: 1, resetAt: now + 60_000 });
+    else if (++hit.n > 40) return res.status(204).end();
+    try {
+      const day = new Date(now + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const detail = String(req.body?.detail || '').replace(/[^A-Za-z0-9_\-:.]/g, '').slice(0, 30);
+      const update: Record<string, any> = { date: day, [`events.${event}`]: admin.firestore.FieldValue.increment(1) };
+      if (detail && (event === 'google_error' || event === 'email_login_fail')) update[`errors.${event}__${detail.replace(/\./g, '_')}`] = admin.firestore.FieldValue.increment(1);
+      await adminDb.collection('funnelDaily').doc(day).set(update, { merge: true });
+    } catch (error) {
+      console.error('funnel error:', error);
+    }
+    return res.status(204).end();
+  });
+
+  app.get('/api/admin/analytics/funnel', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    try {
+      const snap = await adminDb.collection('funnelDaily').orderBy('date', 'desc').limit(30).get();
+      return res.json({ days: snap.docs.map((d) => ({ date: d.id, events: d.data().events || {}, errors: d.data().errors || {} })) });
+    } catch (error) {
+      console.error('admin/analytics/funnel error:', error);
+      return res.status(500).json({ error: 'Unable to load the funnel.' });
+    }
+  });
+
   // ---- Game trends: for every multiplayer game — unique players, games played and hours played — today vs yesterday,
   // the last 7 days vs the 7 before, and 8 weekly buckets for a trend line. Days are Indian (IST) calendar days; a "week" is a
   // rolling 7 days ending today, so this-week vs last-week is always like for like. A game counts on the day it STARTED (left the
