@@ -5,7 +5,7 @@ import { makeHandleSticker } from './cardCanvas';
 
 // Facebook / Meta app id. Instagram Stories shows a "from FamilyLedger" attribution when it receives one, and the Stories
 // share below only runs once this is filled in. Create a free app at developers.facebook.com and paste its id here.
-export const META_APP_ID = '';
+export const META_APP_ID = '1857746475636342';
 
 // Opens ONE specific app with an image ready to post (Facebook / Instagram / WhatsApp / X / LinkedIn),
 // instead of the phone's generic share sheet. Native Android only (android/.../AppSharePlugin.java);
