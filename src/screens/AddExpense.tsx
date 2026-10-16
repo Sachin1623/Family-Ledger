@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db, trackEvent } from '../lib/firebase';
@@ -37,7 +38,7 @@ const LAST_EXPENSE_GROUP_KEY = 'fl_last_expense_group';
 // walkthrough. 'favorite' and 'split' both auto-skip themselves when there's nothing to act on
 // (see the effect below) — no favorites saved yet, or the group has splitting off / too few
 // members.
-const GUIDE_STEPS = ['amount', 'group', 'favorite', 'description', 'category', 'recurring', 'split'] as const;
+const GUIDE_STEPS = ['amount', 'description', 'category', 'favorite', 'group', 'recurring', 'split'] as const;
 type GuideStepId = typeof GUIDE_STEPS[number];
 
 export default function AddExpense() {
@@ -673,7 +674,7 @@ export default function AddExpense() {
       </header>
 
       <div
-        className={clsx("flex-1 overflow-y-auto px-4 py-6", showKeypad && "pb-64")}
+        className="flex-1 overflow-y-auto px-4 py-4"
         onFocusCapture={(e) => {
           // Any other field getting focus (Description, category, split inputs, ...) should
           // bring up its own native keyboard — and since that's a real text field, this closes
@@ -682,7 +683,7 @@ export default function AddExpense() {
         }}
       >
         {receiptInfo && <ReceiptBanner info={receiptInfo} amount={amount} onPickAmount={setAmount} />}
-        <main className="max-w-md mx-auto w-full space-y-5 pb-20">
+        <main className="max-w-md mx-auto w-full space-y-4 pb-4">
           {selectedGroup?.incomeEnabled && (
             <div className="flex gap-1.5" data-tour="expense-type-toggle">
               <button
@@ -710,8 +711,9 @@ export default function AddExpense() {
             </div>
           )}
 
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm">
           {guideReached('amount') && (
-          <section className={clsx("bg-white p-3 rounded-2xl border border-border-subtle shadow-sm", guideWrapClass('amount'))} data-tour="expense-amount">
+          <section className={clsx("p-3", guideWrapClass('amount'))} data-tour="expense-amount">
           {stepBadge('amount')}
           <div className="flex items-start justify-between gap-2 mb-1">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.amount')} <span className="text-error">*</span></label>
@@ -791,56 +793,95 @@ export default function AddExpense() {
         </section>
         )}
 
-        {guideReached('group') && (
-        <div className={clsx("space-y-1.5", guideWrapClass('group'))}>
-        {stepBadge('group')}
-        <div className="flex items-start gap-2">
-          <div className="flex-1 min-w-0">
-            {groupLocked && selectedGroup ? (
-              <div className="flex items-center justify-between bg-white px-3 h-11 rounded-xl border border-border-subtle">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-primary text-[18px] shrink-0">{selectedGroup.icon || 'home'}</span>
-                  <span className="text-sm font-bold text-primary truncate">{selectedGroup.name}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setGroupLocked(false)}
-                  className="text-[11px] font-bold text-primary underline shrink-0"
-                >
-                  {t('addExpense.change')}
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.group')} <span className="text-error">*</span></label>
-                <select
-                  value={groupId}
-                  onChange={(e) => {
-                    setGroupId(e.target.value);
-                    if (formErrors.group) setFormErrors((prev) => ({ ...prev, group: '' }));
-                    if (guideActive('group') && e.target.value) goToNextGuideStep();
-                  }}
-                  className={clsx('w-full h-11 bg-white px-3 rounded-xl border outline-none focus:ring-2 focus:ring-primary/20 text-sm font-bold text-primary', formErrors.group ? 'border-error' : 'border-border-subtle')}
-                >
-                  <option value="">{t('addExpense.selectGroup')}</option>
-                  {selectableGroups.map((group: any) => (
-                    <option key={group.id} value={group.id}>{group.name}</option>
-                  ))}
-                </select>
-                {formErrors.group && <p className="text-xs text-error font-bold px-1 mt-1">{formErrors.group}</p>}
+        {guideReached('description') && (
+        <div className={clsx("space-y-1.5 px-3 pb-3", guideWrapClass('description'))}>
+        {stepBadge('description')}
+        <div>
+          <div className="space-y-1 relative">
+            <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.description')} <span className="text-error">*</span></label>
+            <input
+              value={description}
+              onChange={(e) => { setDescription(e.target.value); if (formErrors.description) setFormErrors((prev) => ({ ...prev, description: '' })); }}
+              onFocus={() => setDescriptionFocused(true)}
+              onBlur={() => setDescriptionFocused(false)}
+              type="text"
+              placeholder={t('addExpense.descriptionPlaceholder')}
+              className={clsx('w-full h-10 bg-white px-3 rounded-lg border focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-text-muted/40 text-sm font-medium', formErrors.description ? 'border-error' : 'border-border-subtle')}
+            />
+            {formErrors.description && <p className="text-xs text-error font-bold px-1 mt-1">{formErrors.description}</p>}
+            {descriptionFocused && descriptionSuggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-border-subtle shadow-lg z-20 overflow-hidden">
+                {descriptionSuggestions.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    // Fires before the input's onBlur (mousedown precedes blur), so the click
+                    // still lands here instead of the dropdown vanishing out from under it.
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setDescription(d)}
+                    className="w-full text-left px-3 py-2 text-xs font-medium text-on-surface hover:bg-surface truncate"
+                  >
+                    {d}
+                  </button>
+                ))}
               </div>
             )}
           </div>
+        </div>
+        {guideActive('description') && (
+          <button type="button" onClick={goToNextGuideStep} disabled={!description.trim()} className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline px-1">Next →</button>
+        )}
+        </div>
+        )}
 
-          <div className="flex-1 min-w-0">
-            <ImageAttachments images={images} onChange={setImages} label={t('addExpense.addReceiptPhoto')} />
           </div>
-        </div>
-        {guideActive('group') && groupId && (
-          <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Next →</button>
+
+        {guideReached('category') && (
+        <section className={clsx("space-y-1.5", guideWrapClass('category'))} data-tour="expense-category">
+          {stepBadge('category')}
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-[10px] font-bold text-primary uppercase tracking-widest opacity-60">{t('addExpense.category')}</h2>
+            {/* Informational only — set by the group's owner/admin in Manage Group, every member
+                just sees the current classification here so they know how their spend will be
+                counted in the group's Essential/Optional filter and chart. */}
+            {entryType !== 'income' && category && (
+              <span className={clsx(
+                'text-[9px] font-bold px-2 py-0.5 rounded-full',
+                getCategoryClassification(selectedGroup, category) === 'essential'
+                  ? 'bg-success/10 text-success'
+                  : 'bg-warning/10 text-warning',
+              )}>
+                {getCategoryClassification(selectedGroup, category) === 'essential' ? t('common.essential') : t('common.optional')}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-5 gap-x-1.5 gap-y-2.5">
+            {activeCategories.map(cat => {
+              const catLabel = getCategoryNameOverride(selectedGroup, cat.id) || t(`${entryType === 'income' ? 'income' : 'category'}.${cat.id}`);
+              const picked = category === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => { setCategory(cat.id); if (guideActive('category')) goToNextGuideStep(); }}
+                  className="flex flex-col items-center gap-1 active:scale-95 transition-all"
+                >
+                  <span className={clsx('rounded-full p-[3px] transition-all', picked ? 'ring-[3px] ring-primary' : 'ring-0')}>
+                    <CategoryBadge id={cat.id} icon={cat.icon} size={44} />
+                  </span>
+                  <span className={clsx('text-[10px] leading-tight text-center truncate w-full px-0.5', picked ? 'font-extrabold text-primary' : 'font-bold text-text-muted')}>
+                    {catLabel}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {guideActive('category') && (
+            <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Looks good, Next →</button>
+          )}
+        </section>
         )}
-        </div>
-        )}
+
 
         {guideReached('favorite') && (
           <div className="space-y-1.5">
@@ -907,7 +948,7 @@ export default function AddExpense() {
                           star
                         </span>
                       )}
-                      <span className="text-lg block">{favCat?.icon || '🧾'}</span>
+                      <CategoryBadge id={fav.category} icon={favCat?.icon || '🧾'} size={30} />
                       <span className="block text-xs font-bold text-on-surface truncate mt-1 pr-3">{fav.description || t('addExpense.untitled')}</span>
                       <span className={clsx('block text-[11px] font-bold', fav.type === 'income' ? 'text-success' : 'text-primary')}>
                         {fav.type === 'income' ? '+' : ''}{getCurrencySymbol(favGroup?.currency)}{Number(fav.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -923,107 +964,72 @@ export default function AddExpense() {
           </section>
         )}
 
-        {guideReached('description') && (
-        <div className={clsx("space-y-1.5", guideWrapClass('description'))}>
-        {stepBadge('description')}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1 relative">
-            <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.description')} <span className="text-error">*</span></label>
-            <input
-              value={description}
-              onChange={(e) => { setDescription(e.target.value); if (formErrors.description) setFormErrors((prev) => ({ ...prev, description: '' })); }}
-              onFocus={() => setDescriptionFocused(true)}
-              onBlur={() => setDescriptionFocused(false)}
-              type="text"
-              placeholder={t('addExpense.descriptionPlaceholder')}
-              className={clsx('w-full h-10 bg-white px-3 rounded-lg border focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-text-muted/40 text-sm font-medium', formErrors.description ? 'border-error' : 'border-border-subtle')}
-            />
-            {formErrors.description && <p className="text-xs text-error font-bold px-1 mt-1">{formErrors.description}</p>}
-            {descriptionFocused && descriptionSuggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-border-subtle shadow-lg z-20 overflow-hidden">
-                {descriptionSuggestions.map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    // Fires before the input's onBlur (mousedown precedes blur), so the click
-                    // still lands here instead of the dropdown vanishing out from under it.
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => setDescription(d)}
-                    className="w-full text-left px-3 py-2 text-xs font-medium text-on-surface hover:bg-surface truncate"
-                  >
-                    {d}
-                  </button>
-                ))}
+
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle">
+          <div className="px-3 py-2.5">
+        {guideReached('group') && (
+        <div className={clsx("space-y-1.5", guideWrapClass('group'))}>
+        {stepBadge('group')}
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            {groupLocked && selectedGroup ? (
+              <div className="flex items-center justify-between h-9">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="material-symbols-outlined text-primary text-[18px] shrink-0">{selectedGroup.icon || 'home'}</span>
+                  <span className="text-sm font-bold text-primary truncate">{selectedGroup.name}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGroupLocked(false)}
+                  className="text-[11px] font-bold text-primary underline shrink-0"
+                >
+                  {t('addExpense.change')}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.group')} <span className="text-error">*</span></label>
+                <select
+                  value={groupId}
+                  onChange={(e) => {
+                    setGroupId(e.target.value);
+                    if (formErrors.group) setFormErrors((prev) => ({ ...prev, group: '' }));
+                    if (guideActive('group') && e.target.value) goToNextGuideStep();
+                  }}
+                  className={clsx('w-full h-11 bg-white px-3 rounded-xl border outline-none focus:ring-2 focus:ring-primary/20 text-sm font-bold text-primary', formErrors.group ? 'border-error' : 'border-border-subtle')}
+                >
+                  <option value="">{t('addExpense.selectGroup')}</option>
+                  {selectableGroups.map((group: any) => (
+                    <option key={group.id} value={group.id}>{group.name}</option>
+                  ))}
+                </select>
+                {formErrors.group && <p className="text-xs text-error font-bold px-1 mt-1">{formErrors.group}</p>}
               </div>
             )}
           </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('addExpense.date')}</label>
-            <input 
+
+        </div>
+        {guideActive('group') && groupId && (
+          <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Next →</button>
+        )}
+        </div>
+        )}
+
+          </div>
+          <div className="px-3 py-2.5 flex items-center justify-between gap-3">
+            <label className="text-sm font-bold text-text-muted shrink-0">{t('addExpense.date')}</label>
+            <input
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              type="date" 
-              className="w-full h-10 bg-white px-3 rounded-lg border border-border-subtle focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm font-medium"
+              type="date"
+              className="h-9 bg-surface px-3 rounded-lg border border-border-subtle focus:ring-2 focus:ring-primary/20 outline-none text-sm font-bold text-on-surface"
             />
           </div>
-        </div>
-        {guideActive('description') && (
-          <button type="button" onClick={goToNextGuideStep} disabled={!description.trim()} className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:no-underline px-1">Next →</button>
-        )}
-        </div>
-        )}
-
-        {guideReached('category') && (
-        <section className={clsx("space-y-1.5", guideWrapClass('category'))} data-tour="expense-category">
-          {stepBadge('category')}
-          <div className="flex items-center justify-between px-1">
-            <h2 className="text-[10px] font-bold text-primary uppercase tracking-widest opacity-60">{t('addExpense.category')}</h2>
-            {/* Informational only — set by the group's owner/admin in Manage Group, every member
-                just sees the current classification here so they know how their spend will be
-                counted in the group's Essential/Optional filter and chart. */}
-            {entryType !== 'income' && category && (
-              <span className={clsx(
-                'text-[9px] font-bold px-2 py-0.5 rounded-full',
-                getCategoryClassification(selectedGroup, category) === 'essential'
-                  ? 'bg-success/10 text-success'
-                  : 'bg-warning/10 text-warning',
-              )}>
-                {getCategoryClassification(selectedGroup, category) === 'essential' ? t('common.essential') : t('common.optional')}
-              </span>
-            )}
+          <div className="px-3 py-2.5">
+            <ImageAttachments images={images} onChange={setImages} label={t('addExpense.addReceiptPhoto')} />
           </div>
-          <div className="grid grid-cols-5 gap-1.5">
-            {activeCategories.map(cat => {
-              const catLabel = getCategoryNameOverride(selectedGroup, cat.id) || t(`${entryType === 'income' ? 'income' : 'category'}.${cat.id}`);
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => { setCategory(cat.id); if (guideActive('category')) goToNextGuideStep(); }}
-                  className={clsx(
-                    "flex flex-col items-center justify-center p-1 rounded-lg border transition-all active:scale-95 gap-0.5 min-h-[51px]",
-                    category === cat.id
-                      ? "bg-primary text-white border-primary shadow-inner"
-                      : "bg-white border-border-subtle hover:bg-surface-container"
-                  )}
-                >
-                  <span className="text-[15px] leading-none">
-                    {cat.icon}
-                  </span>
-                  <span className="text-[9px] font-bold text-center leading-tight truncate w-full px-0.5">
-                    {catLabel}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          {guideActive('category') && (
-            <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">Looks good, Next →</button>
-          )}
-        </section>
-        )}
-
         {guideReached('recurring') && (
-        <section className={clsx("bg-white p-3 rounded-2xl border border-border-subtle space-y-3", guideWrapClass('recurring'))}>
+        <section className={clsx("px-3 py-2.5 space-y-3", guideWrapClass('recurring'))}>
             {stepBadge('recurring')}
             <button
               type="button"
@@ -1060,6 +1066,8 @@ export default function AddExpense() {
             )}
           </section>
         )}
+
+          </div>
 
         {guideReached('split') && splitApplies && (
           <motion.div
@@ -1296,15 +1304,19 @@ export default function AddExpense() {
           opened from. Either way, markExpenseAdded() inside handleSave hands the id(s) off to
           Dashboard.tsx so the group tile highlights (and auto-expands to show) whatever was just
           added, the moment the user actually gets back there. */}
+      {/* Pinned footer — in the card's own flow (not floating over the form), so nothing is ever hidden behind the Save buttons.
+          Slides up above the amount keypad while that is open. "Save & Add More" resets the form and stays for another entry;
+          "Save" closes back to wherever this screen was opened from. Either way, markExpenseAdded() inside handleSave hands the
+          id(s) off to Dashboard.tsx so the group tile highlights whatever was just added. */}
       {guideDone && (
       <div
-        className="absolute left-4 right-4 z-[95] flex items-center justify-end gap-2"
-        style={{ bottom: showKeypad ? '16rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}
+        className="shrink-0 bg-white border-t border-border-subtle px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center gap-2.5"
+        style={{ marginBottom: showKeypad ? '16rem' : 0 }}
       >
         <button
           onClick={() => handleSave(true)}
           disabled={loading}
-          className="flex items-center gap-1.5 pl-4 pr-4 h-12 bg-white border-2 border-primary text-primary rounded-full font-bold text-sm shadow-lg active:scale-95 transition-all disabled:opacity-50 shrink-0"
+          className="flex-1 flex items-center justify-center gap-1.5 h-12 bg-white border-2 border-primary text-primary rounded-2xl font-bold text-sm active:scale-[0.98] transition-all disabled:opacity-50"
         >
           <span className="material-symbols-outlined text-[18px]">add</span>
           {t('addExpense.saveAddMore')}
@@ -1313,7 +1325,7 @@ export default function AddExpense() {
           onClick={() => handleSave(false)}
           disabled={loading}
           data-tour="expense-save"
-          className="flex items-center gap-1.5 pl-4 pr-5 h-12 bg-primary text-white rounded-full font-bold text-sm shadow-lg active:scale-95 transition-all disabled:opacity-50 shrink-0"
+          className="flex-[1.2] flex items-center justify-center gap-1.5 h-12 bg-primary text-white rounded-2xl font-bold text-sm active:scale-[0.98] transition-all disabled:opacity-50"
         >
           <span className="material-symbols-outlined text-[20px]">{loading ? 'progress_activity' : 'check'}</span>
           {loading ? t('addExpense.saving') : t('common.save')}

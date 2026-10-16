@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -1669,14 +1670,7 @@ export default function GroupAnalysisSummary() {
                           className="space-y-1 p-1 hover:bg-surface-container/40 rounded-xl transition-all cursor-pointer"
                         >
                           <div className="flex items-center gap-3">
-                            <div className={clsx(
-                              'w-8 h-8 rounded-lg border flex items-center justify-center flex-shrink-0',
-                              isIncome ? 'bg-[#0F7A38]/10 border-[#0F7A38]/20' : 'bg-primary/5 border-primary/10',
-                            )}>
-                              <span className="text-sm">
-                                {CATEGORIES_LIST.find(c => c.id === entry.name)?.icon || '🧾'}
-                              </span>
-                            </div>
+                            <CategoryBadge id={entry.name} icon={CATEGORIES_LIST.find(c => c.id === entry.name)?.icon || '🧾'} size={32} />
                             <div className="flex-1 min-w-0">
                               <div className="flex justify-between items-center mb-1">
                                 <span className={clsx('font-bold truncate text-xs', isIncome ? 'text-[#0F7A38]' : 'text-primary')}>

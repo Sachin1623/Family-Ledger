@@ -1,4 +1,5 @@
 import React from 'react';
+import CategoryBadge from './CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc } from 'firebase/firestore';
@@ -111,7 +112,7 @@ export default function ExpenseQuickView({
               <div className="bg-surface p-3 rounded-xl border border-border-subtle">
                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('common.category')}</p>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-base">{categoryIcon === '❓' ? '🧾' : categoryIcon}</span>
+                  <CategoryBadge id={expense.category} icon={categoryIcon === '❓' ? '🧾' : categoryIcon} size={28} />
                   <span className="text-sm font-bold text-primary break-words min-w-0">{categoryName}</span>
                 </div>
               </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
@@ -1137,7 +1138,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                             {Number(expense.date.slice(8, 10))}
                           </span>
                         )}
-                        <span className="text-sm">{icon}</span>
+                        <CategoryBadge id={expense.category} icon={icon} size={26} />
                         {isGroupFavorite && (
                           <span className="material-symbols-outlined text-[13px] text-warning shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} title="Favorite">star</span>
                         )}
