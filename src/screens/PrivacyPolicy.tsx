@@ -50,7 +50,10 @@ export default function PrivacyPolicy() {
             </p>
             <h3 className="font-semibold text-primary">F.1 Analytics</h3>
             <p>
-              We use Google Analytics (Firebase Analytics) to understand how the app is used and to find and fix problems — things like which screens are opened and how often, not the content of your expenses or messages. In the installed Android app (outside Europe) this runs by default, using Firebase's Android analytics with a random app instance id — no name or email — and also helps us measure whether our ads lead to sign-ups; a notice shown the first time you open the app lets you turn it off, and you can change it later from Profile → Privacy. On the web, and for devices in Europe, it only runs if you've opted in via the consent prompt. Turning it off doesn't limit any feature. You can find your current choice, and change it, from Settings.
+              We use Google Analytics (Firebase Analytics) to understand how the app is used and to find and fix problems — things like which screens are opened and how often, not the content of your expenses or messages. In the installed Android app (outside Europe) this runs by default: Firebase's Android analytics records events such as the first launch, sign-up and creating a group, tied to a random app instance id and your device's Android advertising ID — never your name, email, expenses, messages or health data. We use it to improve the app and to measure whether our Google Ads campaigns lead to installs and sign-ups; it is not used to show you personalised ads inside FamilyLedger, and we do not sell it. A notice shown the first time you open the app lets you turn it off, and you can change that later from Profile → Privacy (you can also reset or delete your advertising ID in your phone's Android settings). On the web, and on devices in Europe, analytics only runs if you've opted in via the consent prompt. Turning it off doesn't limit any feature. You can find your current choice, and change it, from Settings.
+            </p>
+            <p>
+              We also keep simple anonymous daily counters on our own servers, such as how many times the sign-in screen was opened and how many sign-ins succeeded or failed. These record only the event name and a short error code — no account, device or IP address is stored with them — and help us find and fix sign-in problems.
             </p>
             <h3 className="font-semibold text-primary">F.2 App Version Check and Device Information</h3>
             <p>
@@ -137,7 +140,7 @@ export default function PrivacyPolicy() {
             FamilyLedger uses industry-standard cloud services (Firebase) to store and synchronize your data in real-time across your devices and with group, loan, or shop members as applicable. Your data is stored securely and access is restricted according to our security rules. App Lock settings are the one exception — they are stored only on your local device, never in the cloud.
           </p>
           <p>
-            Our application servers and database are hosted on Google Cloud in Singapore. Some Google services we rely on (such as sign-in, push notifications and, where you've opted in, analytics) may also process limited data in other regions.
+            Our application servers and database are hosted on Google Cloud in Singapore. Some Google services we rely on (such as sign-in, push notifications and analytics) may also process limited data in other regions.
           </p>
           <p>
             Goal amounts and Financial Account balances/account numbers (Sections 1.J–K) get an extra layer on top of that: they're individually encrypted before being written to our database, using a key scoped to that specific goal or account. Even someone with direct database access sees only unreadable ciphertext, not the real number — only you, authenticated as yourself (or someone you've explicitly shared that specific goal with, for that goal only), can ever have it decrypted.
@@ -187,7 +190,7 @@ export default function PrivacyPolicy() {
           <h2 className="text-xl font-bold text-primary">6. Legal Basis for Processing (EEA/UK Users)</h2>
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>Performance of a contract:</strong> account data, financial/group data, and the other features described in Section 1 are processed because they're necessary to actually provide the app to you — without them, the core service (tracking and splitting shared expenses) can't function.</li>
-            <li><strong>Consent:</strong> analytics (Section 3) only run if you've actively opted in via the in-app consent prompt; you can decline it or change your mind at any time, and the app works identically either way.</li>
+            <li><strong>Consent and choice:</strong> on the web and on devices in Europe, analytics (Section 1.F.1) only run if you've actively opted in via the consent prompt. In the installed Android app elsewhere, they run by default and you can turn them off at any time from the first-run notice or Profile → Privacy. The app works identically either way.</li>
             <li><strong>Legitimate interests:</strong> security, fraud/abuse prevention, and diagnosing technical problems, balanced against your right to privacy.</li>
             <li><strong>Legal obligation:</strong> where we're required to disclose information by law (see Section 4).</li>
           </ul>
