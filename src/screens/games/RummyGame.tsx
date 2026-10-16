@@ -3,7 +3,7 @@ import { GameShell, GameHeader, GameLeaveButton } from '../../components/GameShe
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, updateDoc, collection, query, where, documentId } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, documentId, getDocFromServer } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -433,6 +433,14 @@ export default function RummyGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.currentTurnSeatIndex, gameId]);
 
+  // Pulls the game document straight from the server; the live listener picks the fresh copy up immediately.
+  const nudgeGame = (delayMs: number) => {
+    if (!gameId) return;
+    setTimeout(() => { getDocFromServer(doc(db, 'rummyGames', gameId)).catch(() => {}); }, delayMs);
+  };
+
+  const [winDeclared, setWinDeclared] = useState(false);
+
   const call = async (path: string, body: Record<string, unknown>) => {
     if (!user) return;
     setBusy(true);
@@ -446,8 +454,12 @@ export default function RummyGame() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Request failed.');
+      // A move that can END the game: make sure the screen hears about it even if the live feed is slow.
+      if (/declare|drop/.test(path)) { nudgeGame(800); nudgeGame(3500); }
       return json;
     } catch (err: any) {
+      // "Game is not active" means it already ended (e.g. the win went through a moment ago): refresh at once.
+      if (/not active|already/i.test(err?.message || '')) nudgeGame(0);
       setError(err.message || 'Something went wrong.');
       throw err;
     } finally {
@@ -592,14 +604,14 @@ export default function RummyGame() {
     allGroupsValidForWin;
 
   const handleDeclareWinNow = async () => {
-    if (!canDeclareWinNow || !mandatoryFive || !mandatoryFour || !mandatoryThree) return;
+    if (!canDeclareWinNow || !mandatoryFive || !mandatoryFour || !mandatoryThree || winDeclared) return;
     await call('/api/rummy/declare-win', {
       discardCardId: looseForWin[0],
       five: mandatoryFive,
       four: mandatoryFour,
       three: mandatoryThree,
       groups: otherGroupsForWin,
-    }).catch(() => {});
+    }).then(() => setWinDeclared(true)).catch(() => {});
     // A win clears the game to 'finished' via the live listener; an incorrect declaration drops
     // this player server-side — either way there's nothing further to reconcile in local state.
   };
@@ -1188,7 +1200,7 @@ export default function RummyGame() {
                     <TablePill tone="light" onClick={handleEnterMeld543}>Declare 5-4-3</TablePill>
                   )}
                   {isMyTurn && game.turnPhase === 'discard' && (
-                    <TablePill tone="success" onClick={handleDeclareWinNow} disabled={!canDeclareWinNow || busy}>Declare Win</TablePill>
+                    <TablePill tone="success" onClick={handleDeclareWinNow} disabled={!canDeclareWinNow || busy || winDeclared}>{winDeclared ? 'Declared ✓' : 'Declare Win'}</TablePill>
                   )}
                   {isMyTurn && game.turnPhase === 'discard' && !canDeclareWinNow && (
                     <span className="hidden landscape:inline text-[9px] text-emerald-100/70 max-w-[11rem] leading-tight">

@@ -3,7 +3,7 @@ import { GameShell, GameHeader, GameLeaveButton, GameStatusBar } from '../../com
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, updateDoc, collection, query, where, documentId } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, documentId, getDocFromServer } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -332,6 +332,14 @@ export default function Rummy13Game() {
   // funnel through this one helper, which sends whichever id field the endpoint expects alongside
   // `gameId` always carrying the TABLE id too (every endpoint that also needs to notify/label off
   // the table — e.g. discard's notifyGameTurn — reads `deal.tableId` server-side instead).
+  // Pulls the table and deal straight from the server; the live listeners pick the fresh copies up immediately.
+  const nudgeGame = (delayMs: number) => {
+    setTimeout(() => {
+      if (tableId) getDocFromServer(doc(db, 'rummy13Tables', tableId)).catch(() => {});
+      if (dealId) getDocFromServer(doc(db, 'rummy13Deals', dealId)).catch(() => {});
+    }, delayMs);
+  };
+
   const call = async (path: string, body: Record<string, unknown>) => {
     if (!user) return;
     setBusy(true);
@@ -345,8 +353,11 @@ export default function Rummy13Game() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Request failed.');
+      // A move that can END the deal or game: make sure the screen hears about it even if the live feed is slow.
+      if (/declare|drop|show/.test(path)) { nudgeGame(800); nudgeGame(3500); }
       return json;
     } catch (err: any) {
+      if (/not active|already/i.test(err?.message || '')) nudgeGame(0);
       setError(err.message || 'Something went wrong.');
       throw err;
     } finally {
