@@ -73,7 +73,7 @@ export default function ScrambleMultiplayerGame() {
   const [lastSolved, setLastSolved] = React.useState<{ word: string; points: number; key: number } | null>(null);
   React.useEffect(() => {
     if (!lastSolved) return;
-    const t = setTimeout(() => setLastSolved(null), 1250);
+    const t = setTimeout(() => setLastSolved(null), 800);
     return () => clearTimeout(t);
   }, [lastSolved]);
   const [perWordStartedAt, setPerWordStartedAt] = React.useState(Date.now());
@@ -448,6 +448,7 @@ export default function ScrambleMultiplayerGame() {
       <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white bg-[radial-gradient(ellipse_at_50%_0%,#1d2b57_0%,#0c1230_55%,#070a18_100%)]">
         <style>{`
           @keyframes mpTile{0%{transform:scale(.6) rotate(-8deg);opacity:0}60%{transform:scale(1.15) rotate(2deg);opacity:1}100%{transform:scale(1) rotate(0);opacity:1}}
+          @keyframes solvedPill{0%{transform:translateY(8px) scale(.7);opacity:0}25%{transform:translateY(0) scale(1.08);opacity:1}100%{transform:translateY(-14px) scale(1);opacity:0}}
           @keyframes mpPts{0%{transform:translateY(24px) scale(.3);opacity:0}30%{transform:translateY(0) scale(1.25);opacity:1}100%{transform:translateY(-34px) scale(1);opacity:0}}
           @keyframes mpBurst{0%{transform:translate(0,0) rotate(0) scale(.4);opacity:1}100%{transform:translate(var(--dx),var(--dy)) rotate(var(--rot)) scale(1);opacity:0}}
           @keyframes mpRise{0%{transform:translateY(16px);opacity:0}100%{transform:translateY(0);opacity:1}}
@@ -712,16 +713,13 @@ export default function ScrambleMultiplayerGame() {
           )}
         </main>
 
-        {/* Word solved — the tiles pop gold and the points fly up */}
+        {/* Word solved: a small points pill that fades fast, so the next word is never covered */}
         {lastSolved && game.status === 'active' && (
-          <div className="pointer-events-none absolute inset-0 z-[40] flex flex-col items-center justify-center" style={{ background: 'radial-gradient(circle at 50% 40%, rgba(90,61,10,0.55), rgba(7,10,24,0.25) 70%)' }}>
-            <div className="flex gap-2 flex-wrap justify-center">
-              {lastSolved.word.split('').map((l, i) => (
-                <div key={i} className={clsx('w-[50px] h-[56px] rounded-2xl flex items-center justify-center font-black text-[27px] uppercase', tileFace)} style={{ animation: `mpTile 0.4s cubic-bezier(.3,1.4,.5,1) ${i * 0.07}s both` }}>{l}</div>
-              ))}
-            </div>
-            <p className="mt-3 text-[3rem] leading-none font-black text-amber-300 drop-shadow-[0_0_20px_rgba(245,196,81,0.9)]" style={{ animation: 'mpPts 1.1s ease-out 0.15s both' }}>+{lastSolved.points}</p>
+        <div className="pointer-events-none absolute left-0 right-0 top-[88px] z-[40] flex justify-center">
+          <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#2a1d05]/90 border border-amber-300/70 shadow-[0_0_18px_rgba(245,196,81,0.45)]" style={{ animation: 'solvedPill 0.75s ease-out both' }}>
+            <span className="text-lg leading-none font-black text-amber-300">+{lastSolved.points}</span>
           </div>
+        </div>
         )}
       </div>
 
