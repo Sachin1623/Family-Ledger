@@ -752,7 +752,7 @@ export default function Rummy13Game() {
           </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        <main className="flex-1 overflow-y-auto p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] space-y-4">
           {isPool && (
             <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-1.5">
               <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Final Standings</p>

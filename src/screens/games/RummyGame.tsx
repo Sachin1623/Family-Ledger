@@ -822,7 +822,7 @@ export default function RummyGame() {
 
         {/* Everyone's revealed hand — the only scrolling region, so the winner banner above stays
             put while this scrolls underneath it. */}
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        <main className="flex-1 overflow-y-auto p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] space-y-4">
           {game.players.map((p) => {
             const revealed = game.revealedHands?.[p.uid];
             const isWinner = p.uid === game.winnerUid;
