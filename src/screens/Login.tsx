@@ -223,6 +223,12 @@ export default function Login() {
     handleRedirectResult();
   }, [from, navigate]);
 
+  // Must sit above the early returns below: every hook has to run on every render, or React throws error #300 the moment sign-in
+  // completes and `user` appears.
+  React.useEffect(() => {
+    trackFunnel('login_screen_view');
+  }, []);
+
   if (loading) return null;
   if (user) return <Navigate to={from} replace />;
 
@@ -315,10 +321,6 @@ export default function Login() {
       setStatusMessage(null);
     }
   };
-
-  React.useEffect(() => {
-    trackFunnel('login_screen_view');
-  }, []);
 
   const handleGoogleSignIn = async () => {
     trackFunnel('google_tap');
