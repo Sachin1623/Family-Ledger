@@ -9,7 +9,7 @@ export default function PrivacyPolicy() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Privacy Policy</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: October 14, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 16, 2026</p>
           <p>
             FamilyLedger ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our mobile application and services.
           </p>
