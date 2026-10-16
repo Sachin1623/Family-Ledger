@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import {ErrorBoundary} from './components/ErrorBoundary';
 import './index.css';
+import {keepAppFresh} from './lib/keepAppFresh';
 
 // Prevent benign background Vite HMR or WebSocket connection failures from causing unhandled rejections
 const isHmrError = (err: any): boolean => {
@@ -30,6 +31,8 @@ window.addEventListener('error', (event) => {
     event.preventDefault();
   }
 }, true);
+
+if (import.meta.env.PROD) keepAppFresh();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
