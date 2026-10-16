@@ -30,6 +30,7 @@ import { loadSpreadPosters } from '../lib/spreadPosterCache';
 import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
 import { ShareBrandBadge } from '../components/ShareBrandBadge';
+import ShareAppButtons from '../components/ShareAppButtons';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -1186,57 +1187,14 @@ export default function Profile() {
             <p className="text-xs text-text-muted">
               {t('profile.knowSomeone')}
             </p>
-            <button
-              onClick={() => handleShareApp('native')}
-              className="w-full bg-primary text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-sm"
-            >
-              <span className="material-symbols-outlined text-[18px]">{typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}</span>
-              <span>{typeof navigator !== 'undefined' && (navigator as any).share ? t('profile.shareFamilyLedger') : t('profile.copyShareMessage')}</span>
-            </button>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleShareApp('whatsapp')}
-                className="bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
-              >
-                <ShareBrandBadge platform="whatsapp" />
-                WhatsApp
-              </button>
-              <button
-                onClick={() => handleShareApp('facebook')}
-                className="bg-[#1877F2]/10 text-[#1877F2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#1877F2]/20 active:scale-[0.98] transition-all border border-[#1877F2]/20"
-              >
-                <ShareBrandBadge platform="facebook" />
-                Facebook
-              </button>
-              <button
-                onClick={() => handleShareApp('instagram')}
-                className="bg-[#D62976]/10 text-[#B01E5E] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#D62976]/20 active:scale-[0.98] transition-all border border-[#D62976]/20"
-              >
-                <ShareBrandBadge platform="instagram" />
-                Instagram
-              </button>
-              <button
-                onClick={() => handleShareApp('twitter')}
-                className="bg-[#0F1419]/10 text-[#0F1419] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0F1419]/20 active:scale-[0.98] transition-all border border-[#0F1419]/20"
-              >
-                <ShareBrandBadge platform="x" />
-                X
-              </button>
-              <button
-                onClick={() => handleShareApp('linkedin')}
-                className="col-span-2 bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
-              >
-                <ShareBrandBadge platform="linkedin" />
-                LinkedIn
-              </button>
-            </div>
-            {shareNote && <p className="text-[11px] font-bold text-primary bg-primary/5 rounded-lg px-2.5 py-1.5">{shareNote}</p>}
-            <button
-              onClick={handleShareLinkOnly}
-              className="w-full text-center text-[11px] font-bold text-primary underline underline-offset-2"
-            >
-              {t('profile.shareLinkOnly')}
-            </button>
+            <ShareAppButtons
+              onShare={handleShareApp}
+              onLinkOnly={handleShareLinkOnly}
+              primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
+              primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? t('profile.shareFamilyLedger') : t('profile.copyShareMessage')}
+              linkOnlyLabel={t('profile.shareLinkOnly')}
+              note={shareNote}
+            />
             <p className="text-[10px] text-text-muted">
               {t('profile.forAnyOtherApp')}
             </p>

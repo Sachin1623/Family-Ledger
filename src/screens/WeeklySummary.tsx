@@ -5,7 +5,11 @@ import { Capacitor } from '@capacitor/core';
 import { renderRecapCard } from '../lib/recapCardImage';
 import { buildRecapView } from '../lib/recapFeatures';
 import { installLinksText } from '../lib/cardCanvas';
-import { shareOrDownloadFile } from '../lib/fileShare';
+import { shareOrDownloadFile, shareText } from '../lib/fileShare';
+import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
+import { logGrowthEvent } from '../lib/growthEvents';
+import type { ShareTarget } from '../lib/spreadTheWord';
+import ShareAppButtons from '../components/ShareAppButtons';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
@@ -50,6 +54,11 @@ interface SummaryDoc {
   goalsTracked?: number;
   accountsMonitored?: number;
   kudos: string;
+}
+
+function buildShortShareMessage(summary: SummaryDoc): string {
+  const w = summary.week;
+  return `🙌 My week on FamilyLedger: ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} played, ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} tracked, ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} chatted with — all in one family app 👇\n${installLinksText()}`;
 }
 
 function buildShareMessage(summary: SummaryDoc): string {
@@ -190,32 +199,47 @@ export default function WeeklySummary() {
     }
   };
 
-  const handleShareStatus = async () => {
+  const [shareNote, setShareNote] = React.useState<string | null>(null);
+
+  // Same flow as Profile's "Spread the Word": a brand button opens that app's own composer with the recap picture when the
+  // phone supports it, otherwise the phone's share sheet carries the picture and text, otherwise a text-only fallback.
+  const handleShareApp = async (target: ShareTarget) => {
     if (!active) return;
+    setShareNote(null);
     const message = buildShareMessage(active);
-    if (await shareViaOsSheet(message)) return;
-    navigator.clipboard?.writeText(message).catch(() => {});
-    alert('Share message copied! Paste it into WhatsApp yourself — the share sheet isn\'t supported on this device/browser.');
+    const text = target === 'twitter' ? buildShortShareMessage(active) : message;
+    logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
+    const blob = await buildRecapBlob(active).catch(() => null);
+    if (blob && target !== 'native') {
+      const direct = await shareImageToApp(target as DirectShareTarget, blob, text);
+      if (direct.status === 'shared') {
+        if (direct.captionCopied) setShareNote("Caption copied — paste it into your post. (Facebook and Instagram don't let apps fill it in.)");
+        return;
+      }
+      if (direct.status === 'not_installed') setShareNote("That app doesn't seem to be installed — choose another app from the share sheet instead.");
+    }
+    if (blob && (await shareViaOsSheet(text))) return;
+    // No image sharing here — fall back to the same text/link shares as everywhere else.
+    if (target === 'native') {
+      navigator.clipboard?.writeText(message).catch(() => {});
+      alert('Share message copied! (Sharing is not supported on this device/browser.)');
+      return;
+    }
+    if (target === 'whatsapp') window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+    else if (target === 'twitter') window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, '_blank');
+    else if (target === 'facebook') window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(SHARE_LANDING_URL)}`, '_blank');
+    else if (target === 'linkedin') window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(SHARE_LANDING_URL)}`, '_blank');
+    else {
+      navigator.clipboard?.writeText(message).catch(() => {});
+      alert('Caption copied! Open Instagram and paste it into your post.');
+    }
   };
 
-  const handleSendWhatsApp = async () => {
+  const handleShareLinkOnly = async () => {
     if (!active) return;
-    const message = buildShareMessage(active);
-    if (await shareViaOsSheet(message)) return;
-    // wa.me can't carry an image via URL params at all — text-only fallback, same as before.
-    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
-  };
-
-  const handleShareFacebook = async () => {
-    if (!active) return;
-    const message = buildShareMessage(active);
-    if (await shareViaOsSheet(message)) return;
-    // Facebook's own sharer.php ONLY ever accepts a bare URL from an external caller (a real,
-    // unfixable platform restriction) and has no way to receive custom text OR an image from us —
-    // this only runs if the OS share sheet itself isn't available above.
-    navigator.clipboard?.writeText(message).catch(() => {});
-    alert('Copied your recap! In the Facebook box that opens: 1) Paste (your message + link), 2) Tap the photo icon and attach a screenshot yourself — Facebook doesn\'t let us pre-fill either one automatically.');
-    window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(SHARE_LANDING_URL)}`, '_blank');
+    const result = await shareText('FamilyLedger', buildShareMessage(active));
+    if (result === 'copied') alert('Message and link copied!');
+    logGrowthEvent('share_link_only', user?.uid);
   };
 
   return (
@@ -299,20 +323,13 @@ export default function WeeklySummary() {
                   <p className="text-xs text-text-muted text-center leading-snug">
                     Enjoying FamilyLedger? Share how it's helping you stay connected with family & friends — one tap:
                   </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button onClick={handleShareStatus} className="py-2.5 rounded-xl bg-[#25D366]/10 text-[#25D366] text-[11px] font-bold flex flex-col items-center gap-1">
-                      <span className="material-symbols-outlined text-[18px]">ios_share</span>
-                      WhatsApp Status
-                    </button>
-                    <button onClick={handleSendWhatsApp} className="py-2.5 rounded-xl bg-[#25D366]/10 text-[#25D366] text-[11px] font-bold flex flex-col items-center gap-1">
-                      <span className="material-symbols-outlined text-[18px]">send</span>
-                      Send to WhatsApp
-                    </button>
-                    <button onClick={handleShareFacebook} className="py-2.5 rounded-xl bg-[#1877F2]/10 text-[#1877F2] text-[11px] font-bold flex flex-col items-center gap-1">
-                      <span className="material-symbols-outlined text-[18px]">thumb_up</span>
-                      Facebook
-                    </button>
-                  </div>
+                  <ShareAppButtons
+                    onShare={handleShareApp}
+                    onLinkOnly={handleShareLinkOnly}
+                    primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
+                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? 'Share my recap' : 'Copy share message'}
+                    note={shareNote}
+                  />
                 </div>
               </>
             )}
