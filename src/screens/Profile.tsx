@@ -30,7 +30,7 @@ import { loadSpreadPosters } from '../lib/spreadPosterCache';
 import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
 import { ShareBrandBadge } from '../components/ShareBrandBadge';
-import ShareAppButtons from '../components/ShareAppButtons';
+import SpreadTheWordShare from '../components/SpreadTheWordShare';
 
 // Looks up a blocked/muted uid's current display name on demand (Profile only ever stores the
 // uid on the viewer's own doc — any signed-in user can read another user's basic doc, so this
@@ -527,11 +527,6 @@ export default function Profile() {
   // instead means the very next tap — a genuine, in-the-moment click on the Share button — is what
   // actually triggers it, which works everywhere.
   const shareCardRef = useRef<HTMLDivElement>(null);
-  // Tapping any Share button first opens the poster picker (a fresh set of themed posters is drawn
-  // every time); the chosen poster is then shared to whichever target was tapped.
-  const [pickerTarget, setPickerTarget] = useState<ShareTarget | null>(null);
-  // A short note under the share buttons (e.g. "Caption copied — paste it into your post").
-  const [shareNote, setShareNote] = useState<string | null>(null);
   // Draw the posters quietly in the background shortly after Profile opens, so the picker is instant.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -742,107 +737,6 @@ export default function Profile() {
     }
   };
 
-  // Tries the OS share sheet WITH the feature banner image first, for every target — including
-  // the per-platform buttons, not just "native" — before falling back to that platform's own
-  // text-only link. This is a deliberate improvement over routing platform buttons straight to
-  // their web intents: WhatsApp/Facebook/X's own NATIVE apps (unlike their web share intents) can
-  // receive an image fine via the OS's standard share mechanism, so picking e.g. "Facebook" from
-  // the OS sheet after tapping the Facebook button can actually carry the banner through, where
-  // Facebook's web-only sharer.php intent flatly cannot.
-  //
-  // Native-first (Capacitor Share + Filesystem) — same reasoning fileShare.ts's shareOrDownloadFile
-  // already documents: navigator.share's file support is unreliable inside THIS app's actual
-  // installed Android WebView specifically, even though it works fine in a desktop/mobile browser
-  // — it silently did nothing on a real native install, the image never actually attached. Only
-  // falls to navigator.share when there's no native Share/Filesystem plugin available at all (i.e.
-  // genuinely running in a browser, not the installed app).
-  const shareViaOsSheetWithBanner = async (message: string, blob: Blob): Promise<boolean> => {
-    if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Filesystem') && Capacitor.isPluginAvailable('Share')) {
-      try {
-        const base64Data = await blobToBase64(blob);
-        const written = await Filesystem.writeFile({ path: 'familyledger-features.png', data: base64Data, directory: Directory.Cache });
-        await Share.share({ title: 'FamilyLedger', text: message, url: written.uri });
-        return true;
-      } catch (err: any) {
-        if (typeof err?.message === 'string' && /cancel/i.test(err.message)) return true; // user dismissed the sheet
-        console.error('Native image share failed, falling back:', err);
-        return false;
-      }
-    }
-
-    const nav = navigator as any;
-    if (!nav.share) return false;
-    const image = new File([blob], 'familyledger-features.png', { type: 'image/png' });
-    if (nav.canShare?.({ files: [image] })) {
-      try {
-        await nav.share({ title: 'FamilyLedger', text: message, files: [image] });
-        return true;
-      } catch (err) {
-        if ((err as any)?.name === 'AbortError') return true; // user cancelled — don't fall through to a platform link
-        console.error('Image share failed, falling back:', err);
-      }
-    }
-    return false;
-  };
-
-  // `shareUrl` is the Play Store listing directly — read by people, in the message text itself,
-  // for WhatsApp/native/X and pasted straight into the message. Facebook/LinkedIn's web share
-  // intents are different: they don't render any caption text or image we hand them at all, ONLY
-  // ever a bare `u=<url>` — so those two point at `webShareUrl` (the backend's /share landing
-  // page) instead, which carries real Open Graph tags (title/description/share-banner.png) that
-  // Facebook/LinkedIn actually read and populate the post preview from. That's the whole
-  // mechanism for a genuine single-click Facebook/LinkedIn share: there's no way to pre-attach an
-  // image/caption to their web intent directly, only to make the URL they fetch describe itself.
-  //
-  // The feature-banner image is genuinely useful context, but Android's share intent never
-  // guarantees a receiving app renders the accompanying caption text once an image is attached —
-  // several chat apps show the picture and silently drop the text alongside it, and that dropped
-  // text is exactly where the real, clickable Play Store link lives (the link printed inside the
-  // banner image itself is just flat pixels — never an actual hyperlink, in any app). This sends
-  // the same message as a genuine text-only share, so whatever app receives it is guaranteed to
-  // render — and linkify — the link, independent of whatever the image share did.
-  const handleShareLinkOnly = async () => {
-    const { message } = buildShareMessages();
-    const result = await shareText('FamilyLedger', message);
-    if (result === 'copied') alert(t('profile.linkCopied'));
-    logGrowthEvent('share_link_only', user?.uid);
-  };
-
-  // Every Share button opens the poster picker; once a poster is chosen this shares it.
-  const handleShareApp = (target: ShareTarget) => setPickerTarget(target);
-
-  const handlePosterChosen = async (blob: Blob, posterId: SpreadVariantId) => {
-    const target = pickerTarget;
-    if (!target) return;
-    // The post text follows the poster the person picked (money / health / family / games / all).
-    const { message, shortMessage } = buildShareMessages(posterId);
-    const text = target === 'twitter' ? shortMessage : message;
-    setPickerTarget(null);
-    setShareNote(null);
-
-    // A specific platform button opens THAT app directly (its own composer — post / story / reel
-    // options where the app offers them), when the installed build supports it and the app is on the
-    // phone. Otherwise it falls through to the normal share sheet below, exactly as before.
-    if (target !== 'native') {
-      const direct = await shareImageToApp(target as DirectShareTarget, blob, text);
-      if (direct.status === 'shared') {
-        logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
-        if (direct.captionCopied) setShareNote("Caption copied — paste it into your post. (Facebook and Instagram don't let apps fill it in.)");
-        return;
-      }
-      if (direct.status === 'not_installed') {
-        setShareNote(`That app doesn't seem to be installed — choose another app from the share sheet instead.`);
-      }
-    }
-
-    const shared = await shareViaOsSheetWithBanner(text, blob);
-    if (shared) {
-      logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
-      return;
-    }
-    // Image sharing unsupported (or no share sheet at all) — same text-only fallbacks as before.
-    shareAppPlain(target, user?.uid, posterId);
-  };
 
 
   const updateMemberships = async (updates: { displayName?: string, photoURL?: string }) => {
@@ -1187,14 +1081,7 @@ export default function Profile() {
             <p className="text-xs text-text-muted">
               {t('profile.knowSomeone')}
             </p>
-            <ShareAppButtons
-              onShare={handleShareApp}
-              onLinkOnly={handleShareLinkOnly}
-              primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
-              primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? t('profile.shareFamilyLedger') : t('profile.copyShareMessage')}
-              linkOnlyLabel={t('profile.shareLinkOnly')}
-              note={shareNote}
-            />
+            <SpreadTheWordShare />
             <p className="text-[10px] text-text-muted">
               {t('profile.forAnyOtherApp')}
             </p>
@@ -1867,7 +1754,6 @@ export default function Profile() {
         </div>
       </main>
 
-      <SpreadPosterPicker open={pickerTarget !== null} onClose={() => setPickerTarget(null)} onShare={handlePosterChosen} />
 
       <AnimatePresence>
         {showDeleteConfirm && (

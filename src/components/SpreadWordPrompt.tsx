@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
 import { logGrowthEvent } from '../lib/growthEvents';
-import { ShareBrandBadge } from './ShareBrandBadge';
+import SpreadTheWordShare from './SpreadTheWordShare';
 
 // Global "Spread the Word" popup, driven by a single `app_config/spreadWordPrompt` doc an admin
 // writes via AdminBroadcast.tsx's "Send Now" button — same mechanism as BroadcastBanner.tsx/
@@ -81,42 +81,7 @@ export default function SpreadWordPrompt() {
                 Share it with family or friends who split expenses, track budgets, or save toward
                 goals — a quick share goes a long way.
               </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleShare('whatsapp')}
-                  className="bg-[#25D366]/10 text-[#128C4A] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#25D366]/20 active:scale-[0.98] transition-all border border-[#25D366]/20"
-                >
-                  <ShareBrandBadge platform="whatsapp" />
-                  WhatsApp
-                </button>
-                <button
-                  onClick={() => handleShare('facebook')}
-                  className="bg-[#1877F2]/10 text-[#1877F2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#1877F2]/20 active:scale-[0.98] transition-all border border-[#1877F2]/20"
-                >
-                  <ShareBrandBadge platform="facebook" />
-                  Facebook
-                </button>
-                <button
-                  onClick={() => handleShare('twitter')}
-                  className="bg-[#0F1419]/10 text-[#0F1419] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0F1419]/20 active:scale-[0.98] transition-all border border-[#0F1419]/20"
-                >
-                  <ShareBrandBadge platform="x" />
-                  X
-                </button>
-                <button
-                  onClick={() => handleShare('linkedin')}
-                  className="bg-[#0A66C2]/10 text-[#0A66C2] py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#0A66C2]/20 active:scale-[0.98] transition-all border border-[#0A66C2]/20"
-                >
-                  <ShareBrandBadge platform="linkedin" />
-                  LinkedIn
-                </button>
-              </div>
-              <button
-                onClick={handleLinkOnly}
-                className="w-full text-center text-[11px] font-bold text-primary underline underline-offset-2"
-              >
-                Just copy the message & link
-              </button>
+              <SpreadTheWordShare onShared={markSeen} />
             </div>
 
             <div className="p-5 pt-4 shrink-0">
