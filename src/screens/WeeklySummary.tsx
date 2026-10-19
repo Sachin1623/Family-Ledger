@@ -128,6 +128,59 @@ function PeriodStats({ current, previous }: { current: SummaryBucket; previous: 
 }
 
 
+
+const RECAP_BUILD_STEPS = [
+  'Counting your games…',
+  'Adding up your expenses…',
+  'Checking in on your goals and health logs…',
+  'Finding your week’s highlights…',
+  'Polishing your picture…',
+];
+
+// Shown while the recap picture is being drawn (a second or two, longer on a slow phone): a branded card the same shape as the
+// picture, a gentle shimmer, and a line that changes so it clearly feels like something is happening. If drawing fails it says so
+// and offers a retry instead of leaving an empty box.
+function RecapPreviewPlaceholder({ failed, onRetry }: { failed: boolean; onRetry: () => void }) {
+  const [step, setStep] = React.useState(0);
+  React.useEffect(() => {
+    if (failed) return;
+    const t = setInterval(() => setStep((n) => Math.min(n + 1, RECAP_BUILD_STEPS.length - 1)), 1400);
+    return () => clearInterval(t);
+  }, [failed]);
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="relative w-full aspect-[4/5] rounded-2xl overflow-hidden shadow-md flex flex-col items-center justify-center text-center px-8 gap-4 text-white"
+      style={{ background: 'radial-gradient(ellipse at 50% 30%, #0f5a6b 0%, #0b3a4f 55%, #072436 100%)' }}
+    >
+      <style>{`@keyframes recapSheen{0%{transform:translateX(-120%)}100%{transform:translateX(120%)}}@keyframes recapBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}`}</style>
+      {!failed && (
+        <div aria-hidden className="absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent" style={{ animation: 'recapSheen 1.8s ease-in-out infinite' }} />
+      )}
+      <span className="material-symbols-outlined text-[44px] text-amber-300" style={{ animation: failed ? undefined : 'recapBob 1.6s ease-in-out infinite', fontVariationSettings: "'FILL' 1" }}>
+        {failed ? 'error' : 'auto_awesome'}
+      </span>
+      {failed ? (
+        <>
+          <p className="text-base font-black">We couldn’t draw your picture</p>
+          <p className="text-xs text-white/70">Your numbers below are fine. Give it another try.</p>
+          <button onClick={onRetry} className="px-5 py-2.5 rounded-xl bg-white text-primary text-sm font-black active:scale-95">Try again</button>
+        </>
+      ) : (
+        <>
+          <p className="text-base font-black">Creating your weekly recap…</p>
+          <p className="text-xs text-white/75 min-h-[1.25rem] transition-opacity">{RECAP_BUILD_STEPS[step]}</p>
+          <div className="w-40 h-1.5 rounded-full bg-white/15 overflow-hidden">
+            <div className="h-full rounded-full bg-amber-300 transition-all duration-1000 ease-out" style={{ width: `${((step + 1) / RECAP_BUILD_STEPS.length) * 100}%` }} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function WeeklySummary() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -136,6 +189,8 @@ export default function WeeklySummary() {
   // The picture that gets shared, drawn on a canvas (see recapCardImage.ts) — also shown here as the
   // preview, so what you see is exactly what goes out.
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = React.useState(false);
+  const [previewAttempt, setPreviewAttempt] = React.useState(0);
 
   const [summariesSnap, loading] = useCollection(
     user ? query(collection(db, 'userWeeklySummaries'), where('userId', '==', user.uid), orderBy('generatedAt', 'desc'), limit(20)) : null,
@@ -165,19 +220,25 @@ export default function WeeklySummary() {
     }
     let cancelled = false;
     let url: string | null = null;
+    // Start from "creating…" every time (another recap selected, or a retry), never leaving the previous picture or a blank box up.
+    setPreviewUrl(null);
+    setPreviewFailed(false);
     buildRecapBlob(active)
       .then((blob) => {
         if (cancelled) return;
         url = URL.createObjectURL(blob);
         setPreviewUrl(url);
       })
-      .catch((err) => console.error('Recap preview failed:', err));
+      .catch((err) => {
+        console.error('Recap preview failed:', err);
+        if (!cancelled) setPreviewFailed(true);
+      });
     return () => {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id]);
+  }, [active?.id, previewAttempt]);
 
   // All three buttons below try the SAME best path first — hand the recap picture (plus the full
   // text) to the phone's own share sheet, so whichever app the user picks (WhatsApp — a contact or
@@ -271,9 +332,17 @@ export default function WeeklySummary() {
             {active && (
               <>
                 {previewUrl ? (
-                  <img src={previewUrl} alt="Your weekly recap picture" className="w-full rounded-2xl shadow-md" />
+                  <motion.img
+                    key={previewUrl}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.35 }}
+                    src={previewUrl}
+                    alt="Your weekly recap picture"
+                    className="w-full rounded-2xl shadow-md"
+                  />
                 ) : (
-                  <div className="w-full aspect-[4/5] rounded-2xl bg-surface animate-pulse" />
+                  <RecapPreviewPlaceholder failed={previewFailed} onRetry={() => setPreviewAttempt((n) => n + 1)} />
                 )}
 
                 {(active.goalsTracked !== undefined || active.accountsMonitored !== undefined) && (
