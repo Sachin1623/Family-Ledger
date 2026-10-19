@@ -15957,7 +15957,10 @@ async function startServer() {
     app.use(express.static(distPath, {
       index: false,
       setHeaders: (res, filePath) => {
-        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        if (filePath.includes(`${path.sep}spread-posters${path.sep}`)) {
+          // Pre-made Spread the Word posters: the version is part of the file name, so they can be cached for a long time.
+          res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         } else if (/[\\/](sw|registerSW|workbox-.*)\.js$/.test(filePath)) {
           // The service worker script (and its registration/runtime helpers) must always be

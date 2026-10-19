@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "posters": "node scripts/generate-spread-posters.mjs",
     "test": "vitest run"
   },
   "dependencies": {

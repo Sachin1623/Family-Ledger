@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import type { SpreadPoster, SpreadVariantId } from '../lib/spreadCardImage';
-import { loadSpreadPosters, peekSpreadPosters } from '../lib/spreadPosterCache';
+import { loadSpreadPosters, peekSpreadPosters, ensurePng } from '../lib/spreadPosterCache';
 
 // "Pick a poster to share": every time it opens it draws a fresh set of themed posters (each with
 // 4–6 features, the logo and a Play Store QR code) and lets the person choose the one that fits who
@@ -76,7 +76,7 @@ export default function SpreadPosterPicker({
     if (!poster) return;
     setSharing(true);
     try {
-      await onShare(poster.blob, poster.id);
+      await onShare(await ensurePng(poster.blob), poster.id);
     } finally {
       setSharing(false);
     }
@@ -97,7 +97,7 @@ export default function SpreadPosterPicker({
             <div className="p-4 border-b border-border-subtle flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-base font-black text-primary">Pick a poster to share</h2>
-                <p className="text-[11px] text-text-muted">Tap the one you like — or shuffle for new wording.</p>
+                <p className="text-[11px] text-text-muted">This week’s posters — tap the one you like, or shuffle for more.</p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={shuffle} disabled={loading} className="p-2 hover:bg-surface rounded-full disabled:opacity-40" aria-label="Shuffle posters">

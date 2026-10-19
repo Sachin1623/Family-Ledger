@@ -3,8 +3,17 @@
 // the install footer with a scannable Play Store QR code. Pure canvas — no remote images, so it
 // renders the same everywhere and never trips CORS-tainted-canvas errors.
 import QRCode from 'qrcode';
-import { isIosApp } from './platform';
-export { isIosApp };
+import { isIosApp as detectIosApp } from './platform';
+
+// The pre-made posters are drawn once for BOTH phones (the iPhone version has no Google Play wording and a web QR code), so the poster
+// generator can force a platform; in the app it is left unset and the real device decides.
+let platformOverride: 'ios' | 'android' | null = null;
+export function setPosterPlatform(p: 'ios' | 'android' | null) {
+  platformOverride = p;
+}
+export function isIosApp(): boolean {
+  return platformOverride ? platformOverride === 'ios' : detectIosApp();
+}
 
 export const W = 1080;
 export const H = 1350;
@@ -144,6 +153,10 @@ export function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not create the image.'))), 'image/png');
   });
+}
+
+export function canvasToJpeg(canvas: HTMLCanvasElement, quality = 0.84): Promise<Blob> {
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('jpeg export failed'))), 'image/jpeg', quality));
 }
 
 export async function fontsReady() {

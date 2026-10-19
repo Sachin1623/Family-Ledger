@@ -3,7 +3,7 @@
 // A fresh set is drawn every time the user taps Share, so they can pick the one that fits who
 // they're sending it to. Same brand look as the win cards; every poster has a Play Store QR code.
 import {
-  W, FONT, EMOJI_FONT, roundRectPath, fitText, wrapLines, seeded, newPosterCanvas, canvasToPng, fontsReady,
+  W, FONT, EMOJI_FONT, roundRectPath, fitText, wrapLines, seeded, newPosterCanvas, canvasToPng, canvasToJpeg, fontsReady,
   paintBackground, paintLogoBadge, paintInstallFooter,
 } from './cardCanvas';
 
@@ -113,6 +113,68 @@ export const SPREAD_VARIANTS: SpreadVariant[] = [
   },
 ];
 
+
+// ---- Weekly editions ----------------------------------------------------------------------------------------------------------------
+// A new set of posters every week. Each edition changes the wording (one line from the bank below), which feature tiles lead and which
+// are shown, a "This week" spotlight and a slight shift of the glow colour, so the pictures people share are never the same two weeks
+// running. Editions are drawn ahead of time (scripts/generate-spread-posters.mjs) and the app shows the one for the current week.
+export const SPREAD_EDITIONS = 12;
+
+const WEEKLY_TAGLINES: Record<SpreadVariantId, string[]> = {
+  all: [
+    'Money, health, chats and games — together', 'Everything your household needs in one place', 'The family app that actually gets used',
+    'Bills, doses, chats and game night — sorted', 'One shared home for the whole family', 'Less juggling, more together time',
+    'Your family’s day, in one app', 'From groceries to game night', 'Simple tools for a busy household',
+    'Everyone on the same page, finally', 'Free, private and made for families', 'Plan it, split it, share it — together',
+  ],
+  money: [
+    'Shared money for families, flatmates and friends', 'No more chasing who owes who', 'Know where every rupee went',
+    'Rent, groceries, trips — all split fairly', 'Budgets that the whole house can see', 'Set it once, bills log themselves',
+    'Save together, reach goals faster', 'Settle up in one tap', 'Trips, dinners, flat bills — sorted',
+    'See the month at a glance', 'Fair splits without the awkward chat', 'Track it together, stress less',
+  ],
+  health: [
+    'Records and reminders everyone can rely on', 'Care for the people you love, together', 'Never miss a dose again',
+    'Every reading, in one trusted place', 'Baby’s vaccine dates, remembered for you', 'Share with family, stay in control',
+    'Healthy habits, tracked with ease', 'Reports your doctor will appreciate', 'Peace of mind for the whole family',
+    'Reminders that actually ring', 'BP and sugar, trends at a glance', 'Looking after each other, made simpler',
+  ],
+  family: [
+    'One shared space for the whole household', 'Less nagging, more getting things done', 'Shopping lists everyone can tick off',
+    'Chores, plans and reminders — shared', 'Your household’s group chat and to-dos', 'Run the home together, calmly',
+    'Everyone knows what’s next', 'Plans that don’t get lost in chats', 'Small tasks, big difference at home',
+    'Together is easier', 'The household hub for busy families', 'Share the load, share the list',
+  ],
+  games: [
+    'Play with family anywhere — no real-money wagering', 'Classic games, new memories', 'Game night, wherever you are',
+    'Rummy, Ludo, Chess — with the people you love', 'Challenge cousins across cities', 'Quick rounds, long-lasting fun',
+    'Bring the family table to your phone', 'Laugh, compete, repeat', 'Free games, zero wagering',
+    'Beat the bots or beat your brother', 'Word races and card classics', 'Pull up a chair — it’s game time',
+  ],
+};
+
+// Turns the glow colour a little for each edition, so the pictures look different at a glance.
+function shiftGlow(glow: string, edition: number): string {
+  const [r, g, b] = glow.split(',').map((n) => Number(n.trim()));
+  const max = Math.max(r, g, b) / 255;
+  const min = Math.min(r, g, b) / 255;
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  if (d) {
+    if (max === r / 255) h = ((g / 255 - b / 255) / d) % 6;
+    else if (max === g / 255) h = (b / 255 - r / 255) / d + 2;
+    else h = (r / 255 - g / 255) / d + 4;
+  }
+  h = ((h * 60 + (edition % 4) * 14) % 360 + 360) % 360;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r1, g1, b1] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [r1, g1, b1].map((n) => Math.round((n + m) * 255)).join(', ');
+}
+
 export interface SpreadPoster {
   id: SpreadVariantId;
   label: string;
@@ -120,8 +182,14 @@ export interface SpreadPoster {
   blob: Blob;
 }
 
-export async function renderSpreadCard(id: SpreadVariantId, seed = Date.now()): Promise<Blob> {
-  const v = SPREAD_VARIANTS.find((x) => x.id === id) || SPREAD_VARIANTS[0];
+export async function renderSpreadCard(id: SpreadVariantId, seed = Date.now(), edition?: number, asJpeg = false): Promise<Blob> {
+  const base = SPREAD_VARIANTS.find((x) => x.id === id) || SPREAD_VARIANTS[0];
+  // An edition (a particular week) rotates which tiles lead, picks that week's wording and shifts the glow colour.
+  const weekly = edition !== undefined;
+  const rotate = weekly ? edition % base.tiles.length : 0;
+  const v: SpreadVariant = weekly
+    ? { ...base, glow: shiftGlow(base.glow, edition), tiles: [...base.tiles.slice(rotate), ...base.tiles.slice(0, rotate)] }
+    : base;
   await fontsReady();
   const { canvas, ctx } = newPosterCanvas();
   const rnd = seeded(seed + v.id.charCodeAt(0) * 131);
@@ -151,14 +219,26 @@ export async function renderSpreadCard(id: SpreadVariantId, seed = Date.now()): 
   ctx.restore();
 
   ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
-  const tagline = v.taglines[Math.floor(rnd() * v.taglines.length)];
+  const tagline = weekly ? WEEKLY_TAGLINES[v.id][edition % WEEKLY_TAGLINES[v.id].length] : v.taglines[Math.floor(rnd() * v.taglines.length)];
   ctx.fillText(fitText(ctx, tagline, W - 140, 32, '600', 22), W / 2, 442);
+
+  // The weekly spotlight: the feature leading this week's poster.
+  if (weekly) {
+    const spot = `✨ This week: ${v.tiles[0].title}`;
+    ctx.font = `800 24px ${FONT}`;
+    const pw = Math.min(W - 200, ctx.measureText(spot).width + 56);
+    roundRectPath(ctx, W / 2 - pw / 2, 466, pw, 44, 22);
+    ctx.fillStyle = `rgba(${v.glow}, 0.28)`;
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(fitText(ctx, spot, pw - 28, 24, '800', 16), W / 2, 497);
+  }
 
   // ---- Feature tiles (4–6), two per row; an odd last tile is centred ----
   const tiles = v.tiles.slice(0, 6);
   const rows = Math.ceil(tiles.length / 2);
   const gap = 22;
-  const areaTop = 490;
+  const areaTop = weekly ? 538 : 490;
   const areaBottom = 1040;
   const tileH = Math.min(220, (areaBottom - areaTop - (rows - 1) * gap) / rows);
   const tileW = (W - 140 - gap) / 2;
@@ -196,7 +276,7 @@ export async function renderSpreadCard(id: SpreadVariantId, seed = Date.now()): 
   });
 
   paintInstallFooter(ctx, 'Try it free 👉');
-  return canvasToPng(canvas);
+  return asJpeg ? canvasToJpeg(canvas) : canvasToPng(canvas);
 }
 
 // Draws the whole set afresh — called every time the user taps Share.
