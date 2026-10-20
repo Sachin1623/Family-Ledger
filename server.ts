@@ -1851,12 +1851,15 @@ async function sendGameInvites(
   // doesn't create a NEW invite (one already exists from the original invite call) — it only
   // refreshes lastPokedAt so "last nudged" is visible, never resets status/createdAt on an invite
   // the recipient may have already responded to.
-  await Promise.all(targets.map((uid) => {
+  // The host's waiting room lists "invited, waiting to accept" people, so the invite records who it went to.
+  const inviteeProfiles = poke ? [] : await Promise.all(targets.map((uid) => db.collection('users').doc(uid).get().catch(() => null)));
+  await Promise.all(targets.map((uid, i) => {
     const inviteId = `${routeSegment}_${gameId}_${uid}`;
     const ref = db.collection('gameInvites').doc(inviteId);
     if (poke) return ref.set({ lastPokedAt: new Date().toISOString() }, { merge: true });
+    const profile: any = inviteeProfiles[i]?.data?.() || {};
     return ref.set({
-      toUid: uid, gameId, routeSegment, gameLabel, code: game.code,
+      toUid: uid, toName: profile.displayName || '', toPhoto: profile.photoURL || '', gameId, routeSegment, gameLabel, code: game.code,
       hostUid: callerUid, hostName, hostPhoto: host?.photoURL || '',
       status: 'pending', createdAt: new Date().toISOString(),
     });

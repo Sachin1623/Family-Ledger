@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { collection, query, where } from 'firebase/firestore';
+import { useCollection } from 'react-firebase-hooks/firestore';
+import { db } from '../lib/firebase';
 import { clsx } from 'clsx';
 import ShareGameButton from './ShareGameButton';
 import PresenceDot from './PresenceDot';
@@ -95,6 +98,36 @@ export default function WaitingRoom({
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);
   const isHost = !!myUid && hostUid === myUid;
+
+  // Invites this host has sent for this table. An invite document exists only while it is waiting: the person joining
+  // (or declining) removes it. So "still there and not seated" = waiting to accept; "was waiting, now gone and not seated" = declined.
+  const [sentValue] = useCollection(isHost && myUid ? query(collection(db, 'gameInvites'), where('hostUid', '==', myUid)) : null);
+  const seatedUids = useMemo(() => new Set(players.map((p) => p.uid)), [players]);
+  const waitingInvites = useMemo(
+    () =>
+      (sentValue?.docs || [])
+        .map((d) => d.data() as any)
+        .filter((d) => d.code === code && !seatedUids.has(d.toUid))
+        .map((d) => ({ uid: d.toUid as string, name: (d.toName as string) || 'Invited player', photo: (d.toPhoto as string) || '', at: d.createdAt as string })),
+    [sentValue, code, seatedUids],
+  );
+  const everWaiting = useRef(new Map<string, { name: string; photo: string }>());
+  const [declined, setDeclined] = useState<{ uid: string; name: string; photo: string }[]>([]);
+  useEffect(() => {
+    if (!sentValue) return;
+    const nowWaiting = new Set(waitingInvites.map((w) => w.uid));
+    waitingInvites.forEach((w) => everWaiting.current.set(w.uid, { name: w.name, photo: w.photo }));
+    const gone: { uid: string; name: string; photo: string }[] = [];
+    everWaiting.current.forEach((v, uid) => {
+      if (!nowWaiting.has(uid) && !seatedUids.has(uid)) gone.push({ uid, ...v });
+    });
+    setDeclined(gone);
+  }, [sentValue, waitingInvites, seatedUids]);
+  const inviteAvatar = (name: string, photo: string, dim: boolean) => (
+    <div className={clsx('w-9 h-9 shrink-0 rounded-full overflow-hidden bg-gradient-to-br from-[#6f86b3] to-[#3a4a75] flex items-center justify-center text-xs font-black text-white', dim && 'opacity-60')}>
+      {photo ? <img src={photo} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (name || '?').slice(0, 1).toUpperCase()}
+    </div>
+  );
   const host = players.find((p) => p.uid === hostUid);
   const open = Math.max(0, maxPlayers - players.length);
   const canStart = players.length >= minToStart && !startBlocked && !startBusy;
@@ -201,6 +234,29 @@ export default function WaitingRoom({
           {customSeats ? customSeats : layout === 'table' ? table : list}
           {afterSeats}
 
+          {isHost && (waitingInvites.length > 0 || declined.length > 0) && (
+            <div className="rounded-2xl bg-[#121a2e] border border-[#1f2a47] p-3 space-y-2">
+              <p className="text-[10px] font-black tracking-[0.14em] text-amber-300">INVITES SENT</p>
+              {waitingInvites.map((w) => (
+                <div key={w.uid} className="flex items-center gap-3">
+                  {inviteAvatar(w.name, w.photo, false)}
+                  <span className="flex-1 min-w-0 truncate text-sm font-bold">{w.name}</span>
+                  <span className="shrink-0 flex items-center gap-1.5 text-[11px] font-extrabold text-amber-300">
+                    <span className="w-3 h-3 rounded-full border-2 border-amber-300 border-t-transparent animate-spin" />
+                    Waiting to accept
+                  </span>
+                </div>
+              ))}
+              {declined.map((w) => (
+                <div key={w.uid} className="flex items-center gap-3">
+                  {inviteAvatar(w.name, w.photo, true)}
+                  <span className="flex-1 min-w-0 truncate text-sm font-bold text-white/60">{w.name}</span>
+                  <span className="shrink-0 text-[11px] font-extrabold text-red-300">Declined</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {error && <p className="text-xs font-bold text-red-300 px-1">{error}</p>}
 
           {!isPlayer && onJoin && open > 0 && (
@@ -239,7 +295,7 @@ export default function WaitingRoom({
                 <p className="text-[15px] font-black">Invite to the table</p>
                 <span className="text-[11px] font-extrabold text-white/50">{open} seat{open === 1 ? '' : 's'} open</span>
               </div>
-              <div className="rounded-2xl bg-white text-on-surface p-2">{invitePicker}</div>
+              <div className="rounded-2xl bg-white text-on-surface p-2">{React.isValidElement(invitePicker) ? React.cloneElement(invitePicker as React.ReactElement<any>, { onSent: () => setShowInvite(false) }) : invitePicker}</div>
               <button onClick={() => setShowInvite(false)} className="w-full py-3 rounded-2xl text-sm font-extrabold bg-white/10 border border-white/15">Done</button>
             </div>
           </div>

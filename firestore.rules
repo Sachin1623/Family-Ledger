@@ -2822,6 +2822,8 @@ service cloud.firestore {
     // after accepting" are both just the recipient deleting their own copy.
     match /gameInvites/{inviteId} {
       allow read, delete: if isSignedIn() && resource.data.toUid == request.auth.uid;
+      // The host reads the invites they sent, to show who has been invited and is still to accept.
+      allow read: if isSignedIn() && resource.data.hostUid == request.auth.uid;
       allow create, update: if false;
     }
 
