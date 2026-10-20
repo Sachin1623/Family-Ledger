@@ -112,11 +112,11 @@ const BabyCaregiverInviteRow: React.FC<{ item: PendingActionItem }> = ({ item })
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
-  const [profileSnap, profileLoading] = useDocument(item.babyProfileId ? doc(db, 'babyProfiles', item.babyProfileId) : null);
 
-  if (profileLoading) return null;
-  const stale = !profileSnap?.exists();
-
+  // The invite is always answerable. It used to try to read the baby's profile first and show "this child profile no longer exists" (with
+  // only a Dismiss that declined the invite) when that failed — but the security rules only let the owner or an ACCEPTED caregiver read a
+  // profile, so a person with a still-pending invite could never read it, every invite looked stale, and nobody could accept. The invite
+  // itself already carries the child's name and who sent it, which is all this row needs.
   const respond = async (status: 'accepted' | 'declined') => {
     setBusy(true);
     try {
@@ -126,13 +126,6 @@ const BabyCaregiverInviteRow: React.FC<{ item: PendingActionItem }> = ({ item })
     finally { setBusy(false); }
   };
 
-  if (stale) {
-    return (
-      <ActionRow photo={item.senderPhoto} name={item.senderName} title={t('pendingActions.babyCaregiverTitle')} subtitle={t('pendingActions.babyCaregiverStale', { name: item.babyProfileName })}>
-        <RejectButton onClick={() => respond('declined')} busy={busy} label={t('pendingActions.dismiss')} />
-      </ActionRow>
-    );
-  }
   return (
     <ActionRow
       photo={item.senderPhoto}
