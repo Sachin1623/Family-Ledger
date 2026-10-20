@@ -600,7 +600,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   return (
     <div className="fixed inset-0 z-[280] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm hidden sm:block" onClick={onClose} />
-      <div className="relative w-full h-full sm:h-[640px] sm:max-w-md bg-white sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] sm:pt-0">
+      <div className="relative w-full h-full sm:h-[640px] sm:max-h-full sm:max-w-md bg-white sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden pt-[env(safe-area-inset-top)] sm:pt-0">
         <div className="px-3 py-2.5 flex items-center gap-2.5 shrink-0 text-white" style={{ background: 'linear-gradient(135deg,#0f766e,#0e4f5c)' }}>
           <button onClick={onClose} className="w-9 h-9 rounded-full hover:bg-white/15 flex items-center justify-center shrink-0" aria-label="Back">
             <span className="material-symbols-outlined text-[22px]">arrow_back</span>
