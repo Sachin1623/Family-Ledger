@@ -56,6 +56,26 @@ export default function GroupExpenses() {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
   const [showYearDropdown, setShowYearDropdown] = useState(false);
+  // Same collapsible-filters behaviour as Analysis Summary: a compact chip row on top, the full filter card opens from its "Filters" chip.
+  const [showFilters, setShowFilters] = useState(false);
+  const activeFilterCount =
+    [selectedMemberId, selectedCategory, selectedGroupIdFilter].filter(Boolean).length +
+    (selectedType !== 'all' ? 1 : 0) +
+    (selectedClassification !== 'all' ? 1 : 0) +
+    (selectedMonths.length > 0 ? 1 : 0) +
+    (selectedYears.length > 0 ? 1 : 0) +
+    (startDate || endDate ? 1 : 0);
+  const clearAllFilters = () => {
+    setSelectedMemberId(null);
+    setSelectedCategory(null);
+    setSelectedGroupIdFilter(null);
+    setSelectedType('all');
+    setSelectedClassification('all');
+    setSelectedMonths([]);
+    setSelectedYears([]);
+    setStartDate('');
+    setEndDate('');
+  };
 
   // Tapping a row opens this read-only view first (via the shared ExpenseQuickView, same
   // component the Dashboard uses) — its own "Edit or Delete in Group Expenses" button navigates
@@ -795,7 +815,7 @@ export default function GroupExpenses() {
                 <span className="material-symbols-outlined text-[18px] text-primary shrink-0" title="Split Enabled">call_split</span>
               )}
             </div>
-            <p className="text-xs text-text-muted font-medium truncate max-w-[200px] sm:max-w-none">{t('groupExpenses.viewingTransactionsFor', { scope: groupId === 'all' ? t('groupExpenses.allGroups') : (groupData?.name || '') })}</p>
+            <p className="text-xs text-text-muted font-medium truncate max-w-[200px] sm:max-w-none">{t('groupExpenses.viewingTransactionsFor', { scope: groupId === 'all' ? (selectedGroupIdFilter ? (allGroups.find((g: any) => g.id === selectedGroupIdFilter)?.name || t('groupExpenses.allGroups')) : t('groupExpenses.allGroups')) : (groupData?.name || '') })}</p>
           </div>
         </div>
         {/* Search */}
@@ -810,12 +830,45 @@ export default function GroupExpenses() {
           />
         </div>
 
+        {/* Chip row — same look as Analysis Summary: the group as a primary pill (when this page spans every group) and a "Filters" chip
+            that opens the filter card below, with a count of what is active. */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+          {groupId === 'all' && (
+            <div className="relative shrink-0">
+              <select
+                className="max-w-[170px] bg-primary text-white rounded-full text-xs font-bold pl-3.5 pr-8 py-2 appearance-none outline-none cursor-pointer shadow-sm truncate"
+                onChange={(e) => setSelectedGroupIdFilter(e.target.value || null)}
+                value={selectedGroupIdFilter || ''}
+                aria-label="Group"
+              >
+                <option value="">{t('groupExpenses.allGroups')}</option>
+                {allGroups.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-white pointer-events-none text-[18px]">expand_more</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+            aria-expanded={showFilters}
+            className={clsx(
+              'shrink-0 flex items-center gap-1.5 rounded-full text-xs font-bold px-3.5 py-2 border shadow-sm',
+              showFilters || activeFilterCount > 0 ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-text-muted border-border-subtle',
+            )}
+          >
+            <span className="material-symbols-outlined text-[16px]">tune</span>
+            {t('analysis.filtersTitle')}{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ''}
+          </button>
+        </div>
+
         {/* Filters — same layout as GroupAnalysisSummary.tsx's filters card: a "Filters" label
             sharing its row with the Category/Member dropdowns, a non-wrapping type/classification
             pill row below it, then a year-dropdown + scrollable-month-strip row. Group and Date
             Range have no Analysis equivalent (this page can span multiple groups and needs a real
             date range, Analysis doesn't), so they stay as their own rows underneath. */}
-        <section className="bg-white p-4 rounded-xl border border-border-subtle shadow-sm space-y-3">
+        <section className={clsx('bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3', !showFilters && 'hidden')}>
           <div className="flex items-center justify-between gap-1.5">
             <h2 className="text-[10px] font-black text-text-muted uppercase tracking-widest flex items-center gap-1.5 shrink-0">
               <span className="material-symbols-outlined text-[14px]">filter_alt</span>
@@ -980,25 +1033,6 @@ export default function GroupExpenses() {
             </div>
           </div>
 
-          {groupId === 'all' && (
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.group')}</label>
-              <div className="relative">
-                <select
-                  value={selectedGroupIdFilter || ''}
-                  onChange={(e) => setSelectedGroupIdFilter(e.target.value || null)}
-                  className="w-full bg-surface-container border border-border-subtle rounded-lg pl-3 pr-8 py-2 text-xs font-bold text-primary appearance-none focus:ring-0 outline-none"
-                >
-                  <option value="">{t('groupExpenses.allGroups')}</option>
-                  {allGroups.map((g: any) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
-                <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-lg pointer-events-none">expand_more</span>
-              </div>
-            </div>
-          )}
-
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('groupExpenses.dateRange')}</label>
             <div className="flex items-center gap-2">
@@ -1029,6 +1063,17 @@ export default function GroupExpenses() {
             </div>
           </div>
         </section>
+
+        {activeFilterCount > 0 && (
+          <div className="flex items-center justify-between gap-2 bg-primary/5 px-3 py-2 rounded-xl">
+            <p className="text-[10px] font-bold text-primary">
+              {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'} active
+            </p>
+            <button onClick={clearAllFilters} className="text-[10px] font-black text-primary uppercase tracking-wide hover:underline">
+              Clear All
+            </button>
+          </div>
+        )}
 
         {/* Transactions list */}
         <section className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden">
