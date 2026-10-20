@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { collection, doc, query, setDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, query, setDoc, where } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -71,13 +71,18 @@ export default function VaccineCaregivers() {
   const filteredCandidates = candidates.filter((c) => !searchQuery.trim() || c.displayName.toLowerCase().includes(searchQuery.trim().toLowerCase()));
 
   const [inviting, setInviting] = useState<string | null>(null);
-  const alreadyInvitedUids = new Set(invites.map((i) => i.caregiverUid));
+  // A declined invite is finished with: that person can be invited again, so only pending / accepted ones block a new invite.
+  const alreadyInvitedUids = new Set(invites.filter((i) => i.status !== 'declined').map((i) => i.caregiverUid));
+  const declinedUids = new Set(invites.filter((i) => i.status === 'declined').map((i) => i.caregiverUid));
 
   const handleInvite = async (target: Candidate) => {
     if (!user || !babyProfile || inviting) return;
     setInviting(target.uid);
     try {
       const id = babyCaregiverInviteId(babyProfile.id, target.uid);
+      // Inviting again after a decline: the old record has to go first (only the invited person may change its status), then a new
+      // pending invite is created in its place.
+      if (declinedUids.has(target.uid)) await deleteDoc(doc(db, 'babyCaregiverInvites', id));
       await setDoc(doc(db, 'babyCaregiverInvites', id), {
         profileId: babyProfile.id,
         profileName: babyProfile.name,
@@ -94,6 +99,25 @@ export default function VaccineCaregivers() {
       alert(t('babyVax.inviteFailed'));
     } finally {
       setInviting(null);
+    }
+  };
+
+  const isOwner = babyProfile?.ownerUid === user?.uid;
+
+  // Owner actions on an existing invite: invite again (after a decline), cancel one still waiting, or remove someone who accepted.
+  const handleReinvite = async (inv: BabyCaregiverInvite) => {
+    if (!babyProfile || inviting) return;
+    const person = candidates.find((c) => c.uid === inv.caregiverUid);
+    await handleInvite(person || { uid: inv.caregiverUid, displayName: '', photoURL: '', via: 'friend' });
+  };
+  const handleRemoveInvite = async (inv: BabyCaregiverInvite, accepted: boolean) => {
+    if (!isOwner || inviting) return;
+    if (accepted && !window.confirm(t('babyVax.removeCaregiverConfirm'))) return;
+    try {
+      await deleteDoc(doc(db, 'babyCaregiverInvites', inv.id));
+    } catch (err) {
+      console.error('Failed to remove caregiver invite:', err);
+      alert(t('babyVax.inviteFailed'));
     }
   };
 
@@ -136,9 +160,25 @@ export default function VaccineCaregivers() {
                     {inv.status === 'pending' ? t('babyVax.invitedNotYetAccepted') : inv.status === 'accepted' ? t('babyVax.ownerRole') : t('babyVax.declined')}
                   </p>
                 </div>
-                <span className={inv.status === 'pending' ? 'text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-full bg-warning/20 text-warning' : 'text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-full bg-surface text-text-muted border border-border-subtle'}>
-                  {t(`babyVax.role${inv.status.charAt(0).toUpperCase()}${inv.status.slice(1)}`)}
-                </span>
+                <div className="shrink-0 flex flex-col items-end gap-1.5">
+                  <span className={inv.status === 'pending' ? 'text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-full bg-warning/20 text-warning' : 'text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-full bg-surface text-text-muted border border-border-subtle'}>
+                    {t(`babyVax.role${inv.status.charAt(0).toUpperCase()}${inv.status.slice(1)}`)}
+                  </span>
+                  {isOwner && inv.status === 'declined' && (
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" onClick={() => handleReinvite(inv)} disabled={inviting === inv.caregiverUid} className="px-2.5 py-1 bg-primary text-white text-[11px] font-bold rounded-lg disabled:opacity-50">
+                        {inviting === inv.caregiverUid ? '…' : t('babyVax.inviteAgain')}
+                      </button>
+                      <button type="button" onClick={() => handleRemoveInvite(inv, false)} className="px-2 py-1 text-[11px] font-bold text-text-muted">{t('babyVax.dismissInvite')}</button>
+                    </div>
+                  )}
+                  {isOwner && inv.status === 'pending' && (
+                    <button type="button" onClick={() => handleRemoveInvite(inv, false)} className="px-2 py-1 text-[11px] font-bold text-error">{t('babyVax.cancelInvite')}</button>
+                  )}
+                  {isOwner && inv.status === 'accepted' && inv.caregiverUid !== user?.uid && (
+                    <button type="button" onClick={() => handleRemoveInvite(inv, true)} className="px-2 py-1 text-[11px] font-bold text-error">{t('babyVax.removeCaregiver')}</button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -169,7 +209,7 @@ export default function VaccineCaregivers() {
                       <span className="text-[11px] font-bold text-text-muted shrink-0">{t('babyVax.alreadyInvited')}</span>
                     ) : (
                       <button type="button" onClick={() => handleInvite(c)} disabled={inviting === c.uid} className="shrink-0 px-3 py-1.5 bg-primary text-white text-xs font-bold rounded-lg disabled:opacity-50">
-                        {inviting === c.uid ? '…' : t('babyVax.invite')}
+                        {inviting === c.uid ? '…' : declinedUids.has(c.uid) ? t('babyVax.inviteAgain') : t('babyVax.invite')}
                       </button>
                     )}
                   </div>
