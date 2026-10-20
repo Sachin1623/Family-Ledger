@@ -6,7 +6,7 @@ import { collection, query, where, orderBy, doc, setDoc, updateDoc, deleteDoc, d
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS, getCategoryClassification, CategoryClassification, getGroupCategories, getCategoryNameOverride, getCategoryIcon } from '../lib/constants';
+import { getCurrencySymbol, guessLocationCurrency, EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS, getCategoryClassification, CategoryClassification, getGroupCategories, getCategoryNameOverride, getCategoryIcon } from '../lib/constants';
 import { updateGlobalStats } from '../services/statsService';
 import Comments from '../components/Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
@@ -351,6 +351,28 @@ export default function GroupExpenses() {
       { expense: 0, income: 0, essential: 0, optional: 0 },
     );
   }, [filteredExpenses, allGroups]);
+
+  // The report can span several groups (All Groups), each with its own currency, so the totals are kept per currency: one currency shows
+  // its own symbol, several show one amount each instead of adding rupees to dollars. Before this, the totals took their symbol from a
+  // single group, so "All Groups" had none and fell back to "$".
+  const totalsByCurrency = useMemo(() => {
+    const map = new Map<string, { expense: number; income: number }>();
+    filteredExpenses.forEach((exp: any) => {
+      const code = allGroups.find((g: any) => g.id === exp.groupId)?.currency || groupData?.currency || guessLocationCurrency();
+      const cur = map.get(code) || { expense: 0, income: 0 };
+      if (exp.type === 'income') cur.income += exp.amount || 0;
+      else cur.expense += exp.amount || 0;
+      map.set(code, cur);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[1].expense + b[1].income - (a[1].expense + a[1].income));
+  }, [filteredExpenses, allGroups, groupData?.currency]);
+  const mixedCurrencies = totalsByCurrency.length > 1;
+  const formatTotals = (kind: 'expense' | 'income') => {
+    const parts = (totalsByCurrency.length ? totalsByCurrency : [[groupData?.currency || guessLocationCurrency(), { expense: 0, income: 0 }] as const])
+      .filter(([, v], i, arr) => v[kind] > 0 || arr.length === 1)
+      .map(([code, v]) => `${getCurrencySymbol(code)}${v[kind].toLocaleString(undefined, { minimumFractionDigits: 2 })}`);
+    return parts.length ? parts.join(' + ') : `${getCurrencySymbol(groupData?.currency || guessLocationCurrency())}0.00`;
+  };
 
   const editingGroupMembers = useMemo(() => {
     if (!editingExpense || !membersValue) return [];
@@ -1016,13 +1038,13 @@ export default function GroupExpenses() {
           <div className="px-4 py-3 border-b border-border-subtle bg-surface-container-low/50 space-y-1">
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-bold text-text-muted uppercase tracking-wider shrink-0">{t('common.expense')} {t('common.total')}</span>
-              <span className="font-black text-primary shrink-0">{currencySymbol}{filteredTotals.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span className="font-black text-primary text-right">{formatTotals('expense')}</span>
             </div>
             {/* Essential/Optional breakdown as a two-color bar (same idiom as Analysis Summary's
                 Member Contributions bars) instead of inline text — text-based %/amount labels
                 squeezed between the total label and amount used to overlap or truncate on
                 narrow screens. %s render below the bar, never on top of other text. */}
-            {filteredTotals.expense > 0 && (
+            {filteredTotals.expense > 0 && !mixedCurrencies && (
               <div className="space-y-1 pt-0.5">
                 <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
                   {filteredTotals.essential > 0 && (
@@ -1048,7 +1070,7 @@ export default function GroupExpenses() {
             )}
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-text-muted uppercase tracking-wider">{t('common.income')} {t('common.total')}</span>
-              <span className="font-black text-[#0F7A38]">{currencySymbol}{filteredTotals.income.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span className="font-black text-[#0F7A38] text-right">{formatTotals('income')}</span>
             </div>
           </div>
 
