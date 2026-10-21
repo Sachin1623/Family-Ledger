@@ -77,7 +77,7 @@ const INCOME_WORDS = ['received', 'earned', 'salary', 'credited', 'income', 'ref
 const FILLER = new Set([
   'i', 'we', 'spent', 'spend', 'spends', 'spending', 'paid', 'pay', 'payed', 'paying', 'bought', 'buy', 'purchased',
   // what the phone's recogniser often hears when you say "spent": "send", "sent", "spin", "bend"
-  'send', 'sent', 'spin', 'bend', 'pant', 'pent', 'bent', 'sand', 'add', 'an', 'a', 'the', 'expense', 'expenses', 'for', 'on', 'to', 'at', 'of', 'my', 'was', 'is', 'it',
+  'send', 'sent', 'spin', 'bend', 'pant', 'pent', 'bent', 'sand', 'had', 'ate', 'eat', 'eaten', 'having', 'took', 'ordered', 'add', 'an', 'a', 'the', 'expense', 'expenses', 'for', 'on', 'to', 'at', 'of', 'my', 'was', 'is', 'it',
   'rupees', 'rupee', 'rs', 'inr', 'only', 'today', 'yesterday', 'ago', 'just', 'please', 'log', 'record', 'received', 'earned', 'got', 'credited',
 ]);
 

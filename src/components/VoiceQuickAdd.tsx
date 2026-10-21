@@ -7,6 +7,7 @@ import VoiceExpenseSheet from './VoiceExpenseSheet';
 import { lastUsedGroupId, loadMyGroups, quickAddFromSpeech, type MyGroup, type QuickAddResult } from '../lib/voiceQuickAdd';
 
 const UNDO_SECONDS = 7;
+const GROUPS_CACHE_KEY = 'fl_voice_groups';
 
 // One-tap "say it and it is added": the listening sheet, then the expense is saved straight away, and a small bar appears with
 // what was added and an Undo. The rest of the family is only told after the Undo time runs out.
@@ -22,14 +23,28 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
   const [left, setLeft] = useState(UNDO_SECONDS);
   const okRef = useRef<Extract<QuickAddResult, { ok: true }> | null>(null);
   const heardOnce = useRef(false);
-  const [groups, setGroups] = useState<MyGroup[]>([]);
-  const [targetId, setTargetId] = useState<string>(groupId || '');
+  // The last known groups are shown instantly (kept from the previous time), then refreshed — so the sheet never sits on "Choose a group"
+  // while the list loads.
+  const [groups, setGroups] = useState<MyGroup[]>(() => {
+    try { return JSON.parse(localStorage.getItem(GROUPS_CACHE_KEY) || '[]'); } catch { return []; }
+  });
+  const [targetId, setTargetId] = useState<string>(() => {
+    if (groupId) return groupId;
+    const last = lastUsedGroupId();
+    try {
+      const cached: MyGroup[] = JSON.parse(localStorage.getItem(GROUPS_CACHE_KEY) || '[]');
+      if (last && cached.some((g) => g.id === last)) return last;
+      if (cached.length === 1) return cached[0].id;
+    } catch { /* ignore */ }
+    return '';
+  });
   useEffect(() => {
     if (!user) return;
     let alive = true;
     loadMyGroups(user.uid).then((list) => {
       if (!alive) return;
       setGroups(list);
+      try { localStorage.setItem(GROUPS_CACHE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
       if (groupId) return;
       // Default: the group last added to; otherwise the only group; otherwise ask.
       const last = lastUsedGroupId();
@@ -90,10 +105,20 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
   // the group yet (that waits for the undo time), so there is nothing to retract.
   const edit = async () => {
     if (!result?.ok) return;
-    const { sentence, groupId: addedTo } = result;
+    const { groupId: addedTo, amount, description, categoryId, date, isIncome, sentence } = result;
     okRef.current = null;
     await result.undo().catch((err) => console.error('undo failed:', err));
-    navigate(`/add-expense?groupId=${addedTo}`, { state: { voiceText: sentence } });
+    // The same query-string prefill a shared receipt uses: the form starts already filled, with no waiting for anything to load first.
+    const q = new URLSearchParams({ groupId: addedTo, amount: String(amount), description, category: categoryId, date });
+    navigate(isIncome ? `/add-expense?groupId=${addedTo}` : `/add-expense?${q.toString()}`, isIncome ? { state: { voiceText: sentence } } : undefined);
+    onDone();
+  };
+
+  // OK: confirm now instead of waiting out the undo time (the group is told and points claimed straight away).
+  const confirmNow = () => {
+    if (!result?.ok) return;
+    result.finalize();
+    okRef.current = null;
     onDone();
   };
 
@@ -127,12 +152,17 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
                     <p className="text-[11px] opacity-80 truncate">{result.categoryName}{result.groupName ? ` · ${result.groupName}` : ''}</p>
                   </div>
                   <div className="shrink-0 flex flex-col gap-1">
-                    <button type="button" onClick={edit} className="px-3 py-1.5 rounded-lg bg-white text-primary font-black text-xs">
-                      {t('voiceExpense.edit')}
+                    <button type="button" onClick={confirmNow} className="px-3 py-1.5 rounded-lg bg-success text-white font-black text-xs">
+                      {t('voiceExpense.ok')}
                     </button>
-                    <button type="button" onClick={undo} className="px-3 py-1.5 rounded-lg bg-white/20 font-black text-xs">
-                      {t('voiceExpense.undo')} ({left})
-                    </button>
+                    <div className="flex gap-1">
+                      <button type="button" onClick={edit} className="px-3 py-1.5 rounded-lg bg-white text-primary font-black text-xs">
+                        {t('voiceExpense.edit')}
+                      </button>
+                      <button type="button" onClick={undo} className="px-3 py-1.5 rounded-lg bg-white/20 font-black text-xs">
+                        {t('voiceExpense.undo')} ({left})
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

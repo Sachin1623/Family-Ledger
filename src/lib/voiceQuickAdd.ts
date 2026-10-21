@@ -29,6 +29,8 @@ export type QuickAddResult =
       expenseId: string;
       amount: number;
       description: string;
+      categoryId: string;
+      date: string;
       categoryName: string;
       categoryIcon: string;
       isIncome: boolean;
@@ -200,6 +202,8 @@ export async function quickAddFromSpeech(params: {
       expenseId: expenseRef.id,
       amount,
       description,
+      categoryId: category,
+      date: expenseDoc.date,
       categoryName,
       categoryIcon: picked?.icon || '🧾',
       isIncome,
