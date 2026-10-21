@@ -91,7 +91,8 @@ const PARENT_OVERRIDES: Record<string, string> = {
 };
 
 const PARENT_PATTERNS: [RegExp, string | ((path: string) => string)][] = [
-  [/^\/games\/ranks\/[^/]+$/, '/games'],
+  // Ranks is opened from a game's own lobby (its 🏅 button), so back returns to that lobby, not the old /games hub.
+  [/^\/games\/ranks\/[^/]+$/, (p) => p.replace('/games/ranks/', '/games/')],
   // Every game below is an exception to the direct-to-Tools shortcut used by their own lobby
   // overrides above: mid-game back returns to the game's own home/lobby rather than skipping past
   // it (Scramble's equivalent exception is in PARENT_OVERRIDES above, since /games/scramble/play is
