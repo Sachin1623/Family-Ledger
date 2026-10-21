@@ -142,6 +142,11 @@ const CATEGORIES: DataCategory[] = [
         sharedWith: 'Any signed-in FamilyLedger user who opens that leaderboard',
       },
       {
+        data: 'What you say to the Talk button on Add Expense (only while you are speaking to it)',
+        why: 'Turn your words into an expense for you to review',
+        sharedWith: 'Only your phone\'s own speech recogniser (Google on Android, Apple on iPhone) — we never receive or store the recording',
+      },
+      {
         data: 'Voice chat audio (only while you have joined)',
         why: 'Let players talk to each other during a game',
         sharedWith: 'Players in that game, directly device-to-device — not recorded or stored by us; they may see your network (IP) address',

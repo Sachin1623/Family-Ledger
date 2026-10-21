@@ -98,7 +98,9 @@
 	<key>NSContactsUsageDescription</key>
 	<string>Used to browse your contacts so you can invite them to a group by SMS.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Used for voice chat with other players during a multiplayer game.</string>
+	<string>Used for voice chat with other players during a multiplayer game, and to hear you when you talk to add an expense.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Used to turn what you say into an expense when you tap Talk on the Add Expense screen. Nothing is saved until you check it and tap Save.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Used to attach an existing photo of a receipt to an expense.</string>
 	<key>UILaunchStoryboardName</key>

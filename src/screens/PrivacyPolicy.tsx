@@ -109,6 +109,10 @@ export default function PrivacyPolicy() {
             <p>
               If you create a Shared Reminder, we store its text, schedule, and (if you enable it) who has acknowledged or completed it. A reminder is visible to whichever group and/or specific friends you choose to share it with when you create it.
             </p>
+            <h3 className="font-semibold text-primary">N.1 Talk to Add an Expense</h3>
+            <p>
+              In the Android and iPhone apps, the Talk button on Add Expense uses your microphone only while you are speaking to it, after your device asks for microphone and speech-recognition permission. What you say is turned into text by your phone's own speech recogniser (Google's on Android, Apple's on iPhone and iPad, which may process the audio on the phone or through Google or Apple, under their own privacy terms). FamilyLedger does not receive or store the recording. The words are read on your device to fill in an amount, a description, a category and a date, and nothing is saved until you check the form and tap Save.
+            </p>
             <h3 className="font-semibold text-primary">N. Payment Receipts You Share</h3>
             <p>
               If you share a payment receipt (for example from PhonePe, Google Pay or Paytm) to FamilyLedger, the picture or PDF is read on your own device — using Google's on-device text recognition on Android and Apple's on-device Vision framework on iPhone and iPad — to find the amount, the payee, the date and the transaction reference. The picture is not sent to any third-party text-recognition service, and the original file is not kept by us. We never connect to your payment apps or bank accounts; we only see the receipt you choose to share.
@@ -127,7 +131,7 @@ export default function PrivacyPolicy() {
             <li>To facilitate expense sharing, income tracking, budgets, and ledger balance calculations</li>
             <li>To operate the Personal Loans and Shopkeeper mode features you choose to use</li>
             <li>To notify you about changes to our service, group activities, loan reminders, or account-wide announcements from our team</li>
-            <li>To read payment receipts you choose to share and pre-fill an expense for you to review</li>
+            <li>To read payment receipts you choose to share, or words you speak with the Talk button, and pre-fill an expense for you to review</li>
             <li>To run the games, leaderboards, and the ranking and turn alerts you've enabled</li>
             <li>To provide customer support</li>
             <li>To detect, prevent, and address technical issues</li>

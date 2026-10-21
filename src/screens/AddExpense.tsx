@@ -26,6 +26,9 @@ import ReceiptBanner, { type ReceiptInfo } from '../components/ReceiptBanner';
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
 import { buildRoster } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
+import VoiceExpenseSheet from '../components/VoiceExpenseSheet';
+import { speechAvailableHere } from '../lib/speech';
+import { parseSpokenExpense } from '../lib/voiceExpense';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 const LAST_EXPENSE_GROUP_KEY = 'fl_last_expense_group';
@@ -76,6 +79,8 @@ export default function AddExpense() {
   const [invitePromptGroupId, setInvitePromptGroupId] = useState<string | null>(null);
   const [closeAfterInvitePrompt, setCloseAfterInvitePrompt] = useState(false);
   const [showKeypad, setShowKeypad] = useState(false);
+  const [showVoice, setShowVoice] = useState(false);
+  const [voiceFilled, setVoiceFilled] = useState(false);
 
   const [paidBy, setPaidBy] = useState('');
   // Multiple payers ("we both chipped in for this") — deliberately separate atoms from paidBy
@@ -221,9 +226,26 @@ export default function AddExpense() {
   // have a group, which isn't true here before the user's picked one.
   const currencySymbol = groupId ? getCurrencySymbol(selectedGroup?.currency) : '';
   const evaluatedAmount = evaluateAmountSum(amount);
+  const voiceAvailable = speechAvailableHere();
   // Group-aware: hides whatever this group's admin has hidden and appends its custom categories —
   // falls back to the raw global list before a group is picked (nothing to scope it to yet).
   const activeCategories = groupId ? getGroupCategories(selectedGroup, entryType === 'income' ? 'income' : 'expense') : (entryType === 'income' ? INCOME_CATEGORIES : CATEGORIES);
+
+  // "Talk to add": fills the form from a spoken sentence. Only fields that were actually heard are changed, and nothing is saved here.
+  const applySpoken = (sentence: string) => {
+    const incomeAllowed = !!selectedGroup?.incomeEnabled;
+    const wantIncome = parseSpokenExpense(sentence, [...INCOME_CATEGORIES], new Date()).isIncome && incomeAllowed;
+    const list = wantIncome ? INCOME_CATEGORIES : activeCategories;
+    const parsed = parseSpokenExpense(sentence, list as any, new Date());
+    if (parsed.amount) setAmount(String(parsed.amount));
+    if (parsed.description) setDescription(parsed.description);
+    if (parsed.date) setDate(parsed.date);
+    if (wantIncome && entryType !== 'income') setEntryType('income');
+    // Changing the entry type resets the category (see the effect below), so the heard category is applied just after it.
+    if (parsed.categoryId) window.setTimeout(() => setCategory(parsed.categoryId!), wantIncome ? 60 : 0);
+    setVoiceFilled(true);
+    setFormErrors({});
+  };
 
   // Income isn't split, and its categories are a different list — switching type resets the
   // category to the new list's first option (skipped on initial mount, so a category arriving
@@ -716,7 +738,20 @@ export default function AddExpense() {
           <section className={clsx("p-3", guideWrapClass('amount'))} data-tour="expense-amount">
           {stepBadge('amount')}
           <div className="flex items-start justify-between gap-2 mb-1">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.amount')} <span className="text-error">*</span></label>
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('addExpense.amount')} <span className="text-error">*</span></label>
+              {voiceAvailable && (
+                <button
+                  type="button"
+                  onClick={() => setShowVoice(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold active:scale-95"
+                  aria-label={t('voiceExpense.talk')}
+                >
+                  <span className="material-symbols-outlined text-[15px]">mic</span>
+                  {t('voiceExpense.talk')}
+                </button>
+              )}
+            </div>
             {groupId && budget && (() => {
               const signedEntryAmount = entryType === 'income' ? 0 : (evaluatedAmount || 0);
               const projectedRemaining = budget.amount - monthSpendSoFar - signedEntryAmount;
@@ -1331,6 +1366,15 @@ export default function AddExpense() {
           {loading ? t('addExpense.saving') : t('common.save')}
         </button>
       </div>
+      )}
+
+      {showVoice && <VoiceExpenseSheet onClose={() => setShowVoice(false)} onHeard={applySpoken} />}
+      {voiceFilled && (
+        <div className="fixed left-4 right-4 bottom-24 z-[120] rounded-xl bg-primary text-white text-xs font-bold px-4 py-3 shadow-lg flex items-center gap-2">
+          <span className="material-symbols-outlined text-[18px]">check_circle</span>
+          <span className="flex-1">{t('voiceExpense.filled')}</span>
+          <button type="button" onClick={() => setVoiceFilled(false)} className="font-black">OK</button>
+        </div>
       )}
 
       {showKeypad && (

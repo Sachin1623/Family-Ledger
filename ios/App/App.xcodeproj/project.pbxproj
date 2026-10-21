@@ -19,6 +19,7 @@
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F3 /* AppPermissionsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* AppPermissionsPlugin.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F5 /* ReceiptSharePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F4 /* ReceiptSharePlugin.swift */; };
+		A1B2C3D4E5F6A7B8C9D0E1F7 /* SpeechRecognitionPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F6 /* SpeechRecognitionPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +38,7 @@
 		EA7E0868303D544500F6C58B /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* AppPermissionsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPermissionsPlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E1F4 /* ReceiptSharePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptSharePlugin.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D0E1F6 /* SpeechRecognitionPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognitionPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -78,6 +80,7 @@
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* AppPermissionsPlugin.swift */,
 				A1B2C3D4E5F6A7B8C9D0E1F4 /* ReceiptSharePlugin.swift */,
+				A1B2C3D4E5F6A7B8C9D0E1F6 /* SpeechRecognitionPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -173,6 +176,7 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D0E1F3 /* AppPermissionsPlugin.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D0E1F5 /* ReceiptSharePlugin.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D0E1F7 /* SpeechRecognitionPlugin.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -9,6 +9,7 @@ class FamilyLedgerBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(ReceiptSharePlugin())
         bridge?.registerPluginInstance(AppPermissionsPlugin())
+        bridge?.registerPluginInstance(SpeechRecognitionPlugin())
     }
 }
 
