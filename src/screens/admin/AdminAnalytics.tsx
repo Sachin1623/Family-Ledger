@@ -817,6 +817,8 @@ const FUNNEL_COLS: Array<[string, string]> = [
   ['google_error', 'Google errors'],
   ['email_tap', 'Email tapped'],
   ['email_signup_ok', 'Email signups'],
+  ['email_login_ok', 'Email logins'],
+  ['apple_success', 'Apple sign-ins'],
   ['group_created', 'Groups created'],
 ];
 
@@ -830,6 +832,13 @@ function SignInFunnel({ days }: { days: { date: string; events: Record<string, n
   const news = sum('google_success_new');
   const errs = sum('google_error');
   const groups = sum('group_created');
+  // New = a brand-new account (Google or email). Returning = someone with an account signing in again. Apple sign-ins are not split
+  // into new vs returning by the app, so they are shown on their own.
+  const newOf = (e: Record<string, number>) => (e.google_success_new || 0) + (e.email_signup_ok || 0);
+  const returningOf = (e: Record<string, number>) => (e.google_success_existing || 0) + (e.email_login_ok || 0);
+  const newUsers = days.slice(0, 7).reduce((n, d) => n + newOf(d.events), 0);
+  const returningUsers = days.slice(0, 7).reduce((n, d) => n + returningOf(d.events), 0);
+  const apple = sum('apple_success');
   const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : '—');
   const errorTotals: Record<string, number> = {};
   days.slice(0, 7).forEach((d) => Object.entries(d.errors).forEach(([k, v]) => { errorTotals[k] = (errorTotals[k] || 0) + v; }));
@@ -848,9 +857,29 @@ function SignInFunnel({ days }: { days: { date: string; events: Record<string, n
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatTile label="Saw login screen" value={fmt(views)} sub={dev('login_screen_view') ? `${fmt(dev('login_screen_view'))} devices` : undefined} />
             <StatTile label="Tapped Google" value={fmt(taps)} sub={dev('login_screen_view') ? `${fmt(dev('google_tap'))} devices · ${pct(dev('google_tap'), dev('login_screen_view'))} of devices` : `${pct(taps, views)} of views`} />
-            <StatTile label="New accounts (Google)" value={fmt(news)} sub={`${pct(news, taps)} of taps`} />
+            <StatTile label="New accounts" value={fmt(newUsers)} sub={`${pct(newUsers, newUsers + returningUsers)} of sign-ins · Google ${fmt(news)}`} />
+            <StatTile label="Returning sign-ins" value={fmt(returningUsers)} sub={apple ? `+ ${fmt(apple)} via Apple (not split)` : 'signed in to an existing account'} />
             <StatTile label="Google errors" value={fmt(errs)} sub={`${pct(errs, taps)} of taps`} />
             <StatTile label="Created a group" value={fmt(groups)} sub={`${pct(groups, news)} of new accounts`} />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-text-muted border-b border-border-subtle">
+                  <th className="p-2">Day</th><th className="p-2">New accounts</th><th className="p-2">Returning</th><th className="p-2">New share</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days.slice(0, 7).map((d) => (
+                  <tr key={d.date} className="border-b border-border-subtle last:border-0">
+                    <td className="p-2 font-bold text-primary whitespace-nowrap">{d.date.slice(5)}</td>
+                    <td className="p-2 font-bold text-[#0F7A38]">{newOf(d.events)}</td>
+                    <td className="p-2">{returningOf(d.events)}</td>
+                    <td className="p-2">{pct(newOf(d.events), newOf(d.events) + returningOf(d.events))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
           {topErrors.length > 0 && <Chips items={topErrors.map(([k, v]) => ({ label: k.replace('__', ' · '), value: v }))} />}
           <div className="overflow-x-auto">
