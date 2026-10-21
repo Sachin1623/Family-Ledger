@@ -12,7 +12,7 @@ export interface SpeechPlugin {
   available(): Promise<{ available: boolean }>;
   checkPermissions(): Promise<{ speechRecognition: string }>;
   requestPermissions(): Promise<{ speechRecognition: string }>;
-  start(options: { language?: string }): Promise<void>;
+  start(options: { language?: string; maxResults?: number }): Promise<void>;
   stop(): Promise<void>;
   cancel?(): Promise<void>;
   /**

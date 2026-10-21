@@ -17,13 +17,15 @@ export interface VoiceTarget {
   onSelect?: (id: string) => void;
 }
 
-export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClose: () => void; onHeard: (sentence: string) => void; target?: VoiceTarget }) {
+export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClose: () => void; onHeard: (sentence: string, alternatives: string[]) => void; target?: VoiceTarget }) {
   const [pickingGroup, setPickingGroup] = useState(false);
   const { t, language } = useLanguage();
   const [phase, setPhase] = useState<'starting' | 'listening' | 'nothing' | 'denied' | 'unavailable' | 'error'>('starting');
   const [heard, setHeard] = useState('');
   const [errorText, setErrorText] = useState('');
   const heardRef = useRef('');
+  const altsRef = useRef<string[]>([]);
+  const autoRetries = useRef(0);
   const finished = useRef(false);
   const timers = useRef<{ settle?: number; silence?: number }>({});
   const handles = useRef<SpeechListenerHandle[]>([]);
@@ -50,7 +52,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
     if (sentence) {
       finished.current = true;
       SpeechRecognition.stop().catch(() => {});
-      onHeardRef.current(sentence);
+      onHeardRef.current(sentence, altsRef.current.filter((a) => a && a !== sentence));
       onCloseRef.current();
     } else {
       setPhase('nothing');
@@ -60,6 +62,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
   const begin = useCallback(async () => {
     finished.current = false;
     heardRef.current = '';
+    altsRef.current = [];
     setHeard('');
     setErrorText('');
     setPhase('starting');
@@ -82,6 +85,8 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
         await SpeechRecognition.addListener('results', (d) => {
           const text = d.matches?.[0] || '';
           if (text) { heardRef.current = text; setHeard(text); }
+          // The recogniser's other guesses at the same words, kept so the best-fitting one can be chosen.
+          altsRef.current = (d.matches || []).slice(1);
           // The final words: done.
           if (timers.current.settle) window.clearTimeout(timers.current.settle);
           timers.current.settle = window.setTimeout(finish, 250);
@@ -97,6 +102,14 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
           // No speech / no match just means nothing usable was heard; anything else is a real fault worth showing.
           if (heardRef.current) { finish(); return; }
           if (d.code === 7 || d.code === 6) { setPhase('nothing'); return; }
+          // The speech service dropping its connection (11), being busy (8), or a client hiccup (5, 10) is usually momentary: start again by
+          // itself, up to twice, before bothering the person.
+          if ([5, 8, 10, 11].includes(d.code) && autoRetries.current < 2) {
+            autoRetries.current += 1;
+            SpeechRecognition.stop().catch(() => {});
+            window.setTimeout(() => { if (!finished.current) begin(); }, 700);
+            return;
+          }
           setErrorText(`${d.message || 'error'}${d.code ? ` (${d.code})` : ''}`);
           setPhase('error');
         }),
@@ -106,7 +119,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
       timers.current.silence = window.setTimeout(() => {
         if (!heardRef.current) { SpeechRecognition.stop().catch(() => {}); setPhase('nothing'); }
       }, 15000);
-      await SpeechRecognition.start({ language: speechLanguageFor(languageRef.current) });
+      await SpeechRecognition.start({ language: speechLanguageFor(languageRef.current), maxResults: 5 });
     } catch (err: any) {
       console.error('speech start failed:', err);
       setErrorText(String(err?.message || err || 'could not start'));
@@ -115,6 +128,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
   }, [finish]);
 
   useEffect(() => {
+    autoRetries.current = 0;
     begin();
     return () => {
       clearTimers();

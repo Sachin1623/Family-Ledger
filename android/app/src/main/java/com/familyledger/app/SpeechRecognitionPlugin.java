@@ -75,6 +75,7 @@ public class SpeechRecognitionPlugin extends Plugin {
     @PluginMethod
     public void start(PluginCall call) {
         final String language = call.getString("language", "en-IN");
+        final int maxResults = call.getInt("maxResults", 5);
         bridge.getActivity().runOnUiThread(() -> {
             try {
                 destroyRecognizer();
@@ -90,7 +91,7 @@ public class SpeechRecognitionPlugin extends Plugin {
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language);
                 intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-                intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, maxResults);
                 intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
                 // Give a person a moment between words before the recogniser decides they have finished.
                 intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L);
@@ -162,6 +163,10 @@ public class SpeechRecognitionPlugin extends Plugin {
             case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "the speech service is busy";
             case SpeechRecognizer.ERROR_SERVER: return "the speech service failed";
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "no speech heard";
+            case 10: return "too many requests to the speech service";
+            case 11: return "the connection to the speech service was lost";
+            case 12: return "this language is not supported by the speech service";
+            case 13: return "this language is not available right now";
             default: return "unknown (" + error + ")";
         }
     }

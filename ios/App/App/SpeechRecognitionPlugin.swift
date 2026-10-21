@@ -69,7 +69,7 @@ public class SpeechRecognitionPlugin: CAPPlugin, CAPBridgedPlugin {
             }
 
             let language = call.getString("language") ?? "en-US"
-            let maxResults = call.getInt("maxResults") ?? 1
+            let maxResults = call.getInt("maxResults") ?? 5
             let partialResults = call.getBool("partialResults") ?? false
 
             self.recognitionTask?.cancel()

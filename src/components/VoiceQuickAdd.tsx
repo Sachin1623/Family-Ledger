@@ -41,11 +41,11 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
   targetRef.current = targetId;
 
   const onHeard = useCallback(
-    async (sentence: string) => {
+    async (sentence: string, alternatives: string[] = []) => {
       if (!user) return;
       heardOnce.current = true;
       setBusy(true);
-      const r = await quickAddFromSpeech({ sentence, user, profile, groupId: targetRef.current || groupId });
+      const r = await quickAddFromSpeech({ sentence, alternatives, user, profile, groupId: targetRef.current || groupId });
       setBusy(false);
       // Several groups and none used yet: ask in the usual form, with the words already filled in.
       if (r.ok === false && r.reason === 'no-group') {

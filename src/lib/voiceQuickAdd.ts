@@ -85,6 +85,8 @@ async function pickGroup(uid: string, hint?: string): Promise<{ id: string; data
 
 export async function quickAddFromSpeech(params: {
   sentence: string;
+  /** The recogniser's other guesses at the same words. */
+  alternatives?: string[];
   user: { uid: string; displayName?: string | null };
   profile?: { displayName?: string } | null;
   groupId?: string;
@@ -98,7 +100,17 @@ export async function quickAddFromSpeech(params: {
     const asIncome = incomeAllowed && parseSpokenExpense(sentence, getGroupCategories(group.data, 'income'), new Date()).isIncome;
     const kind = asIncome ? 'income' : 'expense';
     const cats = getGroupCategories(group.data, kind).map((c) => ({ id: c.id, name: getCategoryNameOverride(group.data, c.id) || c.name }));
-    const parsed = parseSpokenExpense(sentence, cats, new Date());
+    // The recogniser's first guess is not always the one that makes sense ("send 500 for pizza" for "spent 500 for pizza"). Of all its guesses,
+    // take the one that reads best as an expense: it has an amount, it matches a category, and it has some words left as the description.
+    const guesses = [sentence, ...(params.alternatives || [])];
+    const score = (p: ReturnType<typeof parseSpokenExpense>) => (p.amount ? 3 : 0) + (p.categoryId ? 2 : 0) + (p.description ? 1 : 0);
+    let best = guesses[0];
+    let parsed = parseSpokenExpense(best, cats, new Date());
+    for (const g of guesses.slice(1)) {
+      const p = parseSpokenExpense(g, cats, new Date());
+      if (score(p) > score(parsed)) { best = g; parsed = p; }
+    }
+    const usedSentence = best;
     if (!parsed.amount || parsed.amount <= 0) return { ok: false, reason: 'no-amount', sentence };
 
     const category = parsed.categoryId || (kind === 'income' ? 'other_income' : 'misc');
@@ -180,7 +192,7 @@ export async function quickAddFromSpeech(params: {
       ok: true,
       groupId: group.id,
       groupName: group.data.name || '',
-      sentence,
+      sentence: usedSentence,
       expenseId: expenseRef.id,
       amount,
       description,

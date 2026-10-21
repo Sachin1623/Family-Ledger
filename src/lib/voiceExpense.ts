@@ -75,7 +75,9 @@ const CATEGORY_WORDS: Record<string, string[]> = {
 
 const INCOME_WORDS = ['received', 'earned', 'salary', 'credited', 'income', 'refund', 'cashback', 'reimbursement', 'reimbursed', 'dividend', 'got paid', 'sold'];
 const FILLER = new Set([
-  'i', 'we', 'spent', 'spend', 'paid', 'pay', 'add', 'an', 'a', 'the', 'expense', 'expenses', 'for', 'on', 'to', 'at', 'of', 'my', 'was', 'is', 'it',
+  'i', 'we', 'spent', 'spend', 'spends', 'spending', 'paid', 'pay', 'payed', 'paying', 'bought', 'buy', 'purchased',
+  // what the phone's recogniser often hears when you say "spent": "send", "sent", "spin", "bend"
+  'send', 'sent', 'spin', 'bend', 'add', 'an', 'a', 'the', 'expense', 'expenses', 'for', 'on', 'to', 'at', 'of', 'my', 'was', 'is', 'it',
   'rupees', 'rupee', 'rs', 'inr', 'only', 'today', 'yesterday', 'ago', 'just', 'please', 'log', 'record', 'received', 'earned', 'got', 'credited',
 ]);
 
