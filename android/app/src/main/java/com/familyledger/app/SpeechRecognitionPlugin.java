@@ -38,6 +38,9 @@ import java.util.ArrayList;
 public class SpeechRecognitionPlugin extends Plugin {
 
     private SpeechRecognizer recognizer;
+    // Every start() is a new "session"; a recogniser that has been replaced can still deliver a late error or result, which must not reach the
+    // new one (it used to show "I did not catch that" the instant the sheet re-opened).
+    private int session = 0;
 
     @PluginMethod
     public void available(PluginCall call) {
@@ -79,12 +82,13 @@ public class SpeechRecognitionPlugin extends Plugin {
         bridge.getActivity().runOnUiThread(() -> {
             try {
                 destroyRecognizer();
+                final int mySession = ++session;
                 if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
                     call.reject("No speech recognition service on this phone.");
                     return;
                 }
                 recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-                recognizer.setRecognitionListener(new Listener());
+                recognizer.setRecognitionListener(new Listener(mySession));
 
                 Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
@@ -94,8 +98,8 @@ public class SpeechRecognitionPlugin extends Plugin {
                 intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, maxResults);
                 intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
                 // Give a person a moment between words before the recogniser decides they have finished.
-                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L);
-                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L);
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L);
                 recognizer.startListening(intent);
                 call.resolve();
             } catch (Exception e) {
@@ -123,6 +127,7 @@ public class SpeechRecognitionPlugin extends Plugin {
     }
 
     private void destroyRecognizer() {
+        session++;
         if (recognizer != null) {
             try {
                 recognizer.cancel();
@@ -173,22 +178,33 @@ public class SpeechRecognitionPlugin extends Plugin {
 
     private class Listener implements RecognitionListener {
 
-        @Override public void onReadyForSpeech(Bundle params) { sendState("ready"); }
-        @Override public void onBeginningOfSpeech() { sendState("started"); }
+        private final int id;
+
+        Listener(int id) {
+            this.id = id;
+        }
+
+        private boolean stale() {
+            return id != session;
+        }
+
+        @Override public void onReadyForSpeech(Bundle params) { if (!stale()) sendState("ready"); }
+        @Override public void onBeginningOfSpeech() { if (!stale()) sendState("started"); }
         @Override public void onRmsChanged(float rmsdB) {}
         @Override public void onBufferReceived(byte[] buffer) {}
-        @Override public void onEndOfSpeech() { sendState("speechEnd"); }
+        @Override public void onEndOfSpeech() { if (!stale()) sendState("speechEnd"); }
 
         @Override
         public void onError(int error) {
+            if (stale()) return;
             JSObject o = new JSObject();
             o.put("code", error);
             o.put("message", errorText(error));
             notifyListeners("error", o);
         }
 
-        @Override public void onResults(Bundle results) { sendMatches("results", results); }
-        @Override public void onPartialResults(Bundle partial) { sendMatches("partialResults", partial); }
+        @Override public void onResults(Bundle results) { if (!stale()) sendMatches("results", results); }
+        @Override public void onPartialResults(Bundle partial) { if (!stale()) sendMatches("partialResults", partial); }
         @Override public void onEvent(int eventType, Bundle params) {}
     }
 }

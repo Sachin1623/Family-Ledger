@@ -355,6 +355,8 @@ const en = {
   'voiceExpense.heard': 'I heard:',
   'voiceExpense.talkShort': 'Talk',
   'voiceExpense.edit': 'Edit',
+  'voiceExpense.noDetail': 'I heard an amount but not what it was for.',
+  'voiceExpense.addAsOther': 'Add as Other',
   'voiceExpense.addingTo': 'Adding to',
   'voiceExpense.change': 'Change',
   'voiceExpense.chooseGroup': 'Choose a group',

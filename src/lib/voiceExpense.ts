@@ -50,7 +50,7 @@ function foldNumberWords(words: string[]): string[] {
 
 const CATEGORY_WORDS: Record<string, string[]> = {
   groceries: ['grocery', 'groceries', 'vegetable', 'vegetables', 'veggies', 'fruit', 'fruits', 'milk', 'kirana', 'supermarket', 'zepto', 'blinkit', 'bigbasket', 'instamart', 'dmart', 'provisions', 'atta', 'rice', 'dairy'],
-  food: ['dinner', 'lunch', 'breakfast', 'restaurant', 'cafe', 'coffee', 'tea', 'pizza', 'burger', 'swiggy', 'zomato', 'snacks', 'biryani', 'eating', 'takeaway', 'dhaba', 'chai', 'ice cream', 'dominos'],
+  food: ['noodles', 'maggi', 'momos', 'momo', 'sandwich', 'thali', 'paratha', 'dosa', 'idli', 'samosa', 'chaat', 'juice', 'cake', 'dessert', 'pasta', 'fries', 'meal', 'food', 'tiffin', 'canteen', 'bakery', 'chinese', 'dinner', 'lunch', 'breakfast', 'restaurant', 'cafe', 'coffee', 'tea', 'pizza', 'burger', 'swiggy', 'zomato', 'snacks', 'biryani', 'eating', 'takeaway', 'dhaba', 'chai', 'ice cream', 'dominos'],
   travel: ['petrol', 'diesel', 'fuel', 'uber', 'ola', 'rapido', 'auto', 'cab', 'taxi', 'metro', 'bus', 'train', 'flight', 'toll', 'parking', 'fastag', 'rickshaw', 'ticket', 'cng'],
   bills: ['electricity', 'light bill', 'water bill', 'gas', 'wifi', 'internet', 'broadband', 'recharge', 'mobile bill', 'phone bill', 'dth', 'bill', 'utility', 'postpaid', 'prepaid'],
   health: ['doctor', 'medicine', 'medicines', 'medical', 'pharmacy', 'hospital', 'chemist', 'tablets', 'lab test', 'dentist', 'clinic', 'checkup'],
@@ -77,7 +77,7 @@ const INCOME_WORDS = ['received', 'earned', 'salary', 'credited', 'income', 'ref
 const FILLER = new Set([
   'i', 'we', 'spent', 'spend', 'spends', 'spending', 'paid', 'pay', 'payed', 'paying', 'bought', 'buy', 'purchased',
   // what the phone's recogniser often hears when you say "spent": "send", "sent", "spin", "bend"
-  'send', 'sent', 'spin', 'bend', 'add', 'an', 'a', 'the', 'expense', 'expenses', 'for', 'on', 'to', 'at', 'of', 'my', 'was', 'is', 'it',
+  'send', 'sent', 'spin', 'bend', 'pant', 'pent', 'bent', 'sand', 'add', 'an', 'a', 'the', 'expense', 'expenses', 'for', 'on', 'to', 'at', 'of', 'my', 'was', 'is', 'it',
   'rupees', 'rupee', 'rs', 'inr', 'only', 'today', 'yesterday', 'ago', 'just', 'please', 'log', 'record', 'received', 'earned', 'got', 'credited',
 ]);
 
@@ -89,7 +89,7 @@ function ymd(d: Date) {
 }
 
 export function parseSpokenExpense(spoken: string, categories: CategoryRef[], now: Date = new Date()): SpokenExpense {
-  let text = ` ${spoken.toLowerCase().replace(/₹/g, ' rupees ').replace(/(\d),(\d{3})/g, '$1$2').replace(/[,.!?]+(?=\s|$)/g, ' ')} `;
+  let text = ` ${spoken.toLowerCase().replace(/₹/g, ' rupees ').replace(/[$€£]/g, ' ').replace(/(\d),(\d{3})/g, '$1$2').replace(/[,.!?]+(?=\s|$)/g, ' ')} `;
   text = text.replace(/\b(\d+(?:\.\d+)?)\s*k\b/g, (_, n) => ` ${Math.round(parseFloat(n) * 1000)} `);
   text = text.replace(/\b(\d+(?:\.\d+)?)\s*(lakh|lakhs|lac)\b/g, (_, n) => ` ${Math.round(parseFloat(n) * 100000)} `);
 
@@ -162,7 +162,16 @@ export function parseSpokenExpense(spoken: string, categories: CategoryRef[], no
   if (isIncome && !categoryId) categoryId = wantedIds.has('other_income') ? 'other_income' : undefined;
 
   // ── description: what is left once the amount, dates and filler words are removed ──
-  const left = words.filter((w, i) => i !== amountIdx && !FILLER.has(w) && !isNumber(w));
+  let left = words.filter((w, i) => i !== amountIdx && !FILLER.has(w) && !isNumber(w));
+  // "500 rupees pant on pizza": whatever sits between the amount and the first "on / for / at / to" is the verb (mis-heard or not), not
+  // part of what it was for — so when a preposition follows the amount and something follows that, the description starts after it.
+  if (amountIdx >= 0) {
+    const prepAt = words.findIndex((w, i) => i > amountIdx && (w === 'on' || w === 'for' || w === 'at' || w === 'to'));
+    if (prepAt >= 0) {
+      const afterPrep = words.slice(prepAt + 1).filter((w) => !FILLER.has(w) && !isNumber(w));
+      if (afterPrep.length > 0) left = afterPrep;
+    }
+  }
   let description = left.join(' ').trim();
   description = description.replace(/\b([a-z])/g, (m) => m.toUpperCase());
 

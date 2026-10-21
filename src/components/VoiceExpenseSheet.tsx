@@ -104,10 +104,11 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
           if (d.code === 7 || d.code === 6) { setPhase('nothing'); return; }
           // The speech service dropping its connection (11), being busy (8), or a client hiccup (5, 10) is usually momentary: start again by
           // itself, up to twice, before bothering the person.
-          if ([5, 8, 10, 11].includes(d.code) && autoRetries.current < 2) {
+          if ([5, 8, 10, 11].includes(d.code) && autoRetries.current < 3) {
             autoRetries.current += 1;
             SpeechRecognition.stop().catch(() => {});
-            window.setTimeout(() => { if (!finished.current) begin(); }, 700);
+            // Wait longer each time: a dropped connection to the speech service needs a moment to come back.
+            window.setTimeout(() => { if (!finished.current) begin(); }, 600 + autoRetries.current * 700);
             return;
           }
           setErrorText(`${d.message || 'error'}${d.code ? ` (${d.code})` : ''}`);

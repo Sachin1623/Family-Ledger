@@ -38,7 +38,7 @@ export type QuickAddResult =
       /** Take the expense back out completely. */
       undo: () => Promise<void>;
     }
-  | { ok: false; reason: 'no-amount' | 'no-group' | 'failed'; sentence: string };
+  | { ok: false; reason: 'no-amount' | 'no-detail' | 'no-group' | 'failed'; sentence: string; amount?: number };
 
 export interface MyGroup {
   id: string;
@@ -87,6 +87,8 @@ export async function quickAddFromSpeech(params: {
   sentence: string;
   /** The recogniser's other guesses at the same words. */
   alternatives?: string[];
+  /** Save even when nothing says what it was for (the person chose "Add as Other"). */
+  allowBlank?: boolean;
   user: { uid: string; displayName?: string | null };
   profile?: { displayName?: string } | null;
   groupId?: string;
@@ -112,6 +114,8 @@ export async function quickAddFromSpeech(params: {
     }
     const usedSentence = best;
     if (!parsed.amount || parsed.amount <= 0) return { ok: false, reason: 'no-amount', sentence };
+    // "300 spent on" — an amount and nothing about what it was for. Ask, rather than saving a blank "Other".
+    if (!parsed.description && !parsed.categoryId && !params.allowBlank) return { ok: false, reason: 'no-detail', sentence: usedSentence, amount: parsed.amount };
 
     const category = parsed.categoryId || (kind === 'income' ? 'other_income' : 'misc');
     const picked = getGroupCategories(group.data, kind).find((c) => c.id === category);

@@ -41,11 +41,11 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
   targetRef.current = targetId;
 
   const onHeard = useCallback(
-    async (sentence: string, alternatives: string[] = []) => {
+    async (sentence: string, alternatives: string[] = [], allowBlank = false) => {
       if (!user) return;
       heardOnce.current = true;
       setBusy(true);
-      const r = await quickAddFromSpeech({ sentence, alternatives, user, profile, groupId: targetRef.current || groupId });
+      const r = await quickAddFromSpeech({ sentence, alternatives, allowBlank, user, profile, groupId: targetRef.current || groupId });
       setBusy(false);
       // Several groups and none used yet: ask in the usual form, with the words already filled in.
       if (r.ok === false && r.reason === 'no-group') {
@@ -139,10 +139,21 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
               {result && !result.ok && (
                 <div className="space-y-2">
                   <p className="font-bold">
-                    {result.reason === 'no-amount' ? t('voiceExpense.noAmount') : t('voiceExpense.failed')}
-                    {result.reason === 'no-amount' && <span className="block font-medium opacity-80 mt-0.5">&ldquo;{result.sentence}&rdquo;</span>}
+                    {result.reason === 'no-amount' ? t('voiceExpense.noAmount') : result.reason === 'no-detail' ? t('voiceExpense.noDetail') : t('voiceExpense.failed')}
+                    {(result.reason === 'no-amount' || result.reason === 'no-detail') && (
+                      <span className="block font-medium opacity-80 mt-0.5">&ldquo;{result.sentence}&rdquo;</span>
+                    )}
                   </p>
                   <div className="flex gap-2">
+                    {result.reason === 'no-detail' && (
+                      <button
+                        type="button"
+                        onClick={() => { const s = result.sentence; setResult(null); onHeard(s, [], true); }}
+                        className="flex-1 py-2 rounded-lg bg-white/20 font-black text-xs"
+                      >
+                        {t('voiceExpense.addAsOther')}
+                      </button>
+                    )}
                     <button type="button" onClick={() => { heardOnce.current = false; setResult(null); setListening(true); }} className="flex-1 py-2 rounded-lg bg-white/20 font-black text-xs">{t('voiceExpense.tryAgain')}</button>
                     <button
                       type="button"
