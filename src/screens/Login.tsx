@@ -348,7 +348,13 @@ export default function Login() {
           return;
         }
         const credential = GoogleAuthProvider.credential(idToken);
-        const result = await signInWithCredential(auth, credential);
+        // The Google account is already chosen at this point, so a dropped connection here is retried once by itself instead of
+        // sending the person back to the start ("auth/network-request-failed" was most of the failed Google taps).
+        const result = await signInWithCredential(auth, credential).catch(async (err: any) => {
+          if (err?.code !== 'auth/network-request-failed') throw err;
+          await new Promise((r) => setTimeout(r, 900));
+          return signInWithCredential(auth, credential);
+        });
         firebaseUser = result.user;
         isNewUser = !!getAdditionalUserInfo(result)?.isNewUser;
       } else {
@@ -368,11 +374,15 @@ export default function Login() {
         setLoginError(t('auth.errPopupBlocked'));
       } else if (
         error.code !== "auth/popup-closed-by-user" &&
-        error.code !== "12501" &&
+        !/^12501(?![0-9])/.test(String(error?.code ?? error?.message ?? '')) &&
         error.errorMessage !== "The user canceled the sign-in flow."
       ) {
-        trackFunnel('google_error', String(error?.code || error?.errorCode || error?.message || 'unknown'));
-        setLoginError(error?.message || t('auth.errGoogleSignInFailed'));
+        const raw = String(error?.code || error?.errorCode || error?.message || 'unknown');
+        trackFunnel('google_error', raw);
+        // Connection trouble (web) and Google's own temporary failure (Android error 8, a bare status code with no words) used to
+        // show the raw code. Say what to do instead; anything else keeps the real message.
+        const temporary = error?.code === 'auth/network-request-failed' || error?.code === 'auth/internal-error' || /^8(?![0-9])/.test(raw);
+        setLoginError(temporary ? t('auth.errTemporary') : (error?.message && !/^\d+:?\s*$/.test(error.message) ? error.message : t('auth.errGoogleSignInFailed')));
       } else {
         trackFunnel('google_cancel');
       }

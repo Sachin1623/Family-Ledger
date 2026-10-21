@@ -821,8 +821,10 @@ const FUNNEL_COLS: Array<[string, string]> = [
 ];
 
 // Anonymous counters from /api/funnel: where do people who open the app stop before they have an account.
-function SignInFunnel({ days }: { days: { date: string; events: Record<string, number>; errors: Record<string, number> }[] }) {
+function SignInFunnel({ days }: { days: { date: string; events: Record<string, number>; errors: Record<string, number>; unique?: Record<string, number> }[] }) {
   const sum = (key: string) => days.slice(0, 7).reduce((n, d) => n + (d.events[key] || 0), 0);
+  // Devices that did this at least once on a day (a device is counted once per day, then again on another day).
+  const dev = (key: string) => days.slice(0, 7).reduce((n, d) => n + (d.unique?.[key] || 0), 0);
   const views = sum('login_screen_view');
   const taps = sum('google_tap');
   const news = sum('google_success_new');
@@ -844,8 +846,8 @@ function SignInFunnel({ days }: { days: { date: string; events: Record<string, n
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Saw login screen" value={fmt(views)} />
-            <StatTile label="Tapped Google" value={fmt(taps)} sub={`${pct(taps, views)} of views`} />
+            <StatTile label="Saw login screen" value={fmt(views)} sub={dev('login_screen_view') ? `${fmt(dev('login_screen_view'))} devices` : undefined} />
+            <StatTile label="Tapped Google" value={fmt(taps)} sub={dev('login_screen_view') ? `${fmt(dev('google_tap'))} devices · ${pct(dev('google_tap'), dev('login_screen_view'))} of devices` : `${pct(taps, views)} of views`} />
             <StatTile label="New accounts (Google)" value={fmt(news)} sub={`${pct(news, taps)} of taps`} />
             <StatTile label="Google errors" value={fmt(errs)} sub={`${pct(errs, taps)} of taps`} />
             <StatTile label="Created a group" value={fmt(groups)} sub={`${pct(groups, news)} of new accounts`} />

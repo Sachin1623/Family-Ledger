@@ -326,6 +326,7 @@ const en = {
   'auth.errNoValidCredential': 'Google sign-in did not return a valid credential.',
   'auth.errPopupBlocked': 'Sign-in popup was blocked by your browser. Please allow popups or try again.',
   'auth.errGoogleSignInFailed': 'Failed to sign in with Google. Please try again.',
+  'auth.errTemporary': 'Google sign-in had a temporary problem. Check your internet connection and tap Continue with Google again.',
   'auth.errAppleSignInFailed': 'Failed to sign in with Apple. Please try again.',
   'auth.errWrongPassword': 'Incorrect password. Please try again.',
   'auth.errGoogleOnlyAccount': 'This email signs in with Google, so it has no password yet. Tap "Continue with Google" above, or use Forgot password to add a password.',

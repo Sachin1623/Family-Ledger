@@ -4922,6 +4922,7 @@ async function startServer() {
       // Nested maps, not dotted keys: set(..., { merge: true }) stores a key like "events.google_tap" as ONE field literally named that
       // (only update() reads dots as paths), which the admin screen then could not find under `events`.
       const update: Record<string, any> = { date: day, events: { [event]: admin.firestore.FieldValue.increment(1) } };
+      if (req.body?.first === true) update.unique = { [event]: admin.firestore.FieldValue.increment(1) };
       if (detail && (event === 'google_error' || event === 'email_login_fail')) update.errors = { [`${event}__${detail.replace(/\./g, '_')}`]: admin.firestore.FieldValue.increment(1) };
       await adminDb.collection('funnelDaily').doc(day).set(update, { merge: true });
     } catch (error) {
@@ -4943,7 +4944,7 @@ async function startServer() {
         });
         return out;
       };
-      return res.json({ days: snap.docs.map((d) => ({ date: d.id, events: fold(d.data(), 'events'), errors: fold(d.data(), 'errors') })) });
+      return res.json({ days: snap.docs.map((d) => ({ date: d.id, events: fold(d.data(), 'events'), errors: fold(d.data(), 'errors'), unique: d.data().unique || {} })) });
     } catch (error) {
       console.error('admin/analytics/funnel error:', error);
       return res.status(500).json({ error: 'Unable to load the funnel.' });
