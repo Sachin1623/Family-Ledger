@@ -27,7 +27,8 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
   const altsRef = useRef<string[]>([]);
   const autoRetries = useRef(0);
   const finished = useRef(false);
-  const timers = useRef<{ settle?: number; silence?: number }>({});
+  const timers = useRef<{ settle?: number; silence?: number; ready?: number }>({});
+  const gotFinal = useRef(false);
   const handles = useRef<SpeechListenerHandle[]>([]);
   // The parent hands in fresh callback functions on almost every render. If listening were started from effects that depend on
   // them, every re-render would stop and restart the microphone — which looked like it flipping between listening and recording.
@@ -42,6 +43,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
   const clearTimers = () => {
     if (timers.current.settle) window.clearTimeout(timers.current.settle);
     if (timers.current.silence) window.clearTimeout(timers.current.silence);
+    if (timers.current.ready) window.clearTimeout(timers.current.ready);
     timers.current = {};
   };
 
@@ -51,7 +53,8 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
     const sentence = heardRef.current.trim();
     if (sentence) {
       finished.current = true;
-      SpeechRecognition.stop().catch(() => {});
+      // After the final words the recogniser has already ended by itself; only a session cut short needs to be cancelled.
+      if (!gotFinal.current) SpeechRecognition.cancel?.().catch(() => {});
       onHeardRef.current(sentence, altsRef.current.filter((a) => a && a !== sentence));
       onCloseRef.current();
     } else {
@@ -63,6 +66,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
     finished.current = false;
     heardRef.current = '';
     altsRef.current = [];
+    gotFinal.current = false;
     setHeard('');
     setErrorText('');
     setPhase('starting');
@@ -88,10 +92,17 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
           // The recogniser's other guesses at the same words, kept so the best-fitting one can be chosen.
           altsRef.current = (d.matches || []).slice(1);
           // The final words: done.
+          gotFinal.current = true;
           if (timers.current.settle) window.clearTimeout(timers.current.settle);
           timers.current.settle = window.setTimeout(finish, 250);
         }),
         await SpeechRecognition.addListener('listeningState', (d) => {
+          if (d.status === 'ready') {
+            // The microphone really is recording now.
+            if (timers.current.ready) { window.clearTimeout(timers.current.ready); timers.current.ready = undefined; }
+            setPhase('listening');
+            return;
+          }
           if (d.status !== 'speechEnd') return;
           // Final words normally follow within a moment; if they never do, use what was heard.
           if (timers.current.settle) window.clearTimeout(timers.current.settle);
@@ -106,7 +117,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
           // itself, up to twice, before bothering the person.
           if ([5, 8, 10, 11].includes(d.code) && autoRetries.current < 3) {
             autoRetries.current += 1;
-            SpeechRecognition.stop().catch(() => {});
+            SpeechRecognition.cancel?.().catch(() => {});
             // Wait longer each time: a dropped connection to the speech service needs a moment to come back.
             window.setTimeout(() => { if (!finished.current) begin(); }, 600 + autoRetries.current * 700);
             return;
@@ -115,11 +126,18 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
           setPhase('error');
         }),
       ];
-      setPhase('listening');
       // Nothing heard at all after a while: say so instead of listening forever.
       timers.current.silence = window.setTimeout(() => {
-        if (!heardRef.current) { SpeechRecognition.stop().catch(() => {}); setPhase('nothing'); }
-      }, 15000);
+        if (!heardRef.current) { SpeechRecognition.cancel?.().catch(() => {}); setPhase('nothing'); }
+      }, 18000);
+      // If the recogniser never reports that it is recording, it is not: start it again (up to three times) rather than showing a
+      // "Listening" that is not true.
+      timers.current.ready = window.setTimeout(() => {
+        if (finished.current || autoRetries.current >= 3) { setErrorText('the microphone did not start'); setPhase('error'); return; }
+        autoRetries.current += 1;
+        SpeechRecognition.cancel?.().catch(() => {});
+        window.setTimeout(() => { if (!finished.current) begin(); }, 400);
+      }, 4500);
       await SpeechRecognition.start({ language: speechLanguageFor(languageRef.current), maxResults: 5 });
     } catch (err: any) {
       console.error('speech start failed:', err);
@@ -133,7 +151,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
     begin();
     return () => {
       clearTimers();
-      SpeechRecognition.stop().catch(() => {});
+      if (!gotFinal.current) SpeechRecognition.cancel?.().catch(() => {});
       handles.current.forEach((h) => h.remove().catch(() => {}));
       handles.current = [];
     };

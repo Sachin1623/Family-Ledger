@@ -4,6 +4,8 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
@@ -19,14 +21,17 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
 
 /**
- * "Talk to add an expense": listens with the phone's own speech recogniser and reports back as it hears, and — unlike the
- * community speech plugin this replaces — says exactly what went wrong when it cannot hear (permission, no speech service,
- * no network, recogniser busy ...) instead of failing silently.
+ * "Talk to add an expense": listens with the phone's own speech recogniser and reports back as it hears, and says exactly what went wrong
+ * when it cannot hear (permission, no speech service, no network, recogniser busy ...) instead of failing silently.
+ *
+ * One recogniser object is kept and reused for every listening session (Google's recommended pattern). Creating and destroying a new one for
+ * every session — what an earlier version did — makes the phone's speech service drop its connection (error 11), report "no match" at once,
+ * or sit "listening" without really recording. The recogniser is only thrown away and rebuilt after a real fault.
  *
  * Events sent to the web app:
- *   listeningState {status: "ready" | "started" | "speechEnd"}
- *   partialResults {matches: [text]}      words heard so far
- *   results        {matches: [text]}      the final words (arrive AFTER speechEnd)
+ *   listeningState {status: "ready" | "started" | "speechEnd"}   "ready" means the microphone really is recording
+ *   partialResults {matches: [text...]}   words heard so far
+ *   results        {matches: [text...]}   the final words (arrive AFTER speechEnd), best guess first
  *   error          {code, message}        the recogniser gave up
  *
  * Nothing is recorded or kept by FamilyLedger; the audio goes only to the phone's speech service (Google's on Android).
@@ -38,9 +43,11 @@ import java.util.ArrayList;
 public class SpeechRecognitionPlugin extends Plugin {
 
     private SpeechRecognizer recognizer;
-    // Every start() is a new "session"; a recogniser that has been replaced can still deliver a late error or result, which must not reach the
-    // new one (it used to show "I did not catch that" the instant the sheet re-opened).
-    private int session = 0;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    // True from the moment a session starts until it ends (final result, error or cancel). Callbacks that arrive while false belong to a
+    // session that has already finished and are ignored.
+    private boolean active = false;
+    private Runnable pendingStart;
 
     @PluginMethod
     public void available(PluginCall call) {
@@ -81,16 +88,20 @@ public class SpeechRecognitionPlugin extends Plugin {
         final int maxResults = call.getInt("maxResults", 5);
         bridge.getActivity().runOnUiThread(() -> {
             try {
-                destroyRecognizer();
-                final int mySession = ++session;
                 if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
                     call.reject("No speech recognition service on this phone.");
                     return;
                 }
-                recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-                recognizer.setRecognitionListener(new Listener(mySession));
+                if (pendingStart != null) main.removeCallbacks(pendingStart);
+                if (recognizer == null) {
+                    recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+                    recognizer.setRecognitionListener(new Listener());
+                } else {
+                    active = false;
+                    recognizer.cancel(); // end whatever the previous session was doing, but keep the recogniser
+                }
 
-                Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                final Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language);
@@ -100,7 +111,20 @@ public class SpeechRecognitionPlugin extends Plugin {
                 // Give a person a moment between words before the recogniser decides they have finished.
                 intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L);
                 intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L);
-                recognizer.startListening(intent);
+
+                // A short pause after cancel() lets the speech service settle before it is asked to listen again.
+                pendingStart = () -> {
+                    pendingStart = null;
+                    try {
+                        if (recognizer == null) return;
+                        active = true;
+                        recognizer.startListening(intent);
+                    } catch (Exception e) {
+                        active = false;
+                        sendError(-1, "could not start: " + e.getMessage());
+                    }
+                };
+                main.postDelayed(pendingStart, 300);
                 call.resolve();
             } catch (Exception e) {
                 call.reject("Could not start listening: " + e.getMessage());
@@ -108,26 +132,35 @@ public class SpeechRecognitionPlugin extends Plugin {
         });
     }
 
+    /** Stop listening but still deliver the final words (the person pressed Done). */
     @PluginMethod
     public void stop(PluginCall call) {
         bridge.getActivity().runOnUiThread(() -> {
             try {
-                if (recognizer != null) recognizer.stopListening();
+                if (recognizer != null && active) recognizer.stopListening();
             } catch (Exception ignored) {}
             call.resolve();
         });
     }
 
+    /** Abandon the session without any result (the sheet was closed). */
     @PluginMethod
     public void cancel(PluginCall call) {
         bridge.getActivity().runOnUiThread(() -> {
-            destroyRecognizer();
+            if (pendingStart != null) {
+                main.removeCallbacks(pendingStart);
+                pendingStart = null;
+            }
+            try {
+                if (recognizer != null && active) recognizer.cancel();
+            } catch (Exception ignored) {}
+            active = false;
             call.resolve();
         });
     }
 
     private void destroyRecognizer() {
-        session++;
+        active = false;
         if (recognizer != null) {
             try {
                 recognizer.cancel();
@@ -157,6 +190,13 @@ public class SpeechRecognitionPlugin extends Plugin {
         notifyListeners(event, o);
     }
 
+    private void sendError(int code, String message) {
+        JSObject o = new JSObject();
+        o.put("code", code);
+        o.put("message", message);
+        notifyListeners("error", o);
+    }
+
     private static String errorText(int error) {
         switch (error) {
             case SpeechRecognizer.ERROR_AUDIO: return "audio (the microphone could not be read)";
@@ -178,33 +218,31 @@ public class SpeechRecognitionPlugin extends Plugin {
 
     private class Listener implements RecognitionListener {
 
-        private final int id;
-
-        Listener(int id) {
-            this.id = id;
-        }
-
-        private boolean stale() {
-            return id != session;
-        }
-
-        @Override public void onReadyForSpeech(Bundle params) { if (!stale()) sendState("ready"); }
-        @Override public void onBeginningOfSpeech() { if (!stale()) sendState("started"); }
+        @Override public void onReadyForSpeech(Bundle params) { if (active) sendState("ready"); }
+        @Override public void onBeginningOfSpeech() { if (active) sendState("started"); }
         @Override public void onRmsChanged(float rmsdB) {}
         @Override public void onBufferReceived(byte[] buffer) {}
-        @Override public void onEndOfSpeech() { if (!stale()) sendState("speechEnd"); }
+        @Override public void onEndOfSpeech() { if (active) sendState("speechEnd"); }
 
         @Override
         public void onError(int error) {
-            if (stale()) return;
-            JSObject o = new JSObject();
-            o.put("code", error);
-            o.put("message", errorText(error));
-            notifyListeners("error", o);
+            if (!active) return;
+            active = false;
+            // After a real fault the recogniser is rebuilt for the next session; ordinary "heard nothing" outcomes keep it.
+            if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                main.post(SpeechRecognitionPlugin.this::destroyRecognizer);
+            }
+            sendError(error, errorText(error));
         }
 
-        @Override public void onResults(Bundle results) { if (!stale()) sendMatches("results", results); }
-        @Override public void onPartialResults(Bundle partial) { if (!stale()) sendMatches("partialResults", partial); }
+        @Override
+        public void onResults(Bundle results) {
+            if (!active) return;
+            active = false;
+            sendMatches("results", results);
+        }
+
+        @Override public void onPartialResults(Bundle partial) { if (active) sendMatches("partialResults", partial); }
         @Override public void onEvent(int eventType, Bundle params) {}
     }
 }
