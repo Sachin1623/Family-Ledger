@@ -4919,8 +4919,10 @@ async function startServer() {
     try {
       const day = new Date(now + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const detail = String(req.body?.detail || '').replace(/[^A-Za-z0-9_\-:.]/g, '').slice(0, 30);
-      const update: Record<string, any> = { date: day, [`events.${event}`]: admin.firestore.FieldValue.increment(1) };
-      if (detail && (event === 'google_error' || event === 'email_login_fail')) update[`errors.${event}__${detail.replace(/\./g, '_')}`] = admin.firestore.FieldValue.increment(1);
+      // Nested maps, not dotted keys: set(..., { merge: true }) stores a key like "events.google_tap" as ONE field literally named that
+      // (only update() reads dots as paths), which the admin screen then could not find under `events`.
+      const update: Record<string, any> = { date: day, events: { [event]: admin.firestore.FieldValue.increment(1) } };
+      if (detail && (event === 'google_error' || event === 'email_login_fail')) update.errors = { [`${event}__${detail.replace(/\./g, '_')}`]: admin.firestore.FieldValue.increment(1) };
       await adminDb.collection('funnelDaily').doc(day).set(update, { merge: true });
     } catch (error) {
       console.error('funnel error:', error);
@@ -4933,7 +4935,15 @@ async function startServer() {
     if (!decoded || !adminDb) return;
     try {
       const snap = await adminDb.collection('funnelDaily').orderBy('date', 'desc').limit(30).get();
-      return res.json({ days: snap.docs.map((d) => ({ date: d.id, events: d.data().events || {}, errors: d.data().errors || {} })) });
+      // Counts written before 2026-10-21 were stored as top-level fields named "events.<name>" / "errors.<name>"; fold those in with the nested form.
+      const fold = (data: Record<string, any>, group: 'events' | 'errors') => {
+        const out: Record<string, number> = { ...(data[group] || {}) };
+        Object.keys(data).forEach((k) => {
+          if (k.startsWith(`${group}.`)) out[k.slice(group.length + 1)] = (out[k.slice(group.length + 1)] || 0) + Number(data[k] || 0);
+        });
+        return out;
+      };
+      return res.json({ days: snap.docs.map((d) => ({ date: d.id, events: fold(d.data(), 'events'), errors: fold(d.data(), 'errors') })) });
     } catch (error) {
       console.error('admin/analytics/funnel error:', error);
       return res.status(500).json({ error: 'Unable to load the funnel.' });
