@@ -10,6 +10,7 @@ import {
 } from "../lib/firebase";
 import { encryptPII } from "../lib/encryption";
 import { trackFunnel } from "../lib/funnel";
+import LoginSlider from "../components/LoginSlider";
 import {
   signInWithPopup,
   signInWithCredential,
@@ -943,6 +944,8 @@ export default function Login() {
           </p>
         </div>
 
+        {mode === "google" && <LoginSlider />}
+
         {loginError && (
           <div className="p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200 text-left font-medium flex items-start gap-2">
             <span className="material-symbols-outlined text-red-500 text-lg shrink-0">
@@ -1053,6 +1056,13 @@ export default function Login() {
           >
             {t('auth.continueWithEmail')}
           </button>
+
+          {mode === "google" && (
+            <div className="space-y-1.5">
+              <p className="rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold px-3 py-2">🔒 {t('auth.noLinking')}</p>
+              <p className="text-[11px] font-semibold text-text-muted">✓ {t('auth.freeQuick')}</p>
+            </div>
+          )}
         </div>
 
         {mode !== "google" && (
