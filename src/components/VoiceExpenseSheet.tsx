@@ -1,116 +1,148 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLanguage } from '../context/LanguageContext';
-import { SpeechRecognition, speechLanguageFor } from '../lib/speech';
+import { SpeechRecognition, speechLanguageFor, type SpeechListenerHandle } from '../lib/speech';
 
 // Bottom sheet for "talk to add an expense": asks for the microphone, shows what is being heard as it is heard, and hands the finished
-// sentence back. The sentence is turned into fields by lib/voiceExpense.ts; nothing is saved until the person reviews and taps Save.
+// sentence back. The sentence is turned into fields by lib/voiceExpense.ts (and saved by VoiceQuickAdd / AddExpense).
+//
+// The phone's recogniser sends its FINAL words a moment after it announces the speech has ended, so the sentence is only handed over
+// once those final words arrive (or a short wait runs out) — closing earlier used half-finished words.
 export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () => void; onHeard: (sentence: string) => void }) {
   const { t, language } = useLanguage();
-  const [phase, setPhase] = useState<'starting' | 'listening' | 'nothing' | 'denied' | 'unavailable'>('starting');
+  const [phase, setPhase] = useState<'starting' | 'listening' | 'nothing' | 'denied' | 'unavailable' | 'error'>('starting');
   const [heard, setHeard] = useState('');
+  const [errorText, setErrorText] = useState('');
   const heardRef = useRef('');
   const finished = useRef(false);
-  // The phone's recogniser announces "stopped" the moment you stop talking, but it sends its best, final words a moment AFTER that.
-  // Closing on "stopped" used the half-finished partial words (this was why sentences came through cut short or wrong), so we wait
-  // for the final words: a short settle time after "stopped", restarted whenever newer words arrive.
-  const stoppedAt = useRef(0);
-  const settleTimer = useRef<number | null>(null);
-  const silenceTimer = useRef<number | null>(null);
-  const listeners = useRef<Array<{ remove: () => Promise<void> }>>([]);
+  const timers = useRef<{ settle?: number; silence?: number }>({});
+  const handles = useRef<SpeechListenerHandle[]>([]);
+  // The parent hands in fresh callback functions on almost every render. If listening were started from effects that depend on
+  // them, every re-render would stop and restart the microphone — which looked like it flipping between listening and recording.
+  // So the latest callbacks are kept in refs and the listening itself is started exactly once, when the sheet opens.
+  const onHeardRef = useRef(onHeard);
+  const onCloseRef = useRef(onClose);
+  const languageRef = useRef(language);
+  onHeardRef.current = onHeard;
+  onCloseRef.current = onClose;
+  languageRef.current = language;
+
+  const clearTimers = () => {
+    if (timers.current.settle) window.clearTimeout(timers.current.settle);
+    if (timers.current.silence) window.clearTimeout(timers.current.silence);
+    timers.current = {};
+  };
 
   const finish = useCallback(() => {
     if (finished.current) return;
-    finished.current = true;
-    if (settleTimer.current) window.clearTimeout(settleTimer.current);
-    if (silenceTimer.current) window.clearTimeout(silenceTimer.current);
+    clearTimers();
     const sentence = heardRef.current.trim();
     if (sentence) {
-      onHeard(sentence);
-      onClose();
+      finished.current = true;
+      SpeechRecognition.stop().catch(() => {});
+      onHeardRef.current(sentence);
+      onCloseRef.current();
     } else {
-      finished.current = false;
       setPhase('nothing');
     }
-  }, [onClose, onHeard]);
+  }, []);
 
   const begin = useCallback(async () => {
     finished.current = false;
     heardRef.current = '';
     setHeard('');
+    setErrorText('');
     setPhase('starting');
+    clearTimers();
     try {
       const avail = await SpeechRecognition.available();
       if (!avail.available) { setPhase('unavailable'); return; }
       let perm = await SpeechRecognition.checkPermissions();
       if (perm.speechRecognition !== 'granted') perm = await SpeechRecognition.requestPermissions();
       if (perm.speechRecognition !== 'granted') { setPhase('denied'); return; }
-      await Promise.all(listeners.current.map((l) => l.remove().catch(() => {})));
-      listeners.current = [
+      await Promise.all(handles.current.map((h) => h.remove().catch(() => {})));
+      handles.current = [
         await SpeechRecognition.addListener('partialResults', (d) => {
           const text = d.matches?.[0] || '';
           if (!text) return;
           heardRef.current = text;
           setHeard(text);
-          if (silenceTimer.current) { window.clearTimeout(silenceTimer.current); silenceTimer.current = null; }
-          // Newer words after "stopped" are the final words: give them a moment to settle, then close.
-          if (stoppedAt.current) {
-            if (settleTimer.current) window.clearTimeout(settleTimer.current);
-            settleTimer.current = window.setTimeout(finish, 700);
-          }
+          if (timers.current.silence) { window.clearTimeout(timers.current.silence); timers.current.silence = undefined; }
+        }),
+        await SpeechRecognition.addListener('results', (d) => {
+          const text = d.matches?.[0] || '';
+          if (text) { heardRef.current = text; setHeard(text); }
+          // The final words: done.
+          if (timers.current.settle) window.clearTimeout(timers.current.settle);
+          timers.current.settle = window.setTimeout(finish, 250);
         }),
         await SpeechRecognition.addListener('listeningState', (d) => {
-          if (d.status !== 'stopped') return;
-          stoppedAt.current = Date.now();
-          if (settleTimer.current) window.clearTimeout(settleTimer.current);
-          settleTimer.current = window.setTimeout(finish, 1500);
+          if (d.status !== 'speechEnd') return;
+          // Final words normally follow within a moment; if they never do, use what was heard.
+          if (timers.current.settle) window.clearTimeout(timers.current.settle);
+          timers.current.settle = window.setTimeout(finish, 2500);
+        }),
+        await SpeechRecognition.addListener('error', (d) => {
+          clearTimers();
+          // No speech / no match just means nothing usable was heard; anything else is a real fault worth showing.
+          if (heardRef.current) { finish(); return; }
+          if (d.code === 7 || d.code === 6) { setPhase('nothing'); return; }
+          setErrorText(`${d.message || 'error'}${d.code ? ` (${d.code})` : ''}`);
+          setPhase('error');
         }),
       ];
-      stoppedAt.current = 0;
       setPhase('listening');
       // Nothing heard at all after a while: say so instead of listening forever.
-      silenceTimer.current = window.setTimeout(() => {
+      timers.current.silence = window.setTimeout(() => {
         if (!heardRef.current) { SpeechRecognition.stop().catch(() => {}); setPhase('nothing'); }
-      }, 12000);
-      const result = await SpeechRecognition.start({ language: speechLanguageFor(language), maxResults: 1, partialResults: true, popup: false });
-      if (result?.matches?.[0]) heardRef.current = result.matches[0];
-    } catch (err) {
+      }, 15000);
+      await SpeechRecognition.start({ language: speechLanguageFor(languageRef.current) });
+    } catch (err: any) {
       console.error('speech start failed:', err);
-      setPhase('unavailable');
+      setErrorText(String(err?.message || err || 'could not start'));
+      setPhase('error');
     }
-  }, [finish, language]);
+  }, [finish]);
 
   useEffect(() => {
     begin();
     return () => {
-      if (settleTimer.current) window.clearTimeout(settleTimer.current);
-      if (silenceTimer.current) window.clearTimeout(silenceTimer.current);
+      clearTimers();
       SpeechRecognition.stop().catch(() => {});
-      listeners.current.forEach((l) => l.remove().catch(() => {}));
-      listeners.current = [];
+      handles.current.forEach((h) => h.remove().catch(() => {}));
+      handles.current = [];
     };
-  }, [begin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const done = () => {
     SpeechRecognition.stop().catch(() => {});
-    // The recogniser reports "stopped" itself; this covers a recogniser that does not.
-    stoppedAt.current = Date.now();
-    if (settleTimer.current) window.clearTimeout(settleTimer.current);
-    settleTimer.current = window.setTimeout(finish, 1200);
+    if (timers.current.settle) window.clearTimeout(timers.current.settle);
+    timers.current.settle = window.setTimeout(finish, 1500);
   };
 
+  const blocked = phase === 'denied' || phase === 'unavailable' || phase === 'error';
+
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-end bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-end bg-black/50" onClick={() => onCloseRef.current()}>
       <div
         className="w-full bg-white rounded-t-3xl p-5 space-y-4 text-center"
         style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="w-10 h-1 rounded-full bg-border-subtle mx-auto" />
-        {phase === 'denied' || phase === 'unavailable' ? (
+        {blocked ? (
           <>
-            <p className="text-sm font-bold text-text-main">{phase === 'denied' ? t('voiceExpense.denied') : t('voiceExpense.unavailable')}</p>
-            <button type="button" onClick={onClose} className="w-full py-3 rounded-xl bg-primary text-white text-sm font-bold">{t('voiceExpense.close')}</button>
+            <p className="text-sm font-bold text-text-main">
+              {phase === 'denied' ? t('voiceExpense.denied') : phase === 'unavailable' ? t('voiceExpense.unavailable') : t('voiceExpense.errorTitle')}
+            </p>
+            {phase === 'error' && errorText && <p className="text-xs text-text-muted break-words">{errorText}</p>}
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl bg-surface border border-border-subtle text-sm font-bold text-text-muted">{t('voiceExpense.close')}</button>
+              {phase === 'error' && (
+                <button type="button" onClick={begin} className="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-bold">{t('voiceExpense.tryAgain')}</button>
+              )}
+            </div>
           </>
         ) : (
           <>
@@ -137,6 +169,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
           </>
         )}
       </div>
-    </div>
-  , document.body);
+    </div>,
+    document.body,
+  );
 }

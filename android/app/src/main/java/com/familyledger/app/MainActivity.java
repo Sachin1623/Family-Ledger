@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ReceiptSharePlugin.class);
         registerPlugin(AlarmClockPlugin.class);
         registerPlugin(AppPermissionsPlugin.class);
+        registerPlugin(SpeechRecognitionPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

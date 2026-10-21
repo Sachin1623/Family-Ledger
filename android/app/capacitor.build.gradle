@@ -12,7 +12,6 @@ dependencies {
     implementation project(':aparajita-capacitor-biometric-auth')
     implementation project(':capacitor-community-contacts')
     implementation project(':capacitor-community-in-app-review')
-    implementation project(':capacitor-community-speech-recognition')
     implementation project(':capacitor-firebase-analytics')
     implementation project(':capacitor-firebase-authentication')
     implementation project(':capacitor-firebase-messaging')

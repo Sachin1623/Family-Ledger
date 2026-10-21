@@ -354,6 +354,7 @@ const en = {
   'voiceExpense.talk': 'Talk to add',
   'voiceExpense.heard': 'I heard:',
   'voiceExpense.talkShort': 'Talk',
+  'voiceExpense.errorTitle': 'The speech service had a problem:',
   'voiceExpense.adding': 'Adding…',
   'voiceExpense.added': 'Added',
   'voiceExpense.addedIncome': 'Income added',

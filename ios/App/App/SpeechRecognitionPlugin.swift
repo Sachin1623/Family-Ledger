@@ -49,7 +49,7 @@ public class SpeechRecognitionPlugin: CAPPlugin, CAPBridgedPlugin {
         recognitionRequest = nil
         recognitionTask = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        notifyListeners("listeningState", data: ["status": "stopped"])
+        notifyListeners("listeningState", data: ["status": "speechEnd"])
     }
 
     @objc func start(_ call: CAPPluginCall) {
@@ -98,16 +98,17 @@ public class SpeechRecognitionPlugin: CAPPlugin, CAPBridgedPlugin {
             self.recognitionTask = self.speechRecognizer?.recognitionTask(with: request) { result, error in
                 if let result = result {
                     let matches = result.transcriptions.prefix(max(1, maxResults)).map { $0.formattedString }
-                    if partialResults {
+                    if result.isFinal {
+                        self.notifyListeners("results", data: ["matches": matches])
+                        self.finishListening()
+                    } else if partialResults {
                         self.notifyListeners("partialResults", data: ["matches": matches])
                     }
-                    if result.isFinal {
-                        self.finishListening()
-                    }
                 }
-                if error != nil {
-                    // A recogniser that ends because nothing was said reports an error as well: both end the same way, and the
-                    // web side then shows "I did not catch that" when no words were heard.
+                if let error = error {
+                    // A recogniser that ends because nothing was said reports an error as well; the web side shows "I did not catch that"
+                    // when no words were heard, and the real message otherwise.
+                    self.notifyListeners("error", data: ["code": (error as NSError).code, "message": error.localizedDescription])
                     self.finishListening()
                 }
             }
@@ -119,7 +120,7 @@ public class SpeechRecognitionPlugin: CAPPlugin, CAPBridgedPlugin {
             engine.prepare()
             do {
                 try engine.start()
-                self.notifyListeners("listeningState", data: ["status": "started"])
+                self.notifyListeners("listeningState", data: ["status": "ready"])
                 call.resolve()
             } catch {
                 call.reject("Unknown error occured")

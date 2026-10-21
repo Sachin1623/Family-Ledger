@@ -90,6 +90,10 @@
          queryIntentActivities() can't see other apps' SEND handlers, so AiSharePlugin would
          never find any AI app to share to even when one's installed. -->
     <queries>
+        <!-- Talk to add an expense: lets the app see the phone's speech recognition service (Android 11+ hides other apps by default). -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="text/plain" />
