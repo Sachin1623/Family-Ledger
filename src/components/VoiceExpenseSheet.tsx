@@ -8,7 +8,17 @@ import { SpeechRecognition, speechLanguageFor, type SpeechListenerHandle } from 
 //
 // The phone's recogniser sends its FINAL words a moment after it announces the speech has ended, so the sentence is only handed over
 // once those final words arrive (or a short wait runs out) — closing earlier used half-finished words.
-export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () => void; onHeard: (sentence: string) => void }) {
+export interface VoiceTarget {
+  /** Name of the group the expense will be added to ('' when none is chosen yet). */
+  name: string;
+  /** When given, the person can change the group while talking. */
+  options?: { id: string; name: string }[];
+  selectedId?: string;
+  onSelect?: (id: string) => void;
+}
+
+export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClose: () => void; onHeard: (sentence: string) => void; target?: VoiceTarget }) {
+  const [pickingGroup, setPickingGroup] = useState(false);
   const { t, language } = useLanguage();
   const [phase, setPhase] = useState<'starting' | 'listening' | 'nothing' | 'denied' | 'unavailable' | 'error'>('starting');
   const [heard, setHeard] = useState('');
@@ -131,6 +141,37 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
         onClick={(e) => e.stopPropagation()}
       >
         <div className="w-10 h-1 rounded-full bg-border-subtle mx-auto" />
+        {target && (
+          <div className="text-left">
+            <button
+              type="button"
+              onClick={() => target.options && target.options.length > 1 && setPickingGroup((v) => !v)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-sm ${target.name ? 'bg-primary/5 border-primary/20' : 'bg-warning/10 border-warning/40'}`}
+            >
+              <span className="material-symbols-outlined text-[18px] text-primary">group</span>
+              <span className="text-[11px] font-bold text-text-muted uppercase tracking-wider">{t('voiceExpense.addingTo')}</span>
+              <span className="flex-1 truncate font-black text-primary">{target.name || t('voiceExpense.chooseGroup')}</span>
+              {target.options && target.options.length > 1 && (
+                <span className="text-[11px] font-black text-primary">{pickingGroup ? t('voiceExpense.close') : t('voiceExpense.change')}</span>
+              )}
+            </button>
+            {pickingGroup && target.options && (
+              <div className="mt-1.5 max-h-44 overflow-y-auto rounded-xl border border-border-subtle divide-y divide-border-subtle">
+                {target.options.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => { target.onSelect?.(g.id); setPickingGroup(false); }}
+                    className={`w-full text-left px-3 py-2.5 text-sm font-semibold flex items-center gap-2 ${g.id === target.selectedId ? 'bg-primary/10 text-primary' : 'text-text-main'}`}
+                  >
+                    <span className="flex-1 truncate">{g.name}</span>
+                    {g.id === target.selectedId && <span className="text-primary font-black">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {blocked ? (
           <>
             <p className="text-sm font-bold text-text-main">

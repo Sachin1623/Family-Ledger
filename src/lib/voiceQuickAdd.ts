@@ -25,6 +25,7 @@ export type QuickAddResult =
       ok: true;
       groupId: string;
       groupName: string;
+      sentence: string;
       expenseId: string;
       amount: number;
       description: string;
@@ -38,6 +39,29 @@ export type QuickAddResult =
       undo: () => Promise<void>;
     }
   | { ok: false; reason: 'no-amount' | 'no-group' | 'failed'; sentence: string };
+
+export interface MyGroup {
+  id: string;
+  name: string;
+}
+
+/** The groups this person belongs to (not archived), for choosing where a spoken expense goes. */
+export async function loadMyGroups(uid: string): Promise<MyGroup[]> {
+  const mine = await getDocs(query(collection(db, 'members'), where('userId', '==', uid)));
+  const ids = Array.from(new Set(mine.docs.map((d) => (d.data() as any).groupId as string)));
+  const out: MyGroup[] = [];
+  await Promise.all(
+    ids.map(async (id) => {
+      const snap = await getDoc(doc(db, 'groups', id)).catch(() => null);
+      if (snap?.exists() && !(snap.data() as any).archived) out.push({ id: snap.id, name: (snap.data() as any).name || '' });
+    }),
+  );
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function lastUsedGroupId(): string {
+  try { return localStorage.getItem(LAST_EXPENSE_GROUP_KEY) || ''; } catch { return ''; }
+}
 
 async function pickGroup(uid: string, hint?: string): Promise<{ id: string; data: any } | null> {
   if (hint) {
@@ -156,6 +180,7 @@ export async function quickAddFromSpeech(params: {
       ok: true,
       groupId: group.id,
       groupName: group.data.name || '',
+      sentence,
       expenseId: expenseRef.id,
       amount,
       description,
