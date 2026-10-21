@@ -1,5 +1,7 @@
 import React from 'react';
-import { NavLink, useLocation, useSearchParams } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import VoiceExpenseSheet from './VoiceExpenseSheet';
+import { speechAvailableHere } from '../lib/speech';
 import { clsx } from 'clsx';
 import { useShopMode } from '../context/ShopModeContext';
 import { useAuth } from '../context/AuthContext';
@@ -91,6 +93,8 @@ export default function Navigation() {
   // on a small bottom-nav icon).
   const { unreadChatCount } = useDmChats(shopMode ? undefined : user?.uid);
   const { fabAction } = useFabAction();
+  const navigate = useNavigate();
+  const [showVoice, setShowVoice] = React.useState(false);
   const links = shopMode ? SHOP_LINKS : PERSONAL_LINKS;
 
   // The floating action button is "Add Expense" everywhere by default, but that action has no
@@ -127,19 +131,40 @@ export default function Navigation() {
     fab = { to: '/add-expense', label: t('nav.addExpense'), icon: '➕', tour: 'nav-add-expense' };
   }
 
+  // A mic beside the Add Expense button: say the expense, then land on Add Expense already filled in. Only where Add Expense itself is the button.
+  const showMic = !!fab && fab.to === '/add-expense' && speechAvailableHere();
+
   return (
     <>
+      {showVoice && (
+        <VoiceExpenseSheet
+          onClose={() => setShowVoice(false)}
+          onHeard={(voiceText) => navigate('/add-expense', { state: { voiceText } })}
+        />
+      )}
       {fab && (fab.to ? (
-        <NavLink
-          key={fab.to}
-          to={fab.to}
-          data-tour={fab.tour}
-          className="fixed right-4 z-40 flex items-center gap-2 pl-4 pr-5 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform"
-          style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)' }}
-        >
-          <span className="text-lg leading-none">{fab.icon}</span>
-          {fab.label}
-        </NavLink>
+        <div className="fixed right-4 z-40 flex items-center gap-2" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)' }}>
+          {showMic && (
+            <button
+              type="button"
+              onClick={() => setShowVoice(true)}
+              aria-label={t('voiceExpense.talk')}
+              title={t('voiceExpense.talk')}
+              className="w-12 h-12 rounded-full bg-white text-primary border-2 border-primary shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <span className="material-symbols-outlined text-[24px]">mic</span>
+            </button>
+          )}
+          <NavLink
+            key={fab.to}
+            to={fab.to}
+            data-tour={fab.tour}
+            className="flex items-center gap-2 pl-4 pr-5 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform"
+          >
+            <span className="text-lg leading-none">{fab.icon}</span>
+            {fab.label}
+          </NavLink>
+        </div>
       ) : (
         <button
           type="button"

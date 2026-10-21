@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { SpeechRecognition, speechLanguageFor } from '../lib/speech';
 
@@ -10,11 +11,19 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
   const [heard, setHeard] = useState('');
   const heardRef = useRef('');
   const finished = useRef(false);
+  // The phone's recogniser announces "stopped" the moment you stop talking, but it sends its best, final words a moment AFTER that.
+  // Closing on "stopped" used the half-finished partial words (this was why sentences came through cut short or wrong), so we wait
+  // for the final words: a short settle time after "stopped", restarted whenever newer words arrive.
+  const stoppedAt = useRef(0);
+  const settleTimer = useRef<number | null>(null);
+  const silenceTimer = useRef<number | null>(null);
   const listeners = useRef<Array<{ remove: () => Promise<void> }>>([]);
 
   const finish = useCallback(() => {
     if (finished.current) return;
     finished.current = true;
+    if (settleTimer.current) window.clearTimeout(settleTimer.current);
+    if (silenceTimer.current) window.clearTimeout(silenceTimer.current);
     const sentence = heardRef.current.trim();
     if (sentence) {
       onHeard(sentence);
@@ -40,14 +49,29 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
       listeners.current = [
         await SpeechRecognition.addListener('partialResults', (d) => {
           const text = d.matches?.[0] || '';
+          if (!text) return;
           heardRef.current = text;
           setHeard(text);
+          if (silenceTimer.current) { window.clearTimeout(silenceTimer.current); silenceTimer.current = null; }
+          // Newer words after "stopped" are the final words: give them a moment to settle, then close.
+          if (stoppedAt.current) {
+            if (settleTimer.current) window.clearTimeout(settleTimer.current);
+            settleTimer.current = window.setTimeout(finish, 700);
+          }
         }),
         await SpeechRecognition.addListener('listeningState', (d) => {
-          if (d.status === 'stopped') finish();
+          if (d.status !== 'stopped') return;
+          stoppedAt.current = Date.now();
+          if (settleTimer.current) window.clearTimeout(settleTimer.current);
+          settleTimer.current = window.setTimeout(finish, 1500);
         }),
       ];
+      stoppedAt.current = 0;
       setPhase('listening');
+      // Nothing heard at all after a while: say so instead of listening forever.
+      silenceTimer.current = window.setTimeout(() => {
+        if (!heardRef.current) { SpeechRecognition.stop().catch(() => {}); setPhase('nothing'); }
+      }, 12000);
       const result = await SpeechRecognition.start({ language: speechLanguageFor(language), maxResults: 1, partialResults: true, popup: false });
       if (result?.matches?.[0]) heardRef.current = result.matches[0];
     } catch (err) {
@@ -59,6 +83,8 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
   useEffect(() => {
     begin();
     return () => {
+      if (settleTimer.current) window.clearTimeout(settleTimer.current);
+      if (silenceTimer.current) window.clearTimeout(silenceTimer.current);
       SpeechRecognition.stop().catch(() => {});
       listeners.current.forEach((l) => l.remove().catch(() => {}));
       listeners.current = [];
@@ -68,10 +94,12 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
   const done = () => {
     SpeechRecognition.stop().catch(() => {});
     // The recogniser reports "stopped" itself; this covers a recogniser that does not.
-    window.setTimeout(finish, 350);
+    stoppedAt.current = Date.now();
+    if (settleTimer.current) window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(finish, 1200);
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[300] flex items-end bg-black/50" onClick={onClose}>
       <div
         className="w-full bg-white rounded-t-3xl p-5 space-y-4 text-center"
@@ -110,5 +138,5 @@ export default function VoiceExpenseSheet({ onClose, onHeard }: { onClose: () =>
         )}
       </div>
     </div>
-  );
+  , document.body);
 }

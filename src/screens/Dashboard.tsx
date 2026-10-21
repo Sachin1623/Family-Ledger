@@ -21,6 +21,8 @@ import ImageLightbox from '../components/ImageLightbox';
 import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
 import { setExpandGroupTileFn } from '../lib/dashboardTileRef';
 import AccountsExplainerModal from '../components/AccountsExplainerModal';
+import VoiceExpenseSheet from '../components/VoiceExpenseSheet';
+import { speechAvailableHere } from '../lib/speech';
 import { netBalances, simplifyDebts } from '../lib/settleMath';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
@@ -600,6 +602,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   // itself never changes after Dashboard's initial mount (see peekRecentlyAdded there), so this
   // only needs to run once.
   const [showHighlight, setShowHighlight] = useState(!!highlightExpenseIds?.length);
+  const [showVoice, setShowVoice] = useState(false);
   useEffect(() => {
     if (!highlightExpenseIds?.length) return;
     const timer = setTimeout(() => setShowHighlight(false), 5000);
@@ -841,6 +844,12 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
 
   return (
     <>
+    {showVoice && (
+      <VoiceExpenseSheet
+        onClose={() => setShowVoice(false)}
+        onHeard={(voiceText) => navigate(`/add-expense?groupId=${groupId}`, { state: { voiceText } })}
+      />
+    )}
     <motion.div
       data-tour={isFirst ? 'dashboard-group-card' : undefined}
       initial={{ opacity: 0, scale: 0.95 }}
@@ -915,6 +924,12 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionAdd')}</span>
           </button>
+          {speechAvailableHere() && (
+            <button onClick={stopAnd(() => setShowVoice(true))} title="Talk to add an expense to this group" data-tour={`dashboard-action-talk-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
+              <span className="w-11 h-11 rounded-2xl bg-primary text-white flex items-center justify-center"><span className="material-symbols-outlined text-[22px]">mic</span></span>
+              <span className="text-[10px] font-bold text-text-muted">{t('voiceExpense.talkShort')}</span>
+            </button>
+          )}
           <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-lg">{poked ? '✅' : '✋'}</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionPoke')}</span>
