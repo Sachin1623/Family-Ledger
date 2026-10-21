@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLanguage } from '../context/LanguageContext';
-import { SpeechRecognition, speechLanguageFor, type SpeechListenerHandle } from '../lib/speech';
+import { SpeechRecognition, speechLanguageFor, useSpeechDialog, type SpeechListenerHandle } from '../lib/speech';
 
 // Bottom sheet for "talk to add an expense": asks for the microphone, shows what is being heard as it is heard, and hands the finished
 // sentence back. The sentence is turned into fields by lib/voiceExpense.ts (and saved by VoiceQuickAdd / AddExpense).
@@ -71,6 +71,26 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
     setErrorText('');
     setPhase('starting');
     clearTimers();
+    if (useSpeechDialog && SpeechRecognition.listenDialog) {
+      // Android: the phone's own "Speak now" box does the listening (and its own retries); we only wait for its answer.
+      try {
+        setPhase('listening');
+        const res = await SpeechRecognition.listenDialog({ language: speechLanguageFor(languageRef.current), maxResults: 5, prompt: t('voiceExpense.prompt') });
+        if (finished.current) return;
+        const matches = (res?.matches || []).filter(Boolean);
+        if (matches.length === 0) { setPhase('nothing'); return; }
+        heardRef.current = matches[0];
+        altsRef.current = matches.slice(1);
+        setHeard(matches[0]);
+        gotFinal.current = true;
+        finish();
+      } catch (err: any) {
+        console.error('speech dialog failed:', err);
+        setErrorText(String(err?.message || err || 'could not open'));
+        setPhase('error');
+      }
+      return;
+    }
     try {
       const avail = await SpeechRecognition.available();
       if (!avail.available) { setPhase('unavailable'); return; }
@@ -144,7 +164,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
       setErrorText(String(err?.message || err || 'could not start'));
       setPhase('error');
     }
-  }, [finish]);
+  }, [finish, t]);
 
   useEffect(() => {
     autoRetries.current = 0;

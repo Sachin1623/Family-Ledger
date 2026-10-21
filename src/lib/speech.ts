@@ -15,6 +15,8 @@ export interface SpeechPlugin {
   start(options: { language?: string; maxResults?: number }): Promise<void>;
   stop(): Promise<void>;
   cancel?(): Promise<void>;
+  /** Android: the phone's own "Speak now" box. Resolves when it closes, with the guesses (best first), or none if it was dismissed. */
+  listenDialog?(options: { language?: string; maxResults?: number; prompt?: string }): Promise<{ matches: string[] }>;
   /**
    * partialResults: words heard so far. results: the final words (they arrive AFTER the speech has ended).
    * listeningState: "ready" | "started" | "speechEnd". error: the recogniser gave up (code + plain message).
@@ -63,6 +65,9 @@ function makeWebStandIn(): SpeechPlugin {
 }
 
 export const SpeechRecognition: SpeechPlugin = useWebStandIn ? makeWebStandIn() : registerPlugin<SpeechPlugin>('SpeechRecognition');
+
+/** Android uses the phone's own speech box (steady); everything else (iPhone, the dev stand-in) listens inline with live words. */
+export const useSpeechDialog = !useWebStandIn && Capacitor.getPlatform() === 'android';
 
 export function speechAvailableHere(): boolean {
   if (useWebStandIn) return true;

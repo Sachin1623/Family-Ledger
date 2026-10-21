@@ -1,6 +1,7 @@
 package com.familyledger.app;
 
 import android.Manifest;
+import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -9,12 +10,14 @@ import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
@@ -80,6 +83,42 @@ public class SpeechRecognitionPlugin extends Plugin {
         PermissionState state = getPermissionState("speechRecognition");
         ret.put("speechRecognition", state == null ? "prompt" : state.toString());
         return ret;
+    }
+
+    /**
+     * Listen through the phone's own "Speak now" box (the system speech dialog) and return what was heard when it closes. Unlike the inline
+     * recogniser below, the dialog manages the microphone itself — it keeps listening, offers its own retry, and never leaves the app
+     * "listening" with the microphone off — which is what made the inline version flip on and off. No live words, but a steady result.
+     */
+    @PluginMethod
+    public void listenDialog(PluginCall call) {
+        String language = call.getString("language", "en-IN");
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language);
+        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, call.getInt("maxResults", 5));
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+        intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
+        String prompt = call.getString("prompt");
+        if (prompt != null) intent.putExtra(RecognizerIntent.EXTRA_PROMPT, prompt);
+        try {
+            startActivityForResult(call, intent, "dialogResult");
+        } catch (Exception e) {
+            call.reject("No speech dialog on this phone: " + e.getMessage());
+        }
+    }
+
+    @ActivityCallback
+    private void dialogResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject ret = new JSObject();
+        ArrayList<String> matches = null;
+        if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+            matches = result.getData().getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+        }
+        ret.put("matches", new org.json.JSONArray(matches == null ? new ArrayList<String>() : matches));
+        call.resolve(ret);
     }
 
     @PluginMethod
