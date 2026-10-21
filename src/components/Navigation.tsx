@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import VoiceExpenseSheet from './VoiceExpenseSheet';
+import VoiceQuickAdd from './VoiceQuickAdd';
 import { speechAvailableHere } from '../lib/speech';
 import { clsx } from 'clsx';
 import { useShopMode } from '../context/ShopModeContext';
@@ -137,9 +137,9 @@ export default function Navigation() {
   return (
     <>
       {showVoice && (
-        <VoiceExpenseSheet
-          onClose={() => setShowVoice(false)}
-          onHeard={(voiceText) => navigate('/add-expense', { state: { voiceText } })}
+        <VoiceQuickAdd
+          onDone={() => setShowVoice(false)}
+          afterAdd={() => { if (location.pathname !== '/') navigate('/'); }}
         />
       )}
       {fab && (fab.to ? (

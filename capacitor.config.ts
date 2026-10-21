@@ -1,5 +1,9 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
+// Test builds only: CAP_DEV_URL=http://<this computer's LAN address>:3000 makes the app load from the local dev server instead of the
+// live site, so changes can be tried on a real phone without deploying. Never set for a release build.
+const devUrl = process.env.CAP_DEV_URL;
+
 const config: CapacitorConfig = {
   appId: 'com.familyledger.app',
   appName: 'FamilyLedger',
@@ -13,7 +17,8 @@ const config: CapacitorConfig = {
     // (familyledger.thirteenapps.com), once its cert finished provisioning — same backend,
     // just the branded domain. The .run.app URL still works too; both route to the same
     // familyledger-backend Cloud Run service.
-    url: 'https://familyledger.thirteenapps.com',
+    url: devUrl || 'https://familyledger.thirteenapps.com',
+    ...(devUrl ? { cleartext: true } : {}),
   },
   plugins: {
     // skipNativeAuth: true is required — Login.tsx's native sign-in handlers (Google AND Apple)

@@ -21,7 +21,8 @@ import ImageLightbox from '../components/ImageLightbox';
 import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
 import { setExpandGroupTileFn } from '../lib/dashboardTileRef';
 import AccountsExplainerModal from '../components/AccountsExplainerModal';
-import VoiceExpenseSheet from '../components/VoiceExpenseSheet';
+import VoiceQuickAdd from '../components/VoiceQuickAdd';
+import { QUICK_ADDED_EVENT } from '../lib/voiceQuickAdd';
 import { speechAvailableHere } from '../lib/speech';
 import { netBalances, simplifyDebts } from '../lib/settleMath';
 
@@ -252,7 +253,7 @@ export default function Dashboard() {
   // loadExpandedGroups already uses) rather than in an effect, so the very first render already
   // has the right groups expanded instead of a collapsed-then-expanded flash. Cleared right after
   // so a later reload doesn't keep re-highlighting the same entries.
-  const [pendingHighlights] = useState<Record<string, string[]>>(() => peekRecentlyAdded());
+  const [pendingHighlights, setPendingHighlights] = useState<Record<string, string[]>>(() => peekRecentlyAdded());
   useEffect(() => {
     if (Object.keys(pendingHighlights).length > 0) clearRecentlyAdded();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,6 +265,20 @@ export default function Dashboard() {
     return base;
   });
   const [revealedGroupIds, setRevealedGroupIds] = useState<Set<string>>(() => loadIdSet(REVEALED_STORAGE_KEY));
+
+  // An expense just added by voice (see lib/voiceQuickAdd.ts) while this screen is already showing: open that group's tile fully and
+  // highlight the new line right away, the same highlight a saved-from-the-form expense gets when you come back here.
+  useEffect(() => {
+    const onQuickAdded = (e: Event) => {
+      const { groupId, expenseId } = (e as CustomEvent<{ groupId: string; expenseId: string }>).detail || ({} as any);
+      if (!groupId || !expenseId) return;
+      setPendingHighlights((prev) => ({ ...prev, [groupId]: [...(prev[groupId] || []), expenseId] }));
+      setRevealedGroupIds((prev) => (prev.has(groupId) ? prev : new Set(prev).add(groupId)));
+      setExpandedGroupIds((prev) => (prev.has(groupId) ? prev : new Set(prev).add(groupId)));
+    };
+    window.addEventListener(QUICK_ADDED_EVENT, onQuickAdded);
+    return () => window.removeEventListener(QUICK_ADDED_EVENT, onQuickAdded);
+  }, []);
 
   // Cycles a tile 1 -> 2 -> 3 -> 1 (see tileStateFor's header comment for what each state shows).
   // Each set is independently persisted to its own localStorage key; state 3 -> 1 clears BOTH so a
@@ -603,12 +618,14 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   // only needs to run once.
   const [showHighlight, setShowHighlight] = useState(!!highlightExpenseIds?.length);
   const [showVoice, setShowVoice] = useState(false);
+  // Re-runs whenever a NEW id joins the list (an expense added by voice while this tile is on screen), not only at first paint.
+  const highlightKey = (highlightExpenseIds || []).join(',');
   useEffect(() => {
-    if (!highlightExpenseIds?.length) return;
-    const timer = setTimeout(() => setShowHighlight(false), 5000);
+    if (!highlightKey) return;
+    setShowHighlight(true);
+    const timer = setTimeout(() => setShowHighlight(false), 6000);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [highlightKey]);
   const highlightedIds = useMemo(() => new Set<string>(highlightExpenseIds || []), [highlightExpenseIds]);
   const navigate = useNavigate();
   const { user, profile } = useAuth();
@@ -844,12 +861,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
 
   return (
     <>
-    {showVoice && (
-      <VoiceExpenseSheet
-        onClose={() => setShowVoice(false)}
-        onHeard={(voiceText) => navigate(`/add-expense?groupId=${groupId}`, { state: { voiceText } })}
-      />
-    )}
+    {showVoice && <VoiceQuickAdd groupId={groupId} onDone={() => setShowVoice(false)} />}
     <motion.div
       data-tour={isFirst ? 'dashboard-group-card' : undefined}
       initial={{ opacity: 0, scale: 0.95 }}
