@@ -4,12 +4,16 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
@@ -21,6 +25,7 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 
 /**
@@ -212,8 +217,176 @@ public class SpeechRecognitionPlugin extends Plugin {
         }
     }
 
+    // ── Recording a short voice note natively (for the voice-to-expense service) ──────────────────────────────────────────────────────
+    // Done here rather than in the web page because a page opened over plain http (the local test setup) is not allowed to use the
+    // microphone at all, and because this works the same on every phone. The audio is raw 16 kHz mono, sent to the page as a small WAV.
+    private static final int REC_RATE = 16000;
+    private AudioRecord audioRecord;
+    private Thread recordThread;
+    private volatile boolean recording = false;
+    private volatile boolean recHeardVoice = false;
+    private ByteArrayOutputStream recBytes;
+    private long recStartedAt;
+
+    @PluginMethod
+    public void startRecording(PluginCall call) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissionForAlias("speechRecognition", call, "recordPermissionDone");
+            return;
+        }
+        beginRecording(call);
+    }
+
+    @PermissionCallback
+    private void recordPermissionDone(PluginCall call) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            beginRecording(call);
+        } else {
+            call.reject("microphone permission denied");
+        }
+    }
+
+    private void beginRecording(PluginCall call) {
+        stopRecordingThread();
+        final long silenceMs = call.getInt("silenceMs", 1400);
+        final long giveUpMs = call.getInt("giveUpMs", 9000);
+        final long maxMs = call.getInt("maxMs", 20000);
+        final double threshold = 0.018;
+        int minBuf = AudioRecord.getMinBufferSize(REC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        if (minBuf <= 0) {
+            call.reject("this phone cannot record audio");
+            return;
+        }
+        try {
+            audioRecord = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, REC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf * 4);
+            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                audioRecord.release();
+                audioRecord = null;
+                call.reject("the microphone could not be opened");
+                return;
+            }
+        } catch (Exception e) {
+            call.reject("the microphone could not be opened: " + e.getMessage());
+            return;
+        }
+        recBytes = new ByteArrayOutputStream();
+        recHeardVoice = false;
+        recording = true;
+        recStartedAt = System.currentTimeMillis();
+        final AudioRecord rec = audioRecord;
+        rec.startRecording();
+        recordThread = new Thread(() -> {
+            short[] buf = new short[1600]; // 100 ms
+            long lastVoiceAt = 0;
+            long lastLevelSent = 0;
+            boolean endedSent = false;
+            while (recording) {
+                int n = rec.read(buf, 0, buf.length);
+                if (n <= 0) continue;
+                double sum = 0;
+                byte[] bytes = new byte[n * 2];
+                for (int i = 0; i < n; i++) {
+                    sum += (buf[i] / 32768.0) * (buf[i] / 32768.0);
+                    bytes[i * 2] = (byte) (buf[i] & 0xff);
+                    bytes[i * 2 + 1] = (byte) ((buf[i] >> 8) & 0xff);
+                }
+                synchronized (recBytes) { recBytes.write(bytes, 0, bytes.length); }
+                double rms = Math.sqrt(sum / n);
+                long now = System.currentTimeMillis();
+                if (rms > threshold) { recHeardVoice = true; lastVoiceAt = now; }
+                if (now - lastLevelSent > 90) {
+                    lastLevelSent = now;
+                    JSObject o = new JSObject();
+                    o.put("level", Math.min(1.0, rms * 8));
+                    notifyListeners("recordingLevel", o);
+                }
+                String reason = null;
+                if (recHeardVoice && now - lastVoiceAt > silenceMs) reason = "silence";
+                else if (!recHeardVoice && now - recStartedAt > giveUpMs) reason = "nothing";
+                else if (now - recStartedAt > maxMs) reason = "max";
+                if (reason != null && !endedSent) {
+                    endedSent = true;
+                    JSObject o = new JSObject();
+                    o.put("reason", reason);
+                    notifyListeners("recordingEnded", o);
+                }
+            }
+        }, "fl-voice-record");
+        recordThread.start();
+        call.resolve();
+    }
+
+    private void stopRecordingThread() {
+        recording = false;
+        if (recordThread != null) {
+            try { recordThread.join(400); } catch (InterruptedException ignored) {}
+            recordThread = null;
+        }
+        if (audioRecord != null) {
+            try { audioRecord.stop(); } catch (Exception ignored) {}
+            try { audioRecord.release(); } catch (Exception ignored) {}
+            audioRecord = null;
+        }
+    }
+
+    @PluginMethod
+    public void stopRecording(PluginCall call) {
+        long durationMs = System.currentTimeMillis() - recStartedAt;
+        stopRecordingThread();
+        byte[] pcm;
+        if (recBytes == null) {
+            pcm = new byte[0];
+        } else {
+            synchronized (recBytes) { pcm = recBytes.toByteArray(); }
+        }
+        recBytes = null;
+        byte[] wav = new byte[44 + pcm.length];
+        int dataLen = pcm.length;
+        writeWavHeader(wav, dataLen);
+        System.arraycopy(pcm, 0, wav, 44, dataLen);
+        JSObject ret = new JSObject();
+        ret.put("wavBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
+        ret.put("durationMs", durationMs);
+        ret.put("heardVoice", recHeardVoice);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void cancelRecording(PluginCall call) {
+        stopRecordingThread();
+        recBytes = null;
+        call.resolve();
+    }
+
+    private static void writeWavHeader(byte[] h, int dataLen) {
+        int total = 36 + dataLen;
+        byte[] riff = {'R', 'I', 'F', 'F'};
+        System.arraycopy(riff, 0, h, 0, 4);
+        putInt(h, 4, total);
+        byte[] wave = {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '};
+        System.arraycopy(wave, 0, h, 8, 8);
+        putInt(h, 16, 16);
+        h[20] = 1; h[21] = 0; // PCM
+        h[22] = 1; h[23] = 0; // mono
+        putInt(h, 24, REC_RATE);
+        putInt(h, 28, REC_RATE * 2);
+        h[32] = 2; h[33] = 0;
+        h[34] = 16; h[35] = 0;
+        byte[] data = {'d', 'a', 't', 'a'};
+        System.arraycopy(data, 0, h, 36, 4);
+        putInt(h, 40, dataLen);
+    }
+
+    private static void putInt(byte[] b, int off, int v) {
+        b[off] = (byte) (v & 0xff);
+        b[off + 1] = (byte) ((v >> 8) & 0xff);
+        b[off + 2] = (byte) ((v >> 16) & 0xff);
+        b[off + 3] = (byte) ((v >> 24) & 0xff);
+    }
+
     @Override
     protected void handleOnDestroy() {
+        stopRecordingThread();
         destroyRecognizer();
         super.handleOnDestroy();
     }

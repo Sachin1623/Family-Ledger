@@ -15,6 +15,12 @@ export interface SpeechPlugin {
   start(options: { language?: string; maxResults?: number }): Promise<void>;
   stop(): Promise<void>;
   cancel?(): Promise<void>;
+  /** Android: record a short voice note natively (works even on a page opened over plain http). */
+  startRecording?(options?: { silenceMs?: number; giveUpMs?: number; maxMs?: number }): Promise<void>;
+  stopRecording?(): Promise<{ wavBase64: string; durationMs: number; heardVoice: boolean }>;
+  cancelRecording?(): Promise<void>;
+  addListener(event: 'recordingLevel', fn: (d: { level: number }) => void): Promise<SpeechListenerHandle>;
+  addListener(event: 'recordingEnded', fn: (d: { reason: string }) => void): Promise<SpeechListenerHandle>;
   /** Android: the phone's own "Speak now" box. Resolves when it closes, with the guesses (best first), or none if it was dismissed. */
   listenDialog?(options: { language?: string; maxResults?: number; prompt?: string }): Promise<{ matches: string[] }>;
   /**

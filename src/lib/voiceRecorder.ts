@@ -60,12 +60,40 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+import { Capacitor } from '@capacitor/core';
+import { SpeechRecognition } from './speech';
+
 export async function startVoiceRecording(opts: {
   /** Called a few times a second with the current loudness (0..1) so the screen can show it. */
   onLevel?: (level: number) => void;
   /** Called when the recording stopped on its own (finished speaking, nothing said, or too long). */
   onAutoStop?: () => void;
 }): Promise<VoiceRecording> {
+  // The Android app records natively (the page itself may not be allowed the microphone, e.g. when opened over plain http while testing).
+  if (Capacitor.getPlatform() === 'android' && SpeechRecognition.startRecording && SpeechRecognition.stopRecording) {
+    const handles = await Promise.all([
+      SpeechRecognition.addListener('recordingLevel', (d) => opts.onLevel?.(d.level)),
+      SpeechRecognition.addListener('recordingEnded', () => opts.onAutoStop?.()),
+    ]);
+    const dropListeners = () => handles.forEach((h) => h.remove().catch(() => {}));
+    try {
+      await SpeechRecognition.startRecording({ silenceMs: SILENCE_AFTER_VOICE_MS, giveUpMs: NO_VOICE_GIVE_UP_MS, maxMs: MAX_MS });
+    } catch (err) {
+      dropListeners();
+      throw err;
+    }
+    return {
+      stop: async () => {
+        dropListeners();
+        return SpeechRecognition.stopRecording!();
+      },
+      cancel: () => {
+        dropListeners();
+        SpeechRecognition.cancelRecording?.().catch(() => {});
+      },
+    };
+  }
+
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
