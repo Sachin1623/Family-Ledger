@@ -355,6 +355,7 @@ const en = {
   'voiceExpense.heard': 'I heard:',
   'voiceExpense.talkShort': 'Talk',
   'voiceExpense.edit': 'Edit',
+  'voiceExpense.micBusy': 'The microphone gave only silence. Another app may be using it, for example a screen recorder with sound on. Turn that off and try again.',
   'voiceExpense.thinking': 'Understanding…',
   'voiceExpense.prompt': 'Say it like: spent 450 on groceries',
   'voiceExpense.ok': 'OK',

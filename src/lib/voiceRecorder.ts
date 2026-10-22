@@ -4,7 +4,7 @@
 
 export interface VoiceRecording {
   /** Stop now and get the clip. */
-  stop: () => Promise<{ wavBase64: string; durationMs: number; heardVoice: boolean }>;
+  stop: () => Promise<{ wavBase64: string; durationMs: number; heardVoice: boolean; peak?: number }>;
   /** Throw the recording away. */
   cancel: () => void;
 }

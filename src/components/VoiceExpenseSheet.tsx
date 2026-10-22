@@ -98,6 +98,13 @@ export default function VoiceExpenseSheet({
     setPhase('thinking');
     try {
       const clip = await rec.stop();
+      // A recording that is completely flat means the microphone was given silence, typically because another app is using it (a screen
+      // recorder with sound switched on, a call, a game's voice chat). Say so instead of a vague "did not catch that".
+      if (clip.peak !== undefined && clip.peak < 0.003 && clip.durationMs > 1500) {
+        setErrorText(t('voiceExpense.micBusy'));
+        setPhase('error');
+        return;
+      }
       if (!clip.heardVoice || clip.durationMs < 500) { setPhase('nothing'); return; }
       const given = getContextRef.current?.();
       const ctx = {

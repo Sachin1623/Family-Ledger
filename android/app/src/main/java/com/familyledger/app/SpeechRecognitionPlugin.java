@@ -283,7 +283,7 @@ public class SpeechRecognitionPlugin extends Plugin {
             boolean endedSent = false;
             // The room's own background loudness, learned from the first half second, so speech is judged against it. A fixed loudness
             // limit missed quiet voices on some phones (the recorder then never noticed anyone speaking and gave up).
-            double noiseFloor = 0;
+            double noiseFloor = 1;
             int calibrated = 0;
             int voiceBuffers = 0;
             while (recording) {
@@ -302,12 +302,10 @@ public class SpeechRecognitionPlugin extends Plugin {
                 double peakNow = 0;
                 for (int i = 0; i < n; i++) peakNow = Math.max(peakNow, Math.abs(buf[i] / 32768.0));
                 if (peakNow > recPeak) recPeak = peakNow;
-                if (calibrated < 5) {
-                    noiseFloor = (noiseFloor * calibrated + rms) / (calibrated + 1);
-                    calibrated++;
-                }
+                if (rms > 0.00005) noiseFloor = Math.min(noiseFloor, rms);
+                calibrated++;
                 double threshold = Math.max(0.008, noiseFloor * 3.0);
-                if (calibrated >= 5 && rms > threshold) {
+                if (calibrated >= 3 && rms > threshold) {
                     voiceBuffers++;
                     if (voiceBuffers >= 2) { recHeardVoice = true; lastVoiceAt = now; }
                 }
@@ -374,6 +372,7 @@ public class SpeechRecognitionPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("wavBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
         ret.put("durationMs", durationMs);
+        ret.put("peak", recPeak);
         // Even if the loudness check never fired, a recording with a clearly audible peak is worth sending: the model decides.
         ret.put("heardVoice", recHeardVoice || recPeak > 0.05);
         call.resolve(ret);
