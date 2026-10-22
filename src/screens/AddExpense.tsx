@@ -28,7 +28,7 @@ import { buildRoster } from '../lib/groupParticipants';
 import { useLanguage } from '../context/LanguageContext';
 import VoiceExpenseSheet from '../components/VoiceExpenseSheet';
 import { speechAvailableHere } from '../lib/speech';
-import { parseSpokenExpense } from '../lib/voiceExpense';
+import { parseSpokenExpense, type SpokenStructured } from '../lib/voiceExpense';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 const LAST_EXPENSE_GROUP_KEY = 'fl_last_expense_group';
@@ -232,11 +232,22 @@ export default function AddExpense() {
   const activeCategories = groupId ? getGroupCategories(selectedGroup, entryType === 'income' ? 'income' : 'expense') : (entryType === 'income' ? INCOME_CATEGORIES : CATEGORIES);
 
   // "Talk to add": fills the form from a spoken sentence. Only fields that were actually heard are changed, and nothing is saved here.
-  const applySpoken = (sentence: string) => {
+  const applySpoken = (sentence: string, _alternatives?: string[], structured?: SpokenStructured) => {
     const incomeAllowed = !!selectedGroup?.incomeEnabled;
-    const wantIncome = parseSpokenExpense(sentence, [...INCOME_CATEGORIES], new Date()).isIncome && incomeAllowed;
+    const wantIncome = (structured && structured.amount ? structured.isIncome : parseSpokenExpense(sentence, [...INCOME_CATEGORIES], new Date()).isIncome) && incomeAllowed;
     const list = wantIncome ? INCOME_CATEGORIES : activeCategories;
-    const parsed = parseSpokenExpense(sentence, list as any, new Date());
+    let parsed = parseSpokenExpense(sentence, list as any, new Date());
+    if (structured && structured.amount) {
+      // The voice service listened to the recording itself: use what it read out, and fill any gap from the words.
+      const stCategory = structured.categoryId && (list as any[]).some((c) => c.id === structured.categoryId) ? structured.categoryId : undefined;
+      parsed = {
+        amount: structured.amount,
+        description: structured.description || parsed.description,
+        categoryId: stCategory || parsed.categoryId,
+        date: structured.date || parsed.date,
+        isIncome: wantIncome,
+      };
+    }
     if (parsed.amount) setAmount(String(parsed.amount));
     if (parsed.description) setDescription(parsed.description);
     if (parsed.date) setDate(parsed.date);
@@ -1378,7 +1389,13 @@ export default function AddExpense() {
       </div>
       )}
 
-      {showVoice && <VoiceExpenseSheet onClose={() => setShowVoice(false)} onHeard={applySpoken} />}
+      {showVoice && (
+        <VoiceExpenseSheet
+          onClose={() => setShowVoice(false)}
+          onHeard={applySpoken}
+          getContext={() => ({ categories: activeCategories as any, incomeCategories: INCOME_CATEGORIES, currency: selectedGroup?.currency })}
+        />
+      )}
       {voiceHeard && (
         <div className="fixed left-4 right-4 bottom-24 z-[120] rounded-xl bg-primary text-white text-xs font-bold px-4 py-3 shadow-lg flex items-center gap-2">
           <span className="material-symbols-outlined text-[18px]">check_circle</span>

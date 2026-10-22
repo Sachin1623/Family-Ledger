@@ -355,6 +355,7 @@ const en = {
   'voiceExpense.heard': 'I heard:',
   'voiceExpense.talkShort': 'Talk',
   'voiceExpense.edit': 'Edit',
+  'voiceExpense.thinking': 'Understanding…',
   'voiceExpense.prompt': 'Say it like: spent 450 on groceries',
   'voiceExpense.ok': 'OK',
   'voiceExpense.noDetail': 'I heard an amount but not what it was for.',

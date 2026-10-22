@@ -8,7 +8,7 @@ import { markExpenseAdded } from './recentlyAddedExpenses';
 import { buildRoster } from './groupParticipants';
 import { getCurrencySymbol, getCategoryNameOverride, getGroupCategories } from './constants';
 import { todayLocalDateString } from './dateUtils';
-import { parseSpokenExpense } from './voiceExpense';
+import { parseSpokenExpense, type SpokenStructured } from './voiceExpense';
 
 // "Say it, and it is added": turns a spoken sentence straight into a saved expense — no form. The person gets a few seconds to undo
 // (see VoiceQuickAdd.tsx); the group is only told about it, and points only claimed, once those seconds pass without an undo, so a
@@ -89,6 +89,8 @@ export async function quickAddFromSpeech(params: {
   sentence: string;
   /** The recogniser's other guesses at the same words. */
   alternatives?: string[];
+  /** What the voice service read out of the recording, when it did the listening. Used instead of guessing from the words. */
+  structured?: SpokenStructured;
   /** Save even when nothing says what it was for (the person chose "Add as Other"). */
   allowBlank?: boolean;
   user: { uid: string; displayName?: string | null };
@@ -101,7 +103,8 @@ export async function quickAddFromSpeech(params: {
     if (!group) return { ok: false, reason: 'no-group', sentence };
 
     const incomeAllowed = !!group.data.incomeEnabled;
-    const asIncome = incomeAllowed && parseSpokenExpense(sentence, getGroupCategories(group.data, 'income'), new Date()).isIncome;
+    const st = params.structured && params.structured.amount ? params.structured : null;
+    const asIncome = incomeAllowed && (st ? st.isIncome : parseSpokenExpense(sentence, getGroupCategories(group.data, 'income'), new Date()).isIncome);
     const kind = asIncome ? 'income' : 'expense';
     const cats = getGroupCategories(group.data, kind).map((c) => ({ id: c.id, name: getCategoryNameOverride(group.data, c.id) || c.name }));
     // The recogniser's first guess is not always the one that makes sense ("send 500 for pizza" for "spent 500 for pizza"). Of all its guesses,
@@ -113,6 +116,17 @@ export async function quickAddFromSpeech(params: {
     for (const g of guesses.slice(1)) {
       const p = parseSpokenExpense(g, cats, new Date());
       if (score(p) > score(parsed)) { best = g; parsed = p; }
+    }
+    if (st) {
+      // The voice service listened to the recording itself: trust its amount, description, category and date, and only fill any gap from the words.
+      const stCategory = st.categoryId && cats.some((c) => c.id === st.categoryId) ? st.categoryId : undefined;
+      parsed = {
+        amount: st.amount ?? parsed.amount,
+        description: st.description || parsed.description,
+        categoryId: stCategory || parsed.categoryId,
+        date: st.date || parsed.date,
+        isIncome: asIncome,
+      };
     }
     const usedSentence = best;
     if (!parsed.amount || parsed.amount <= 0) return { ok: false, reason: 'no-amount', sentence };

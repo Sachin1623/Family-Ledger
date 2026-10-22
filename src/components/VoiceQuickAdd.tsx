@@ -4,6 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import VoiceExpenseSheet from './VoiceExpenseSheet';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { getCategoryNameOverride, getGroupCategories } from '../lib/constants';
+import type { SpokenStructured } from '../lib/voiceExpense';
 import { lastUsedGroupId, loadMyGroups, quickAddFromSpeech, type MyGroup, type QuickAddResult } from '../lib/voiceQuickAdd';
 
 const UNDO_SECONDS = 7;
@@ -54,13 +58,29 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
   }, [user, groupId]);
   const targetRef = useRef(targetId);
   targetRef.current = targetId;
+  const lastStructured = useRef<SpokenStructured | undefined>(undefined);
+
+  // The categories of the group being added to (custom ones included), handed to the speech service so it can pick the right one.
+  const ctxRef = useRef<{ categories: { id: string; name: string }[]; incomeCategories: { id: string; name: string }[]; currency?: string } | null>(null);
+  useEffect(() => {
+    ctxRef.current = null;
+    if (!targetId) return;
+    let alive = true;
+    getDoc(doc(db, 'groups', targetId)).then((snap) => {
+      if (!alive || !snap.exists()) return;
+      const g: any = snap.data();
+      const named = (list: { id: string; name: string }[]) => list.map((c) => ({ id: c.id, name: getCategoryNameOverride(g, c.id) || c.name }));
+      ctxRef.current = { categories: named(getGroupCategories(g, 'expense')), incomeCategories: g.incomeEnabled ? named(getGroupCategories(g, 'income')) : [], currency: g.currency };
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [targetId]);
 
   const onHeard = useCallback(
-    async (sentence: string, alternatives: string[] = [], allowBlank = false) => {
+    async (sentence: string, alternatives: string[] = [], structured?: SpokenStructured, allowBlank = false) => {
       if (!user) return;
       heardOnce.current = true;
       setBusy(true);
-      const r = await quickAddFromSpeech({ sentence, alternatives, allowBlank, user, profile, groupId: targetRef.current || groupId });
+      const r = await quickAddFromSpeech({ sentence, alternatives, structured, allowBlank, user, profile, groupId: targetRef.current || groupId });
       setBusy(false);
       // Several groups and none used yet: ask in the usual form, with the words already filled in.
       if (r.ok === false && r.reason === 'no-group') {
@@ -127,7 +147,8 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
       {listening && (
         <VoiceExpenseSheet
           onClose={() => { setListening(false); if (!heardOnce.current) onDone(); }}
-          onHeard={onHeard}
+          onHeard={(s, alts, structured) => { lastStructured.current = structured; return onHeard(s, alts, structured); }}
+          getContext={() => ctxRef.current || { categories: [], incomeCategories: [] }}
           target={{
             name: groups.find((g) => g.id === targetId)?.name || '',
             options: groupId ? undefined : groups,
@@ -178,7 +199,7 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
                     {result.reason === 'no-detail' && (
                       <button
                         type="button"
-                        onClick={() => { const s = result.sentence; setResult(null); onHeard(s, [], true); }}
+                        onClick={() => { const s = result.sentence; setResult(null); onHeard(s, [], lastStructured.current, true); }}
                         className="flex-1 py-2 rounded-lg bg-white/20 font-black text-xs"
                       >
                         {t('voiceExpense.addAsOther')}

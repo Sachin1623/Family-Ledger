@@ -13,6 +13,7 @@ import allEnglishWords from "an-array-of-english-words";
 import { Filter as BadWordsFilter } from "bad-words";
 import { getWordsList as getMostCommonWordsList } from "most-common-words-by-language";
 import { z } from "zod";
+import { GoogleGenAI, Type as GenAiType } from "@google/genai";
 
 dotenv.config();
 
@@ -4929,6 +4930,99 @@ async function startServer() {
       console.error('funnel error:', error);
     }
     return res.status(204).end();
+  });
+
+  // ---- Talk to add an expense: a short voice clip -> the expense it describes -------------------------------------------------------
+  // The phone's built-in speech box is the weak link (accents, Hindi-mixed phrases, numbers), so the app records a short clip and this
+  // asks Google's Gemini model (through Vertex AI, using this service's own Google identity — no API key to keep) to listen and read out
+  // the expense. The clip is processed once and not stored by us. Only a signed-in person can use it, with a small per-person limit,
+  // because every call costs a little.
+  const voiceHits = new Map<string, { n: number; resetAt: number }>();
+  const VOICE_MODEL = 'gemini-2.5-flash';
+  const VOICE_LOCATION = process.env.VOICE_AI_LOCATION || 'asia-south1';
+  let voiceAi: GoogleGenAI | null = null;
+  app.post('/api/voice-expense', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded) return res.status(401).json({ error: 'Unauthorized.' });
+
+    const now = Date.now();
+    const hit = voiceHits.get(decoded.uid);
+    if (!hit || hit.resetAt < now) voiceHits.set(decoded.uid, { n: 1, resetAt: now + 60_000 });
+    else if (++hit.n > 20) return res.status(429).json({ error: 'Too many voice entries in a minute. Please wait a moment.' });
+
+    const audio = typeof req.body?.audio === 'string' ? req.body.audio : '';
+    const mimeType = String(req.body?.mimeType || 'audio/wav');
+    if (!audio || audio.length > 4_500_000) return res.status(400).json({ error: 'A short voice clip is required.' });
+    if (!/^audio\/(wav|x-wav|mpeg|mp3|ogg|flac|aac|mp4|webm)$/.test(mimeType)) return res.status(400).json({ error: 'Unsupported audio type.' });
+
+    const categories: { id: string; name: string }[] = (Array.isArray(req.body?.categories) ? req.body.categories : [])
+      .filter((c: any) => c && typeof c.id === 'string' && typeof c.name === 'string')
+      .slice(0, 60)
+      .map((c: any) => ({ id: c.id.slice(0, 60), name: c.name.slice(0, 60) }));
+    const incomeCategories: { id: string; name: string }[] = (Array.isArray(req.body?.incomeCategories) ? req.body.incomeCategories : [])
+      .filter((c: any) => c && typeof c.id === 'string' && typeof c.name === 'string')
+      .slice(0, 30)
+      .map((c: any) => ({ id: c.id.slice(0, 60), name: c.name.slice(0, 60) }));
+    const today = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.today || '')) ? String(req.body.today) : new Date().toISOString().slice(0, 10);
+    const currency = String(req.body?.currency || 'INR').slice(0, 5);
+
+    try {
+      if (!voiceAi) voiceAi = new GoogleGenAI({ vertexai: true, project: 'familyledgerta', location: VOICE_LOCATION });
+      const prompt = [
+        'You listen to a short voice note in which someone logs a personal or family expense or income, usually in English, Hindi or a mix of both (Hinglish).',
+        'Work out what they said and return JSON only.',
+        `Today's date is ${today}. The currency is ${currency}.`,
+        'Fields:',
+        '- transcript: exactly what was said, in the original language, as plain text.',
+        '- amount: the number the person paid or received, as a plain number (no currency sign). null if no amount was said. Say "5 hundred" = 500, "dedh sau" = 150, "paanch hazaar" = 5000, "2 lakh" = 200000.',
+        '- description: 1-4 words saying what it was for (e.g. "Pizza", "School fees", "Petrol"), in Title Case. Never include the amount, the verb (spent, paid, bought, ate) or the date. Empty string if it was not said.',
+        `- categoryId: the id of the best matching category from this list, or null if none fits: ${JSON.stringify(categories)}.`,
+        `- incomeCategoryId: only for income, the best id from: ${JSON.stringify(incomeCategories)}, otherwise null.`,
+        '- type: "income" if money was received/earned/refunded, otherwise "expense".',
+        '- date: YYYY-MM-DD if a day was mentioned (yesterday, kal, 3 days ago, on the 5th ...), resolved against today\'s date; otherwise null.',
+        'Do not invent anything that was not said. If the audio is silent or not about money, return amount null and an empty description.',
+      ].join('\n');
+
+      const response = await voiceAi.models.generateContent({
+        model: VOICE_MODEL,
+        contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: audio } }] }],
+        config: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: GenAiType.OBJECT,
+            properties: {
+              transcript: { type: GenAiType.STRING },
+              amount: { type: GenAiType.NUMBER, nullable: true },
+              description: { type: GenAiType.STRING },
+              categoryId: { type: GenAiType.STRING, nullable: true },
+              incomeCategoryId: { type: GenAiType.STRING, nullable: true },
+              type: { type: GenAiType.STRING, enum: ['expense', 'income'] },
+              date: { type: GenAiType.STRING, nullable: true },
+            },
+            required: ['transcript', 'amount', 'description', 'type'],
+          },
+        },
+      });
+
+      let parsed: any = {};
+      try { parsed = JSON.parse(response.text || '{}'); } catch { parsed = {}; }
+      const isIncome = parsed.type === 'income';
+      const pool = isIncome ? incomeCategories : categories;
+      const wantedId = isIncome ? parsed.incomeCategoryId : parsed.categoryId;
+      const amount = typeof parsed.amount === 'number' && isFinite(parsed.amount) && parsed.amount > 0 && parsed.amount < 1e9 ? parsed.amount : null;
+      return res.json({
+        transcript: String(parsed.transcript || '').slice(0, 300),
+        amount,
+        description: String(parsed.description || '').slice(0, 80),
+        categoryId: pool.some((c) => c.id === wantedId) ? wantedId : null,
+        isIncome,
+        date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || '')) ? parsed.date : null,
+      });
+    } catch (error: any) {
+      console.error('voice-expense error:', error?.message || error);
+      return res.status(502).json({ error: 'Could not understand that right now. Please try again.' });
+    }
   });
 
   app.get('/api/admin/analytics/funnel', async (req, res) => {

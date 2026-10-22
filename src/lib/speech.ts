@@ -69,7 +69,12 @@ export const SpeechRecognition: SpeechPlugin = useWebStandIn ? makeWebStandIn() 
 /** Android uses the phone's own speech box (steady); everything else (iPhone, the dev stand-in) listens inline with live words. */
 export const useSpeechDialog = !useWebStandIn && Capacitor.getPlatform() === 'android';
 
+/** Phones record a short clip and a speech model on our server reads the expense from it (far better than the phone's own recogniser). */
+export const useServerVoice = Capacitor.isNativePlatform() || import.meta.env.DEV;
+
 export function speechAvailableHere(): boolean {
+  // While developing in a browser: the recording path needs only a microphone.
+  if (import.meta.env.DEV && !Capacitor.isNativePlatform()) return !!navigator.mediaDevices?.getUserMedia;
   if (useWebStandIn) return true;
   return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SpeechRecognition');
 }

@@ -10,6 +10,15 @@ export interface SpokenExpense {
   isIncome: boolean;
 }
 
+/** What the voice-to-expense service (Gemini) read out of a recording. */
+export interface SpokenStructured {
+  amount: number | null;
+  description: string;
+  categoryId: string | null;
+  isIncome: boolean;
+  date: string | null;
+}
+
 interface CategoryRef {
   id: string;
   name: string;

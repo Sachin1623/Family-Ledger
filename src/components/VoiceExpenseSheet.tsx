@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLanguage } from '../context/LanguageContext';
-import { SpeechRecognition, speechLanguageFor, useSpeechDialog, type SpeechListenerHandle } from '../lib/speech';
+import { useAuth } from '../context/AuthContext';
+import { SpeechRecognition, speechLanguageFor, useSpeechDialog, useServerVoice, type SpeechListenerHandle } from '../lib/speech';
+import { startVoiceRecording, type VoiceRecording } from '../lib/voiceRecorder';
+import type { SpokenStructured } from '../lib/voiceExpense';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/constants';
+import { todayLocalDateString } from '../lib/dateUtils';
 
 // Bottom sheet for "talk to add an expense": asks for the microphone, shows what is being heard as it is heard, and hands the finished
 // sentence back. The sentence is turned into fields by lib/voiceExpense.ts (and saved by VoiceQuickAdd / AddExpense).
@@ -17,10 +22,33 @@ export interface VoiceTarget {
   onSelect?: (id: string) => void;
 }
 
-export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClose: () => void; onHeard: (sentence: string, alternatives: string[]) => void; target?: VoiceTarget }) {
+export interface VoiceContext {
+  categories: { id: string; name: string }[];
+  incomeCategories: { id: string; name: string }[];
+  currency?: string;
+}
+
+export default function VoiceExpenseSheet({
+  onClose,
+  onHeard,
+  target,
+  getContext,
+}: {
+  onClose: () => void;
+  onHeard: (sentence: string, alternatives: string[], structured?: SpokenStructured) => void;
+  target?: VoiceTarget;
+  /** The categories of the group being added to, so the speech service can pick the right one. Built-in categories when omitted. */
+  getContext?: () => VoiceContext;
+}) {
   const [pickingGroup, setPickingGroup] = useState(false);
+  const { user } = useAuth();
+  const [level, setLevel] = useState(0);
+  const recRef = useRef<VoiceRecording | null>(null);
+  const structuredRef = useRef<SpokenStructured | undefined>(undefined);
+  const getContextRef = useRef(getContext);
+  getContextRef.current = getContext;
   const { t, language } = useLanguage();
-  const [phase, setPhase] = useState<'starting' | 'listening' | 'nothing' | 'denied' | 'unavailable' | 'error'>('starting');
+  const [phase, setPhase] = useState<'starting' | 'listening' | 'thinking' | 'nothing' | 'denied' | 'unavailable' | 'error'>('starting');
   const [heard, setHeard] = useState('');
   const [errorText, setErrorText] = useState('');
   const heardRef = useRef('');
@@ -55,22 +83,100 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
       finished.current = true;
       // After the final words the recogniser has already ended by itself; only a session cut short needs to be cancelled.
       if (!gotFinal.current) SpeechRecognition.cancel?.().catch(() => {});
-      onHeardRef.current(sentence, altsRef.current.filter((a) => a && a !== sentence));
+      onHeardRef.current(sentence, altsRef.current.filter((a) => a && a !== sentence), structuredRef.current);
       onCloseRef.current();
     } else {
       setPhase('nothing');
     }
   }, []);
 
+  // Stops the recording and asks the speech service what expense it describes.
+  const sendRecording = async () => {
+    const rec = recRef.current;
+    if (!rec || finished.current) return;
+    recRef.current = null;
+    setPhase('thinking');
+    try {
+      const clip = await rec.stop();
+      if (!clip.heardVoice || clip.durationMs < 500) { setPhase('nothing'); return; }
+      const given = getContextRef.current?.();
+      const ctx = {
+        categories: given?.categories?.length ? given.categories : EXPENSE_CATEGORIES,
+        incomeCategories: given?.incomeCategories?.length ? given.incomeCategories : INCOME_CATEGORIES,
+        currency: given?.currency,
+      };
+      const token = await user?.getIdToken();
+      const res = await fetch('/api/voice-expense', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          audio: clip.wavBase64,
+          mimeType: 'audio/wav',
+          categories: ctx.categories.map((c) => ({ id: c.id, name: c.name })),
+          incomeCategories: ctx.incomeCategories.map((c) => ({ id: c.id, name: c.name })),
+          today: todayLocalDateString(),
+          currency: ctx.currency || 'INR',
+        }),
+      });
+      if (finished.current) return;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErrorText(String(data?.error || `error ${res.status}`));
+        setPhase('error');
+        return;
+      }
+      const transcript = String(data.transcript || '').trim();
+      if (!data.amount && !transcript) { setPhase('nothing'); return; }
+      structuredRef.current = {
+        amount: typeof data.amount === 'number' ? data.amount : null,
+        description: String(data.description || ''),
+        categoryId: data.categoryId || null,
+        isIncome: !!data.isIncome,
+        date: data.date || null,
+      };
+      heardRef.current = transcript || `${data.amount ?? ''} ${data.description ?? ''}`.trim();
+      altsRef.current = [];
+      setHeard(heardRef.current);
+      gotFinal.current = true;
+      finish();
+    } catch (err: any) {
+      console.error('voice service failed:', err);
+      setErrorText(String(err?.message || err || 'could not reach the service'));
+      setPhase('error');
+    }
+  };
+
   const begin = useCallback(async () => {
     finished.current = false;
     heardRef.current = '';
     altsRef.current = [];
     gotFinal.current = false;
+    structuredRef.current = undefined;
     setHeard('');
     setErrorText('');
     setPhase('starting');
     clearTimers();
+
+    // Phones and (while developing) the browser: record a short clip and let the speech service on our server read the expense from it.
+    if (useServerVoice) {
+      try {
+        recRef.current?.cancel();
+        recRef.current = await startVoiceRecording({
+          onLevel: setLevel,
+          onAutoStop: () => { void sendRecording(); },
+        });
+        setPhase('listening');
+        return;
+      } catch (err: any) {
+        console.error('could not start recording:', err);
+        // No microphone access for the app's own recording: on Android fall through to the phone's speech box instead.
+        if (!(useSpeechDialog && SpeechRecognition.listenDialog)) {
+          setPhase(String(err?.name || '') === 'NotAllowedError' ? 'denied' : 'error');
+          setErrorText(String(err?.message || err || 'microphone unavailable'));
+          return;
+        }
+      }
+    }
     if (useSpeechDialog && SpeechRecognition.listenDialog) {
       // Android: the phone's own "Speak now" box does the listening (and its own retries); we only wait for its answer.
       try {
@@ -171,6 +277,8 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
     begin();
     return () => {
       clearTimers();
+      recRef.current?.cancel();
+      recRef.current = null;
       if (!gotFinal.current) SpeechRecognition.cancel?.().catch(() => {});
       handles.current.forEach((h) => h.remove().catch(() => {}));
       handles.current = [];
@@ -179,6 +287,7 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
   }, []);
 
   const done = () => {
+    if (recRef.current) { void sendRecording(); return; }
     SpeechRecognition.stop().catch(() => {});
     if (timers.current.settle) window.clearTimeout(timers.current.settle);
     timers.current.settle = window.setTimeout(finish, 1500);
@@ -241,13 +350,17 @@ export default function VoiceExpenseSheet({ onClose, onHeard, target }: { onClos
         ) : (
           <>
             <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
-              {phase === 'listening' && <span className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />}
+              {phase === 'listening' && !useServerVoice && <span className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />}
+              {phase === 'listening' && useServerVoice && (
+                <span className="absolute inset-0 rounded-full bg-primary/20 transition-transform duration-100" style={{ transform: `scale(${1 + level * 0.5})` }} />
+              )}
+              {phase === 'thinking' && <span className="absolute inset-0 rounded-full border-4 border-primary/30 border-t-primary animate-spin" />}
               <span className="relative w-16 h-16 rounded-full bg-primary text-white flex items-center justify-center">
                 <span className="material-symbols-outlined text-[32px]">mic</span>
               </span>
             </div>
             <p className="text-sm font-black text-primary">
-              {phase === 'starting' ? t('voiceExpense.starting') : phase === 'nothing' ? t('voiceExpense.nothing') : t('voiceExpense.listening')}
+              {phase === 'starting' ? t('voiceExpense.starting') : phase === 'thinking' ? t('voiceExpense.thinking') : phase === 'nothing' ? t('voiceExpense.nothing') : t('voiceExpense.listening')}
             </p>
             <p className="min-h-[44px] text-base font-semibold text-text-main px-2">
               {heard || <span className="text-text-muted text-xs font-medium">{t('voiceExpense.example')}</span>}
