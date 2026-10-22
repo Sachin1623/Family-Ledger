@@ -932,16 +932,22 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             to make room for a 6th thing on this row. Same 5 actions, same handlers/tooltips as
             before — purely a visual redesign, not a functional change. */}
         <div className="flex items-center justify-between gap-1" data-tour={`dashboard-action-row-${groupId}`}>
-          <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} data-tour={`dashboard-action-add-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-            <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
-            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionAdd')}</span>
-          </button>
-          {speechAvailableHere() && (
-            <button onClick={stopAnd(() => setShowVoice(true))} title="Talk to add an expense to this group" data-tour={`dashboard-action-talk-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-              <span className="w-11 h-11 rounded-2xl bg-primary text-white flex items-center justify-center"><span className="material-symbols-outlined text-[22px]">mic</span></span>
-              <span className="text-[10px] font-bold text-text-muted">{t('voiceExpense.talkShort')}</span>
+          {/* "Add" is one tile with two ways in — type it, or talk it — so it is clear that Talk is another way to add an expense. */}
+          <div className={clsx('flex items-stretch rounded-2xl bg-violet-50 border border-violet-100', speechAvailableHere() ? 'flex-[2]' : 'flex-1')}>
+            <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} data-tour={`dashboard-action-add-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl hover:bg-violet-100/70 transition-colors">
+              <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
+              <span className="text-[10px] font-bold text-text-muted">{speechAvailableHere() ? t('voiceExpense.type') : t('dashboard.actionAdd')}</span>
             </button>
-          )}
+            {speechAvailableHere() && (
+              <>
+                <span className="self-center w-px h-9 bg-violet-200" aria-hidden="true" />
+                <button onClick={stopAnd(() => setShowVoice(true))} title="Talk to add an expense to this group" data-tour={`dashboard-action-talk-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl hover:bg-violet-100/70 transition-colors">
+                  <span className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-sm" style={{ background: 'linear-gradient(135deg,#4ADE80,#3B82F6)' }}><span className="material-symbols-outlined text-[22px]">mic</span></span>
+                  <span className="text-[10px] font-bold text-text-muted">{t('voiceExpense.talkShort')}</span>
+                </button>
+              </>
+            )}
+          </div>
           <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
             <span className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-lg">{poked ? '✅' : '✋'}</span>
             <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionPoke')}</span>

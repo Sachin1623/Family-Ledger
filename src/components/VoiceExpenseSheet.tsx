@@ -305,11 +305,33 @@ export default function VoiceExpenseSheet({
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-end bg-black/50" onClick={() => onCloseRef.current()}>
       <div
-        className="w-full bg-white rounded-t-3xl p-5 space-y-4 text-center"
-        style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+        className="w-full bg-white rounded-t-[28px] overflow-hidden text-center shadow-[0_-12px_40px_rgba(13,59,78,0.25)]"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="w-10 h-1 rounded-full bg-border-subtle mx-auto" />
+        {/* Brand header: the FamilyLedger mark and name on the app's own green-to-blue, so this reads as part of the app, not a system box. */}
+        <div className="relative px-5 pt-3 pb-4 text-left" style={{ background: 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
+          <div className="w-10 h-1 rounded-full bg-white/30 mx-auto mb-3" />
+          <div className="flex items-center gap-3">
+            <span className="rounded-xl bg-white p-1.5 shadow-sm">
+              <svg viewBox="0 0 100 120" className="w-9 h-11 shrink-0" aria-hidden="true">
+                <defs><linearGradient id="vx_g" x1="10" y1="10" x2="90" y2="110" gradientUnits="userSpaceOnUse"><stop stopColor="#4ADE80" /><stop offset="1" stopColor="#3B82F6" /></linearGradient></defs>
+                <rect x="10" y="10" width="80" height="100" rx="12" fill="url(#vx_g)" />
+                <path d="M70 40C70 36.7 72.7 34 76 34H90V86H76C72.7 86 70 83.3 70 80V40Z" fill="#1E3A8A" />
+                <circle cx="35" cy="40" r="8" fill="#fff" fillOpacity=".9" /><path d="M25 50C25 48.9 25.9 48 27 48H43C44.1 48 45 48.9 45 50V75H25V50Z" fill="#fff" fillOpacity=".9" />
+                <circle cx="55" cy="45" r="7" fill="#fff" fillOpacity=".8" /><path d="M48 52C48 50.9 48.9 50 50 50H60C61.1 50 62 50.9 62 52V75H48V52Z" fill="#fff" fillOpacity=".8" />
+                <circle cx="45" cy="70" r="5" fill="#fff" /><path d="M40 75C40 74.4 40.4 74 41 74H49C49.6 74 50 74.4 50 75V85H40V75Z" fill="#fff" />
+                <circle cx="65" cy="72" r="5" fill="#fff" /><path d="M60 77C60 76.4 60.4 76 61 76H69C69.6 76 70 76.4 70 77V85H60V77Z" fill="#fff" />
+              </svg>
+            </span>
+            <div className="min-w-0">
+              <p className="text-white text-lg font-black leading-tight tracking-tight">Family<span className="text-[#4ADE80]">Ledger</span></p>
+              <p className="text-white/70 text-[11px] font-bold uppercase tracking-[0.14em]">{t('voiceExpense.brandSub')}</p>
+            </div>
+          </div>
+          <span aria-hidden="true" className="pointer-events-none absolute -right-6 -top-6 w-28 h-28 rounded-full" style={{ background: 'radial-gradient(circle,rgba(74,222,128,0.35),transparent 70%)' }} />
+        </div>
+        <div className="p-5 space-y-4">
         {target && (
           <div className="text-left">
             <button
@@ -356,32 +378,45 @@ export default function VoiceExpenseSheet({
           </>
         ) : (
           <>
-            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
-              {phase === 'listening' && !useServerVoice && <span className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />}
+            <div className="relative w-28 h-28 mx-auto flex items-center justify-center">
+              {phase === 'listening' && !useServerVoice && <span className="absolute inset-0 rounded-full bg-[#4ADE80]/25 animate-ping" />}
               {phase === 'listening' && useServerVoice && (
-                <span className="absolute inset-0 rounded-full bg-primary/20 transition-transform duration-100" style={{ transform: `scale(${1 + level * 0.5})` }} />
+                <>
+                  <span className="absolute inset-0 rounded-full bg-[#4ADE80]/20 transition-transform duration-100" style={{ transform: `scale(${1 + level * 0.55})` }} />
+                  <span className="absolute inset-2 rounded-full bg-[#3B82F6]/20 transition-transform duration-100" style={{ transform: `scale(${1 + level * 0.3})` }} />
+                </>
               )}
-              {phase === 'thinking' && <span className="absolute inset-0 rounded-full border-4 border-primary/30 border-t-primary animate-spin" />}
-              <span className="relative w-16 h-16 rounded-full bg-primary text-white flex items-center justify-center">
-                <span className="material-symbols-outlined text-[32px]">mic</span>
+              {phase === 'thinking' && <span className="absolute inset-0 rounded-full border-4 border-[#3B82F6]/25 border-t-[#4ADE80] animate-spin" />}
+              <span
+                className="relative w-20 h-20 rounded-full text-white flex items-center justify-center shadow-lg"
+                style={{ background: 'linear-gradient(135deg,#4ADE80 0%,#3B82F6 100%)' }}
+              >
+                <span className="material-symbols-outlined text-[38px]">mic</span>
               </span>
             </div>
-            <p className="text-sm font-black text-primary">
+            <p className="text-base font-black text-[#0d3b4e]">
               {phase === 'starting' ? t('voiceExpense.starting') : phase === 'thinking' ? t('voiceExpense.thinking') : phase === 'nothing' ? t('voiceExpense.nothing') : t('voiceExpense.listening')}
             </p>
             <p className="min-h-[44px] text-base font-semibold text-text-main px-2">
-              {heard || <span className="text-text-muted text-xs font-medium">{t('voiceExpense.example')}</span>}
+              {heard || (
+                <span className="flex flex-wrap justify-center gap-1.5">
+                  {[t('voiceExpense.ex1'), t('voiceExpense.ex2'), t('voiceExpense.ex3')].map((x) => (
+                    <span key={x} className="px-2.5 py-1 rounded-full bg-[#4ADE80]/10 text-[#0d3b4e] text-[11px] font-bold border border-[#4ADE80]/30">&ldquo;{x}&rdquo;</span>
+                  ))}
+                </span>
+              )}
             </p>
             <div className="flex gap-2">
-              <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl bg-surface border border-border-subtle text-sm font-bold text-text-muted">{t('voiceExpense.cancel')}</button>
+              <button type="button" onClick={onClose} className="flex-1 py-3.5 rounded-2xl bg-surface border border-border-subtle text-sm font-bold text-text-muted">{t('voiceExpense.cancel')}</button>
               {phase === 'nothing' ? (
-                <button type="button" onClick={begin} className="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-bold">{t('voiceExpense.tryAgain')}</button>
+                <button type="button" onClick={begin} className="flex-1 py-3.5 rounded-2xl text-white text-sm font-black shadow-md" style={{ background: 'linear-gradient(135deg,#0d3b4e,#1E3A8A)' }}>{t('voiceExpense.tryAgain')}</button>
               ) : (
-                <button type="button" onClick={done} disabled={phase !== 'listening'} className="flex-1 py-3 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50">{t('voiceExpense.done')}</button>
+                <button type="button" onClick={done} disabled={phase !== 'listening'} className="flex-1 py-3.5 rounded-2xl text-white text-sm font-black shadow-md disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#0d3b4e,#1E3A8A)' }}>{t('voiceExpense.done')}</button>
               )}
             </div>
           </>
         )}
+        </div>
       </div>
     </div>,
     document.body,
