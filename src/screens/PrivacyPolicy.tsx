@@ -111,7 +111,7 @@ export default function PrivacyPolicy() {
             </p>
             <h3 className="font-semibold text-primary">N.1 Talk to Add an Expense</h3>
             <p>
-              In the Android and iPhone apps, the Talk button on Add Expense uses your microphone only while you are speaking to it, after your device asks for microphone and speech-recognition permission. What you say is turned into text by your phone's own speech recogniser (Google's on Android, Apple's on iPhone and iPad, which may process the audio on the phone or through Google or Apple, under their own privacy terms). FamilyLedger does not receive or store the recording. The words are read on your device to fill in an amount, a description, a category and a date, and nothing is saved until you check the form and tap Save.
+              In the apps, the Talk (microphone) button lets you add an expense by speaking, for example &ldquo;spent 500 on pizza&rdquo;. It uses your microphone only from the moment you tap it until you stop talking (a few seconds), after your device has asked for microphone permission. That short voice clip is sent securely from the app to our server, which passes it to Google&rsquo;s Gemini AI service (through Google Cloud Vertex AI, in India) to read out the amount, what it was for, the category and the date. The clip is used only for that one request: FamilyLedger does not save the recording, and we do not use it to train any model. Google processes it under its Google Cloud terms. What was understood is shown to you straight away, you can undo or edit it, and the expense is only shared with your group once it is confirmed. You never have to use voice entry; you can always type an expense instead.
             </p>
             <h3 className="font-semibold text-primary">N. Payment Receipts You Share</h3>
             <p>
@@ -131,7 +131,7 @@ export default function PrivacyPolicy() {
             <li>To facilitate expense sharing, income tracking, budgets, and ledger balance calculations</li>
             <li>To operate the Personal Loans and Shopkeeper mode features you choose to use</li>
             <li>To notify you about changes to our service, group activities, loan reminders, or account-wide announcements from our team</li>
-            <li>To read payment receipts you choose to share, or words you speak with the Talk button, and pre-fill an expense for you to review</li>
+            <li>To read payment receipts you choose to share, or a short voice clip you record with the Talk button, and turn it into an expense for you to review</li>
             <li>To run the games, leaderboards, and the ranking and turn alerts you've enabled</li>
             <li>To provide customer support</li>
             <li>To detect, prevent, and address technical issues</li>

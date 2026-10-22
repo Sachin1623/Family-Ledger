@@ -142,9 +142,9 @@ const CATEGORIES: DataCategory[] = [
         sharedWith: 'Any signed-in FamilyLedger user who opens that leaderboard',
       },
       {
-        data: 'What you say to the Talk button on Add Expense (only while you are speaking to it)',
-        why: 'Turn your words into an expense for you to review',
-        sharedWith: 'Only your phone\'s own speech recogniser (Google on Android, Apple on iPhone) — we never receive or store the recording',
+        data: 'A short voice clip recorded when you tap the Talk (microphone) button, only while you are speaking',
+        why: 'Turn what you said into an expense (amount, what it was for, category, date) for you to review',
+        sharedWith: 'Sent through our server to Google\'s Gemini AI service (Google Cloud, India) for that one request — we do not store the recording or use it to train a model',
       },
       {
         data: 'Voice chat audio (only while you have joined)',
