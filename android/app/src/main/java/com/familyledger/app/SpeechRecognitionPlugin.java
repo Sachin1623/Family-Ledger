@@ -100,9 +100,6 @@ public class SpeechRecognitionPlugin extends Plugin {
         intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, call.getInt("maxResults", 5));
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
         intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
-        // Listen on the phone itself when its offline speech pack is installed: no round trip to Google, so no "Didn't catch that" after the
-        // words were in fact heard (a slow or dropped connection did that on the first try). Falls back to online when the pack is missing.
-        intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
         // Give a person a moment between words before the box decides they have finished.
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
