@@ -225,6 +225,7 @@ public class SpeechRecognitionPlugin extends Plugin {
     private Thread recordThread;
     private volatile boolean recording = false;
     private volatile boolean recHeardVoice = false;
+    private volatile double recPeak = 0;
     private ByteArrayOutputStream recBytes;
     private long recStartedAt;
 
@@ -251,14 +252,13 @@ public class SpeechRecognitionPlugin extends Plugin {
         final long silenceMs = call.getInt("silenceMs", 1400);
         final long giveUpMs = call.getInt("giveUpMs", 9000);
         final long maxMs = call.getInt("maxMs", 20000);
-        final double threshold = 0.018;
         int minBuf = AudioRecord.getMinBufferSize(REC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         if (minBuf <= 0) {
             call.reject("this phone cannot record audio");
             return;
         }
         try {
-            audioRecord = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, REC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf * 4);
+            audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, REC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf * 4);
             if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
                 audioRecord.release();
                 audioRecord = null;
@@ -271,6 +271,7 @@ public class SpeechRecognitionPlugin extends Plugin {
         }
         recBytes = new ByteArrayOutputStream();
         recHeardVoice = false;
+        recPeak = 0;
         recording = true;
         recStartedAt = System.currentTimeMillis();
         final AudioRecord rec = audioRecord;
@@ -280,6 +281,11 @@ public class SpeechRecognitionPlugin extends Plugin {
             long lastVoiceAt = 0;
             long lastLevelSent = 0;
             boolean endedSent = false;
+            // The room's own background loudness, learned from the first half second, so speech is judged against it. A fixed loudness
+            // limit missed quiet voices on some phones (the recorder then never noticed anyone speaking and gave up).
+            double noiseFloor = 0;
+            int calibrated = 0;
+            int voiceBuffers = 0;
             while (recording) {
                 int n = rec.read(buf, 0, buf.length);
                 if (n <= 0) continue;
@@ -293,11 +299,22 @@ public class SpeechRecognitionPlugin extends Plugin {
                 synchronized (recBytes) { recBytes.write(bytes, 0, bytes.length); }
                 double rms = Math.sqrt(sum / n);
                 long now = System.currentTimeMillis();
-                if (rms > threshold) { recHeardVoice = true; lastVoiceAt = now; }
+                double peakNow = 0;
+                for (int i = 0; i < n; i++) peakNow = Math.max(peakNow, Math.abs(buf[i] / 32768.0));
+                if (peakNow > recPeak) recPeak = peakNow;
+                if (calibrated < 5) {
+                    noiseFloor = (noiseFloor * calibrated + rms) / (calibrated + 1);
+                    calibrated++;
+                }
+                double threshold = Math.max(0.008, noiseFloor * 3.0);
+                if (calibrated >= 5 && rms > threshold) {
+                    voiceBuffers++;
+                    if (voiceBuffers >= 2) { recHeardVoice = true; lastVoiceAt = now; }
+                }
                 if (now - lastLevelSent > 90) {
                     lastLevelSent = now;
                     JSObject o = new JSObject();
-                    o.put("level", Math.min(1.0, rms * 8));
+                    o.put("level", Math.min(1.0, rms * 14));
                     notifyListeners("recordingLevel", o);
                 }
                 String reason = null;
@@ -340,6 +357,16 @@ public class SpeechRecognitionPlugin extends Plugin {
             synchronized (recBytes) { pcm = recBytes.toByteArray(); }
         }
         recBytes = null;
+        // A quiet voice is lifted to a good level (never more than 20x) so the speech model hears it clearly.
+        if (recPeak > 0.01 && recPeak < 0.6) {
+            double gain = Math.min(20.0, 0.7 / recPeak);
+            for (int i = 0; i + 1 < pcm.length; i += 2) {
+                int v = (short) ((pcm[i] & 0xff) | (pcm[i + 1] << 8));
+                v = (int) Math.max(-32768, Math.min(32767, Math.round(v * gain)));
+                pcm[i] = (byte) (v & 0xff);
+                pcm[i + 1] = (byte) ((v >> 8) & 0xff);
+            }
+        }
         byte[] wav = new byte[44 + pcm.length];
         int dataLen = pcm.length;
         writeWavHeader(wav, dataLen);
@@ -347,7 +374,8 @@ public class SpeechRecognitionPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("wavBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
         ret.put("durationMs", durationMs);
-        ret.put("heardVoice", recHeardVoice);
+        // Even if the loudness check never fired, a recording with a clearly audible peak is worth sending: the model decides.
+        ret.put("heardVoice", recHeardVoice || recPeak > 0.05);
         call.resolve(ret);
     }
 
