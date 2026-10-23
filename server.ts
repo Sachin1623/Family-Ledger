@@ -1754,6 +1754,92 @@ function buildWeeklyKudosLine(week: WeeklySummaryBucket, prevWeek: WeeklySummary
   return `This week you ${best.text} — keep building those habits with your family & friends! ${best.emoji}`;
 }
 
+// ── Weekly recap: the "you are taking responsibility for your family's money" numbers ─────────────────────────────────────────────────
+// Everything here is a plain count of what this person actually did, and the ranking is among FamilyLedger's own members (never a claim about
+// "all families" in the world). Consistency = how many different Indian days in the last 30 they logged an expense.
+interface RecapPraise {
+  loggedDays30: number;
+  streakDays: number;
+  healthDays30: number;
+  weeksActive8: number;
+  topPercent: number | null; // top X% of FamilyLedger members by days logged this month; null when it would not be a flattering truth
+  members: number;
+}
+let recapDistributionCache: { at: number; daysPerUser: Map<string, number>; members: number } | null = null;
+
+async function loadRecapDistribution(db: Firestore, now: number) {
+  if (recapDistributionCache && now - recapDistributionCache.at < 6 * 60 * 60 * 1000) return recapDistributionCache;
+  const ist = (ms: number) => new Date(ms + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const [snap, usersCount] = await Promise.all([
+    db.collection('expenses').where('createdAt', '>=', new Date(now - 30 * 86400e3).toISOString()).select('addedBy', 'createdAt').get(),
+    db.collection('users').count().get(),
+  ]);
+  const sets = new Map<string, Set<string>>();
+  snap.docs.forEach((d) => {
+    const by = d.data().addedBy;
+    const t = Date.parse(String(d.data().createdAt || ''));
+    if (!by || !t) return;
+    if (!sets.has(by)) sets.set(by, new Set());
+    sets.get(by)!.add(ist(t));
+  });
+  const daysPerUser = new Map<string, number>();
+  sets.forEach((v, k) => daysPerUser.set(k, v.size));
+  recapDistributionCache = { at: now, daysPerUser, members: usersCount.data().count };
+  return recapDistributionCache;
+}
+
+async function computeRecapPraise(db: Firestore, uid: string, now: number): Promise<RecapPraise> {
+  const ist = (ms: number) => new Date(ms + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const DAY = 86400e3;
+  const [mine, bp, gl, meds, dist] = await Promise.all([
+    db.collection('expenses').where('addedBy', '==', uid).select('createdAt').get(),
+    db.collection('bloodPressureLogs').where('userId', '==', uid).select('createdAt').get(),
+    db.collection('glucoseLogs').where('userId', '==', uid).select('createdAt').get(),
+    db.collection('medicineLogs').where('userId', '==', uid).select('loggedAt', 'status').get(),
+    loadRecapDistribution(db, now),
+  ]);
+  const days = new Set<string>();
+  mine.docs.forEach((d) => { const t = Date.parse(String(d.data().createdAt || '')); if (t) days.add(ist(t)); });
+  const since30 = ist(now - 29 * DAY);
+  const loggedDays30 = Array.from(days).filter((k) => k >= since30).length;
+  // Streak: consecutive days with at least one expense, counting back from today (or from yesterday if today has none yet).
+  let streakDays = 0;
+  let cursor = days.has(ist(now)) ? now : now - DAY;
+  while (days.has(ist(cursor))) { streakDays += 1; cursor -= DAY; }
+  // Weeks (of the last 8) with at least one expense logged.
+  let weeksActive8 = 0;
+  for (let w = 0; w < 8; w++) {
+    const from = ist(now - (w * 7 + 6) * DAY);
+    const to = ist(now - w * 7 * DAY);
+    if (Array.from(days).some((k) => k >= from && k <= to)) weeksActive8 += 1;
+  }
+  const healthSet = new Set<string>();
+  const addIf = (raw: unknown) => { const t = Date.parse(String(raw || '')); if (t && t >= now - 30 * DAY) healthSet.add(ist(t)); };
+  bp.docs.forEach((d) => addIf(d.data().createdAt));
+  gl.docs.forEach((d) => addIf(d.data().createdAt));
+  meds.docs.forEach((d) => { if (d.data().status === 'taken') addIf(d.data().loggedAt); });
+
+  let topPercent: number | null = null;
+  if (loggedDays30 >= 5 && dist.members > 0) {
+    let moreActive = 0;
+    dist.daysPerUser.forEach((n, k) => { if (k !== uid && n > loggedDays30) moreActive += 1; });
+    const pctTop = Math.max(1, Math.ceil(((moreActive + 1) / dist.members) * 100));
+    if (pctTop <= 40) topPercent = pctTop;
+  }
+  return { loggedDays30, streakDays, healthDays30: healthSet.size, weeksActive8, topPercent, members: dist.members };
+}
+
+// The push / feed line: warm, specific, and true to what this person did.
+function buildAppreciationKudos(praise: RecapPraise, fallback: string): string {
+  if (praise.topPercent !== null) {
+    const streak = praise.streakDays >= 3 ? ` ${praise.streakDays} days in a row` : ` ${praise.loggedDays30} days this month`;
+    return `You're in the top ${praise.topPercent}% of FamilyLedger members for keeping track of your family's money —${streak}. That's real responsibility. 💚`;
+  }
+  if (praise.streakDays >= 2) return `${praise.streakDays} days in a row of watching your family's spending. Awareness is where good money habits begin. 🌱`;
+  if (praise.loggedDays30 >= 1) return `You logged your spending on ${praise.loggedDays30} day${praise.loggedDays30 === 1 ? '' : 's'} this month. Every entry is a step toward a calmer family budget. 🌱`;
+  return fallback;
+}
+
 // Computes, writes, and delivers (feed + push) one user's weekly summary — shared by the
 // Cloud-Scheduler-triggered /api/cron/send-weekly-summary (which additionally checks the
 // weeklySummaryEnabled opt-out before calling this) and the self-service
@@ -1788,7 +1874,8 @@ async function generateAndDeliverWeeklySummary(
   const periodLabel = `Week of ${new Date(now).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
   const windows = await computeUserWeeklyStats(db, uid, now);
   const { goalsTracked, accountsMonitored } = await computeGoalsAndAccountsSnapshot(db, uid);
-  const kudos = buildWeeklyKudosLine(windows.week, windows.prevWeek);
+  const praise = await computeRecapPraise(db, uid, now).catch((err) => { console.error('recap praise failed:', err); return null; });
+  const kudos = praise ? buildAppreciationKudos(praise, buildWeeklyKudosLine(windows.week, windows.prevWeek)) : buildWeeklyKudosLine(windows.week, windows.prevWeek);
   const summaryId = `${uid}_${weekStart}`;
 
   await db.collection('userWeeklySummaries').doc(summaryId).set({
@@ -1802,6 +1889,7 @@ async function generateAndDeliverWeeklySummary(
     goalsTracked,
     accountsMonitored,
     kudos,
+    ...(praise ? { praise } : {}),
   });
 
   await logFeedActivity(db, {

@@ -54,6 +54,8 @@ interface SummaryDoc {
   goalsTracked?: number;
   accountsMonitored?: number;
   kudos: string;
+  // How consistently this person looked after the family's money and health (see computeRecapPraise on the server). Older recaps lack it.
+  praise?: { loggedDays30: number; streakDays: number; healthDays30: number; weeksActive8: number; topPercent: number | null; members: number };
 }
 
 function buildShortShareMessage(summary: SummaryDoc): string {
@@ -67,6 +69,98 @@ function buildShareMessage(summary: SummaryDoc): string {
     ? ` I'm also tracking ${summary.goalsTracked ?? 0} savings goal${(summary.goalsTracked ?? 0) === 1 ? '' : 's'} across ${summary.accountsMonitored ?? 0} account${(summary.accountsMonitored ?? 0) === 1 ? '' : 's'}.`
     : '';
   return `🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!${trackingLine}\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${installLinksText()}`;
+}
+
+
+// What financially steady families tend to do, in plain words, with where the idea comes from. These are widely repeated rules of thumb
+// from financial planners and consumer-finance research, offered as encouragement, never as a promise of a result.
+const COMMUNITY_THOUGHTS: { icon: string; text: string; source: string }[] = [
+  { icon: 'savings', text: 'Financial planners commonly suggest keeping 3 to 6 months of living expenses aside as an emergency fund, and keeping it separate from everyday savings.', source: 'Common planner guidance' },
+  { icon: 'pie_chart', text: 'The popular 50/30/20 guide splits income into needs, wants and savings. It only works if you know where the money actually goes, and you are finding that out.', source: '50/30/20 rule of thumb (Elizabeth Warren)' },
+  { icon: 'visibility', text: 'In a UK study of people who used a budgeting method for three months, about half said it helped them keep track of what they spend, and over a third said they understood their income and spending better.', source: 'Royal London, "Looking after the pennies" (2017)' },
+  { icon: 'event_repeat', text: 'Money habits stick when they are small and regular. A quick check-in each week matters more than a long review once a year.', source: 'Habit-building principle widely used by planners' },
+  { icon: 'family_restroom', text: 'Families who talk about money openly, with everyone seeing the same numbers, tend to argue less about it. Shared groups give you exactly that.', source: 'Common family-finance advice' },
+  { icon: 'flag', text: 'Writing a goal down, with an amount and a date, makes it far easier to act on than a vague wish to save more.', source: 'Goal-setting guidance used by planners' },
+  { icon: 'health_and_safety', text: 'Health is a money topic too. Medical costs are one of the biggest surprises in a family budget, and staying on top of check-ups and medicines helps avoid them.', source: 'Common family-finance advice' },
+];
+
+function AppreciationCard({ summary }: { summary: SummaryDoc }) {
+  const p = summary.praise;
+  const w = summary.week;
+  const weekNumber = Math.floor(new Date(summary.generatedAt).getTime() / (7 * 86400000));
+  const thought = COMMUNITY_THOUGHTS[weekNumber % COMMUNITY_THOUGHTS.length];
+  const trackedMoney = (p?.loggedDays30 ?? 0) > 0 || w.expenseLinesAdded > 0 || w.expensesTracked > 0;
+  const planning = (summary.goalsTracked ?? 0) > 0 || (summary.accountsMonitored ?? 0) > 0;
+  const health = (p?.healthDays30 ?? 0) > 0 || (w.bpReadings ?? 0) + (w.glucoseReadings ?? 0) + (w.medicineDoses ?? 0) + (w.vaccinesGiven ?? 0) > 0;
+
+  const headline = p?.topPercent != null
+    ? `You are in the top ${p.topPercent}%`
+    : (p?.streakDays ?? 0) >= 2 ? `${p!.streakDays} days in a row` : 'You are taking charge';
+  const sub = p?.topPercent != null
+    ? `of FamilyLedger members for keeping a close eye on your family's money this month.`
+    : 'of your family\'s money. That is exactly how good habits start.';
+
+  const badges: { icon: string; value: string; label: string }[] = [];
+  if (p && p.streakDays > 0) badges.push({ icon: 'local_fire_department', value: String(p.streakDays), label: p.streakDays === 1 ? 'day watching your spending' : 'days in a row watching your spending' });
+  if (p && p.loggedDays30 > 0) badges.push({ icon: 'calendar_month', value: `${p.loggedDays30}/30`, label: 'days you logged expenses' });
+  if (p && p.weeksActive8 > 0) badges.push({ icon: 'event_available', value: `${p.weeksActive8}/8`, label: 'recent weeks you stayed on top of it' });
+  if (p && p.healthDays30 > 0) badges.push({ icon: 'favorite', value: String(p.healthDays30), label: 'days you looked after family health' });
+
+  const habits = [
+    { done: trackedMoney, icon: 'receipt_long', title: 'Knows where the money goes', text: 'You track spending, which is the first step planners ask of every family.' },
+    { done: planning, icon: 'flag', title: 'Plans ahead', text: planning ? `You are tracking ${summary.goalsTracked ?? 0} goal${(summary.goalsTracked ?? 0) === 1 ? '' : 's'} and ${summary.accountsMonitored ?? 0} account${(summary.accountsMonitored ?? 0) === 1 ? '' : 's'}.` : 'Set one goal with an amount and a date to join the planners.' },
+    { done: health, icon: 'favorite', title: 'Protects the family\'s health', text: health ? 'You are keeping health records, which helps avoid costly surprises.' : 'Add a medicine or health log to cover the other half of family wellbeing.' },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-3xl p-5 text-white shadow-md" style={{ background: 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
+        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#4ADE80]">Well done</p>
+        <p className="text-2xl font-black leading-tight mt-1">{headline}</p>
+        <p className="text-sm text-white/85 mt-1 leading-snug">{sub}</p>
+        <p className="text-sm text-white/90 mt-3 leading-snug">
+          Looking after a family's finances takes patience and care. You believe in planning, you stay aware of every rupee, and that quiet consistency is what builds financial peace of mind.
+        </p>
+        {badges.length > 0 && (
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            {badges.map((b) => (
+              <div key={b.label} className="rounded-2xl bg-white/10 px-3 py-2.5 flex items-center gap-2.5">
+                <span className="material-symbols-outlined text-[#F59E0B] text-[22px]" style={{ fontVariationSettings: "'FILL' 1" }}>{b.icon}</span>
+                <div className="min-w-0">
+                  <p className="text-lg font-black leading-none">{b.value}</p>
+                  <p className="text-[10px] text-white/75 leading-tight mt-0.5">{b.label}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-border-subtle bg-white p-4 space-y-2.5">
+        <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Habits of financially steady families</p>
+        {habits.map((h) => (
+          <div key={h.title} className="flex items-start gap-3">
+            <span className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center ${h.done ? 'bg-green-100 text-green-700' : 'bg-surface text-text-muted'}`}>
+              <span className="material-symbols-outlined text-[18px]">{h.done ? 'check' : h.icon}</span>
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-black text-primary leading-tight">{h.title}</p>
+              <p className="text-[12px] text-text-muted leading-snug">{h.text}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
+        <span className="material-symbols-outlined text-amber-600 text-[22px] shrink-0">{thought.icon}</span>
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">A thought for this week</p>
+          <p className="text-[13px] text-amber-950 leading-snug mt-0.5">{thought.text}</p>
+          <p className="text-[10px] text-amber-700/80 mt-1">{thought.source}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StatRow({ icon, label, current, previous }: { icon: string; label: string; current: number; previous: number }) {
@@ -331,6 +425,8 @@ export default function WeeklySummary() {
 
             {active && (
               <>
+                <AppreciationCard summary={active} />
+
                 {previewUrl ? (
                   <motion.img
                     key={previewUrl}
@@ -355,6 +451,7 @@ export default function WeeklySummary() {
                   </div>
                 )}
 
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider -mb-2 px-1">Your week in numbers</p>
                 <div>
                   <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-2 px-1">This Week vs. Last Week</p>
                   <PeriodStats current={active.week} previous={active.prevWeek} />
