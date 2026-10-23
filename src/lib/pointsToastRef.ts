@@ -28,11 +28,6 @@ export function setPointsFlyListener(fn: FlyListenerFn | null) {
 
 export function showPointsAward(xp: number, coins: number): void {
   if (!xp && !coins) return;
-  addFn?.({
-    type: 'success',
-    title: `+${xp} XP`,
-    message: coins ? `+${coins} coins` : 'Nice work!',
-    icon: 'stars',
-  });
+  // Only the flying XP and coins animation now. The "+10 XP, +10 coins" pop-up tile that used to appear as well was removed.
   flyListener?.(xp, coins, hudTargetGetter ? hudTargetGetter() : null);
 }
