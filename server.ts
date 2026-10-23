@@ -5355,9 +5355,21 @@ async function startServer() {
   const voiceHits = new Map<string, { n: number; resetAt: number }>();
   // Google retires older Gemini models for a project over time (gemini-2.5-flash started answering 404 here), so the model is configurable
   // and a second, lighter model is tried when the first is not found.
-  const VOICE_MODELS = [process.env.VOICE_AI_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.5-flash'];
+  // Tried in order. Google's shared capacity answers 429 ("resource exhausted") now and then, and a missing model answers 404; either way the
+  // next choice (another model, or the worldwide endpoint, which has its own capacity) is tried before giving up.
   const VOICE_LOCATION = process.env.VOICE_AI_LOCATION || 'asia-south1';
-  let voiceAi: GoogleGenAI | null = null;
+  const VOICE_ATTEMPTS: { model: string; location: string }[] = [
+    { model: process.env.VOICE_AI_MODEL || 'gemini-3.5-flash-lite', location: VOICE_LOCATION },
+    { model: 'gemini-3.5-flash', location: VOICE_LOCATION },
+    { model: 'gemini-3.5-flash-lite', location: 'global' },
+    { model: 'gemini-3.1-flash-lite', location: 'global' },
+  ];
+  const voiceClients = new Map<string, GoogleGenAI>();
+  const voiceClientFor = (location: string) => {
+    let c = voiceClients.get(location);
+    if (!c) { c = new GoogleGenAI({ vertexai: true, project: 'familyledgerta', location }); voiceClients.set(location, c); }
+    return c;
+  };
   app.post('/api/voice-expense', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded) return res.status(401).json({ error: 'Unauthorized.' });
@@ -5384,7 +5396,6 @@ async function startServer() {
     const currency = String(req.body?.currency || 'INR').slice(0, 5);
 
     try {
-      if (!voiceAi) voiceAi = new GoogleGenAI({ vertexai: true, project: 'familyledgerta', location: VOICE_LOCATION });
       const prompt = [
         'You listen to a short voice note in which someone logs a personal or family expense or income, usually in English, Hindi or a mix of both (Hinglish).',
         'Work out what they said and return JSON only.',
@@ -5400,7 +5411,7 @@ async function startServer() {
         'Do not invent anything that was not said. If the audio is silent or not about money, return amount null and an empty description.',
       ].join('\n');
 
-      const voiceRequest = (model: string) => voiceAi!.models.generateContent({
+      const voiceRequest = (model: string, location: string) => voiceClientFor(location).models.generateContent({
         model,
         contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: audio } }] }],
         config: {
@@ -5423,15 +5434,19 @@ async function startServer() {
       });
       let response: Awaited<ReturnType<typeof voiceRequest>> | null = null;
       let lastError: any = null;
-      for (const model of VOICE_MODELS) {
-        try {
-          response = await voiceRequest(model);
-          break;
-        } catch (err: any) {
-          lastError = err;
-          if (!/NOT_FOUND|404/.test(String(err?.message || err))) throw err; // only a missing model moves on to the next one
-          console.error(`voice-expense: model ${model} not available, trying the next`);
+      for (let round = 0; round < 2 && !response; round++) {
+        for (const a of VOICE_ATTEMPTS) {
+          try {
+            response = await voiceRequest(a.model, a.location);
+            break;
+          } catch (err: any) {
+            lastError = err;
+            const msg = String(err?.message || err);
+            if (!/NOT_FOUND|404|RESOURCE_EXHAUSTED|429|UNAVAILABLE|503/.test(msg)) throw err; // a real fault stops here; a busy or missing model moves on
+            console.error(`voice-expense: ${a.model} (${a.location}) unavailable, trying the next`);
+          }
         }
+        if (!response && round === 0) await new Promise((r) => setTimeout(r, 900));
       }
       if (!response) throw lastError || new Error('no voice model available');
 
