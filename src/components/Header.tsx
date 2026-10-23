@@ -1,4 +1,5 @@
 import React from 'react';
+import AnimatedIcon from './AnimatedIcon';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, limit, orderBy, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
@@ -240,9 +241,11 @@ export default function Header() {
             to its natural ~3.3:1 ratio, so it actually reads as "FamilyLedger" again. */}
         <div
           onClick={() => navigate(shopMode ? '/shop/sales' : '/')}
-          className="h-9 shrink-0 cursor-pointer transform active:scale-95 transition-transform"
+          className="h-9 shrink-0 cursor-pointer transform active:scale-95 transition-transform flex items-center gap-1.5"
         >
-          <img src="/logo.svg" alt="FamilyLedger" className="h-full w-auto object-contain" />
+          {/* the icon plays its short animation every 5 seconds (the video lives in the app itself on Android); the wordmark is the same text as logo.svg */}
+          <AnimatedIcon size={32} radius="rounded-lg" />
+          <img src="/logo-wordmark.svg" alt="FamilyLedger" className="h-8 w-auto object-contain" />
         </div>
         {shopMode && (
           <span className="hidden sm:inline text-[9px] font-black uppercase tracking-widest text-[#7C3AED] bg-[#7C3AED]/10 px-2 py-1 rounded-full shrink-0">

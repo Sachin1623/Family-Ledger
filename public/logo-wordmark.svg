@@ -1,0 +1,11 @@
+<svg width="260" height="100" viewBox="105 22 260 98" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- The "FamilyLedger" text of logo.svg on its own, so the animated icon can sit beside it. -->
+  <text x="110" y="55" fill="#0F172A" font-family="'Work Sans', sans-serif" font-size="44" font-weight="900" letter-spacing="-1">Family</text>
+  <text x="110" y="95" fill="url(#text_grad)" font-family="'Work Sans', sans-serif" font-size="44" font-weight="900" letter-spacing="-1">Ledger</text>
+  <defs>
+    <linearGradient id="text_grad" x1="110" y1="70" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0284C7"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+</svg>

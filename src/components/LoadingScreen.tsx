@@ -1,4 +1,5 @@
 import React from 'react';
+import AnimatedIcon from './AnimatedIcon';
 
 // The app-wide loading state (auth resolving, route guards) — replaces a bare "Loading..." text
 // with something that actually reads as FamilyLedger: the same rounded-square ledger mark and
@@ -9,35 +10,12 @@ import React from 'react';
 export default function LoadingScreen({ fullScreen = true, className = '' }: { fullScreen?: boolean; className?: string }) {
   return (
     <div className={`flex flex-col items-center justify-center gap-5 ${fullScreen ? 'h-screen' : 'py-20'} ${className}`}>
-      <div className="relative w-20 h-20">
-        <div
-          className="absolute inset-0 rounded-full animate-spin"
-          style={{
-            background: 'conic-gradient(from 0deg, #4ADE80, #3B82F6, transparent 65%)',
-            WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px))',
-            mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px))',
-            animationDuration: '1.1s',
-          }}
-        />
-        <div className="absolute inset-[10px] rounded-2xl shadow-lg overflow-hidden animate-pulse">
-          <svg viewBox="0 0 80 100" className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
-            <rect width="80" height="100" rx="12" fill="url(#ledger_grad_loading)" />
-            <path d="M60 30C60 26.6863 62.6863 24 66 24H80V76H66C62.6863 76 60 73.3137 60 70V30Z" fill="#1E3A8A" />
-            <circle cx="25" cy="30" r="8" fill="white" fillOpacity="0.9" />
-            <path d="M15 40C15 38.8954 15.8954 38 17 38H33C34.1046 38 35 38.8954 35 40V65H15V40Z" fill="white" fillOpacity="0.9" />
-            <circle cx="45" cy="35" r="7" fill="white" fillOpacity="0.8" />
-            <path d="M38 42C38 40.8954 38.8954 40 40 40H50C51.1046 40 52 40.8954 52 42V65H38V42Z" fill="white" fillOpacity="0.8" />
-            <circle cx="35" cy="60" r="5" fill="white" />
-            <path d="M30 65C30 64.4477 30.4477 64 31 64H39C39.5523 64 40 64.4477 40 65V75H30V65Z" fill="white" />
-            <circle cx="55" cy="62" r="5" fill="white" />
-            <path d="M50 67C50 66.4477 50.4477 66 51 66H59C59.5523 66 60 66.4477 60 67V75H50V67Z" fill="white" />
-            <defs>
-              <linearGradient id="ledger_grad_loading" x1="0" y1="0" x2="80" y2="100" gradientUnits="userSpaceOnUse">
-                <stop stopColor="#4ADE80" />
-                <stop offset="1" stopColor="#3B82F6" />
-              </linearGradient>
-            </defs>
-          </svg>
+      <style>{`@keyframes lsBar{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}@media (prefers-reduced-motion: reduce){.ls-bar{animation:none!important;transform:none!important;width:100%!important}}`}</style>
+      <div className="flex flex-col items-center gap-4">
+        <AnimatedIcon size={132} mode="loop" radius="rounded-[28px]" className="shadow-xl ring-1 ring-black/5" />
+        {/* the horizontal bar: a bright block gliding along a track while the app gets ready */}
+        <div className="relative w-44 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+          <div className="ls-bar absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-[#4ADE80] to-[#3B82F6]" style={{ animation: 'lsBar 1.3s ease-in-out infinite' }} />
         </div>
       </div>
       <div className="flex items-center gap-1.5">

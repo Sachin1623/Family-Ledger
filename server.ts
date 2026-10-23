@@ -16582,7 +16582,10 @@ async function startServer() {
     app.use(express.static(distPath, {
       index: false,
       setHeaders: (res, filePath) => {
-        if (filePath.includes(`${path.sep}spread-posters${path.sep}`)) {
+        if (filePath.includes(`${path.sep}brand${path.sep}`)) {
+          // The animated icon video and its first picture: the file name carries a version, so a year of caching is safe.
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (filePath.includes(`${path.sep}spread-posters${path.sep}`)) {
           // Pre-made Spread the Word posters: the version is part of the file name, so they can be cached for a long time.
           res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
         } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
