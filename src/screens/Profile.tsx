@@ -706,11 +706,19 @@ export default function Profile() {
     }
   };
 
+  // Signing out takes a moment (the device's push token is removed first), so the button and a full-screen "Signing out…" overlay show as soon as it is tapped.
+  const [loggingOut, setLoggingOut] = useState(false);
   const handleLogout = async () => {
-    if (user) await removeCurrentDeviceToken(user);
-    clearFieldCryptoCache(); // a shared device shouldn't let the next signed-in account decrypt this one's cached keys
-    await auth.signOut();
-    navigate('/login');
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      if (user) await removeCurrentDeviceToken(user);
+      clearFieldCryptoCache(); // a shared device shouldn't let the next signed-in account decrypt this one's cached keys
+      await auth.signOut();
+      navigate('/login');
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   // Manual trigger for the weekly recap (games/expenses/groups/chat stats) — normally generated
@@ -1693,11 +1701,18 @@ export default function Profile() {
 
         <button
           onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 py-5 border-2 border-border-subtle text-primary font-bold rounded-2xl hover:bg-surface-container/20 active:scale-[0.98] transition-all shadow-sm mt-8"
+          disabled={loggingOut}
+          className="w-full flex items-center justify-center gap-2 py-5 border-2 border-border-subtle text-primary font-bold rounded-2xl hover:bg-surface-container/20 active:scale-[0.98] transition-all shadow-sm mt-8 disabled:opacity-70"
         >
-          <span className="material-symbols-outlined">logout</span>
-          {t('profile.logout')}
+          <span className={`material-symbols-outlined ${loggingOut ? 'animate-spin' : ''}`}>{loggingOut ? 'progress_activity' : 'logout'}</span>
+          {loggingOut ? t('profile.signingOut') : t('profile.logout')}
         </button>
+        {loggingOut && (
+          <div className="fixed inset-0 z-[400] bg-white/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+            <span className="material-symbols-outlined text-[40px] text-primary animate-spin">progress_activity</span>
+            <p className="text-sm font-black text-primary">{t('profile.signingOut')}</p>
+          </div>
+        )}
         
         <div className="flex flex-col items-center text-center gap-3 pt-4 pb-8">
           <p className="text-[10px] text-text-muted font-bold uppercase tracking-[0.1em] opacity-50">

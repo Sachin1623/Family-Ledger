@@ -823,6 +823,7 @@ const en = {
   'profile.changeAccountPassword': 'Change Account Password',
   'profile.updateSecurityCredentials': 'Update security credentials',
   'profile.logout': 'Logout',
+  'profile.signingOut': 'Signing out…',
   'profile.deleteAccountData': 'Delete Account & Data',
 
   // Create Group (CreateGroup.tsx)
