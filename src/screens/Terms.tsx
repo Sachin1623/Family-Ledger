@@ -9,7 +9,7 @@ export default function Terms() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Terms of Service</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: October 23, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 24, 2026</p>
           <p>
             Welcome to FamilyLedger. By using our application, you agree to these terms. Please read them carefully.
           </p>
@@ -93,21 +93,28 @@ export default function Terms() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-bold text-primary">12. Limitation of Liability</h2>
+          <h2 className="text-xl font-bold text-primary">12. Health Tracking Features</h2>
+          <p>
+            The medicine reminders, blood pressure and glucose logs, and baby vaccination tracker in FamilyLedger are personal record-keeping and reminder tools. They let you write down your own entries, get reminders you have set, and see simple summaries of what you logged, for example to show a doctor. FamilyLedger is not a medical app or a medical device: it does not diagnose, treat, monitor or prevent any condition, it does not give medical advice or recommend doses or treatments, and it does not read data from medical devices. Any ranges or labels it shows are general reference values for your convenience, not a medical assessment. Always follow your doctor's or pharmacist's instructions, and do not rely on the app to decide on medication or care. If you think you have a medical emergency, contact your local emergency number or a doctor immediately.
+          </p>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xl font-bold text-primary">13. Limitation of Liability</h2>
           <p>
             FamilyLedger is provided "as is" without any warranties of any kind. We do not guarantee that the app will always be safe, secure, or error-free, or that it will function without disruptions, delays, or imperfections.
           </p>
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-bold text-primary">13. Termination</h2>
+          <h2 className="text-xl font-bold text-primary">14. Termination</h2>
           <p>
             We reserve the right to terminate or suspend your account and access to the service at our sole discretion, without notice, for conduct that we believe violates these Terms or is harmful to other users of the service, us, or third parties, or for any other reason.
           </p>
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-bold text-primary">14. Changes to Terms</h2>
+          <h2 className="text-xl font-bold text-primary">15. Changes to Terms</h2>
           <p>
             We may modify these terms at any time. If we make changes, we will notify you by revising the date at the top of this policy. Your continued use of the service after such changes indicates your acceptance of the new Terms.
           </p>
