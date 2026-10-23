@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { checkAppPermissions, openPermissionSettings } from './appPermissions';
 
 // Bridges a fully custom native plugin (android/app/src/main/java/com/familyledger/app/
 // AlarmClockPlugin.java + AlarmReceiver/AlarmRingingService/AlarmActivity/AlarmBootReceiver
@@ -226,6 +227,27 @@ export function onRingingAlarmChange(
 // it's a separate restriction layer OEMs add on top of stock Android. This shows Android's own
 // system dialog directly (one tap to grant), not a redirect into Settings to hunt for the toggle.
 const BATTERY_EXEMPTION_ASKED_KEY = 'familyledger_battery_exemption_asked';
+
+// The ringing alarm's pop-up card (Snooze / Dismiss over any screen, even with the app closed) needs Android's "Display over other apps" switched on
+// for FamilyLedger. Unlike the one-time asks above, this one is repeated (at most once a day) until it is on, because without it the card never appears.
+const OVERLAY_ASKED_KEY = 'familyledger_alarm_popup_asked_on';
+
+export async function requestAlarmPopupPermission() {
+  if (!isSupported()) return;
+  try {
+    const status = await checkAppPermissions();
+    if (!status || status.overlay !== false) return; // already on, or not an Android phone
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem(OVERLAY_ASKED_KEY) === today) return;
+    localStorage.setItem(OVERLAY_ASKED_KEY, today);
+    const proceed = window.confirm(
+      'Show the alarm pop-up? When a medicine alarm rings, a card with Snooze and Dismiss will appear over whatever you are doing, even if the app is closed. On the next screen, switch on "Allow display over other apps" for FamilyLedger.'
+    );
+    if (proceed) await openPermissionSettings('overlay');
+  } catch (err) {
+    console.error('Failed to ask for the alarm pop-up permission:', err);
+  }
+}
 
 export async function requestBatteryOptimizationExemption() {
   if (!isSupported()) return;

@@ -4,7 +4,7 @@ import { FirebaseMessaging } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { User } from 'firebase/auth';
 import { navigateTo } from './navigationRef';
-import { requestBatteryOptimizationExemption } from './alarmClock';
+import { requestBatteryOptimizationExemption, requestAlarmPopupPermission } from './alarmClock';
 import { registerMedicineActionTypes, snoozeMedicineReminder } from './medicineReminders';
 
 let registered = false;
@@ -277,6 +277,9 @@ export async function initPushNotifications(user: User) {
     // permission above does not cover this; it's the OEM's own background-management layer, on top
     // of stock Android, silently dropping the alarm broadcast before it reaches our code.
     requestBatteryOptimizationExemption();
+
+    // The alarm pop-up card (Snooze / Dismiss over any screen). Asked again, at most once a day, until it is switched on.
+    requestAlarmPopupPermission();
 
     // iOS-only (no-ops on Android, where medicine reminders bypass this plugin entirely) — lets
     // the scheduled reminder show Dismiss/Snooze buttons directly on the lock-screen notification.
