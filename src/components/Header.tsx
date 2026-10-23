@@ -186,7 +186,8 @@ export default function Header() {
   // entry has one, so the icon itself is always a reliable "something in here needs you" signal
   // without having to remember which specific item to check. Add future menu-item red dots to
   // this list too, rather than introducing a second, separate aggregate.
-  const anyMenuRedDot = missingPermissions.length > 0 || pendingRecurringCount > 0 || pendingActionsCount > 0;
+  // (only a missing notifications permission lights it: the others are asked for where they are needed, so they are not an alert on their own)
+  const anyMenuRedDot = missingPermissions.includes('notifications') || pendingRecurringCount > 0 || pendingActionsCount > 0;
 
   // Lets other components (a group card's Feed button, say) open this SAME slide-over — see
   // feedPanelRef.ts. Mirrors NavigationBridge's setNavigateFn registration pattern in App.tsx.

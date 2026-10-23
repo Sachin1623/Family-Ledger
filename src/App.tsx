@@ -142,6 +142,7 @@ import GlobalVaccineReminderScheduler from './components/GlobalVaccineReminderSc
 import GlobalAlarmRingingBanner from './components/GlobalAlarmRingingBanner';
 import FeedbackRatingPrompt from './components/FeedbackRatingPrompt';
 import AppPermissionsReminder from './components/AppPermissionsReminder';
+import AlarmPermissionsPrompt from './components/AlarmPermissionsPrompt';
 import InviteBanner from './components/InviteBanner';
 import OnboardingTour from './components/OnboardingTour';
 import ProfileSetupWizard from './components/ProfileSetupWizard';
@@ -336,6 +337,7 @@ export default function App() {
           <GlobalAlarmRingingBanner />
           <FeedbackRatingPrompt />
           <AppPermissionsReminder />
+          <AlarmPermissionsPrompt />
           <InviteBanner />
           <ProfileSetupWizard />
           <OnboardingTour />

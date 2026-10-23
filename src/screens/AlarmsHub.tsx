@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { askAlarmPermissions } from '../lib/alarmPermissions';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { collection, doc, query, updateDoc, deleteDoc, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
@@ -176,6 +177,10 @@ export default function AlarmsHub() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
+  // This is where alarms are managed: if exact timing, the battery exemption or the alarm pop-up is still off, ask now (at most once a day)
+  React.useEffect(() => {
+    askAlarmPermissions('medicine');
+  }, []);
   // Drill-down level lives in the URL (not component state) so the app's single global back
   // button/Android hardware-back (both driven by navigationParents.ts's getParentPath) step back
   // one level at a time — no separate in-page back buttons needed. See getParentPath's own

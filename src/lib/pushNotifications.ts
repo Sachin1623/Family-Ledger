@@ -4,7 +4,6 @@ import { FirebaseMessaging } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { User } from 'firebase/auth';
 import { navigateTo } from './navigationRef';
-import { requestBatteryOptimizationExemption, requestAlarmPopupPermission } from './alarmClock';
 import { registerMedicineActionTypes, snoozeMedicineReminder } from './medicineReminders';
 
 let registered = false;
@@ -264,22 +263,21 @@ export async function initPushNotifications(user: User) {
       console.error('LocalNotifications permission request failed:', err);
     }
 
+    // The exact-alarm, battery and alarm pop-up asks that used to follow here at every app start now happen where alarms are set up (see
+    // alarmPermissions.ts); a new person is asked for notifications only. (Notes on why each one matters are kept below.)
     // Getting *shown* a notification (above) is separate from getting it *on time*. Every
     // scheduled reminder in this app (medicine, BP, glucose, shared reminders, todos) asks
     // AlarmManager for an exact alarm; on Android 12+ that silently downgrades to an inexact one
     // — deliverable whenever Doze next wakes the app, sometimes much later than the set time —
     // unless the user has separately granted "Alarms & reminders" for this app. Nudge for it once.
-    requestExactAlarmPermission();
+    // requestExactAlarmPermission();  // now asked in context
 
     // Separate from the permission ask above — standard Android's own battery-optimization
     // exemption, confirmed this session (via a real device) to be the actual root cause behind
     // medicine reminders silently never ringing at all, with zero trace anywhere. The exact-alarm
     // permission above does not cover this; it's the OEM's own background-management layer, on top
     // of stock Android, silently dropping the alarm broadcast before it reaches our code.
-    requestBatteryOptimizationExemption();
-
-    // The alarm pop-up card (Snooze / Dismiss over any screen). Asked again, at most once a day, until it is switched on.
-    requestAlarmPopupPermission();
+    // requestBatteryOptimizationExemption();  // now asked in context
 
     // iOS-only (no-ops on Android, where medicine reminders bypass this plugin entirely) — lets
     // the scheduled reminder show Dismiss/Snooze buttons directly on the lock-screen notification.

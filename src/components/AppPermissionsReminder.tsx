@@ -29,7 +29,8 @@ export default function AppPermissionsReminder() {
       if (Date.now() < snoozedUntil) return;
       const status: PermissionStatus | null = await checkAppPermissions();
       if (!status || cancelled) return;
-      const gaps = PERMISSION_ORDER.filter((key) => status[key] === false);
+      // Only notifications are asked for on their own. Contacts, microphone and the alarm permissions are asked for where they are used.
+      const gaps = PERMISSION_ORDER.filter((key) => key === 'notifications' && status[key] === false);
       if (gaps.length > 0) {
         setMissing(gaps);
         setVisible(true);

@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { askAlarmPermissions } from '../lib/alarmPermissions';
 import { questEvent } from '../lib/questsApi';
 import { useConfirm, PersonSwitcher, SegTabs, ProgressRing, StatusChip } from '../components/HealthKit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -744,6 +745,8 @@ export default function HealthMedicines() {
       }
       setMedForm(false);
       setEditingMedicine(null);
+      // a medicine with reminders rings like an alarm: ask for what that needs (exact timing, battery, the pop-up card) now, not at app start
+      if (formReminders) askAlarmPermissions('medicine', { force: true });
     } finally {
       setSavingMed(false);
     }
@@ -1222,6 +1225,12 @@ export default function HealthMedicines() {
   // misjudge "not a delegate" just because that data hasn't arrived yet.
   // "Mark taken" on a ringing alarm's pop-up card opens this page with ?markTaken=owner:medicine:dose,... : those doses are ticked off as taken today,
   // then the parameter is removed. Reactive on the value (not mount-only) and run once per value and day.
+  // Medicines with reminders ring like alarms: when this screen opens with some, ask (at most once a day) for whatever alarm permission is still off.
+  const hasReminderMedicines = medicines.some((m) => m.userId === user?.uid && m.active && m.remindersEnabled);
+  useEffect(() => {
+    if (hasReminderMedicines) askAlarmPermissions('medicine');
+  }, [hasReminderMedicines]);
+
   const handledMarkRef = useRef<string>('');
   useEffect(() => {
     const param = searchParams.get('markTaken');
