@@ -4265,6 +4265,35 @@ async function startServer() {
     }
   });
 
+  // New sign-ups per Indian (IST) calendar day for the last N days, for the trend chart on the admin Users page. Reads only the joinedAt
+  // field of users who joined inside the window, so it stays cheap however many users exist.
+  app.get('/api/admin/users/signups', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    try {
+      const days = Math.min(Math.max(parseInt(String(req.query.days || '120'), 10) || 120, 7), 365);
+      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+      const counts: Record<string, number> = {};
+      for (let i = 0; i < days; i++) counts[dayKey(new Date(istNow.getTime() - i * 86_400_000))] = 0;
+      const startIst = new Date(istNow.getTime() - (days - 1) * 86_400_000);
+      // Midnight at the start of the first IST day, expressed in UTC (joinedAt is stored as a UTC ISO string).
+      const windowStartUtc = new Date(`${dayKey(startIst)}T00:00:00+05:30`).toISOString();
+      const snap = await adminDb.collection('users').where('joinedAt', '>=', windowStartUtc).select('joinedAt').get();
+      snap.docs.forEach((d) => {
+        const at = d.data().joinedAt;
+        if (!at) return;
+        const key = dayKey(new Date(new Date(at).getTime() + 5.5 * 60 * 60 * 1000));
+        if (key in counts) counts[key] += 1;
+      });
+      const series = Object.keys(counts).sort().map((date) => ({ date, count: counts[date] }));
+      return res.json({ days: series, total: series.reduce((n, d) => n + d.count, 0) });
+    } catch (error) {
+      console.error('admin/users/signups error:', error);
+      return res.status(500).json({ error: 'Unable to load sign-up trend.' });
+    }
+  });
+
   app.get('/api/admin/users', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;

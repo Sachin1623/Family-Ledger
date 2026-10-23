@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { adminGet, adminPost } from '../../lib/adminApi';
 
 interface AdminUser {
@@ -29,6 +30,110 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
 ];
 
 const PAGE_SIZE = 20;
+
+// ── New sign-ups trend (daily / weekly) ─────────────────────────────────────────────────────────────────────────────────────────────
+interface SignupDay { date: string; count: number }
+
+function weekStart(dateStr: string): string {
+  // Monday of that date's week (dates are IST calendar days, so plain UTC arithmetic on the date string is exact).
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  const shift = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - shift);
+  return d.toISOString().slice(0, 10);
+}
+
+const shortDate = (s: string) => new Date(`${s}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+function SignupTrend() {
+  const [days, setDays] = useState<SignupDay[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'daily' | 'weekly'>('daily');
+  const [range, setRange] = useState<14 | 30 | 90>(30);
+
+  useEffect(() => {
+    adminGet('/api/admin/users/signups?days=120')
+      .then((d) => setDays(d.days || []))
+      .catch((e) => setError(e.message));
+  }, []);
+
+  if (error) return <p className="text-xs text-error">Could not load the sign-up trend: {error}</p>;
+  if (!days) return <div className="h-48 rounded-2xl bg-white border border-border-subtle animate-pulse" />;
+
+  const sum = (list: SignupDay[]) => list.reduce((n, d) => n + d.count, 0);
+  const today = days[days.length - 1]?.count || 0;
+  const last7 = sum(days.slice(-7));
+  const prev7 = sum(days.slice(-14, -7));
+  const monthPrefix = days[days.length - 1]?.date.slice(0, 7);
+  const thisMonth = sum(days.filter((d) => d.date.startsWith(monthPrefix)));
+  const delta = prev7 === 0 ? (last7 > 0 ? 100 : 0) : Math.round(((last7 - prev7) / prev7) * 100);
+
+  let chartData: { label: string; count: number; full: string }[];
+  if (mode === 'daily') {
+    chartData = days.slice(-range).map((d) => ({ label: shortDate(d.date), count: d.count, full: d.date }));
+  } else {
+    const weeks = new Map<string, number>();
+    days.forEach((d) => weeks.set(weekStart(d.date), (weeks.get(weekStart(d.date)) || 0) + d.count));
+    chartData = Array.from(weeks.entries()).sort().slice(-13).map(([start, count]) => ({ label: shortDate(start), count, full: `Week of ${shortDate(start)}` }));
+    // The first and last weeks of the window can be partial; the current week is still in progress.
+  }
+  const avg = chartData.length ? Math.round((sum(chartData.map((c) => ({ date: '', count: c.count }))) / chartData.length) * 10) / 10 : 0;
+
+  return (
+    <section className="bg-white rounded-2xl border border-border-subtle p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-lg font-bold text-primary">New users</h2>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-xl border border-border-subtle overflow-hidden text-xs font-bold">
+            {(['daily', 'weekly'] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setMode(m)} className={`px-3 py-1.5 ${mode === m ? 'bg-primary text-white' : 'bg-white text-text-muted'}`}>
+                {m === 'daily' ? 'Days' : 'Weeks'}
+              </button>
+            ))}
+          </div>
+          {mode === 'daily' && (
+            <select value={range} onChange={(e) => setRange(Number(e.target.value) as 14 | 30 | 90)} className="rounded-xl border border-border-subtle px-2 py-1.5 text-xs font-bold text-primary bg-white">
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+            </select>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {[
+          { label: 'Today', value: today, sub: 'IST day' },
+          { label: 'Last 7 days', value: last7, sub: `${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs previous 7` },
+          { label: 'This month', value: thisMonth, sub: monthPrefix },
+          { label: `Avg per ${mode === 'daily' ? 'day' : 'week'}`, value: avg, sub: mode === 'daily' ? `last ${range} days` : 'last 13 weeks' },
+        ].map((t) => (
+          <div key={t.label} className="rounded-xl bg-surface p-3">
+            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t.label}</p>
+            <p className="text-2xl font-black text-primary">{t.value}</p>
+            <p className="text-[10px] text-text-muted">{t.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="h-52">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} margin={{ top: 6, right: 6, left: -22, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={mode === 'daily' ? Math.max(0, Math.ceil(chartData.length / 7) - 1) : 0} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+            <Tooltip
+              formatter={(v: number) => [v, 'New users']}
+              labelFormatter={(_l, p) => (p && p[0] ? (p[0].payload as any).full : '')}
+              cursor={{ fill: 'rgba(15,118,110,0.08)' }}
+            />
+            <Bar dataKey="count" fill="#0f766e" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="text-[10px] text-text-muted">Days are Indian (IST) calendar days. {mode === 'weekly' ? 'Weeks start on Monday; the latest week is still in progress.' : ''}</p>
+    </section>
+  );
+}
 
 export default function AdminUsers() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -123,6 +228,8 @@ export default function AdminUsers() {
       <p className="text-xs text-text-muted -mt-4">
         To grant or revoke admin access, use <Link to="/admin/manage-admins" className="font-bold text-primary underline">Manage Admins</Link>.
       </p>
+
+      <SignupTrend />
 
       <form onSubmit={handleSearch} className="flex gap-2">
         <input
