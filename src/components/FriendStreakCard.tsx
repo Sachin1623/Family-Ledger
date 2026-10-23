@@ -9,6 +9,7 @@ import {
   answerStreakInvite, endFriendStreak, fetchFriendStreak, fetchStreakCandidates, inviteToStreak, nudgeFriend, rescueFriendStreak,
   type FriendPerson, type FriendStreakState,
 } from '../lib/streakApi';
+import StreakFlame, { Snowfield, useFreezeBurst } from './StreakFlame';
 
 // A streak shared with one friend, under the streak flame on the home page. Started by an invitation the friend accepts. It grows on a day when
 // BOTH of you logged something. A missed day freezes it for up to 3 days; either of you can pay coins to unfreeze it (2 times per streak).
@@ -78,6 +79,9 @@ export default function FriendStreakCard() {
     }
   };
 
+  // plays the freeze and thaw animations when the shared streak freezes or is unfrozen
+  const burst = useFreezeBurst(state?.status === 'active' && state.state === 'frozen', state?.status === 'active' && !!state.rescueKind && state.rescueKind === 'lost');
+
   const openPicker = async () => {
     setPicking(true);
     setPeople(null);
@@ -93,7 +97,7 @@ export default function FriendStreakCard() {
   if (!state) return null;
 
   const incoming = state.incoming?.[0];
-  const frame = 'rounded-2xl p-4 text-white shadow-sm';
+  const frame = 'relative overflow-hidden rounded-2xl p-4 text-white shadow-sm';
 
   let body: React.ReactNode;
 
@@ -102,11 +106,16 @@ export default function FriendStreakCard() {
     const frozen = state.state === 'frozen';
     const me = { name: profile?.displayName || user.displayName || 'You', photoURL: profile?.photoURL || user.photoURL || null };
     body = (
-      <div className={frame} style={{ background: frozen ? 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 100%)' : 'linear-gradient(135deg,#7c2d12 0%,#c2410c 55%,#ea580c 100%)' }}>
-        <div className="flex items-center gap-3">
+      <div className={frame} style={{ background: 'linear-gradient(135deg,#3a1208 0%,#9a3412 55%,#ea580c 100%)' }}>
+        <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000" style={{ opacity: frozen ? 1 : 0, background: 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 60%,#38bdf8 140%)' }} />
+        <Snowfield show={frozen} />
+        <div className="relative flex items-center gap-3">
+          <div className="shrink-0" style={{ width: 52 }}>
+            <StreakFlame state={frozen ? 'frozen' : (state.current || 0) > 0 ? 'lit' : 'out'} size={50} burst={burst} />
+          </div>
           <div className="flex -space-x-2 shrink-0">
-            <Avatar p={me} ring />
-            <Avatar p={p} ring />
+            <Avatar p={me} size={34} ring />
+            <Avatar p={p} size={34} ring />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/70">Friend streak</p>
@@ -128,7 +137,7 @@ export default function FriendStreakCard() {
           </div>
         </div>
 
-        <div className="flex gap-2 mt-3 text-[11px] font-black">
+        <div className="relative flex gap-2 mt-3 text-[11px] font-black">
           <span className={clsx('flex-1 rounded-xl px-2.5 py-1.5 flex items-center gap-1.5', state.myDone ? 'bg-emerald-400/90 text-emerald-950' : 'bg-white/15')}>
             <span className="material-symbols-outlined text-[16px]">{state.myDone ? 'check_circle' : 'radio_button_unchecked'}</span>You {state.myDone ? 'logged' : 'not yet'}
           </span>
@@ -139,7 +148,7 @@ export default function FriendStreakCard() {
         </div>
 
         {frozen && (
-          <div className="mt-3 rounded-xl bg-white/10 p-2.5 space-y-2">
+          <div className="relative mt-3 rounded-xl bg-white/10 p-2.5 space-y-2">
             <p className="text-[12px] leading-snug text-white/90">A day was missed, so your streak is frozen. {state.frozenDaysLeft} day{state.frozenDaysLeft === 1 ? '' : 's'} left to save it.</p>
             {state.canRescue ? (
               <button type="button" disabled={busy !== null} onClick={() => run('rescue', rescueFriendStreak, 'Unfrozen! Log something today to keep it going.')} className="w-full py-2.5 rounded-xl bg-white text-sky-900 text-sm font-black active:scale-95 disabled:opacity-60">
@@ -151,7 +160,7 @@ export default function FriendStreakCard() {
           </div>
         )}
         {!frozen && state.rescueKind === 'lost' && state.canRescue && (
-          <div className="mt-3 rounded-xl bg-white/10 p-2.5 flex items-center gap-2">
+          <div className="relative mt-3 rounded-xl bg-white/10 p-2.5 flex items-center gap-2">
             <p className="flex-1 text-[12px] leading-snug text-white/90">Bring back your {state.lostValue}-day streak together.</p>
             <button type="button" disabled={busy !== null} onClick={() => run('rescue', rescueFriendStreak, 'Restored!')} className="shrink-0 px-3 py-2 rounded-xl bg-white text-sky-900 text-xs font-black active:scale-95 disabled:opacity-60">
               {busy === 'rescue' ? '…' : `Restore · ${state.rescueCost} 🪙`}
@@ -160,7 +169,7 @@ export default function FriendStreakCard() {
         )}
 
         {state.myDone && !state.partnerDone && (
-          <button type="button" disabled={busy !== null} onClick={() => run('nudge', async () => { const r = await nudgeFriend(); if (r.already) throw new Error('You already nudged them today.'); }, `Nudge sent to ${p.name.split(' ')[0]} 👏`)} className="mt-3 w-full py-2.5 rounded-xl bg-white/20 text-white text-sm font-black active:scale-95 disabled:opacity-60">
+          <button type="button" disabled={busy !== null} onClick={() => run('nudge', async () => { const r = await nudgeFriend(); if (r.already) throw new Error('You already nudged them today.'); }, `Nudge sent to ${p.name.split(' ')[0]} 👏`)} className="relative mt-3 w-full py-2.5 rounded-xl bg-white/20 text-white text-sm font-black active:scale-95 disabled:opacity-60">
             {busy === 'nudge' ? '…' : `Nudge ${p.name.split(' ')[0]}`}
           </button>
         )}
