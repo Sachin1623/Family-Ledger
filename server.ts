@@ -3170,14 +3170,21 @@ async function startServer() {
   // already-open tab. `K_REVISION` is set automatically by Cloud Run; falls back to 'local' for
   // `npm start` outside Cloud Run, where the banner should never fire (see the startup write's
   // matching guard below).
-  app.get("/api/build-info", (req, res) => {
+  // Set at startup for a silent deploy (see the stamp near the end of this file).
+  let silentRevisionOverride: string | null = null;
+  app.get("/api/build-info", async (req, res) => {
     // Must never be cached — a stale cached response here is exactly what makes UpdateBanner.tsx
     // loop forever: hardReloadApp() gets a fresh page, but if this specific GET is served from the
     // browser's HTTP cache instead of hitting the network, myRevision never actually advances, so
     // the mismatch against Firestore's app_config/webBuild persists and the same "update
     // available" prompt reappears every reload no matter how many times the user reloads.
     res.set("Cache-Control", "no-store");
-    res.json({ revision: process.env.K_REVISION || "local" });
+    // A "silent" deploy (DEPLOY_SILENT=1) keeps reporting the revision that was last announced, so nobody sees an "update available" popup;
+    // the new code still reaches phones through the service worker and the app's own refresh-on-open.
+    if (process.env.DEPLOY_SILENT === '1' && !silentRevisionOverride && adminDb) {
+      try { silentRevisionOverride = ((await adminDb.collection('app_config').doc('webBuild').get()).data()?.revision as string) || null; } catch { /* fall back to this revision */ }
+    }
+    res.json({ revision: silentRevisionOverride || process.env.K_REVISION || "local" });
   });
 
   // Deliberately unauthenticated — AddFriendInvite.tsx (the public "you've been invited to be
@@ -16427,7 +16434,10 @@ async function startServer() {
   // Only ONE backend may stamp this marker: a second service (the old us-central1 one) waking up
   // overwrote it with its own old revision, so every phone on the live backend saw a permanent
   // "update available" popup that no reload could clear.
-  if (adminDb && process.env.K_REVISION && process.env.REDIRECT_TO_DOMAIN !== '1') {
+  if (adminDb && process.env.K_REVISION && process.env.REDIRECT_TO_DOMAIN !== '1' && process.env.DEPLOY_SILENT === '1') {
+    // Silent deploy: do not touch the marker, and keep reporting the last announced revision from /api/build-info.
+    adminDb.collection('app_config').doc('webBuild').get().then((snap) => { silentRevisionOverride = (snap.data()?.revision as string) || null; }).catch(() => {});
+  } else if (adminDb && process.env.K_REVISION && process.env.REDIRECT_TO_DOMAIN !== '1') {
     adminDb.collection('app_config').doc('webBuild').set({
       revision: process.env.K_REVISION,
       changelog: process.env.DEPLOY_CHANGELOG || null,
