@@ -3027,6 +3027,39 @@ async function startServer() {
     });
   }
 
+  // ---- Operations counters: requests, server errors and response-time buckets, per Indian day, in opsDaily/{yyyy-mm-dd} ------------------
+  // Counted in memory and written in one small batch about once a minute (piggybacking on a request, so it never needs a timer), so the
+  // cost is a handful of writes an hour. Only on Cloud Run (K_REVISION), so a local dev server never pollutes the real numbers.
+  const opsBuf = { requests: 0, errors5xx: 0, lat0: 0, lat1: 0, lat2: 0, lat3: 0, lat4: 0, voiceCalls: 0, voiceUnderstood: 0, voiceErrors: 0 };
+  let opsLastFlush = Date.now();
+  const opsFlush = () => {
+    opsLastFlush = Date.now();
+    if (!adminDb || !process.env.K_REVISION) return;
+    const snapshot = { ...opsBuf };
+    if (snapshot.requests === 0 && snapshot.voiceCalls === 0) return;
+    (Object.keys(opsBuf) as (keyof typeof opsBuf)[]).forEach((k) => { opsBuf[k] = 0; });
+    const day = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const ops: Record<string, any> = {};
+    (Object.keys(snapshot) as (keyof typeof snapshot)[]).forEach((k) => { if (snapshot[k]) ops[k] = admin.firestore.FieldValue.increment(snapshot[k]); });
+    adminDb.collection('opsDaily').doc(day).set({ date: day, ops }, { merge: true }).catch((err) => console.error('ops flush failed:', err));
+  };
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/') || req.path === '/api/health') return next();
+    const t0 = Date.now();
+    res.on('finish', () => {
+      const ms = Date.now() - t0;
+      opsBuf.requests += 1;
+      if (res.statusCode >= 500) opsBuf.errors5xx += 1;
+      if (ms < 100) opsBuf.lat0 += 1;
+      else if (ms < 250) opsBuf.lat1 += 1;
+      else if (ms < 500) opsBuf.lat2 += 1;
+      else if (ms < 1000) opsBuf.lat3 += 1;
+      else opsBuf.lat4 += 1;
+      if (Date.now() - opsLastFlush > 60_000) opsFlush();
+    });
+    next();
+  });
+
   // Use JSON and urlencoded body parsers. Default express.json() limit is 100kb, which is too
   // small for /api/admin/broadcast's resized-image data URIs (up to 3 images, base64-encoded —
   // every other image upload in this app writes straight to Firestore from the client, bypassing
@@ -4177,6 +4210,129 @@ async function startServer() {
     }
   });
 
+  // Breakdown of this month's Google Cloud cost by service (Cloud Run, Firestore, Vertex AI ...) and a daily series, from the billing export.
+  app.get('/api/admin/cloud-cost/breakdown', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded) return;
+    try {
+      const tableName = await findBillingExportTable();
+      if (!tableName) return res.json({ tableReady: false });
+      const net = `cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) AS c), 0)`;
+      const table = `\`familyledgerta.billing_export.${tableName}\``;
+      const [byService] = await bigquery.query({
+        query: `SELECT service.description AS service, currency, SUM(${net}) AS net FROM ${table}
+                WHERE DATE(usage_start_time) >= DATE_TRUNC(CURRENT_DATE(), MONTH) GROUP BY service, currency ORDER BY net DESC LIMIT 12`,
+      });
+      const [daily] = await bigquery.query({
+        query: `SELECT CAST(DATE(usage_start_time) AS STRING) AS day, SUM(${net}) AS net FROM ${table}
+                WHERE DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) GROUP BY day ORDER BY day`,
+      });
+      return res.json({
+        tableReady: true,
+        currency: byService[0]?.currency || 'INR',
+        byService: byService.map((r: any) => ({ service: String(r.service || 'Other'), net: Number(r.net) || 0 })),
+        daily: daily.map((r: any) => ({ date: String(r.day), net: Number(r.net) || 0 })),
+      });
+    } catch (error) {
+      console.error('admin/cloud-cost/breakdown error:', error);
+      return res.status(500).json({ error: 'Unable to load the cost breakdown.' });
+    }
+  });
+
+  // One bundle for the admin health dashboard (Today / Growth / Health tabs): user counts, retention, activation, the sign-in funnel, server
+  // health, and what needs attention. Computed from fields already stored, cached for 3 minutes.
+  let metricsCache: { at: number; data: any } | null = null;
+  app.get('/api/admin/metrics', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const db = adminDb;
+    try {
+      if (!req.query.refresh && metricsCache && Date.now() - metricsCache.at < 3 * 60 * 1000) return res.json(metricsCache.data);
+      const DAY = 86_400_000;
+      const now = Date.now();
+      const istKey = (ms: number) => new Date(ms + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const todayKey = istKey(now);
+
+      // ── users ──
+      const usersSnap = await db.collection('users').select('joinedAt', 'lastActiveAt').get();
+      const users = usersSnap.docs.map((d) => ({ joined: Date.parse(String(d.data().joinedAt || '')) || 0, active: Date.parse(String(d.data().lastActiveAt || '')) || 0 }));
+      const startOfTodayUtc = Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+      const count = (fn: (u: { joined: number; active: number }) => boolean) => users.filter(fn).length;
+      const newByDay: Record<string, number> = {};
+      for (let i = 0; i < 30; i++) newByDay[istKey(now - i * DAY)] = 0;
+      users.forEach((u) => { if (u.joined) { const k = istKey(u.joined); if (k in newByDay) newByDay[k] += 1; } });
+      const usersOut = {
+        total: users.length,
+        newToday: newByDay[todayKey] || 0,
+        dau: count((u) => u.active >= startOfTodayUtc),
+        wau: count((u) => u.active >= now - 7 * DAY),
+        mau: count((u) => u.active >= now - 30 * DAY),
+        newByDay: Object.keys(newByDay).sort().map((date) => ({ date, count: newByDay[date] })),
+      };
+
+      // ── retention: of people who joined long enough ago, how many came back on or after day N ──
+      const retention: Record<string, { cohort: number; returned: number }> = {};
+      for (const n of [1, 7, 30]) {
+        const cohort = users.filter((u) => u.joined && u.joined <= now - (n + 1) * DAY && u.joined >= now - 120 * DAY);
+        retention[`d${n}`] = { cohort: cohort.length, returned: cohort.filter((u) => u.active >= u.joined + n * DAY).length };
+      }
+
+      // ── activation: of people who joined 8-45 days ago, how many logged an expense (and 3+) within a week of joining ──
+      const cohort = users.map((u, i) => ({ ...u, uid: usersSnap.docs[i].id })).filter((u) => u.joined && u.joined <= now - 8 * DAY && u.joined >= now - 45 * DAY);
+      const expSnap = await db.collection('expenses').where('createdAt', '>=', new Date(now - 45 * DAY).toISOString()).select('addedBy', 'createdAt').get();
+      const perUser = new Map<string, number[]>();
+      expSnap.docs.forEach((d) => {
+        const by = d.data().addedBy;
+        const at = Date.parse(String(d.data().createdAt || ''));
+        if (by && at) { const arr = perUser.get(by) || []; arr.push(at); perUser.set(by, arr); }
+      });
+      let ge1 = 0;
+      let ge3 = 0;
+      cohort.forEach((u) => {
+        const within = (perUser.get(u.uid) || []).filter((t) => t >= u.joined && t <= u.joined + 7 * DAY).length;
+        if (within >= 1) ge1 += 1;
+        if (within >= 3) ge3 += 1;
+      });
+      const activation = { cohort: cohort.length, firstExpense: ge1, threeExpenses: ge3 };
+
+      // ── sign-in funnel: this 7 days and the 7 before ──
+      const funnelSnap = await db.collection('funnelDaily').orderBy('date', 'desc').limit(14).get();
+      const sumDays = (docs: FirebaseFirestore.QueryDocumentSnapshot[]) => {
+        const out: Record<string, number> = {};
+        docs.forEach((d) => {
+          const ev = d.data().events || {};
+          Object.keys(ev).forEach((k) => { out[k] = (out[k] || 0) + Number(ev[k] || 0); });
+          Object.keys(d.data()).forEach((k) => { if (k.startsWith('events.')) out[k.slice(7)] = (out[k.slice(7)] || 0) + Number(d.data()[k] || 0); });
+        });
+        return out;
+      };
+      const funnel = { current: sumDays(funnelSnap.docs.slice(0, 7)), previous: sumDays(funnelSnap.docs.slice(7, 14)) };
+
+      // ── server health, last 7 days ──
+      const opsSnap = await db.collection('opsDaily').orderBy('date', 'desc').limit(7).get();
+      const ops = opsSnap.docs.map((d) => ({ date: d.id, ...(d.data().ops || {}) })).sort((a: any, b: any) => (a.date < b.date ? -1 : 1));
+
+      // ── needs attention ──
+      const [fbSnap, crSnap, skSnap] = await Promise.all([
+        db.collection('feedback').orderBy('createdAt', 'desc').limit(500).select('resolved').get(),
+        db.collection('chatReports').orderBy('createdAt', 'desc').limit(500).select('resolved').get(),
+        db.collection('shopkeeperRequests').orderBy('createdAt', 'desc').limit(200).select('status').get(),
+      ]);
+      const attention = {
+        feedback: fbSnap.docs.filter((d) => !d.data().resolved).length,
+        chatReports: crSnap.docs.filter((d) => !d.data().resolved).length,
+        shopkeeper: skSnap.docs.filter((d) => d.data().status === 'pending').length,
+      };
+
+      const data = { generatedAt: new Date().toISOString(), revision: process.env.K_REVISION || 'local', users: usersOut, retention, activation, funnel, ops, attention };
+      metricsCache = { at: Date.now(), data };
+      return res.json(data);
+    } catch (error) {
+      console.error('admin/metrics error:', error);
+      return res.status(500).json({ error: 'Unable to load the dashboard.' });
+    }
+  });
+
   app.get('/api/admin/overview', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
@@ -5036,6 +5192,8 @@ async function startServer() {
 
       let parsed: any = {};
       try { parsed = JSON.parse(response.text || '{}'); } catch { parsed = {}; }
+      opsBuf.voiceCalls += 1;
+      if (typeof parsed.amount === 'number' && parsed.amount > 0) opsBuf.voiceUnderstood += 1;
       const isIncome = parsed.type === 'income';
       const pool = isIncome ? incomeCategories : categories;
       const wantedId = isIncome ? parsed.incomeCategoryId : parsed.categoryId;
@@ -5049,6 +5207,8 @@ async function startServer() {
         date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || '')) ? parsed.date : null,
       });
     } catch (error: any) {
+      opsBuf.voiceCalls += 1;
+      opsBuf.voiceErrors += 1;
       console.error('voice-expense error:', error?.message || error);
       return res.status(502).json({ error: 'Could not understand that right now. Please try again.' });
     }

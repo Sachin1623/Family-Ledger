@@ -1,0 +1,410 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { adminGet } from '../../lib/adminApi';
+
+// The admin health dashboard: Today / Growth / Health / Cost / Product. Every number comes from data the app already keeps (users, expenses,
+// the sign-in counters, the server's own request counters and the Google Cloud billing export). Things only Google Play knows (installs,
+// crash-free users) are linked, not guessed.
+
+type Tab = 'today' | 'growth' | 'health' | 'cost' | 'product';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: 'growth', label: 'Growth' },
+  { id: 'health', label: 'Health' },
+  { id: 'cost', label: 'Cost' },
+  { id: 'product', label: 'Product' },
+];
+
+// Lines that turn a tile amber or red. Edit here to change what counts as "bad".
+const GOALS = {
+  signInFailure: { good: 8, bad: 15 }, // % of Google taps that error
+  serverErrors: { good: 1, bad: 3 }, // % of requests that fail on the server
+  p95Ms: { good: 500, bad: 1000 },
+  voiceUnderstood: { good: 90, bad: 75 }, // % of voice clips that produced an amount (higher is better)
+  costVsLastMonth: 15, // alert when the forecast is this % above last month
+};
+
+interface Metrics {
+  generatedAt: string;
+  revision: string;
+  users: { total: number; newToday: number; dau: number; wau: number; mau: number; newByDay: { date: string; count: number }[] };
+  retention: Record<'d1' | 'd7' | 'd30', { cohort: number; returned: number }>;
+  activation: { cohort: number; firstExpense: number; threeExpenses: number };
+  funnel: { current: Record<string, number>; previous: Record<string, number> };
+  ops: Array<Record<string, any>>;
+  attention: { feedback: number; chatReports: number; shopkeeper: number };
+}
+interface Cost { tableReady: boolean; hasData?: boolean; currency?: string; thisMonth?: number; lastMonth?: number; last7Days?: number }
+interface Breakdown { tableReady: boolean; currency?: string; byService?: { service: string; net: number }[]; daily?: { date: string; net: number }[] }
+
+const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
+const fmtPct = (v: number | null) => (v === null ? '—' : `${v}%`);
+const num = (v: number) => v.toLocaleString();
+
+type Level = 'ok' | 'warn' | 'bad' | 'none';
+const levelLow = (v: number | null, g: { good: number; bad: number }): Level => (v === null ? 'none' : v <= g.good ? 'ok' : v >= g.bad ? 'bad' : 'warn'); // lower is better
+const levelHigh = (v: number | null, g: { good: number; bad: number }): Level => (v === null ? 'none' : v >= g.good ? 'ok' : v <= g.bad ? 'bad' : 'warn'); // higher is better
+const LEVEL_STYLE: Record<Level, string> = {
+  ok: 'bg-green-100 text-green-800',
+  warn: 'bg-amber-100 text-amber-800',
+  bad: 'bg-red-100 text-red-800',
+  none: 'bg-surface text-text-muted',
+};
+const LEVEL_WORD: Record<Level, string> = { ok: 'good', warn: 'watch', bad: 'act', none: 'no data' };
+
+function Tile({ label, value, sub, level, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; level?: Level; tone?: 'up' | 'down' | 'flat' }) {
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle p-3 min-w-0">
+      <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">{label}</p>
+      <p className="text-2xl font-black text-primary leading-tight">{value}</p>
+      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+        {level && level !== 'none' && <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${LEVEL_STYLE[level]}`}>{LEVEL_WORD[level]}</span>}
+        {sub !== undefined && (
+          <span className={`text-[11px] font-bold ${tone === 'up' ? 'text-green-600' : tone === 'down' ? 'text-red-600' : 'text-text-muted'}`}>{sub}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <section className="space-y-2">
+    <h2 className="text-[11px] font-black text-text-muted uppercase tracking-[0.14em] px-1">{title}</h2>
+    {children}
+  </section>
+);
+
+const shortDate = (s: string) => new Date(`${s}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+function Bars({ data, color = '#0f766e', money }: { data: { label: string; value: number; full?: string }[]; color?: string; money?: string }) {
+  return (
+    <div className="h-44">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 6, right: 6, left: -22, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+          <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={Math.max(0, Math.ceil(data.length / 7) - 1)} />
+          <YAxis allowDecimals={!!money} tick={{ fontSize: 10 }} />
+          <Tooltip formatter={(v: number) => [money ? `${money}${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : v, '']} labelFormatter={(_l, p) => (p && p[0] ? (p[0].payload as any).full || (p[0].payload as any).label : '')} cursor={{ fill: 'rgba(15,118,110,0.08)' }} />
+          <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// Walks an object of metrics ({ last7, prev7, ... }) and lists every one it finds, so new product metrics show up without editing this file.
+function collectUsage(node: any, path: string[] = [], out: { label: string; last7: number; prev7: number; total: number }[] = []) {
+  if (node && typeof node === 'object') {
+    if (typeof node.last7 === 'number' && typeof node.prev7 === 'number') {
+      out.push({ label: path.map((p) => p.replace(/([A-Z])/g, ' $1')).join(' › '), last7: node.last7, prev7: node.prev7, total: Number(node.total) || 0 });
+    } else {
+      Object.keys(node).forEach((k) => collectUsage(node[k], [...path, k], out));
+    }
+  }
+  return out;
+}
+
+export default function AdminMetrics() {
+  const [tab, setTab] = useState<Tab>('today');
+  const [m, setM] = useState<Metrics | null>(null);
+  const [cost, setCost] = useState<Cost | null>(null);
+  const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
+  const [product, setProduct] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = (refresh = false) => {
+    setRefreshing(true);
+    adminGet(`/api/admin/metrics${refresh ? '?refresh=1' : ''}`).then(setM).catch((e) => setError(e.message)).finally(() => setRefreshing(false));
+    adminGet('/api/admin/cloud-cost').then(setCost).catch(() => setCost({ tableReady: false }));
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (tab === 'cost' && !breakdown) adminGet('/api/admin/cloud-cost/breakdown').then(setBreakdown).catch(() => setBreakdown({ tableReady: false }));
+    if (tab === 'product' && !product) adminGet('/api/admin/analytics/product').then(setProduct).catch(() => setProduct({}));
+  }, [tab, breakdown, product]);
+
+  // ── derived numbers shared by several tabs ──
+  const derived = useMemo(() => {
+    if (!m) return null;
+    const f = m.funnel.current;
+    const fp = m.funnel.previous;
+    const taps = (f.google_tap || 0);
+    const signInFail = pct(f.google_error || 0, taps);
+    const signInFailPrev = pct(fp.google_error || 0, fp.google_tap || 0);
+    const total = m.ops.reduce((a, d) => ({ requests: a.requests + (d.requests || 0), e5: a.e5 + (d.errors5xx || 0), l: [0, 1, 2, 3, 4].map((i) => a.l[i] + (d[`lat${i}`] || 0)), vc: a.vc + (d.voiceCalls || 0), vu: a.vu + (d.voiceUnderstood || 0), ve: a.ve + (d.voiceErrors || 0) }), { requests: 0, e5: 0, l: [0, 0, 0, 0, 0], vc: 0, vu: 0, ve: 0 });
+    const serverErr = pct(total.e5, total.requests);
+    // The slowest 5%: the first speed bucket that takes the running share past 95%.
+    const edges = [100, 250, 500, 1000];
+    let p95: number | null = null;
+    let p95Label = '—';
+    if (total.requests > 0) {
+      let run = 0;
+      for (let i = 0; i < 5; i++) {
+        run += total.l[i];
+        if (run / total.requests >= 0.95) { p95 = i < 4 ? edges[i] : 2000; p95Label = i < 4 ? `<${edges[i]}ms` : '>1s'; break; }
+      }
+    }
+    const voiceRate = pct(total.vu, total.vc);
+    const now = new Date();
+    const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const forecast = cost?.thisMonth !== undefined ? (cost.thisMonth / Math.max(1, now.getDate())) * dim : null;
+    const forecastVsLast = forecast !== null && cost?.lastMonth ? Math.round(((forecast - cost.lastMonth) / cost.lastMonth) * 100) : null;
+    const avg30 = m.users.newByDay.reduce((n, d) => n + d.count, 0) / Math.max(1, m.users.newByDay.length);
+    return { f, fp, taps, signInFail, signInFailPrev, total, serverErr, p95, p95Label, voiceRate, forecast, forecastVsLast, avg30, dim };
+  }, [m, cost]);
+
+  const alerts = useMemo(() => {
+    const out: { level: 'bad' | 'warn'; text: string }[] = [];
+    if (!m || !derived) return out;
+    if (derived.taps >= 10 && derived.signInFail !== null && derived.signInFail >= GOALS.signInFailure.bad) out.push({ level: 'bad', text: `Google sign-in fails for ${derived.signInFail}% of taps (7 days)${derived.signInFailPrev !== null ? `, was ${derived.signInFailPrev}%` : ''}` });
+    else if (derived.taps >= 10 && derived.signInFail !== null && derived.signInFail > GOALS.signInFailure.good) out.push({ level: 'warn', text: `Google sign-in fails for ${derived.signInFail}% of taps (goal under ${GOALS.signInFailure.good}%)` });
+    if (derived.total.requests >= 50 && derived.serverErr !== null && derived.serverErr >= GOALS.serverErrors.bad) out.push({ level: 'bad', text: `Server errors are ${derived.serverErr}% of requests` });
+    if (derived.p95 !== null && derived.p95 >= GOALS.p95Ms.bad) out.push({ level: 'bad', text: `The slowest 5% of requests take over ${derived.p95Label.replace('<', '')}` });
+    if (derived.total.vc >= 10 && derived.voiceRate !== null && derived.voiceRate < GOALS.voiceUnderstood.bad) out.push({ level: 'warn', text: `Only ${derived.voiceRate}% of voice entries are understood` });
+    if (derived.forecastVsLast !== null && derived.forecastVsLast >= GOALS.costVsLastMonth) out.push({ level: 'warn', text: `Cloud cost is heading ${derived.forecastVsLast}% above last month` });
+    return out;
+  }, [m, derived]);
+
+  const money = (v: number | null | undefined, cur?: string) => (v === null || v === undefined ? '—' : `${cur === 'INR' || !cur ? '₹' : `${cur} `}${Math.round(v).toLocaleString()}`);
+
+  return (
+    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-5 pb-24">
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="text-3xl font-black text-primary">App health</h1>
+        <Link to="/admin" className="text-sm font-bold text-primary underline">Back to Admin</Link>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" onClick={() => setTab(t.id)} className={`shrink-0 px-4 py-2 rounded-full text-sm font-black border ${tab === t.id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="text-sm text-error">Could not load: {error}</p>}
+      {!m && !error && <div className="h-40 rounded-2xl bg-white border border-border-subtle animate-pulse" />}
+
+      {m && derived && tab === 'today' && (
+        <div className="space-y-5">
+          <div className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-white ${alerts.some((a) => a.level === 'bad') ? 'bg-red-700' : alerts.length ? 'bg-amber-600' : 'bg-[#0d3b4e]'}`}>
+            <span className={`w-3 h-3 rounded-full ${alerts.some((a) => a.level === 'bad') ? 'bg-red-200' : alerts.length ? 'bg-amber-200' : 'bg-green-400'}`} />
+            <div className="min-w-0 flex-1">
+              <p className="font-black">{alerts.some((a) => a.level === 'bad') ? 'Something needs fixing' : alerts.length ? 'Worth a look' : 'All systems healthy'}</p>
+              <p className="text-[11px] opacity-80 truncate">Backend {m.revision.replace('familyledger-backend-', '')} · errors {fmtPct(derived.serverErr)} · slowest 5% {derived.p95Label} · updated {new Date(m.generatedAt).toLocaleTimeString()}</p>
+            </div>
+            <button type="button" onClick={() => load(true)} disabled={refreshing} className="shrink-0 px-3 py-1.5 rounded-lg bg-white/20 text-xs font-black disabled:opacity-50">{refreshing ? '…' : 'Refresh'}</button>
+          </div>
+          {alerts.map((a) => (
+            <div key={a.text} className={`rounded-xl px-3 py-2 text-xs font-bold ${a.level === 'bad' ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>⚠ {a.text}</div>
+          ))}
+
+          <Section title="Growth">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <Tile label="New users today" value={m.users.newToday} sub={derived.avg30 > 0 ? `${m.users.newToday >= derived.avg30 ? '▲' : '▼'} avg ${Math.round(derived.avg30 * 10) / 10}/day` : undefined} tone={m.users.newToday >= derived.avg30 ? 'up' : 'down'} />
+              <Tile label="Active today" value={m.users.dau} sub={`of ${num(m.users.total)} users`} />
+              <Tile label="Active 7 days" value={m.users.wau} sub={fmtPct(pct(m.users.dau, m.users.wau)) + ' daily/weekly'} />
+              <Tile label="Active 30 days" value={m.users.mau} sub={fmtPct(pct(m.users.wau, m.users.mau)) + ' weekly/monthly'} />
+            </div>
+            <div className="bg-white rounded-2xl border border-border-subtle p-3">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">New users · last 30 days</p>
+              <Bars data={m.users.newByDay.map((d) => ({ label: shortDate(d.date), value: d.count, full: d.date }))} />
+              <Link to="/admin/users" className="text-xs font-bold text-primary underline">Open Users for days and weeks</Link>
+            </div>
+          </Section>
+
+          <Section title="Money">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <Tile label="Cloud cost this month" value={money(cost?.thisMonth, cost?.currency)} sub={derived.forecast !== null ? `on track ${money(derived.forecast, cost?.currency)}` : undefined} />
+              <Tile label="Last month" value={money(cost?.lastMonth, cost?.currency)} />
+              <Tile label="Cost per active user" value={cost?.thisMonth !== undefined && m.users.mau ? money(cost.thisMonth / m.users.mau, cost.currency) : '—'} sub="this month ÷ 30-day active" />
+            </div>
+          </Section>
+
+          <Section title="Needs attention">
+            <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle text-sm">
+              {[
+                { label: 'Feedback waiting', n: m.attention.feedback, to: '/admin/feedback' },
+                { label: 'Chat reports to review', n: m.attention.chatReports, to: '/admin/chat-reports' },
+                { label: 'Shopkeeper requests', n: m.attention.shopkeeper, to: '/admin/shopkeeper-requests' },
+              ].map((r) => (
+                <Link key={r.label} to={r.to} className="flex items-center justify-between px-4 py-3">
+                  <span className="font-semibold">{r.label}</span>
+                  <span className={`font-black ${r.n > 0 ? 'text-amber-700' : 'text-text-muted'}`}>{r.n}</span>
+                </Link>
+              ))}
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {m && derived && tab === 'growth' && (
+        <div className="space-y-5">
+          <Section title="Sign-in funnel · last 7 days (anonymous counters, Android and web)">
+            {(() => {
+              const f = derived.f;
+              const steps = [
+                { label: 'Saw the login screen', v: f.login_screen_view || 0 },
+                { label: 'Tapped a sign-in button', v: (f.google_tap || 0) + (f.email_tap || 0) + (f.apple_tap || 0) },
+                { label: 'New account created', v: (f.google_success_new || 0) + (f.email_signup_ok || 0) },
+                { label: 'Created a group', v: f.group_created || 0 },
+              ];
+              const top = Math.max(1, steps[0].v);
+              return (
+                <div className="bg-white rounded-2xl border border-border-subtle p-4 space-y-2">
+                  {steps.map((s, i) => (
+                    <div key={s.label}>
+                      <div className="flex justify-between text-[11px] font-bold text-text-muted"><span>{s.label}</span><span>{num(s.v)}{i > 0 ? ` · ${fmtPct(pct(s.v, steps[i - 1].v))} of previous step` : ''}</span></div>
+                      <div className="h-5 rounded-md bg-surface overflow-hidden"><div className="h-full rounded-md" style={{ width: `${Math.max(2, (s.v / top) * 100)}%`, background: 'linear-gradient(90deg,#4ade80,#3b82f6)' }} /></div>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-text-muted">Store visits and installs are in Google Play Console; the funnel starts when someone sees the login screen. A device is counted every time it opens the screen.</p>
+                </div>
+              );
+            })()}
+          </Section>
+
+          <Section title="Do people come back? (of people who joined at least that long ago)">
+            <div className="grid grid-cols-3 gap-2">
+              {(['d1', 'd7', 'd30'] as const).map((k) => (
+                <React.Fragment key={k}>
+                  <Tile label={`Back after day ${k.slice(1)}`} value={fmtPct(pct(m.retention[k].returned, m.retention[k].cohort))} sub={`${m.retention[k].returned} of ${m.retention[k].cohort}`} />
+                </React.Fragment>
+              ))}
+            </div>
+            <p className="text-[11px] text-text-muted px-1">"Back" means the account was last active on or after that many days after joining. It is a close stand-in for classic retention, which needs a daily activity log.</p>
+          </Section>
+
+          <Section title="Do new people get value? (joined 8 to 45 days ago)">
+            <div className="grid grid-cols-2 gap-2">
+              <Tile label="Logged an expense in week 1" value={fmtPct(pct(m.activation.firstExpense, m.activation.cohort))} sub={`${m.activation.firstExpense} of ${m.activation.cohort}`} />
+              <Tile label="Logged 3+ in week 1" value={fmtPct(pct(m.activation.threeExpenses, m.activation.cohort))} sub={`${m.activation.threeExpenses} of ${m.activation.cohort}`} />
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {m && derived && tab === 'health' && (
+        <div className="space-y-5">
+          <Section title="Reliability · last 7 days">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <Tile label="Server errors" value={fmtPct(derived.serverErr)} level={levelLow(derived.serverErr, GOALS.serverErrors)} sub={`${num(derived.total.e5)} of ${num(derived.total.requests)}`} />
+              <Tile label="Slowest 5% respond in" value={derived.p95Label} level={levelLow(derived.p95, GOALS.p95Ms)} sub="goal under 500ms" />
+              <Tile label="Google sign-in failures" value={fmtPct(derived.signInFail)} level={levelLow(derived.signInFail, GOALS.signInFailure)} sub={derived.signInFailPrev !== null ? `was ${derived.signInFailPrev}%` : undefined} />
+              <Tile label="Voice entries understood" value={fmtPct(derived.voiceRate)} level={levelHigh(derived.voiceRate, GOALS.voiceUnderstood)} sub={`${num(derived.total.vc)} tries · ${derived.total.ve} errors`} />
+            </div>
+            <div className="bg-white rounded-2xl border border-border-subtle p-4 text-sm">
+              <p className="font-black text-primary">Crashes and freezes</p>
+              <p className="text-text-muted text-xs mt-1">Crash-free users, ANR rate and ratings are measured by Google, so they are not on this page. Check <b>Play Console → Quality → Android vitals</b> and keep crash-free users above 99%.</p>
+              <a href="https://play.google.com/console" target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); window.open('https://play.google.com/console', '_blank'); }} className="inline-block mt-2 text-xs font-black text-primary underline">Open Play Console</a>
+            </div>
+          </Section>
+          <Section title="Server by day">
+            <div className="bg-white rounded-2xl border border-border-subtle overflow-x-auto">
+              <table className="w-full text-xs min-w-[420px]">
+                <thead><tr className="text-left text-text-muted border-b border-border-subtle"><th className="p-2">Day</th><th className="p-2">Requests</th><th className="p-2">Errors</th><th className="p-2">Under 250ms</th><th className="p-2">Voice tries</th></tr></thead>
+                <tbody>
+                  {m.ops.length === 0 && <tr><td colSpan={5} className="p-3 text-text-muted">No server counters yet — they start filling in once this version is live.</td></tr>}
+                  {[...m.ops].reverse().map((d: any) => (
+                    <tr key={d.date} className="border-b border-border-subtle last:border-0">
+                      <td className="p-2 font-bold text-primary">{String(d.date).slice(5)}</td>
+                      <td className="p-2">{num(d.requests || 0)}</td>
+                      <td className={`p-2 ${d.errors5xx ? 'text-red-700 font-bold' : ''}`}>{d.errors5xx || 0}</td>
+                      <td className="p-2">{fmtPct(pct((d.lat0 || 0) + (d.lat1 || 0), d.requests || 0))}</td>
+                      <td className="p-2">{d.voiceCalls || 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {m && derived && tab === 'cost' && (
+        <div className="space-y-5">
+          <Section title="Google Cloud cost">
+            {cost && !cost.tableReady && <p className="text-sm text-text-muted">The billing export is not set up yet, so there is no cost data.</p>}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <Tile label="This month so far" value={money(cost?.thisMonth, cost?.currency)} />
+              <Tile label="Forecast this month" value={money(derived.forecast, cost?.currency)} level={derived.forecastVsLast === null ? 'none' : derived.forecastVsLast >= GOALS.costVsLastMonth ? 'warn' : 'ok'} sub={derived.forecastVsLast !== null ? `${derived.forecastVsLast >= 0 ? '+' : ''}${derived.forecastVsLast}% vs last month` : undefined} />
+              <Tile label="Last month" value={money(cost?.lastMonth, cost?.currency)} />
+              <Tile label="Last 7 days" value={money(cost?.last7Days, cost?.currency)} />
+              <Tile label="Per active user" value={cost?.thisMonth !== undefined && m.users.mau ? money(cost.thisMonth / m.users.mau, cost.currency) : '—'} sub="30-day active" />
+              <Tile label="Per weekly active user" value={cost?.thisMonth !== undefined && m.users.wau ? money(cost.thisMonth / m.users.wau, cost.currency) : '—'} />
+            </div>
+          </Section>
+          <Section title="Where it goes · this month">
+            <div className="bg-white rounded-2xl border border-border-subtle p-3">
+              {!breakdown && <div className="h-24 animate-pulse bg-surface rounded-xl" />}
+              {breakdown?.byService && breakdown.byService.length > 0 && (() => {
+                const total = breakdown.byService.reduce((n, r) => n + Math.max(0, r.net), 0) || 1;
+                return (
+                  <div className="space-y-2">
+                    {breakdown.byService.map((r) => (
+                      <div key={r.service}>
+                        <div className="flex justify-between text-xs font-bold"><span className="truncate">{r.service}</span><span>{money(r.net, breakdown.currency)} · {Math.round((Math.max(0, r.net) / total) * 100)}%</span></div>
+                        <div className="h-2 rounded-full bg-surface overflow-hidden"><div className="h-full bg-primary" style={{ width: `${Math.max(2, (Math.max(0, r.net) / total) * 100)}%` }} /></div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              {breakdown && !breakdown.byService?.length && <p className="text-xs text-text-muted">No cost lines yet.</p>}
+            </div>
+          </Section>
+          {breakdown?.daily && breakdown.daily.length > 0 && (
+            <Section title="Daily cost · last 30 days">
+              <div className="bg-white rounded-2xl border border-border-subtle p-3">
+                <Bars money={breakdown.currency === 'INR' || !breakdown.currency ? '₹' : `${breakdown.currency} `} color="#3b82f6" data={breakdown.daily.map((d) => ({ label: shortDate(d.date), value: d.net, full: d.date }))} />
+              </div>
+            </Section>
+          )}
+        </div>
+      )}
+
+      {m && derived && tab === 'product' && (
+        <div className="space-y-5">
+          <Section title="Is it useful?">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <Tile label="New users who log an expense in week 1" value={fmtPct(pct(m.activation.firstExpense, m.activation.cohort))} />
+              <Tile label="…and log 3 or more" value={fmtPct(pct(m.activation.threeExpenses, m.activation.cohort))} />
+              <Tile label="Active in last 7 days" value={m.users.wau} sub={`${fmtPct(pct(m.users.wau, m.users.total))} of all users`} />
+              <Tile label="Active in last 30 days" value={m.users.mau} sub={`${fmtPct(pct(m.users.mau, m.users.total))} of all users`} />
+            </div>
+          </Section>
+          <Section title="Feature use · last 7 days vs the 7 before">
+            <div className="bg-white rounded-2xl border border-border-subtle overflow-x-auto">
+              {!product && <div className="h-24 animate-pulse bg-surface" />}
+              {product && (() => {
+                const rows = collectUsage(product).filter((r) => r.last7 > 0 || r.prev7 > 0).sort((a, b) => b.last7 - a.last7).slice(0, 16);
+                if (rows.length === 0) return <p className="p-3 text-xs text-text-muted">No feature data yet.</p>;
+                return (
+                  <table className="w-full text-xs min-w-[380px]">
+                    <thead><tr className="text-left text-text-muted border-b border-border-subtle"><th className="p-2">Feature</th><th className="p-2">Last 7d</th><th className="p-2">Previous 7d</th><th className="p-2">Change</th></tr></thead>
+                    <tbody>
+                      {rows.map((r) => {
+                        const ch = r.prev7 === 0 ? (r.last7 > 0 ? 100 : 0) : Math.round(((r.last7 - r.prev7) / r.prev7) * 100);
+                        return (
+                          <tr key={r.label} className="border-b border-border-subtle last:border-0">
+                            <td className="p-2 font-bold text-primary capitalize">{r.label}</td>
+                            <td className="p-2">{num(r.last7)}</td>
+                            <td className="p-2">{num(r.prev7)}</td>
+                            <td className={`p-2 font-bold ${ch >= 0 ? 'text-green-600' : 'text-red-600'}`}>{ch >= 0 ? '▲' : '▼'} {Math.abs(ch)}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+            <Link to="/admin/analytics" className="text-xs font-bold text-primary underline px-1">Open Full Analytics</Link>
+          </Section>
+        </div>
+      )}
+    </div>
+  );
+}

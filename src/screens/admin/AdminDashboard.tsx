@@ -157,6 +157,11 @@ export default function AdminDashboard() {
 
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          <Link to="/admin/metrics" className="flex items-center gap-3 rounded-2xl px-4 py-3 text-white" style={{ background: 'linear-gradient(135deg,#0d3b4e,#1E3A8A)' }}>
+            <span className="material-symbols-outlined">monitor_heart</span>
+            <span className="flex-1"><span className="block font-black">App health dashboard</span><span className="block text-[11px] opacity-80">Growth, retention, server health, cost and product use — with alerts</span></span>
+            <span className="material-symbols-outlined">chevron_right</span>
+          </Link>
           {/* Real spend, read from the BigQuery Billing Export dataset (enabled manually in the
               Billing Console — see server.ts's /api/admin/cloud-cost). The export table itself takes
               ~24-48h to appear after being turned on, and data only accumulates from that point
