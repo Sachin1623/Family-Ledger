@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BROADCAST_TEMPLATES } from '../../lib/broadcastTemplates';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost, adminDelete } from '../../lib/adminApi';
 
@@ -108,6 +109,38 @@ export default function AdminBroadcast() {
   };
 
   useEffect(loadAll, []);
+
+  // Fills the form from a ready-made template (message and pictures); everything can still be edited before sending.
+  const [loadingTemplate, setLoadingTemplate] = useState<string | null>(null);
+  const [templateHint, setTemplateHint] = useState<string | null>(null);
+  const applyTemplate = async (id: string) => {
+    const t = BROADCAST_TEMPLATES.find((x) => x.id === id);
+    if (!t || loadingTemplate) return;
+    if (message.trim() && !window.confirm('Replace what you have written with this template?')) return;
+    setLoadingTemplate(id);
+    setError(null);
+    try {
+      const loaded = await Promise.all(
+        t.images.map(async (file) => {
+          const blob = await (await fetch(`/community/${file}`)).blob();
+          return await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }),
+      );
+      setTitle(t.title);
+      setMessage(t.message);
+      setImages(loaded);
+      setTemplateHint(t.hint);
+    } catch {
+      setError('Could not load that template. Check your connection and try again.');
+    } finally {
+      setLoadingTemplate(null);
+    }
+  };
 
   const resetForm = () => {
     setEditingId(null);
@@ -328,6 +361,23 @@ export default function AdminBroadcast() {
                 <button type="button" onClick={resetForm} className="text-xs font-bold text-primary underline">Cancel edit</button>
               </div>
             )}
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Start from a template</label>
+              <div className="flex gap-2 flex-wrap">
+                {BROADCAST_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => applyTemplate(t.id)}
+                    disabled={loadingTemplate !== null}
+                    className="px-3 py-2 rounded-xl bg-primary/5 border border-primary/20 text-xs font-bold text-primary active:scale-95 disabled:opacity-60"
+                  >
+                    {loadingTemplate === t.id ? 'Loading…' : `${t.emoji} ${t.label}`}
+                  </button>
+                ))}
+              </div>
+              {templateHint && <p className="text-[11px] text-text-muted px-1">{templateHint} Edit anything before you send.</p>}
+            </div>
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">Title</label>
               <input

@@ -4,6 +4,8 @@ import { useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
+import { useNavigate } from 'react-router-dom';
+import { ShareBrandBadge } from './ShareBrandBadge';
 
 // Full-screen announcement modal, driven by a single `app_config/broadcast` doc an admin writes
 // via AdminBroadcast.tsx. Whichever user is already in the app when it's sent sees this the
@@ -17,8 +19,22 @@ import { motion, AnimatePresence } from 'motion/react';
 // isn't foregrounded) — so by the time someone actually tapped the push notification to open
 // the app, it had already been marked read and silently never appeared. Tying the write to the
 // close button means it can only ever be marked seen after a human actually dismissed it.
+// Web addresses in a broadcast message become tappable. A link to this app's own address opens that page inside the app (for example
+// /feedback); any other link opens outside it. (Always from a button with window.open: a bare link tag does nothing in the Android app.)
+const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
+const OWN_HOST = 'familyledger.thirteenapps.com';
+
+function friendlyLabel(url: string): string {
+  if (url.includes('instagram.com')) return 'Instagram: @family.ledger';
+  if (url.includes('facebook.com')) return 'Facebook: Family Ledger';
+  if (url.includes('play.google.com')) return 'Rate us on Google Play';
+  if (url.includes(OWN_HOST) && url.includes('/feedback')) return 'Send us your feedback';
+  return url.replace(/^https?:\/\/(www\.)?/, '');
+}
+
 export default function BroadcastBanner() {
   const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [dismissed, setDismissed] = React.useState(false);
   const [broadcastDoc] = useDocument(doc(db, 'app_config', 'broadcast'));
   const broadcast = broadcastDoc?.data() as { id?: string; title?: string; message?: string; images?: string[] } | undefined;
@@ -45,6 +61,42 @@ export default function BroadcastBanner() {
     }
   };
 
+  const openLink = (rawUrl: string) => {
+    const url = rawUrl.replace(/[.,;:!?)]+$/, '');
+    try {
+      const u = new URL(url);
+      if (u.hostname === OWN_HOST) {
+        handleClose();
+        navigate(`${u.pathname}${u.search}`);
+        return;
+      }
+    } catch {
+      /* not a valid address: just try to open it */
+    }
+    window.open(url, '_blank');
+  };
+
+  // The message with its links turned into tappable text.
+  const renderMessage = (text: string) =>
+    text.split(URL_PATTERN).map((part, i) => {
+      if (!/^https?:\/\//.test(part)) return <React.Fragment key={i}>{part}</React.Fragment>;
+      const url = part.replace(/[.,;:!?)]+$/, '');
+      const trailing = part.slice(url.length);
+      return (
+        <React.Fragment key={i}>
+          <button type="button" onClick={() => openLink(url)} className="text-primary font-bold underline underline-offset-2 text-left break-all">
+            {friendlyLabel(url)}
+          </button>
+          {trailing}
+        </React.Fragment>
+      );
+    });
+
+  // Big Follow buttons when the message links to our pages.
+  const messageUrls = ((broadcast?.message || '').match(URL_PATTERN) || []).map((u) => u.replace(/[.,;:!?)]+$/, ''));
+  const instagramUrl = messageUrls.find((u) => u.includes('instagram.com'));
+  const facebookUrl = messageUrls.find((u) => u.includes('facebook.com'));
+
   return (
     <AnimatePresence>
       {shouldShow && (
@@ -68,12 +120,28 @@ export default function BroadcastBanner() {
             </div>
 
             <div className="overflow-y-auto flex-1 px-5 space-y-4">
-              <p className="text-sm text-on-surface whitespace-pre-wrap leading-relaxed">{broadcast?.message}</p>
+              <p className="text-sm text-on-surface whitespace-pre-wrap leading-relaxed">{renderMessage(broadcast?.message || '')}</p>
               {broadcast?.images && broadcast.images.length > 0 && (
                 <div className="space-y-3">
                   {broadcast.images.map((src, idx) => (
                     <img key={idx} src={src} alt="" className="w-full rounded-2xl border border-border-subtle object-cover" />
                   ))}
+                </div>
+              )}
+              {(instagramUrl || facebookUrl) && (
+                <div className="grid grid-cols-2 gap-2 pb-1">
+                  {instagramUrl && (
+                    <button type="button" onClick={() => openLink(instagramUrl)} className="py-3 rounded-2xl text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95" style={{ background: 'linear-gradient(45deg,#FA7E1E,#D62976,#962FBF,#4F5BD5)' }}>
+                      <span className="[&_svg]:fill-white [&_path]:!fill-white"><ShareBrandBadge platform="instagram" /></span>
+                      Follow
+                    </button>
+                  )}
+                  {facebookUrl && (
+                    <button type="button" onClick={() => openLink(facebookUrl)} className="py-3 rounded-2xl bg-[#1877F2] text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95">
+                      <span className="[&_path]:!fill-white"><ShareBrandBadge platform="facebook" /></span>
+                      Follow
+                    </button>
+                  )}
                 </div>
               )}
             </div>
