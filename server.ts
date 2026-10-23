@@ -5359,11 +5359,15 @@ async function startServer() {
   // next choice (another model, or the worldwide endpoint, which has its own capacity) is tried before giving up.
   const VOICE_LOCATION = process.env.VOICE_AI_LOCATION || 'asia-south1';
   const VOICE_ATTEMPTS: { model: string; location: string }[] = [
-    { model: process.env.VOICE_AI_MODEL || 'gemini-3.5-flash-lite', location: VOICE_LOCATION },
-    { model: 'gemini-3.5-flash', location: VOICE_LOCATION },
+    // Measured on a real voice note: 3.1-flash-lite on the worldwide endpoint ~1.4 s and not rate limited; 3.5-flash-lite worldwide ~2.5 s;
+    // 3.5-flash-lite in Mumbai is quick but answers 429 after the first call in a short while (very small quota).
+    { model: process.env.VOICE_AI_MODEL || 'gemini-3.1-flash-lite', location: 'global' },
     { model: 'gemini-3.5-flash-lite', location: 'global' },
-    { model: 'gemini-3.1-flash-lite', location: 'global' },
+    { model: 'gemini-3.5-flash-lite', location: VOICE_LOCATION },
+    { model: 'gemini-3.5-flash', location: VOICE_LOCATION },
   ];
+  // An option that just answered "busy" is skipped for a minute, so the next voice note does not pay for a failed call first.
+  const voiceCooldown = new Map<string, number>();
   const voiceClients = new Map<string, GoogleGenAI>();
   const voiceClientFor = (location: string) => {
     let c = voiceClients.get(location);
@@ -5435,7 +5439,8 @@ async function startServer() {
       let response: Awaited<ReturnType<typeof voiceRequest>> | null = null;
       let lastError: any = null;
       for (let round = 0; round < 2 && !response; round++) {
-        for (const a of VOICE_ATTEMPTS) {
+        const ready = VOICE_ATTEMPTS.filter((a) => (voiceCooldown.get(`${a.model}@${a.location}`) || 0) < Date.now());
+        for (const a of (ready.length > 0 ? ready : VOICE_ATTEMPTS)) {
           try {
             response = await voiceRequest(a.model, a.location);
             break;
@@ -5443,6 +5448,7 @@ async function startServer() {
             lastError = err;
             const msg = String(err?.message || err);
             if (!/NOT_FOUND|404|RESOURCE_EXHAUSTED|429|UNAVAILABLE|503/.test(msg)) throw err; // a real fault stops here; a busy or missing model moves on
+            voiceCooldown.set(`${a.model}@${a.location}`, Date.now() + 60_000);
             console.error(`voice-expense: ${a.model} (${a.location}) unavailable, trying the next`);
           }
         }

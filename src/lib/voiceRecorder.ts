@@ -11,7 +11,7 @@ export interface VoiceRecording {
 
 const TARGET_RATE = 16000;
 const VOICE_LEVEL = 0.018; // loudness (RMS, 0..1) that counts as someone speaking
-const SILENCE_AFTER_VOICE_MS = 1400; // quiet this long after speaking = finished
+const SILENCE_AFTER_VOICE_MS = 1100; // quiet this long after speaking = finished
 const NO_VOICE_GIVE_UP_MS = 9000; // nothing said at all for this long = give up
 const MAX_MS = 20000;
 
