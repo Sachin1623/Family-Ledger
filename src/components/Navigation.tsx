@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import VoiceQuickAdd from './VoiceQuickAdd';
+import QuestFab from './QuestFab';
 import { speechAvailableHere } from '../lib/speech';
 import { clsx } from 'clsx';
 import { useShopMode } from '../context/ShopModeContext';
@@ -136,6 +137,7 @@ export default function Navigation() {
 
   return (
     <>
+      <QuestFab />
       {showVoice && (
         <VoiceQuickAdd
           onDone={() => setShowVoice(false)}

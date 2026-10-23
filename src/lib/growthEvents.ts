@@ -1,5 +1,6 @@
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from './firebase';
+import { questEvent } from './questsApi';
 
 // Lightweight usage tracking for the admin Growth tab — how much the invite and "Spread the
 // Word" share flows actually get used, and through which channel. Same fire-and-forget,
@@ -21,6 +22,7 @@ export type GrowthEventType =
 
 export function logGrowthEvent(type: GrowthEventType, uid: string | undefined | null) {
   if (!uid) return;
+  if (type.startsWith('invite_')) questEvent('invite_sent'); // counts toward the invite quest
   addDoc(collection(db, 'growthEvents'), {
     type,
     uid,

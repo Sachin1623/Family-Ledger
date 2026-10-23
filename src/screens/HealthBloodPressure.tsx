@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { questEvent } from '../lib/questsApi';
 import { useConfirm, HealthInsightsCard, SegTabs } from '../components/HealthKit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -398,6 +399,7 @@ export default function HealthBloodPressure() {
           }),
           'add BP log',
         );
+        questEvent('health_log');
         const actorName = profile?.displayName || user.displayName || undefined;
         const readingLabel = `${parsedSystolic}/${parsedDiastolic}`;
         if (computedGroupId) {

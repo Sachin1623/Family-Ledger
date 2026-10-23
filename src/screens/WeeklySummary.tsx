@@ -1,4 +1,5 @@
 import React from 'react';
+import { questEvent } from '../lib/questsApi';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Capacitor } from '@capacitor/core';
@@ -430,6 +431,7 @@ export default function WeeklySummary() {
     if (picked.length > 1) {
       const multi = await shareImagesToApp(target === 'native' ? 'sheet' : (target as DirectShareTarget), picked.map((p) => p.blob), text);
       if (multi.status === 'shared') {
+        questEvent('recap_shared');
         setShareNote(`Caption copied. If the app did not fill it in, paste it into your post. (${picked.length} pictures sent.)`);
         return;
       }
@@ -441,12 +443,16 @@ export default function WeeklySummary() {
     if (blob && target !== 'native') {
       const direct = await shareImageToApp(target as DirectShareTarget, blob, text);
       if (direct.status === 'shared') {
+        questEvent('recap_shared');
         if (direct.captionCopied) setShareNote("Caption copied — paste it into your post. (Facebook and Instagram don't let apps fill it in.)");
         return;
       }
       if (direct.status === 'not_installed') setShareNote("That app doesn't seem to be installed — choose another app from the share sheet instead.");
     }
-    if (picked.length > 0 && (await shareViaOsSheet(text, only))) return;
+    if (picked.length > 0 && (await shareViaOsSheet(text, only))) {
+      questEvent('recap_shared');
+      return;
+    }
     if (picked.length > 1) setShareNote('Your pictures could not be attached on this phone, so only the text was shared. Update the app, or choose one picture at a time.');
     // No image sharing here — fall back to the same text/link shares as everywhere else.
     if (target === 'native') {
@@ -474,6 +480,7 @@ export default function WeeklySummary() {
       const caption = buildShortShareMessage(active);
       navigator.clipboard?.writeText(caption).catch(() => {});
       await shareOrDownloadFile(video.blob, `familyledger-recap.${video.extension}`, video.mimeType, caption);
+      questEvent('recap_shared');
       setShareNote('Caption copied. Pick WhatsApp, then My Status, and paste the caption if it is not filled in.');
     } catch (err) {
       console.error('Slideshow video failed:', err);

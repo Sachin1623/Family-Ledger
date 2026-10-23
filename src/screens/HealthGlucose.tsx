@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { questEvent } from '../lib/questsApi';
 import { useConfirm, HealthInsightsCard, SegTabs, PersonSwitcher } from '../components/HealthKit';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -540,6 +541,7 @@ export default function HealthGlucose() {
           }),
           'add glucose log',
         );
+        questEvent('health_log');
         // Only a brand-new entry triggers the "reading recorded" notification — editing an
         // already-shared entry doesn't need to re-announce it.
         const actorName = profile?.displayName || user.displayName || undefined;

@@ -1430,6 +1430,15 @@ export default function Profile() {
                 onToggle={togglePreference}
               />
               <NotificationToggle
+                icon="emoji_events"
+                label="Quest board"
+                description="Show the floating quests icon"
+                prefKey="questsEnabled"
+                enabled={profile?.questsEnabled !== false}
+                updating={updating}
+                onToggle={togglePreference}
+              />
+              <NotificationToggle
                 icon="edit_calendar"
                 label={t('profile.spendReminders')}
                 description={t('profile.spendRemindersDesc')}

@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { questEvent } from '../lib/questsApi';
 import { useConfirm, PersonSwitcher, SegTabs, ProgressRing, StatusChip } from '../components/HealthKit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -1177,6 +1178,7 @@ export default function HealthMedicines() {
       }),
       'mark medicine dose',
     );
+    if (status === 'taken') questEvent('health_log');
     // Fires for BOTH taken and skipped now (used to be taken-only) — a caregiver wants to know a
     // dose was deliberately skipped just as much as that it was taken. Group members are notified
     // by the existing notifyGroupActivity call below (writes its own group Feed entry); every

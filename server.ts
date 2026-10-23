@@ -14,6 +14,7 @@ import { Filter as BadWordsFilter } from "bad-words";
 import { getWordsList as getMostCommonWordsList } from "most-common-words-by-language";
 import { z } from "zod";
 import { GoogleGenAI, Type as GenAiType } from "@google/genai";
+import { registerQuestRoutes, bumpQuestCounts, recordServerQuestEvent } from "./quests";
 
 dotenv.config();
 
@@ -582,6 +583,9 @@ async function hardDeleteUserData(
     { name: 'userPoints', field: '__docId' },
     { name: 'streakWatch', field: '__docId' },
     { name: 'pointsLedger', field: 'uid' },
+    { name: 'questCounters', field: 'uid' },
+    { name: 'userQuests', field: '__docId' },
+    { name: 'questCheers', field: 'from' },
     { name: 'sudokuLeaderboard', field: 'userId' },
     { name: 'scrambleLeaderboard', field: 'userId' },
     { name: 'gameInvites', field: 'toUid' },
@@ -1040,6 +1044,7 @@ interface AwardReadState {
   ledgerExists: boolean[];
   awards: PointsAward[];
   extraUserPointsFields?: Record<string, any>;
+  dayStr: string; // the person's own calendar day, for the quest counters
 }
 
 async function readAwardPlan(
@@ -1051,14 +1056,15 @@ async function readAwardPlan(
 ): Promise<AwardReadState> {
   const userPointsRef = db.collection('userPoints').doc(uid);
   const ledgerRefs = awards.map((award) => db.collection('pointsLedger').doc(award.ledgerKey));
-  const [userPointsSnap, ledgerSnaps] = await Promise.all([
+  const [userPointsSnap, ledgerSnaps, tz] = await Promise.all([
     tx.get(userPointsRef),
     Promise.all(ledgerRefs.map((ref) => tx.get(ref))),
+    getUserTimezone(db, uid), // a plain read outside the transaction: it only needs to happen before the writes start
   ]);
   return {
     uid, userPointsRef, userPointsData: userPointsSnap.data() || {},
     ledgerRefs, ledgerExists: ledgerSnaps.map((snap) => snap.exists),
-    awards, extraUserPointsFields,
+    awards, extraUserPointsFields, dayStr: dayInTimezone(new Date(), tz),
   };
 }
 
@@ -1067,9 +1073,11 @@ function writeAwardPlan(tx: FirebaseFirestore.Transaction, state: AwardReadState
   let totalXp = 0;
   let totalCoins = 0;
   let anyAwarded = false;
+  const questCounts: Record<string, number> = {}; // what was newly awarded here, for the quest counters
 
   state.awards.forEach((award, i) => {
     if (state.ledgerExists[i]) return; // already awarded — safe no-op for this one entry
+    if (!award.actionType.startsWith('quest_')) questCounts[award.actionType] = (questCounts[award.actionType] || 0) + 1;
     tx.set(state.ledgerRefs[i], {
       uid: state.uid, actionType: award.actionType, xp: award.xp, coins: award.coins,
       sourceCollection: award.sourceCollection || null, sourceDocId: award.sourceDocId || null,
@@ -1090,6 +1098,7 @@ function writeAwardPlan(tx: FirebaseFirestore.Transaction, state: AwardReadState
       ...(state.extraUserPointsFields || {}),
     }, { merge: true });
   }
+  if (anyAwarded) bumpQuestCounts(tx, state.userPointsRef.firestore, state.uid, state.dayStr, questCounts);
   return anyAwarded;
 }
 
@@ -1247,6 +1256,7 @@ interface GamePointsReadState {
   playedExists: boolean;
   wonRef: FirebaseFirestore.DocumentReference;
   wonExists: boolean;
+  dayStr: string;
 }
 
 async function readGamePointsPlan(
@@ -1258,10 +1268,11 @@ async function readGamePointsPlan(
     const userPointsRef = db.collection('userPoints').doc(uid);
     const playedRef = db.collection('pointsLedger').doc(`${uid}_game_played_${params.gameType}_${params.gameId}`);
     const wonRef = db.collection('pointsLedger').doc(`${uid}_game_won_${params.gameType}_${params.gameId}`);
-    const [userPointsSnap, playedSnap, wonSnap] = await Promise.all([tx.get(userPointsRef), tx.get(playedRef), tx.get(wonRef)]);
+    const [userPointsSnap, playedSnap, wonSnap, tz] = await Promise.all([tx.get(userPointsRef), tx.get(playedRef), tx.get(wonRef), getUserTimezone(db, uid)]);
     return {
       uid, userPointsRef, userPointsData: userPointsSnap.data() || {},
       playedRef, playedExists: playedSnap.exists, wonRef, wonExists: wonSnap.exists,
+      dayStr: dayInTimezone(new Date(), tz),
     };
   }));
 }
@@ -1296,6 +1307,10 @@ function writeGamePointsPlan(
       });
       totalXp += 8; totalCoins += 8; runningXp += 8;
     }
+    const gameQuestCounts: Record<string, number> = {};
+    if (!state.playedExists) gameQuestCounts.game_played = 1;
+    if (won && !state.wonExists) gameQuestCounts.game_won = 1;
+    bumpQuestCounts(tx, state.userPointsRef.firestore, state.uid, state.dayStr, gameQuestCounts);
     const currentStreak = state.userPointsData.gameStreaks?.[params.gameType] || 0;
     // gameStreaks rides along on the SAME userPoints write as the awards above (see
     // awardMultipleInTx's doc comment for why this can't be a separate follow-up tx.set).
@@ -3376,6 +3391,17 @@ async function startServer() {
   // default OFF — opt-in, not opt-out. A toggle set to off means the corresponding field is
   // omitted from the response entirely, not just hidden client-side, so turning something off
   // actually stops it from ever leaving the server for that request.
+  // Quests (the floating quest board): list, claim, events and cheers. See quests.ts.
+  registerQuestRoutes(app, {
+    getDb: () => adminDb,
+    verifyAuth: verifyAuthHeader,
+    getUserTimezone,
+    dayInTimezone,
+    awardMultipleInTx,
+    collectPushTokens,
+    sendPush,
+  });
+
   app.get('/api/public-points/:uid', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
@@ -5459,7 +5485,14 @@ async function startServer() {
       let parsed: any = {};
       try { parsed = JSON.parse(response.text || '{}'); } catch { parsed = {}; }
       opsBuf.voiceCalls += 1;
-      if (typeof parsed.amount === 'number' && parsed.amount > 0) opsBuf.voiceUnderstood += 1;
+      if (typeof parsed.amount === 'number' && parsed.amount > 0) {
+        opsBuf.voiceUnderstood += 1;
+        // counts toward the "Try Talk to add" quest; never allowed to slow or break the answer
+        if (adminDb) {
+          const questDb = adminDb;
+          getUserTimezone(questDb, decoded.uid).then((tz) => recordServerQuestEvent(questDb, decoded.uid, 'voice_used', dayInTimezone, tz)).catch(() => {});
+        }
+      }
       const isIncome = parsed.type === 'income';
       const pool = isIncome ? incomeCategories : categories;
       const wantedId = isIncome ? parsed.incomeCategoryId : parsed.categoryId;

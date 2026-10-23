@@ -9,6 +9,7 @@ import { makeSlideshowVideo } from '../lib/slideshowVideo';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
 import { shareImageToApp, shareImagesToApp, DirectShareTarget } from '../lib/appShare';
 import { logGrowthEvent } from '../lib/growthEvents';
+import { questEvent } from '../lib/questsApi';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
 import SpreadPosterPicker from './SpreadPosterPicker';
 import ShareAppButtons from './ShareAppButtons';
@@ -19,6 +20,11 @@ import ShareAppButtons from './ShareAppButtons';
 // started (the broadcast popup uses it to mark the prompt as seen).
 export default function SpreadTheWordShare({ onShared }: { onShared?: () => void }) {
   const { user } = useAuth();
+  // a share was started: counts toward the weekly quest, then lets the caller know
+  const sharedOk = () => {
+    questEvent('spread_shared');
+    onShared?.();
+  };
   const { t } = useLanguage();
   // Tapping any Share button first opens the poster picker (a fresh set of themed posters is drawn every time); the chosen poster is
   // then shared to whichever target was tapped.
@@ -64,7 +70,7 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
     const result = await shareText('FamilyLedger', message);
     if (result === 'copied') alert(t('profile.linkCopied'));
     logGrowthEvent('share_link_only', user?.uid);
-    onShared?.();
+    sharedOk();
   };
 
   // Every Share button opens the poster picker; once a poster is chosen this shares it.
@@ -88,7 +94,7 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
       if (multi.status === 'shared') {
         logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
         setShareNote(`Caption copied. If the app did not fill it in, paste it into your post. (${items.length} posters sent.)`);
-        onShared?.();
+        sharedOk();
         return;
       }
       if (multi.status === 'not_installed') {
@@ -104,7 +110,7 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
       if (direct.status === 'shared') {
         logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
         if (direct.captionCopied) setShareNote("Caption copied — paste it into your post. (Facebook and Instagram don't let apps fill it in.)");
-        onShared?.();
+        sharedOk();
         return;
       }
       if (direct.status === 'not_installed') {
@@ -115,12 +121,12 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
     const shared = await shareViaOsSheetWithBanner(text, blob);
     if (shared) {
       logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
-      onShared?.();
+      sharedOk();
       return;
     }
     // Image sharing unsupported (or no share sheet at all) — text-only fallbacks.
     shareAppPlain(target, user?.uid, posterId);
-    onShared?.();
+    sharedOk();
   };
 
   // WhatsApp Status keeps only one item from a share, so several posters can go as ONE slideshow video instead.
@@ -134,7 +140,7 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
       await shareOrDownloadFile(video.blob, `familyledger-posters.${video.extension}`, video.mimeType, caption);
       logGrowthEvent('share_native', user?.uid);
       setShareNote('Caption copied. Pick WhatsApp, then My Status, and paste the caption if it is not filled in.');
-      onShared?.();
+      sharedOk();
     } catch (err) {
       console.error('Slideshow video failed:', err);
       setShareNote('Could not make the video on this phone. Share the posters instead.');
