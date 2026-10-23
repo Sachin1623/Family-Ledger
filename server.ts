@@ -6267,6 +6267,100 @@ async function startServer() {
     return images.reduce((sum, s) => sum + s.length, 0) > BROADCAST_IMAGES_MAX_BYTES;
   }
 
+  // ---- Broadcast results: who saw each broadcast, closed it, and tapped what. The app reports it as it happens (one tiny call per view, close or tap).
+  // broadcastStats/{id} holds the totals; broadcastStats/{id}/people/{uid} remembers what each person already did so views, closes and
+  // "people who tapped" count each person once while total taps still count every tap.
+  const BROADCAST_EVENTS = new Set(['view', 'close', 'click']);
+  const BROADCAST_TARGETS = new Set(['instagram', 'facebook', 'play', 'feedback', 'other']);
+  const BROADCAST_VIA = new Set(['link', 'button', 'image']);
+  const broadcastTrackHits = new Map<string, { n: number; resetAt: number }>();
+  app.post('/api/broadcast/track', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const id = String(req.body?.id || '').slice(0, 60);
+    const event = String(req.body?.event || '');
+    const target = BROADCAST_TARGETS.has(String(req.body?.target)) ? String(req.body.target) : 'other';
+    const via = BROADCAST_VIA.has(String(req.body?.via)) ? String(req.body.via) : 'link';
+    if (!id || !BROADCAST_EVENTS.has(event)) return res.status(400).json({ error: 'Bad request.' });
+    const now = Date.now();
+    const hit = broadcastTrackHits.get(decoded.uid);
+    if (!hit || hit.resetAt < now) broadcastTrackHits.set(decoded.uid, { n: 1, resetAt: now + 60_000 });
+    else if (++hit.n > 30) return res.status(204).end();
+    const db = adminDb;
+    try {
+      const statsRef = db.collection('broadcastStats').doc(id);
+      const personRef = statsRef.collection('people').doc(decoded.uid);
+      await db.runTransaction(async (tx) => {
+        const personSnap = await tx.get(personRef);
+        const person = personSnap.data() || {};
+        const inc = admin.firestore.FieldValue.increment;
+        const stats: Record<string, any> = { updatedAt: new Date().toISOString() };
+        const mine: Record<string, any> = {};
+        if (event === 'view' && !person.viewedAt) {
+          stats.views = inc(1);
+          mine.viewedAt = new Date().toISOString();
+        } else if (event === 'close' && !person.closedAt) {
+          stats.closes = inc(1);
+          mine.closedAt = new Date().toISOString();
+        } else if (event === 'click') {
+          stats.clicks = inc(1);
+          stats.byVia = { [via]: inc(1) };
+          const t: Record<string, any> = { clicks: inc(1) };
+          if (!(person.clicked && person.clicked[target])) {
+            t.people = inc(1);
+            mine.clicked = { [target]: true };
+          }
+          stats.byTarget = { [target]: t };
+          if (!person.clickedAny) {
+            stats.clickers = inc(1);
+            mine.clickedAny = true;
+          }
+        } else {
+          return; // already counted for this person
+        }
+        tx.set(statsRef, stats, { merge: true });
+        if (Object.keys(mine).length) tx.set(personRef, mine, { merge: true });
+      });
+      return res.status(204).end();
+    } catch (error) {
+      console.error('broadcast track error:', error);
+      return res.status(204).end();
+    }
+  });
+
+  // The results of the most recent broadcasts, for the admin dashboard.
+  app.get('/api/admin/broadcast/analytics', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const db = adminDb;
+    try {
+      const snap = await db.collection('broadcasts').orderBy('createdAt', 'desc').limit(20).get();
+      const sent = snap.docs.filter((d) => d.data().status === 'sent');
+      const stats = sent.length ? await db.getAll(...sent.map((d) => db.collection('broadcastStats').doc(d.id))) : [];
+      const list = sent.map((d, i) => {
+        const b = d.data();
+        const st = (stats[i]?.data() || {}) as any;
+        return {
+          id: d.id,
+          title: b.title || 'FamilyLedger',
+          sentAt: b.sentAt || b.createdAt,
+          recipients: b.recipientCount || 0,
+          pushSent: b.pushSent || 0,
+          views: st.views || 0,
+          closes: st.closes || 0,
+          clicks: st.clicks || 0,
+          clickers: st.clickers || 0,
+          byTarget: st.byTarget || {},
+          byVia: st.byVia || {},
+        };
+      });
+      return res.json({ broadcasts: list });
+    } catch (error) {
+      console.error('admin/broadcast/analytics error:', error);
+      return res.status(500).json({ error: 'Unable to load broadcast results.' });
+    }
+  });
+
   // Last-sent broadcast, for AdminBroadcast.tsx to show as context before sending a new one.
   app.get('/api/admin/broadcast', async (req, res) => {
     const decoded = await requireAdmin(req, res);

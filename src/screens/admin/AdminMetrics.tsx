@@ -7,13 +7,14 @@ import { adminGet } from '../../lib/adminApi';
 // the sign-in counters, the server's own request counters and the Google Cloud billing export). Things only Google Play knows (installs,
 // crash-free users) are linked, not guessed.
 
-type Tab = 'today' | 'growth' | 'health' | 'cost' | 'product';
+type Tab = 'today' | 'growth' | 'health' | 'cost' | 'product' | 'broadcasts';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'today', label: 'Today' },
   { id: 'growth', label: 'Growth' },
   { id: 'health', label: 'Health' },
   { id: 'cost', label: 'Cost' },
   { id: 'product', label: 'Product' },
+  { id: 'broadcasts', label: 'Broadcasts' },
 ];
 
 // Lines that turn a tile amber or red. Edit here to change what counts as "bad".
@@ -280,6 +281,7 @@ export default function AdminMetrics() {
   const [cost, setCost] = useState<Cost | null>(null);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [product, setProduct] = useState<any | null>(null);
+  const [bcast, setBcast] = useState<any[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -291,6 +293,7 @@ export default function AdminMetrics() {
   useEffect(() => { load(); }, []);
   useEffect(() => {
     if (tab === 'cost' && !breakdown) adminGet('/api/admin/cloud-cost/breakdown').then(setBreakdown).catch(() => setBreakdown({ tableReady: false }));
+    if (tab === 'broadcasts' && !bcast) adminGet('/api/admin/broadcast/analytics').then((r) => setBcast(r.broadcasts || [])).catch(() => setBcast([]));
     if (tab === 'product' && !product) adminGet('/api/admin/analytics/product').then(setProduct).catch(() => setProduct({}));
   }, [tab, breakdown, product]);
 
@@ -558,6 +561,58 @@ export default function AdminMetrics() {
               </div>
             </Section>
           )}
+        </div>
+      )}
+
+      {tab === 'broadcasts' && (
+        <div className="space-y-4">
+          <p className="text-[11px] text-text-muted px-1">
+            How each broadcast did. "Seen" is people who opened the app and saw it (the push notification itself is counted separately). A tap counts on a link, on a Follow button or on a picture; "people" counts each person once.
+          </p>
+          {!bcast && <div className="h-28 rounded-2xl bg-white border border-border-subtle animate-pulse" />}
+          {bcast && bcast.length === 0 && <p className="text-sm text-text-muted px-1">No broadcast has been sent yet.</p>}
+          {bcast?.map((b) => {
+            const seenPct = pct(b.views, b.recipients);
+            const tapPct = pct(b.clickers, b.views);
+            const targets: { key: string; label: string; icon: string }[] = [
+              { key: 'instagram', label: 'Instagram', icon: '📸' },
+              { key: 'facebook', label: 'Facebook', icon: '👍' },
+              { key: 'play', label: 'Google Play', icon: '⭐' },
+              { key: 'feedback', label: 'Feedback', icon: '💬' },
+              { key: 'other', label: 'Other links', icon: '🔗' },
+            ];
+            const maxTaps = Math.max(1, ...targets.map((t) => b.byTarget?.[t.key]?.clicks || 0));
+            return (
+              <div key={b.id} className="bg-white rounded-2xl border border-border-subtle p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-black text-primary leading-tight">{b.title}</p>
+                  <p className="text-[11px] text-text-muted">{b.sentAt ? new Date(b.sentAt).toLocaleString() : ''}</p>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  <Tile label="Sent to" value={num(b.recipients)} sub={`${num(b.pushSent)} notified`} />
+                  <Tile label="Seen" value={num(b.views)} sub={`${fmtPct(seenPct)} of those sent`} />
+                  <Tile label="Closed" value={num(b.closes)} sub={`${fmtPct(pct(b.closes, b.views))} of seen`} />
+                  <Tile label="People who tapped" value={num(b.clickers)} sub={`${fmtPct(tapPct)} of seen`} level={levelHigh(tapPct, { good: 15, bad: 3 })} />
+                  <Tile label="Total taps" value={num(b.clicks)} sub={`links ${num(b.byVia?.link || 0)} · buttons ${num(b.byVia?.button || 0)} · pictures ${num(b.byVia?.image || 0)}`} />
+                </div>
+                <div className="space-y-1.5">
+                  {targets.map((t) => {
+                    const v = b.byTarget?.[t.key] || { clicks: 0, people: 0 };
+                    if (!v.clicks && t.key === 'other') return null;
+                    return (
+                      <div key={t.key} className="flex items-center gap-3">
+                        <span className="w-28 shrink-0 text-xs font-bold text-primary">{t.icon} {t.label}</span>
+                        <div className="flex-1 h-3 rounded-full bg-surface overflow-hidden">
+                          <div className="h-full rounded-full bg-gradient-to-r from-[#4ADE80] to-[#3B82F6]" style={{ width: `${(v.clicks / maxTaps) * 100}%` }} />
+                        </div>
+                        <span className="w-28 shrink-0 text-right text-[11px] font-bold text-text-muted tabular-nums">{num(v.clicks)} taps · {num(v.people)} people</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { ShareBrandBadge } from './ShareBrandBadge';
+import { targetOf, trackBroadcast, type BroadcastVia } from '../lib/broadcastTrack';
 
 // Full-screen announcement modal, driven by a single `app_config/broadcast` doc an admin writes
 // via AdminBroadcast.tsx. Whichever user is already in the app when it's sent sees this the
@@ -42,7 +43,17 @@ export default function BroadcastBanner() {
   const shouldShow =
     !!broadcast?.id && !!profile && profile.lastSeenBroadcastId !== broadcast.id && !dismissed;
 
+  // reported once per broadcast and phone: it was shown
+  const viewedRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (shouldShow && broadcast?.id && viewedRef.current !== broadcast.id) {
+      viewedRef.current = broadcast.id;
+      trackBroadcast(broadcast.id, 'view');
+    }
+  }, [shouldShow, broadcast?.id]);
+
   const handleClose = () => {
+    if (broadcast?.id) trackBroadcast(broadcast.id, 'close');
     setDismissed(true);
     if (user && broadcast?.id) {
       // updateDoc, not setDoc(...,{merge:true}) — this banner is mounted globally and can be
@@ -61,8 +72,9 @@ export default function BroadcastBanner() {
     }
   };
 
-  const openLink = (rawUrl: string) => {
+  const openLink = (rawUrl: string, via: BroadcastVia = 'link') => {
     const url = rawUrl.replace(/[.,;:!?)]+$/, '');
+    if (broadcast?.id) trackBroadcast(broadcast.id, 'click', { target: targetOf(url), via });
     try {
       const u = new URL(url);
       if (u.hostname === OWN_HOST) {
@@ -128,7 +140,7 @@ export default function BroadcastBanner() {
                     const picture = <img src={src} alt="" className="w-full rounded-2xl border border-border-subtle object-cover" />;
                     // a picture with a link opens it when tapped
                     return link ? (
-                      <button key={idx} type="button" onClick={() => openLink(link)} className="block w-full active:scale-[0.99] transition-transform">
+                      <button key={idx} type="button" onClick={() => openLink(link, 'image')} className="block w-full active:scale-[0.99] transition-transform">
                         {picture}
                       </button>
                     ) : (
@@ -140,13 +152,13 @@ export default function BroadcastBanner() {
               {(instagramUrl || facebookUrl) && (
                 <div className="grid grid-cols-2 gap-2 pb-1">
                   {instagramUrl && (
-                    <button type="button" onClick={() => openLink(instagramUrl)} className="py-3 rounded-2xl text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95" style={{ background: 'linear-gradient(45deg,#FA7E1E,#D62976,#962FBF,#4F5BD5)' }}>
+                    <button type="button" onClick={() => openLink(instagramUrl, 'button')} className="py-3 rounded-2xl text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95" style={{ background: 'linear-gradient(45deg,#FA7E1E,#D62976,#962FBF,#4F5BD5)' }}>
                       <span className="[&_svg]:fill-white [&_path]:!fill-white"><ShareBrandBadge platform="instagram" /></span>
                       Follow
                     </button>
                   )}
                   {facebookUrl && (
-                    <button type="button" onClick={() => openLink(facebookUrl)} className="py-3 rounded-2xl bg-[#1877F2] text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95">
+                    <button type="button" onClick={() => openLink(facebookUrl, 'button')} className="py-3 rounded-2xl bg-[#1877F2] text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95">
                       <span className="[&_path]:!fill-white"><ShareBrandBadge platform="facebook" /></span>
                       Follow
                     </button>
