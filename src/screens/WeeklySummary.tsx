@@ -58,8 +58,28 @@ interface SummaryDoc {
   praise?: { loggedDays30: number; streakDays: number; healthDays30: number; weeksActive8: number; topPercent: number | null; members: number };
 }
 
+// The proud opening line of every shared caption: who this person is being (top X%, streak, habits), true to their own numbers.
+function buildPraiseLead(summary: SummaryDoc): string {
+  const p = summary.praise;
+  if (!p) return '';
+  const lines: string[] = [];
+  if (p.topPercent != null) lines.push(`🏆 I'm in the top ${p.topPercent}% of FamilyLedger members for keeping track of my family's money.`);
+  else if (p.streakDays >= 2) lines.push(`🔥 ${p.streakDays} days in a row watching my family's spending.`);
+  const bits: string[] = [];
+  if (p.streakDays >= 2 && p.topPercent != null) bits.push(`${p.streakDays} days in a row`);
+  if (p.loggedDays30 > 0) bits.push(`${p.loggedDays30} of the last 30 days logged`);
+  if (p.healthDays30 > 0) bits.push(`${p.healthDays30} days caring for the family's health`);
+  if (bits.length) lines.push(`📈 ${bits.join(' · ')}.`);
+  if (lines.length) lines.push('Planning, awareness and small daily habits are what make a family financially steady. 💚');
+  return lines.length ? `${lines.join('\n')}\n\n` : '';
+}
+
 function buildShortShareMessage(summary: SummaryDoc): string {
   const w = summary.week;
+  const p = summary.praise;
+  if (p && (p.topPercent != null || p.streakDays >= 2)) {
+    return `🏆 ${p.topPercent != null ? `Top ${p.topPercent}% of FamilyLedger members` : `${p.streakDays} days in a row`} for looking after my family's money — all in one family app 👇\n${installLinksText()}`;
+  }
   return `🙌 My week on FamilyLedger: ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} played, ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} tracked, ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} chatted with — all in one family app 👇\n${installLinksText()}`;
 }
 
@@ -68,7 +88,7 @@ function buildShareMessage(summary: SummaryDoc): string {
   const trackingLine = summary.goalsTracked || summary.accountsMonitored
     ? ` I'm also tracking ${summary.goalsTracked ?? 0} savings goal${(summary.goalsTracked ?? 0) === 1 ? '' : 's'} across ${summary.accountsMonitored ?? 0} account${(summary.accountsMonitored ?? 0) === 1 ? '' : 's'}.`
     : '';
-  return `🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!${trackingLine}\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${installLinksText()}`;
+  return `${buildPraiseLead(summary)}🙌 This week FamilyLedger helped me stay connected — I played ${w.gamesPlayed} game${w.gamesPlayed === 1 ? '' : 's'} with ${w.coPlayers} family member${w.coPlayers === 1 ? '' : 's'}/friend${w.coPlayers === 1 ? '' : 's'}, tracked ${w.expensesTracked} expense${w.expensesTracked === 1 ? '' : 's'} across ${w.groupsEngaged} group${w.groupsEngaged === 1 ? '' : 's'}, and chatted with ${w.chatPeople} ${w.chatPeople === 1 ? 'person' : 'people'} — all in one app!${trackingLine}\n\n✅ Split bills equally, by %, or exact amounts\n🔄 Never forget a recurring bill\n🎲 Play Ludo, Rummy, Chess & more together\n📊 Budgets, smart reminders & to-do/shopping lists\n\nTry it with your family 👇\n${installLinksText()}`;
 }
 
 
@@ -304,6 +324,7 @@ export default function WeeklySummary() {
       periodLabel: summary.periodLabel,
       kudos: summary.kudos,
       view: buildRecapView(summary.week, summary.prevWeek, { goalsTracked: summary.goalsTracked, accountsMonitored: summary.accountsMonitored }),
+      praise: summary.praise,
     });
 
   // Preview of the exact image that will be shared, regenerated whenever the selected recap changes.
@@ -441,6 +462,22 @@ export default function WeeklySummary() {
                   <RecapPreviewPlaceholder failed={previewFailed} onRetry={() => setPreviewAttempt((n) => n + 1)} />
                 )}
 
+                <div className="rounded-3xl border-2 border-primary/20 bg-primary/5 p-4 space-y-3">
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-black text-primary">Be proud of this. Inspire another family.</p>
+                    <p className="text-xs text-text-muted leading-snug">
+                      Share your recap in one tap. The picture already has your achievements, the app link, a QR code, the Google Play badge, and our Instagram and Facebook pages, and the caption carries the links too.
+                    </p>
+                  </div>
+                  <ShareAppButtons
+                    onShare={handleShareApp}
+                    onLinkOnly={handleShareLinkOnly}
+                    primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
+                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? 'Share my recap' : 'Copy share message'}
+                    note={shareNote}
+                  />
+                </div>
+
                 {(active.goalsTracked !== undefined || active.accountsMonitored !== undefined) && (
                   <div>
                     <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-2 px-1">Your Money Tracking</p>
@@ -485,18 +522,6 @@ export default function WeeklySummary() {
                   </div>
                 )}
 
-                <div className="border-t border-border-subtle pt-4 space-y-2.5">
-                  <p className="text-xs text-text-muted text-center leading-snug">
-                    Enjoying FamilyLedger? Share how it's helping you stay connected with family & friends — one tap:
-                  </p>
-                  <ShareAppButtons
-                    onShare={handleShareApp}
-                    onLinkOnly={handleShareLinkOnly}
-                    primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
-                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? 'Share my recap' : 'Copy share message'}
-                    note={shareNote}
-                  />
-                </div>
               </>
             )}
           </div>

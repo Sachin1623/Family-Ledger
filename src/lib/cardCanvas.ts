@@ -296,7 +296,40 @@ export async function makeHandleSticker(network: 'instagram' | 'facebook' = 'ins
 
 // Bottom band shared by every picture: a Play Store QR (scan to install), the Play Store / website
 // text, and a green call-to-action pill.
-export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: string) {
+// The familiar black "GET IT ON Google Play" badge, drawn with the four coloured triangles. Android pictures only (never on the iPhone app).
+export function drawPlayBadge(ctx: CanvasRenderingContext2D, cx: number, y: number, h: number) {
+  const w = h * 3.7;
+  const x = cx - w / 2;
+  ctx.save();
+  roundRectPath(ctx, x, y, w, h, h * 0.2);
+  ctx.fillStyle = '#000000';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#A6A6A6';
+  ctx.stroke();
+  const s = (h * 0.62) / 24;
+  ctx.translate(x + h * 0.2, y + h * 0.19);
+  ctx.scale(s, s);
+  const parts: [string, string][] = [
+    ['#00D7FE', 'M3.6 1.6 13.4 12 3.6 22.4a1.9 1.9 0 0 1-.6-1.4V3c0-.5.2-1 .6-1.4Z'],
+    ['#00F076', 'm17 8.4-3.6 3.6L3.6 1.6c.5-.3 1.2-.3 1.8 0L17 8.4Z'],
+    ['#FF3A44', 'm17 15.6-11.6 6.8c-.6.3-1.3.3-1.8 0L13.4 12 17 15.6Z'],
+    ['#FFD400', 'm21 10.8-4 2.4L13.4 12 17 8.4l4 2.4a1.4 1.4 0 0 1 0 2.4Z'],
+  ];
+  parts.forEach(([c, d]) => { ctx.fillStyle = c; ctx.fill(new Path2D(d)); });
+  ctx.restore();
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#FFFFFF';
+  const tx = x + h * 0.2 + h * 0.62 + h * 0.2;
+  ctx.font = `600 ${Math.round(h * 0.2)}px ${FONT}`;
+  ctx.fillText('GET IT ON', tx, y + h * 0.34);
+  ctx.font = `600 ${Math.round(h * 0.4)}px ${FONT}`;
+  ctx.fillText('Google Play', tx, y + h * 0.74);
+  ctx.restore();
+}
+
+export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: string, opts: { playBadge?: boolean } = {}) {
   const qrSize = 210;
   const qrX = W - 70 - qrSize;
   const qrY = H - 40 - qrSize - 28;
@@ -322,7 +355,8 @@ export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: strin
   ctx.fillText(fitText(ctx, ctaText, leftW - 50, 34, '800', 24), leftX + leftW / 2, pillY + 55);
 
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText(fitText(ctx, ios ? 'Free for the whole family' : 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
+  if (!ios && opts.playBadge) drawPlayBadge(ctx, leftX + leftW / 2, pillY + pillH + 4, 56);
+  else ctx.fillText(fitText(ctx, ios ? 'Free for the whole family' : 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.fillText(fitText(ctx, 'familyledger.thirteenapps.com', leftW, 28, '600', 20), leftX + leftW / 2, pillY + pillH + 92);
   paintSocialPills(ctx, leftX, pillY + pillH + 106, leftW);

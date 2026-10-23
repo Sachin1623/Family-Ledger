@@ -7,13 +7,22 @@ import {
 } from './cardCanvas';
 import { RecapView } from './recapFeatures';
 
+export interface RecapPraiseInput {
+  topPercent: number | null;
+  streakDays: number;
+  loggedDays30: number;
+  healthDays30: number;
+  weeksActive8: number;
+}
+
 export interface RecapCardInput {
   periodLabel: string;
   kudos: string;
   view: RecapView;
+  praise?: RecapPraiseInput | null;
 }
 
-export async function renderRecapCard({ periodLabel, kudos, view }: RecapCardInput): Promise<Blob> {
+export async function renderRecapCard({ periodLabel, kudos, view, praise }: RecapCardInput): Promise<Blob> {
   await fontsReady();
   const { canvas, ctx } = newPosterCanvas();
   paintBackground(ctx, '255, 196, 61', 20261014);
@@ -48,17 +57,72 @@ export async function renderRecapCard({ periodLabel, kudos, view }: RecapCardInp
     ctx.fillText(label, W / 2, 340);
   }
 
-  // ---- Kudos ----
+  // ---- Kudos (or, when we have the person's consistency numbers, a short appreciation line with a ribbon and badges) ----
+  const hasPraise = !!praise && (praise.topPercent != null || praise.streakDays > 0 || praise.loggedDays30 > 0);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
   ctx.font = `600 30px ${FONT}`;
-  const kudosLines = wrapLines(ctx, kudos, W - 200, 2);
+  const kudosLines = hasPraise
+    ? [fitText(ctx, 'Taking responsibility for my family\u2019s money, one day at a time \uD83D\uDC9A', W - 140, 30, '600', 22)]
+    : wrapLines(ctx, kudos, W - 200, 2);
   kudosLines.forEach((l, i) => ctx.fillText(l, W / 2, 404 + i * 40));
 
-  // ---- Feature tiles: 6 to 8, two per row, most-engaged first ----
-  const feats = view.features.slice(0, 8);
+  let stripBottom = 404 + kudosLines.length * 40 + 8;
+  if (hasPraise && praise) {
+    if (praise.topPercent != null) {
+      const ribbon = `\uD83C\uDFC6  TOP ${praise.topPercent}% of FamilyLedger members`;
+      ctx.save();
+      roundRectPath(ctx, 70, stripBottom + 12, W - 140, 76, 38);
+      const rg = ctx.createLinearGradient(70, 0, W - 70, 0);
+      rg.addColorStop(0, '#FFE58A');
+      rg.addColorStop(1, '#FFA629');
+      ctx.fillStyle = rg;
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#3A2600';
+      ctx.textAlign = 'center';
+      ctx.font = `900 38px ${FONT}`;
+      ctx.fillText(fitText(ctx, ribbon, W - 200, 38, '900', 26), W / 2, stripBottom + 12 + 52);
+      stripBottom += 100;
+    }
+    const badges: { emoji: string; value: string; label: string }[] = [];
+    if (praise.streakDays > 0) badges.push({ emoji: '\uD83D\uDD25', value: String(praise.streakDays), label: praise.streakDays === 1 ? 'day watching spending' : 'days in a row' });
+    if (praise.loggedDays30 > 0) badges.push({ emoji: '\uD83D\uDCC5', value: `${praise.loggedDays30}/30`, label: 'days logged this month' });
+    if (praise.healthDays30 > 0) badges.push({ emoji: '\u2764\uFE0F', value: String(praise.healthDays30), label: 'days caring for health' });
+    else if (praise.weeksActive8 > 0) badges.push({ emoji: '\u2705', value: `${praise.weeksActive8}/8`, label: 'weeks on top of it' });
+    const shown = badges.slice(0, 3);
+    if (shown.length > 0) {
+      const bg = 16;
+      const bw = (W - 140 - bg * (shown.length - 1)) / shown.length;
+      shown.forEach((b, i) => {
+        const bx = 70 + i * (bw + bg);
+        const by = stripBottom + 14;
+        roundRectPath(ctx, bx, by, bw, 104, 26);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255, 201, 60, 0.45)';
+        ctx.stroke();
+        ctx.textAlign = 'left';
+        ctx.font = `34px ${EMOJI_FONT}`;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(b.emoji, bx + 18, by + 62);
+        ctx.font = `900 40px ${FONT}`;
+        ctx.fillStyle = '#FFE58A';
+        ctx.fillText(b.value, bx + 72, by + 52);
+        ctx.font = `700 19px ${FONT}`;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+        ctx.fillText(fitText(ctx, b.label, bw - 80, 19, '700', 13), bx + 72, by + 82);
+      });
+      stripBottom += 14 + 104 + 10;
+    }
+    ctx.textAlign = 'center';
+  }
+
+  // ---- Feature tiles: 6 to 8, two per row, most-engaged first (6 when the appreciation strip above takes room) ----
+  const feats = view.features.slice(0, hasPraise ? 6 : 8);
   const rows = Math.ceil(feats.length / 2);
   const gap = 18;
-  const areaTop = 404 + kudosLines.length * 40 + 8;
+  const areaTop = stripBottom;
   const areaBottom = 1050;
   const tileH = Math.min(150, (areaBottom - areaTop - (rows - 1) * gap) / rows);
   const tileW = (W - 140 - gap) / 2;
@@ -111,6 +175,6 @@ export async function renderRecapCard({ periodLabel, kudos, view }: RecapCardInp
     ctx.fillText(fitText(ctx, f.label, tileW - (textX - x) - 20, Math.round(23 * k), '700', 16), textX, cy + 44 * k);
   });
 
-  paintInstallFooter(ctx, 'Join me on FamilyLedger 👉');
+  paintInstallFooter(ctx, 'Join me on FamilyLedger 👉', { playBadge: true });
   return canvasToPng(canvas);
 }
