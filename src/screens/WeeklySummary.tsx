@@ -95,7 +95,7 @@ function buildShareMessage(summary: SummaryDoc): string {
 }
 
 
-function AppreciationCard({ summary }: { summary: SummaryDoc }) {
+function AppreciationCard({ summary, onShare }: { summary: SummaryDoc; onShare?: () => void }) {
   const p = summary.praise;
   const w = summary.week;
   const thought = thoughtFor(summary.generatedAt);
@@ -140,6 +140,12 @@ function AppreciationCard({ summary }: { summary: SummaryDoc }) {
               </div>
             ))}
           </div>
+        )}
+        {onShare && (
+          <button type="button" onClick={onShare} className="mt-4 w-full py-2.5 rounded-xl bg-white text-[#0d3b4e] text-sm font-black flex items-center justify-center gap-2 active:scale-95">
+            <span className="material-symbols-outlined text-[20px]">share</span>
+            Share this card
+          </button>
         )}
       </div>
 
@@ -379,17 +385,17 @@ export default function WeeklySummary() {
 
   const toggleChosen = (id: RecapVariant) => setChosen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   // The chosen pictures, in the order they are listed, that have finished drawing.
-  const chosenBlobs = (): { blob: Blob; filename: string }[] =>
+  const chosenBlobs = (only?: RecapVariant): { blob: Blob; filename: string }[] =>
     (active ? variantsFor(active) : [])
-      .filter((v) => chosen.includes(v.id) && pictures[v.id])
+      .filter((v) => (only ? v.id === only : chosen.includes(v.id)) && pictures[v.id])
       .map((v) => ({ blob: pictures[v.id]!.blob, filename: `familyledger-recap-${v.id}.png` }));
 
   // All three buttons below try the SAME best path first — hand the chosen picture(s) (plus the full text) to the phone's own share
   // sheet, so whichever app the user picks (WhatsApp — a contact or Status, Facebook, Instagram, anything else registered as a share
   // target) receives the actual image(s) with real numbers baked in. On the installed app this goes through the native share plugin; in a
   // browser it uses the Web Share API. One picture can also open a brand app's own composer directly; several always use the share sheet.
-  const shareViaOsSheet = async (message: string): Promise<boolean> => {
-    const files = chosenBlobs();
+  const shareViaOsSheet = async (message: string, only?: RecapVariant): Promise<boolean> => {
+    const files = chosenBlobs(only);
     if (!active || files.length === 0) return false;
     const nav = navigator as any;
     if (!Capacitor.isNativePlatform() && !nav.share) return false;
@@ -406,14 +412,14 @@ export default function WeeklySummary() {
 
   // Same flow as Profile's "Spread the Word": a brand button opens that app's own composer with the recap picture when the
   // phone supports it, otherwise the phone's share sheet carries the picture and text, otherwise a text-only fallback.
-  const handleShareApp = async (target: ShareTarget) => {
+  const handleShareApp = async (target: ShareTarget, only?: RecapVariant) => {
     if (!active) return;
     setShareNote(null);
     const message = buildShareMessage(active);
     // X has a short limit and a WhatsApp status refuses more than 700 characters, so both get the short caption.
     const text = target === 'twitter' || target === 'whatsapp' ? buildShortShareMessage(active) : message;
     logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
-    const picked = chosenBlobs();
+    const picked = chosenBlobs(only);
     if (picked.length === 0) {
       setShareNote('Tap at least one picture above to choose what to share.');
       return;
@@ -439,7 +445,7 @@ export default function WeeklySummary() {
       }
       if (direct.status === 'not_installed') setShareNote("That app doesn't seem to be installed — choose another app from the share sheet instead.");
     }
-    if (picked.length > 0 && (await shareViaOsSheet(text))) return;
+    if (picked.length > 0 && (await shareViaOsSheet(text, only))) return;
     if (picked.length > 1) setShareNote('Your pictures could not be attached on this phone, so only the text was shared. Update the app, or choose one picture at a time.');
     // No image sharing here — fall back to the same text/link shares as everywhere else.
     if (target === 'native') {
@@ -508,7 +514,7 @@ export default function WeeklySummary() {
                   />
                 </div>
 
-                <AppreciationCard summary={active} />
+                <AppreciationCard summary={active} onShare={pictures.welldone ? () => handleShareApp('native', 'welldone') : undefined} />
 
                 <div className="space-y-2">
                   <div className="flex items-end justify-between px-1">
