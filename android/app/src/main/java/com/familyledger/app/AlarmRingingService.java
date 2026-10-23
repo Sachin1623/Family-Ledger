@@ -36,11 +36,15 @@ public class AlarmRingingService extends Service {
     static final String CHANNEL_ID = "familyledger_alarms";
     static final String ACTION_STOP = "com.familyledger.app.ACTION_STOP_ALARM";
     static final String ACTION_SNOOZE = "com.familyledger.app.ACTION_SNOOZE_ALARM";
+    // Sent when the person swipes the alarm notification away while it is still ringing: it is put straight back.
+    static final String ACTION_REPOST = "com.familyledger.app.ACTION_REPOST_ALARM";
 
     private MediaPlayer mediaPlayer;
     private Vibrator vibrator;
     private PowerManager.WakeLock wakeLock;
     private boolean ringing;
+    private Notification currentNotification;
+    private int currentNotificationId;
 
     private int currentId;
     private String currentTitle = "";
@@ -57,6 +61,14 @@ public class AlarmRingingService extends Service {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopRinging();
             stopSelf();
+            return START_NOT_STICKY;
+        }
+        // The notification was swiped away (Android 14 and later lets people swipe even ongoing ones): an alarm that is still ringing keeps it.
+        if (intent != null && ACTION_REPOST.equals(intent.getAction())) {
+            if (ringing && currentNotification != null) {
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null) nm.notify(currentNotificationId, currentNotification);
+            }
             return START_NOT_STICKY;
         }
         // "Snooze" straight from the notification: re-fire once in 10 minutes, then stop this ring.
@@ -139,8 +151,14 @@ public class AlarmRingingService extends Service {
             .setOngoing(true)
             .setAutoCancel(false);
 
+        // Swiping it away re-posts it, and it cannot be cleared by "Clear all" either, for as long as the alarm rings.
+        Intent repostIntent = new Intent(this, AlarmRingingService.class).setAction(ACTION_REPOST);
+        builder.setDeleteIntent(PendingIntent.getService(this, 5_000_000 + (id & 0xFFFFF), repostIntent, actionFlags));
         Notification notification = builder.build();
+        notification.flags |= Notification.FLAG_NO_CLEAR | Notification.FLAG_ONGOING_EVENT;
         int notificationId = 2000000000 + id;
+        currentNotification = notification;
+        currentNotificationId = notificationId;
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
