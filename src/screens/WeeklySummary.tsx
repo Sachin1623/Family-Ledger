@@ -311,6 +311,7 @@ export default function WeeklySummary() {
     const w = summary.week;
     const hasHealth = (summary.praise?.healthDays30 ?? 0) > 0 || (w.bpReadings ?? 0) + (w.glucoseReadings ?? 0) + (w.medicineDoses ?? 0) + (w.vaccinesGiven ?? 0) > 0;
     const list: { id: RecapVariant; title: string; blurb: string }[] = [
+      { id: 'welldone', title: 'Well done', blurb: 'My praise card' },
       { id: 'achievement', title: 'My achievement', blurb: 'Top ranking, streak and week' },
       { id: 'numbers', title: 'My week in numbers', blurb: 'What I did, vs last week' },
       { id: 'habits', title: 'Steady family habits', blurb: 'Habits and a money thought' },
@@ -409,7 +410,8 @@ export default function WeeklySummary() {
     if (!active) return;
     setShareNote(null);
     const message = buildShareMessage(active);
-    const text = target === 'twitter' ? buildShortShareMessage(active) : message;
+    // X has a short limit and a WhatsApp status refuses more than 700 characters, so both get the short caption.
+    const text = target === 'twitter' || target === 'whatsapp' ? buildShortShareMessage(active) : message;
     logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
     const picked = chosenBlobs();
     if (picked.length === 0) {

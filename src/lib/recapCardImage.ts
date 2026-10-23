@@ -17,7 +17,7 @@ export interface RecapPraiseInput {
   weeksActive8: number;
 }
 
-export type RecapVariant = 'achievement' | 'numbers' | 'habits' | 'care';
+export type RecapVariant = 'welldone' | 'achievement' | 'numbers' | 'habits' | 'care';
 
 export interface RecapHabitInput { done: boolean; emoji: string; title: string; text: string }
 export interface RecapThoughtInput { emoji: string; text: string; source: string }
@@ -34,6 +34,7 @@ export interface RecapCardInput {
 }
 
 export async function renderRecapCard(input: RecapCardInput): Promise<Blob> {
+  if (input.variant === 'welldone') return renderWellDoneCard(input);
   if (input.variant === 'habits') return renderHabitsCard(input);
   if (input.variant === 'care') return renderCareCard(input);
   return renderTilesCard(input);
@@ -59,6 +60,80 @@ function paintTitle(ctx: CanvasRenderingContext2D, small: string, headline: stri
   ctx.fillStyle = gold(ctx);
   ctx.fillText(fitText(ctx, headline, W - 120, 84, '900', 44), W / 2, 282);
   ctx.restore();
+}
+
+// "Well done": the praise card from the recap screen as a picture: who they are being (top X%, streak, Guardian rank), in warm words.
+async function renderWellDoneCard({ periodLabel, praise }: RecapCardInput): Promise<Blob> {
+  await fontsReady();
+  const { canvas, ctx } = newPosterCanvas();
+  paintBackground(ctx, '74, 222, 128', 20261017);
+  paintLogoBadge(ctx);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#4ADE80';
+  ctx.font = `900 30px ${FONT}`;
+  (ctx as any).letterSpacing = '8px';
+  ctx.fillText('WELL DONE', W / 2, 200);
+  (ctx as any).letterSpacing = '0px';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.font = `700 24px ${FONT}`;
+  ctx.fillText(periodLabel.toUpperCase(), W / 2, 238);
+
+  const top = praise?.topPercent != null;
+  const headline = top ? `I'm in the top ${praise!.topPercent}%` : (praise?.streakDays ?? 0) >= 2 ? `${praise!.streakDays} days in a row` : "I'm taking charge";
+  const sub = top ? 'of FamilyLedger members for keeping a close eye on my family\u2019s money' : 'of my family\u2019s money, and that is how good habits start';
+  ctx.save();
+  ctx.shadowColor = 'rgba(255, 170, 40, 0.55)';
+  ctx.shadowBlur = 30;
+  ctx.fillStyle = gold(ctx);
+  ctx.fillText(fitText(ctx, headline, W - 120, 108, '900', 54), W / 2, 350);
+  ctx.restore();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.font = `700 32px ${FONT}`;
+  wrapLines(ctx, sub, W - 180, 2).forEach((l, i) => ctx.fillText(l, W / 2, 410 + i * 42));
+
+  // the warm message
+  roundRectPath(ctx, 70, 520, W - 140, 190, 34);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+  ctx.stroke();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = `600 30px ${FONT}`;
+  wrapLines(ctx, 'Looking after a family\u2019s finances takes patience and care. I believe in planning, I stay aware of every rupee, and that quiet consistency is what builds peace of mind.', W - 170, 4).forEach((l, i) => ctx.fillText(l, W / 2, 575 + i * 40));
+
+  // badges, two by two
+  const badges: { emoji: string; value: string; label: string }[] = [];
+  if ((praise?.activeDays ?? 0) > 0) badges.push({ emoji: '\uD83D\uDEE1\uFE0F', value: String(praise!.activeDays), label: `Guardian Days \u00B7 ${guardianLevel(praise!.activeDays!).title}` });
+  if ((praise?.streakDays ?? 0) > 0) badges.push({ emoji: '\uD83D\uDD25', value: String(praise!.streakDays), label: 'days in a row watching my spending' });
+  if ((praise?.loggedDays30 ?? 0) > 0) badges.push({ emoji: '\uD83D\uDCC5', value: `${praise!.loggedDays30}/30`, label: 'days I logged this month' });
+  if ((praise?.healthDays30 ?? 0) > 0) badges.push({ emoji: '\u2764\uFE0F', value: String(praise!.healthDays30), label: 'days caring for my family\u2019s health' });
+  else if ((praise?.weeksActive8 ?? 0) > 0) badges.push({ emoji: '\u2705', value: `${praise!.weeksActive8}/8`, label: 'recent weeks on top of it' });
+  const gap = 18;
+  const bw = (W - 140 - gap) / 2;
+  badges.slice(0, 4).forEach((b, i) => {
+    const bx = 70 + (i % 2) * (bw + gap);
+    const by = 736 + Math.floor(i / 2) * (140 + gap);
+    roundRectPath(ctx, bx, by, bw, 140, 30);
+    ctx.fillStyle = 'rgba(255, 201, 60, 0.13)';
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(255, 201, 60, 0.55)';
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.font = `46px ${EMOJI_FONT}`;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(b.emoji, bx + 24, by + 84);
+    ctx.font = `900 58px ${FONT}`;
+    ctx.fillStyle = '#FFE58A';
+    ctx.fillText(b.value, bx + 98, by + 70);
+    ctx.font = `700 22px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillText(fitText(ctx, b.label, bw - 114, 22, '700', 13), bx + 98, by + 108);
+  });
+  ctx.textAlign = 'center';
+  paintInstallFooter(ctx, 'Join me on FamilyLedger 👉', { playBadge: true });
+  return canvasToPng(canvas);
 }
 
 // "Steady family habits": the three habits ticked from what this person did, and the week's thought with its source.
