@@ -1762,6 +1762,7 @@ interface RecapPraise {
   streakDays: number;
   healthDays30: number;
   weeksActive8: number;
+  activeDays: number; // every different Indian day this person opened the app or logged an expense, since they joined
   topPercent: number | null; // top X% of FamilyLedger members by days logged this month; null when it would not be a flattering truth
   members: number;
 }
@@ -1791,15 +1792,20 @@ async function loadRecapDistribution(db: Firestore, now: number) {
 async function computeRecapPraise(db: Firestore, uid: string, now: number): Promise<RecapPraise> {
   const ist = (ms: number) => new Date(ms + 5.5 * 3600e3).toISOString().slice(0, 10);
   const DAY = 86400e3;
-  const [mine, bp, gl, meds, dist] = await Promise.all([
+  const [mine, bp, gl, meds, dist, logins] = await Promise.all([
     db.collection('expenses').where('addedBy', '==', uid).select('createdAt').get(),
     db.collection('bloodPressureLogs').where('userId', '==', uid).select('createdAt').get(),
     db.collection('glucoseLogs').where('userId', '==', uid).select('createdAt').get(),
     db.collection('medicineLogs').where('userId', '==', uid).select('loggedAt', 'status').get(),
     loadRecapDistribution(db, now),
+    db.collection('loginEvents').where('uid', '==', uid).select('createdAt').get(),
   ]);
   const days = new Set<string>();
   mine.docs.forEach((d) => { const t = Date.parse(String(d.data().createdAt || '')); if (t) days.add(ist(t)); });
+  // "Guardian Days": every different day they opened the app or logged an expense.
+  const everyDay = new Set<string>(days);
+  logins.docs.forEach((d) => { const t = Date.parse(String(d.data().createdAt || '')); if (t) everyDay.add(ist(t)); });
+  const activeDays = everyDay.size;
   const since30 = ist(now - 29 * DAY);
   const loggedDays30 = Array.from(days).filter((k) => k >= since30).length;
   // Streak: consecutive days with at least one expense, counting back from today (or from yesterday if today has none yet).
@@ -1826,7 +1832,7 @@ async function computeRecapPraise(db: Firestore, uid: string, now: number): Prom
     const pctTop = Math.max(1, Math.ceil(((moreActive + 1) / dist.members) * 100));
     if (pctTop <= 40) topPercent = pctTop;
   }
-  return { loggedDays30, streakDays, healthDays30: healthSet.size, weeksActive8, topPercent, members: dist.members };
+  return { loggedDays30, streakDays, healthDays30: healthSet.size, weeksActive8, activeDays, topPercent, members: dist.members };
 }
 
 // The push / feed line: warm, specific, and true to what this person did.

@@ -24,6 +24,16 @@ export function thoughtFor(generatedAt: string): CommunityThought {
   return COMMUNITY_THOUGHTS[((weekNumber % COMMUNITY_THOUGHTS.length) + COMMUNITY_THOUGHTS.length) % COMMUNITY_THOUGHTS.length];
 }
 
+// The number of days someone has been active on FamilyLedger gets a name, and a rank that grows as the days add up.
+export const GUARDIAN_DAYS_NAME = 'Guardian Days';
+export function guardianLevel(days: number): { title: string; next: number | null } {
+  if (days >= 150) return { title: 'Legendary Guardian', next: null };
+  if (days >= 75) return { title: 'Trusted Guardian', next: 150 };
+  if (days >= 30) return { title: 'Steady Guardian', next: 75 };
+  if (days >= 10) return { title: 'Rising Guardian', next: 30 };
+  return { title: 'Guardian in the making', next: 10 };
+}
+
 export interface RecapHabit {
   done: boolean;
   icon: string;

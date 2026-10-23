@@ -6,8 +6,10 @@ import {
   paintBackground, paintLogoBadge, paintInstallFooter,
 } from './cardCanvas';
 import { RecapView } from './recapFeatures';
+import { guardianLevel } from './recapThoughts';
 
 export interface RecapPraiseInput {
+  activeDays?: number;
   topPercent: number | null;
   streakDays: number;
   loggedDays30: number;
@@ -170,6 +172,7 @@ async function renderCareCard({ periodLabel, praise, care }: RecapCardInput): Pr
   });
 
   const badges: { emoji: string; value: string; label: string }[] = [];
+  if (praise && (praise.activeDays ?? 0) > 0) badges.push({ emoji: '🛡️', value: String(praise.activeDays), label: `Guardian Days · ${guardianLevel(praise.activeDays!).title}` });
   if (praise && praise.healthDays30 > 0) badges.push({ emoji: '❤️', value: String(praise.healthDays30), label: 'days caring for health this month' });
   if (praise && praise.streakDays > 0) badges.push({ emoji: '🔥', value: String(praise.streakDays), label: 'days in a row watching my spending' });
   badges.slice(0, 2).forEach((b, i, arr) => {
@@ -266,6 +269,7 @@ async function renderTilesCard({ periodLabel, kudos, view, praise, variant }: Re
       stripBottom += 100;
     }
     const badges: { emoji: string; value: string; label: string }[] = [];
+    if ((praise.activeDays ?? 0) > 0) badges.push({ emoji: '\uD83D\uDEE1\uFE0F', value: String(praise.activeDays), label: `Guardian Days \u00B7 ${guardianLevel(praise.activeDays!).title}` });
     if (praise.streakDays > 0) badges.push({ emoji: '\uD83D\uDD25', value: String(praise.streakDays), label: praise.streakDays === 1 ? 'day watching spending' : 'days in a row' });
     if (praise.loggedDays30 > 0) badges.push({ emoji: '\uD83D\uDCC5', value: `${praise.loggedDays30}/30`, label: 'days logged this month' });
     if (praise.healthDays30 > 0) badges.push({ emoji: '\u2764\uFE0F', value: String(praise.healthDays30), label: 'days caring for health' });

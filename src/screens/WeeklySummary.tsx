@@ -6,7 +6,7 @@ import { renderRecapCard } from '../lib/recapCardImage';
 import { buildRecapView } from '../lib/recapFeatures';
 import { installLinksText } from '../lib/cardCanvas';
 import { shareOrDownloadFiles, shareText } from '../lib/fileShare';
-import { thoughtFor, recapHabits } from '../lib/recapThoughts';
+import { thoughtFor, recapHabits, guardianLevel, GUARDIAN_DAYS_NAME } from '../lib/recapThoughts';
 import type { RecapVariant } from '../lib/recapCardImage';
 import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import { logGrowthEvent } from '../lib/growthEvents';
@@ -57,7 +57,7 @@ interface SummaryDoc {
   accountsMonitored?: number;
   kudos: string;
   // How consistently this person looked after the family's money and health (see computeRecapPraise on the server). Older recaps lack it.
-  praise?: { loggedDays30: number; streakDays: number; healthDays30: number; weeksActive8: number; topPercent: number | null; members: number };
+  praise?: { loggedDays30: number; streakDays: number; healthDays30: number; weeksActive8: number; activeDays?: number; topPercent: number | null; members: number };
 }
 
 // The proud opening line of every shared caption: who this person is being (top X%, streak, habits), true to their own numbers.
@@ -69,6 +69,7 @@ function buildPraiseLead(summary: SummaryDoc): string {
   else if (p.streakDays >= 2) lines.push(`🔥 ${p.streakDays} days in a row watching my family's spending.`);
   const bits: string[] = [];
   if (p.streakDays >= 2 && p.topPercent != null) bits.push(`${p.streakDays} days in a row`);
+  if ((p.activeDays ?? 0) > 0) bits.push(`${p.activeDays} ${GUARDIAN_DAYS_NAME} (${guardianLevel(p.activeDays!).title})`);
   if (p.loggedDays30 > 0) bits.push(`${p.loggedDays30} of the last 30 days logged`);
   if (p.healthDays30 > 0) bits.push(`${p.healthDays30} days caring for the family's health`);
   if (bits.length) lines.push(`📈 ${bits.join(' · ')}.`);
@@ -110,6 +111,7 @@ function AppreciationCard({ summary }: { summary: SummaryDoc }) {
     : 'of your family\'s money. That is exactly how good habits start.';
 
   const badges: { icon: string; value: string; label: string }[] = [];
+  if (p && (p.activeDays ?? 0) > 0) badges.push({ icon: 'shield', value: String(p.activeDays), label: `${GUARDIAN_DAYS_NAME} · ${guardianLevel(p.activeDays!).title}` });
   if (p && p.streakDays > 0) badges.push({ icon: 'local_fire_department', value: String(p.streakDays), label: p.streakDays === 1 ? 'day watching your spending' : 'days in a row watching your spending' });
   if (p && p.loggedDays30 > 0) badges.push({ icon: 'calendar_month', value: `${p.loggedDays30}/30`, label: 'days you logged expenses' });
   if (p && p.weeksActive8 > 0) badges.push({ icon: 'event_available', value: `${p.weeksActive8}/8`, label: 'recent weeks you stayed on top of it' });
@@ -352,7 +354,7 @@ export default function WeeklySummary() {
     const urls: string[] = [];
     setPictures({});
     setFailedVariants(new Set());
-    setChosen(['achievement']);
+    setChosen(variantsFor(active).map((v) => v.id)); // every picture starts selected; tap one to leave it out
     (async () => {
       for (const v of variantsFor(active)) {
         try {
@@ -476,6 +478,22 @@ export default function WeeklySummary() {
 
             {active && (
               <>
+                <div className="rounded-3xl border-2 border-primary/20 bg-primary/5 p-4 space-y-3">
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-black text-primary">Be proud of this. Inspire another family.</p>
+                    <p className="text-xs text-text-muted leading-snug">
+                      All your pictures are ready and selected below. Untick any you do not want, then share in one tap. Each has your achievements, the app link, a QR code, the Google Play badge, and our Instagram and Facebook pages, and the caption carries the links too.
+                    </p>
+                  </div>
+                  <ShareAppButtons
+                    onShare={handleShareApp}
+                    onLinkOnly={handleShareLinkOnly}
+                    primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
+                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? (chosen.length > 1 ? `Share ${chosen.length} pictures` : 'Share my recap') : 'Copy share message'}
+                    note={shareNote}
+                  />
+                </div>
+
                 <AppreciationCard summary={active} />
 
                 <div className="space-y-2">
@@ -531,22 +549,6 @@ export default function WeeklySummary() {
                     <button type="button" onClick={() => setZoomed(null)} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 flex items-center justify-center" aria-label="Close"><span className="material-symbols-outlined">close</span></button>
                   </div>
                 )}
-
-                <div className="rounded-3xl border-2 border-primary/20 bg-primary/5 p-4 space-y-3">
-                  <div className="text-center space-y-1">
-                    <p className="text-sm font-black text-primary">Be proud of this. Inspire another family.</p>
-                    <p className="text-xs text-text-muted leading-snug">
-                      Choose the pictures above, then share in one tap. Each has your achievements, the app link, a QR code, the Google Play badge, and our Instagram and Facebook pages, and the caption carries the links too.
-                    </p>
-                  </div>
-                  <ShareAppButtons
-                    onShare={handleShareApp}
-                    onLinkOnly={handleShareLinkOnly}
-                    primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
-                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? (chosen.length > 1 ? `Share ${chosen.length} pictures` : 'Share my recap') : 'Copy share message'}
-                    note={shareNote}
-                  />
-                </div>
 
                 {(active.goalsTracked !== undefined || active.accountsMonitored !== undefined) && (
                   <div>
