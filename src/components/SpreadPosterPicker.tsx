@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import type { SpreadPoster, SpreadVariantId } from '../lib/spreadCardImage';
 import { loadSpreadPosters, peekSpreadPosters, ensurePng } from '../lib/spreadPosterCache';
+import { canMakeSlideshow } from '../lib/slideshowVideo';
 
 // "Pick a poster to share": every time it opens it draws a fresh set of themed posters (each with
 // 4–6 features, the logo and a Play Store QR code) and lets the person choose the one that fits who
@@ -12,10 +13,13 @@ export default function SpreadPosterPicker({
   open,
   onClose,
   onShare,
+  onShareVideo,
 }: {
   open: boolean;
   onClose: () => void;
   onShare: (items: { blob: Blob; id: SpreadVariantId }[]) => void | Promise<void>;
+  // Several posters as one slideshow video (for WhatsApp Status, which takes a single item).
+  onShareVideo?: (items: { blob: Blob; id: SpreadVariantId }[], onProgress: (fraction: number) => void) => void | Promise<void>;
 }) {
   const [posters, setPosters] = useState<SpreadPoster[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -69,6 +73,18 @@ export default function SpreadPosterPicker({
       setError('Could not create new posters. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [videoProgress, setVideoProgress] = useState<number | null>(null);
+  const handleVideo = async () => {
+    const chosen = posters.filter((p) => selected.includes(p.id));
+    if (chosen.length < 2 || !onShareVideo) return;
+    setVideoProgress(0);
+    try {
+      await onShareVideo(await Promise.all(chosen.map(async (p) => ({ blob: await ensurePng(p.blob), id: p.id }))), setVideoProgress);
+    } finally {
+      setVideoProgress(null);
     }
   };
 
@@ -136,7 +152,17 @@ export default function SpreadPosterPicker({
               </div>
             </div>
 
-            <div className="p-4 border-t border-border-subtle shrink-0">
+            <div className="p-4 border-t border-border-subtle shrink-0 space-y-2">
+              {onShareVideo && canMakeSlideshow() && selected.length > 1 && (
+                <button
+                  onClick={handleVideo}
+                  disabled={videoProgress !== null || sharing}
+                  className="w-full py-2.5 bg-[#25D366]/10 text-[#128C4A] border border-[#25D366]/40 font-bold rounded-2xl text-xs disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">movie</span>
+                  {videoProgress !== null ? `Making your video… ${Math.round(videoProgress * 100)}%` : `Share ${selected.length} as one video (for WhatsApp Status)`}
+                </button>
+              )}
               <button
                 onClick={handleShare}
                 disabled={selected.length === 0 || sharing}

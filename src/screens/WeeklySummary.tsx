@@ -5,10 +5,11 @@ import { Capacitor } from '@capacitor/core';
 import { renderRecapCard } from '../lib/recapCardImage';
 import { buildRecapView } from '../lib/recapFeatures';
 import { installLinksText } from '../lib/cardCanvas';
-import { shareOrDownloadFiles, shareText } from '../lib/fileShare';
+import { shareOrDownloadFile, shareOrDownloadFiles, shareText } from '../lib/fileShare';
 import { thoughtFor, recapHabits, guardianLevel, GUARDIAN_DAYS_NAME } from '../lib/recapThoughts';
 import type { RecapVariant } from '../lib/recapCardImage';
 import { shareImageToApp, shareImagesToApp, DirectShareTarget } from '../lib/appShare';
+import { makeSlideshowVideo, canMakeSlideshow } from '../lib/slideshowVideo';
 import { logGrowthEvent } from '../lib/growthEvents';
 import type { ShareTarget } from '../lib/spreadTheWord';
 import ShareAppButtons from '../components/ShareAppButtons';
@@ -463,15 +464,21 @@ export default function WeeklySummary() {
     }
   };
 
-  // WhatsApp Status keeps only one picture from a multi-picture share, so this sends the chosen pictures one at a time.
-  const sendOneToWhatsApp = async (index: number): Promise<boolean> => {
-    if (!active) return false;
+  // WhatsApp Status keeps only one item from a share, so the chosen pictures can also go as ONE slideshow video.
+  const shareAsVideo = async (onProgress: (fraction: number) => void) => {
+    if (!active) return;
     const picked = chosenBlobs();
-    if (!picked[index]) return false;
-    const res = await shareImageToApp('whatsapp', picked[index].blob, buildShortShareMessage(active));
-    if (res.status === 'shared') return true;
-    setShareNote(res.status === 'not_installed' ? "WhatsApp doesn't seem to be installed on this phone." : 'Could not open WhatsApp from here. Use Share my recap instead.');
-    return false;
+    if (picked.length < 2) return;
+    try {
+      const video = await makeSlideshowVideo(picked.map((x) => x.blob), onProgress);
+      const caption = buildShortShareMessage(active);
+      navigator.clipboard?.writeText(caption).catch(() => {});
+      await shareOrDownloadFile(video.blob, `familyledger-recap.${video.extension}`, video.mimeType, caption);
+      setShareNote('Caption copied. Pick WhatsApp, then My Status, and paste the caption if it is not filled in.');
+    } catch (err) {
+      console.error('Slideshow video failed:', err);
+      setShareNote('Could not make the video on this phone. Share the pictures instead.');
+    }
   };
 
   const handleShareLinkOnly = async () => {
@@ -522,7 +529,7 @@ export default function WeeklySummary() {
                     primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
                     primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? (chosen.length > 1 ? `Share ${chosen.length} pictures` : 'Share my recap') : 'Copy share message'}
                     note={shareNote}
-                    oneByOne={chosen.length > 1 ? { count: chosenBlobs().length, send: sendOneToWhatsApp } : undefined}
+                    videoShare={chosenBlobs().length > 1 && canMakeSlideshow() ? { count: chosenBlobs().length, make: shareAsVideo } : undefined}
                   />
                 </div>
 
