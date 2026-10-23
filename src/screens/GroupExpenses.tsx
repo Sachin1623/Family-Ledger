@@ -30,8 +30,11 @@ const PAYMENT_METHODS_LIST = PAYMENT_METHODS;
 // adjusts a group's running total needs to know which field a given entry's `type` belongs to.
 const totalsField = (type: string | undefined): 'totalIncome' | 'totalSpending' => (type === 'income' ? 'totalIncome' : 'totalSpending');
 
-export default function GroupExpenses() {
-  const { groupId } = useParams();
+// `embedded` opens ONLY the edit window for one expense, over whatever screen the person is on (the Dashboard, Settlements ...), instead of
+// navigating to this page. Everything below (loading, the form, saving, deleting) is the same code the page itself uses.
+export default function GroupExpenses({ embedded }: { embedded?: { expenseId: string; groupId: string; onClose: () => void } } = {}) {
+  const routeParams = useParams();
+  const groupId = embedded?.groupId ?? routeParams.groupId;
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -125,6 +128,10 @@ export default function GroupExpenses() {
   // here, so `returnTo` is honored no matter which one the user takes.
   const closeEditModal = () => {
     setEditingExpense(null);
+    if (embedded) {
+      embedded.onClose();
+      return;
+    }
     if (returnTo) {
       const dest = returnTo;
       setReturnTo(null);
@@ -243,7 +250,7 @@ export default function GroupExpenses() {
     const stateExpenseId = (location.state as any)?.openExpenseId;
     const stateReturnTo = (location.state as any)?.returnTo;
     const queryExpenseId = searchParams.get('expenseId');
-    const openExpenseId = stateExpenseId || queryExpenseId;
+    const openExpenseId = embedded?.expenseId || stateExpenseId || queryExpenseId;
     if (!openExpenseId || allExpenses.length === 0) return;
     const target = allExpenses.find((exp: any) => exp.id === openExpenseId);
     if (target) {
@@ -260,14 +267,14 @@ export default function GroupExpenses() {
       }
       setViewingExpense(null);
       if (stateReturnTo) setReturnTo(stateReturnTo);
-      if (stateExpenseId) navigate(location.pathname, { replace: true, state: {} });
-      if (queryExpenseId) {
+      if (stateExpenseId && !embedded) navigate(location.pathname, { replace: true, state: {} });
+      if (queryExpenseId && !embedded) {
         const next = new URLSearchParams(searchParams);
         next.delete('expenseId');
         setSearchParams(next, { replace: true });
       }
     }
-  }, [location.state, searchParams, allExpenses, navigate, location.pathname, setSearchParams]);
+  }, [location.state, searchParams, allExpenses, navigate, location.pathname, setSearchParams, embedded?.expenseId]);
 
   // Carries over every filter that was active on GroupAnalysisSummary.tsx when the user tapped a
   // "view transactions" link there (see its buildExpensesLink) — so switching screens doesn't
@@ -798,7 +805,8 @@ export default function GroupExpenses() {
 
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
+    <div className={embedded ? undefined : 'flex flex-col min-h-screen bg-surface'}>
+      {!embedded && (<>
       <main className="flex-1 p-4 max-w-4xl mx-auto w-full space-y-4 pb-24 overflow-x-hidden">
         <div className="mb-2 flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-inner overflow-hidden shrink-0">
@@ -1314,9 +1322,11 @@ export default function GroupExpenses() {
             payerPhoto={payer?.photoURL}
             members={buildRoster(members as any[], viewGroup)}
             onClose={() => setViewingExpense(null)}
+            editOnGroupPage
           />
         );
       })()}
+      </>)}
 
       {/* Floating Action Button */}
       <AnimatePresence>

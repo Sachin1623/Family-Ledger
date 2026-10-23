@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import CategoryBadge from './CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -12,6 +12,9 @@ import { useAuth } from '../context/AuthContext';
 import { parseLocalDate } from '../lib/dateUtils';
 import ImageLightbox from './ImageLightbox';
 import { useLanguage } from '../context/LanguageContext';
+
+// Loaded only when someone taps Edit: the edit window is the Group Expenses screen's own form, opened by itself over the current screen.
+const GroupExpensesEditor = React.lazy(() => import('../screens/GroupExpenses'));
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -27,6 +30,7 @@ export default function ExpenseQuickView({
   members,
   onClose,
   returnTo,
+  editOnGroupPage,
 }: {
   expense: any;
   groupId: string;
@@ -41,7 +45,11 @@ export default function ExpenseQuickView({
   // itself, browsing its own list) so finishing an edit there just closes the modal as it always
   // has, rather than navigating anywhere.
   returnTo?: string;
+  // The Group Expenses page itself sets this: its own edit window is already part of that page, so Edit goes there (as it always did).
+  // Everywhere else, Edit opens the edit window right here, floating over the current screen.
+  editOnGroupPage?: boolean;
 }) {
+  const [editingHere, setEditingHere] = React.useState(false);
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -58,6 +66,14 @@ export default function ExpenseQuickView({
     || t('common.uncategorized');
   const categoryIcon = category?.icon || getCategoryIcon(groupCategorySettings, expense.category, isIncome ? 'income' : 'expense');
   const [lightboxSrc, setLightboxSrc] = React.useState<string | null>(null);
+
+  if (editingHere) {
+    return (
+      <Suspense fallback={<div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center"><span className="material-symbols-outlined text-white text-4xl animate-spin">progress_activity</span></div>}>
+        <GroupExpensesEditor embedded={{ expenseId: expense.id, groupId, onClose }} />
+      </Suspense>
+    );
+  }
 
   return (
     <AnimatePresence>
@@ -182,7 +198,7 @@ export default function ExpenseQuickView({
 
           <div className="p-4 border-t border-border-subtle shrink-0">
             <button
-              onClick={() => navigate(`/groups/${groupId}/expenses`, { state: { openExpenseId: expense.id, ...(returnTo ? { returnTo } : {}) } })}
+              onClick={() => (editOnGroupPage ? navigate(`/groups/${groupId}/expenses`, { state: { openExpenseId: expense.id, ...(returnTo ? { returnTo } : {}) } }) : setEditingHere(true))}
               className="w-full h-12 border-2 border-border-subtle text-primary font-bold rounded-xl active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
             >
               <span className="material-symbols-outlined text-[18px]">edit</span>
