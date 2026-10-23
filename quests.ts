@@ -54,10 +54,10 @@ const ONBOARDING_DONE: QuestDef = { id: 'ob_done', title: 'Guardian Starter', de
 const DAILY_FIRST: QuestDef = { id: 'd_log1', title: 'Log an expense', desc: 'Add one expense today. It also lights your streak.', icon: 'receipt_long', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: EXPENSE }, go: '/add-expense' };
 const DAILY_POOL: QuestDef[] = [
   { id: 'd_log3', title: 'Log 3 expenses', desc: 'Three entries today keep your picture complete.', icon: 'checklist', target: 3, xp: 10, coins: 10, metric: { kind: 'count', keys: EXPENSE }, go: '/add-expense' },
-  { id: 'd_todo', title: 'Finish a to-do', desc: 'Tick off one task today.', icon: 'task_alt', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['todo_completed'] }, go: '/tools', needs: 'history', historyKeys: ['todo_completed'] },
-  { id: 'd_habit', title: 'Keep a habit going', desc: 'Mark one habit done today.', icon: 'self_improvement', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['habit_occurrence'] }, go: '/tools', needs: 'history', historyKeys: ['habit_occurrence'] },
+  { id: 'd_todo', title: 'Finish a to-do', desc: 'Tick off one task today.', icon: 'task_alt', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['todo_completed'] }, go: '/tools?category=productivity', needs: 'history', historyKeys: ['todo_completed'] },
+  { id: 'd_habit', title: 'Keep a habit going', desc: 'Mark one habit done today.', icon: 'self_improvement', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['habit_occurrence'] }, go: '/tools?category=productivity', needs: 'history', historyKeys: ['habit_occurrence'] },
   { id: 'd_health', title: 'Look after your health', desc: 'Log a medicine dose or a reading today.', icon: 'favorite', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['ev_health_log'] }, go: '/health', needs: 'history', historyKeys: ['ev_health_log'] },
-  { id: 'd_game', title: 'Play a game', desc: 'Finish one game, solo or with family.', icon: 'sports_esports', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['game_played'] }, go: '/games' },
+  { id: 'd_game', title: 'Play a game', desc: 'Finish one game, solo or with family.', icon: 'sports_esports', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['game_played'] }, go: '/tools?category=games' },
   { id: 'd_cheer', title: 'Cheer a family member', desc: 'Send someone a cheer. A little kindness goes far.', icon: 'celebration', target: 1, xp: 8, coins: 8, metric: { kind: 'count', keys: ['ev_cheer'] }, go: 'cheer', needs: 'family' },
 ];
 const DAILY_BONUS: QuestDef = { id: 'd_all', title: 'Daily sweep', desc: 'Finish all three of today\'s quests.', icon: 'workspace_premium', target: 3, xp: 15, coins: 15, metric: { kind: 'count', keys: [] } };
@@ -68,10 +68,10 @@ const WEEKLY_FIXED: QuestDef[] = [
   { id: 'w_recap', title: 'Share your weekly recap', desc: 'Send your recap pictures to family and friends.', icon: 'ios_share', target: 1, xp: 25, coins: 25, metric: { kind: 'count', keys: ['ev_recap_shared', 'ev_spread_shared'] }, go: '/weekly-summary' },
 ];
 const WEEKLY_POOL: QuestDef[] = [
-  { id: 'w_tasks5', title: 'Complete 5 tasks', desc: 'Any mix of to-dos and habits.', icon: 'task_alt', target: 5, xp: 30, coins: 30, metric: { kind: 'count', keys: TASKS }, go: '/tools', needs: 'history', historyKeys: TASKS },
+  { id: 'w_tasks5', title: 'Complete 5 tasks', desc: 'Any mix of to-dos and habits.', icon: 'task_alt', target: 5, xp: 30, coins: 30, metric: { kind: 'count', keys: TASKS }, go: '/tools?category=productivity', needs: 'history', historyKeys: TASKS },
   { id: 'w_budget', title: 'Set or meet a budget', desc: 'Make a budget, or stay inside one.', icon: 'savings', target: 1, xp: 50, coins: 50, metric: { kind: 'count', keys: ['budget_set', 'budget_met'] }, go: '/analysis' },
   { id: 'w_health3', title: 'Health on 3 days', desc: 'Log medicine or a reading on three different days.', icon: 'monitor_heart', target: 3, xp: 30, coins: 30, metric: { kind: 'days', keys: ['ev_health_log'] }, go: '/health', needs: 'history', historyKeys: ['ev_health_log'] },
-  { id: 'w_game3', title: 'Play 3 games', desc: 'Three finished games this week.', icon: 'sports_esports', target: 3, xp: 20, coins: 20, metric: { kind: 'count', keys: ['game_played'] }, go: '/games' },
+  { id: 'w_game3', title: 'Play 3 games', desc: 'Three finished games this week.', icon: 'sports_esports', target: 3, xp: 20, coins: 20, metric: { kind: 'count', keys: ['game_played'] }, go: '/tools?category=games' },
   { id: 'w_cheer3', title: 'Cheer 3 times', desc: 'Cheer family members three times this week.', icon: 'celebration', target: 3, xp: 20, coins: 20, metric: { kind: 'count', keys: ['ev_cheer'] }, go: 'cheer', needs: 'family' },
 ];
 
@@ -81,7 +81,7 @@ const MONTHLY_FIXED: QuestDef = { id: 'm_days20', title: 'Log on 20 days', desc:
 const MONTHLY_POOL: QuestDef[] = [
   { id: 'm_budget', title: 'Meet a budget', desc: 'Finish the month inside a group budget.', icon: 'savings', target: 1, xp: 100, coins: 100, metric: { kind: 'count', keys: ['budget_met'] }, go: '/analysis' },
   { id: 'm_health10', title: '10 health logs', desc: 'Medicine doses and readings count.', icon: 'monitor_heart', target: 10, xp: 80, coins: 80, metric: { kind: 'count', keys: ['ev_health_log'] }, go: '/health', needs: 'history', historyKeys: ['ev_health_log'] },
-  { id: 'm_games10', title: 'Play 10 games', desc: 'Ten finished games this month.', icon: 'sports_esports', target: 10, xp: 60, coins: 60, metric: { kind: 'count', keys: ['game_played'] }, go: '/games' },
+  { id: 'm_games10', title: 'Play 10 games', desc: 'Ten finished games this month.', icon: 'sports_esports', target: 10, xp: 60, coins: 60, metric: { kind: 'count', keys: ['game_played'] }, go: '/tools?category=games' },
   { id: 'm_cheer10', title: 'Cheer 10 times', desc: 'Lift your family up ten times this month.', icon: 'celebration', target: 10, xp: 60, coins: 60, metric: { kind: 'count', keys: ['ev_cheer'] }, go: 'cheer', needs: 'family' },
 ];
 
@@ -90,8 +90,8 @@ interface JourneyCat { id: string; title: (n: number) => string; desc: string; i
 const JOURNEY: JourneyCat[] = [
   { id: 'streak', title: (n) => `${n}-day streak`, desc: 'Look after your family\'s spending day after day.', icon: 'local_fire_department', steps: [3, 7, 14, 30, 60, 100, 180, 365], metric: { kind: 'streak' }, go: '/add-expense', rewardOf: (n) => Math.max(10, Math.round(n * 1.5)) },
   { id: 'expenses', title: (n) => `Log ${n} expenses`, desc: 'Every entry builds a clearer picture.', icon: 'receipt_long', steps: [10, 25, 50, 100, 250, 500, 1000, 2500], metric: { kind: 'life', keys: EXPENSE }, go: '/add-expense', rewardOf: (n) => Math.max(10, Math.round(n / 5)) },
-  { id: 'tasks', title: (n) => `Finish ${n} tasks`, desc: 'To-dos and habits, one at a time.', icon: 'task_alt', steps: [10, 25, 50, 100, 250, 500], metric: { kind: 'life', keys: TASKS }, go: '/tools', rewardOf: (n) => Math.max(10, Math.round(n / 4)) },
-  { id: 'games', title: (n) => `Play ${n} games`, desc: 'Family game nights add up.', icon: 'sports_esports', steps: [5, 10, 25, 50, 100, 250], metric: { kind: 'life', keys: ['game_played'] }, go: '/games', rewardOf: (n) => Math.max(10, Math.round(n / 3)) },
+  { id: 'tasks', title: (n) => `Finish ${n} tasks`, desc: 'To-dos and habits, one at a time.', icon: 'task_alt', steps: [10, 25, 50, 100, 250, 500], metric: { kind: 'life', keys: TASKS }, go: '/tools?category=productivity', rewardOf: (n) => Math.max(10, Math.round(n / 4)) },
+  { id: 'games', title: (n) => `Play ${n} games`, desc: 'Family game nights add up.', icon: 'sports_esports', steps: [5, 10, 25, 50, 100, 250], metric: { kind: 'life', keys: ['game_played'] }, go: '/tools?category=games', rewardOf: (n) => Math.max(10, Math.round(n / 3)) },
   { id: 'budgets', title: (n) => `Meet ${n} budget${n === 1 ? '' : 's'}`, desc: 'Staying inside a budget is the real win.', icon: 'savings', steps: [1, 3, 5, 10, 25, 50], metric: { kind: 'life', keys: ['budget_met'] }, go: '/analysis', rewardOf: (n) => Math.max(40, n * 25) },
   { id: 'health', title: (n) => `${n} health logs`, desc: 'Care for the people who matter most.', icon: 'monitor_heart', steps: [5, 10, 25, 50, 100, 250], metric: { kind: 'life', keys: ['ev_health_log'] }, go: '/health', rewardOf: (n) => Math.max(10, Math.round(n / 2)) },
   { id: 'cheers', title: (n) => `Cheer ${n} time${n === 1 ? '' : 's'}`, desc: 'Be someone\'s reason to smile.', icon: 'celebration', steps: [1, 5, 10, 25, 50, 100], metric: { kind: 'life', keys: ['ev_cheer'] }, go: 'cheer', rewardOf: (n) => Math.max(10, n * 2) },
