@@ -156,6 +156,9 @@ public class AlarmRingingService extends Service {
             // AlarmActivity and stops the ring, it just won't force the screen on by itself.
         }
 
+        // The pop-up card with Snooze and Dismiss, drawn over whatever is on screen (needs "Display over other apps"; see AlarmOverlay).
+        AlarmOverlay.show(this, id, title, body, route);
+
         startRinging();
 
         return START_NOT_STICKY;
@@ -250,6 +253,7 @@ public class AlarmRingingService extends Service {
             wakeLock.release();
             wakeLock = null;
         }
+        AlarmOverlay.hide();
         stopForeground(true);
         if (notify && wasRinging) {
             AlarmClockPlugin.onRingingStopped();

@@ -151,6 +151,8 @@ const en = {
   'permissions.exactAlarmWhy': 'Without this, alarm-style reminders may fire late or not at all.',
   'permissions.batteryOptimization': 'Background activity',
   'permissions.batteryOptimizationWhy': 'Letting the app run in the background keeps alarms and reminders reliable.',
+  'permissions.overlay': 'Alarm pop-up',
+  'permissions.overlayWhy': 'Shows a Snooze and Dismiss card over any screen when a medicine alarm rings, even if the app is closed.',
   'dashboard.expandGroupIcon': 'View group photo',
   'dashboard.expenseReportTooltip': 'Expense report',
   'dashboard.groupFeedTooltip': 'Group feed',

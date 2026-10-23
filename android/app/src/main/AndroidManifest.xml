@@ -149,6 +149,9 @@
          neither of those requires USE_FULL_SCREEN_INTENT. Only the notification-level
          setFullScreenIntent() fallback (for the rare case a stricter OEM blocks the direct
          service-start path) is lost; see AlarmRingingService's own comment for the removed call. -->
+    <!-- The ringing alarm's Snooze / Dismiss pop-up card (AlarmOverlay.java), drawn over other apps while an alarm rings. The person switches it on once
+         in Settings; the app only asks for it where they set up alarm-style reminders. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

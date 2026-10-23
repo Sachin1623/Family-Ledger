@@ -14,6 +14,7 @@ export interface PermissionStatus {
   microphone: boolean;
   exactAlarm?: boolean; // Android only
   batteryOptimization?: boolean; // Android only
+  overlay?: boolean; // Android only: "Display over other apps", for the alarm pop-up card
 }
 
 export type PermissionKey = keyof PermissionStatus;
@@ -23,13 +24,14 @@ export type PermissionKey = keyof PermissionStatus;
 // by specific optional flows: inviting from contacts, voice chat in games). Shared by
 // AppPermissionsReminder.tsx (the auto-popup) and Header.tsx (the always-on menu entry + red dot)
 // so both ever agree on the same list and the same order.
-export const PERMISSION_ORDER: PermissionKey[] = ['notifications', 'exactAlarm', 'batteryOptimization', 'contacts', 'microphone'];
+export const PERMISSION_ORDER: PermissionKey[] = ['notifications', 'exactAlarm', 'batteryOptimization', 'overlay', 'contacts', 'microphone'];
 
 interface AppPermissionsPluginApi {
   checkAll(): Promise<PermissionStatus>;
   openAppSettings(): Promise<void>;
   openExactAlarmSettings(): Promise<void>;
   openBatteryOptimizationSettings(): Promise<void>;
+  openOverlaySettings(): Promise<void>;
 }
 
 const AppPermissions = registerPlugin<AppPermissionsPluginApi>('AppPermissions');
@@ -40,6 +42,7 @@ const SETTINGS_OPENER: Record<PermissionKey, () => Promise<void>> = {
   microphone: () => AppPermissions.openAppSettings(),
   exactAlarm: () => AppPermissions.openExactAlarmSettings(),
   batteryOptimization: () => AppPermissions.openBatteryOptimizationSettings(),
+  overlay: () => AppPermissions.openOverlaySettings(),
 };
 
 // Callers must guard with Capacitor.isNativePlatform() themselves — there's no web

@@ -37,6 +37,7 @@ public class AppPermissionsPlugin extends Plugin {
         result.put("microphone", granted(ctx, Manifest.permission.RECORD_AUDIO, 0));
         result.put("exactAlarm", canScheduleExactAlarms(ctx));
         result.put("batteryOptimization", isIgnoringBatteryOptimizations(ctx));
+        result.put("overlay", Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(ctx));
         call.resolve(result);
     }
 
@@ -84,6 +85,23 @@ public class AppPermissionsPlugin extends Plugin {
                 // Some OEM builds don't expose this screen despite advertising the API — fall
                 // back to the general app settings page rather than failing the request.
             }
+        }
+        openAppSettings(call);
+    }
+
+    // "Display over other apps": lets the ringing alarm's Snooze / Dismiss card appear over whatever is on screen, even when the app is closed.
+    @PluginMethod
+    public void openOverlaySettings(PluginCall call) {
+        Context ctx = getContext();
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+        intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            ctx.startActivity(intent);
+            call.resolve();
+            return;
+        } catch (Exception e) {
+            // fall back to the general app settings page
         }
         openAppSettings(call);
     }
