@@ -202,7 +202,8 @@ export default function AdminMetrics() {
     const fp = m.funnel.previous;
     const taps = (f.google_tap || 0);
     const signInFail = pct(f.google_error || 0, taps);
-    const signInFailPrev = pct(fp.google_error || 0, fp.google_tap || 0);
+    // The earlier week is only worth quoting once it has enough taps to mean something (the counters only began on 16 Oct).
+    const signInFailPrev = (fp.google_tap || 0) >= 10 ? pct(fp.google_error || 0, fp.google_tap || 0) : null;
     const total = m.ops.reduce((a, d) => ({ requests: a.requests + (d.requests || 0), e5: a.e5 + (d.errors5xx || 0), l: [0, 1, 2, 3, 4].map((i) => a.l[i] + (d[`lat${i}`] || 0)), vc: a.vc + (d.voiceCalls || 0), vu: a.vu + (d.voiceUnderstood || 0), ve: a.ve + (d.voiceErrors || 0) }), { requests: 0, e5: 0, l: [0, 0, 0, 0, 0], vc: 0, vu: 0, ve: 0 });
     const serverErr = pct(total.e5, total.requests);
     // The slowest 5%: the first speed bucket that takes the running share past 95%.
