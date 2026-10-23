@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, increment, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, increment, limit, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { db, trackEvent } from './firebase';
 import { fireWrite } from './offlineWrite';
 import { claimPoints } from './pointsApi';
@@ -67,6 +67,9 @@ export function lastUsedGroupId(): string {
 
 async function pickGroup(uid: string, hint?: string): Promise<{ id: string; data: any } | null> {
   if (hint) {
+    // only a group the signed-in person really belongs to (a stale id left from another account must never be used)
+    const member = await getDocs(query(collection(db, 'members'), where('userId', '==', uid), where('groupId', '==', hint), limit(1)));
+    if (member.empty) return null;
     const snap = await getDoc(doc(db, 'groups', hint));
     return snap.exists() ? { id: snap.id, data: snap.data() } : null;
   }

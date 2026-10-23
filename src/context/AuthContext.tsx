@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { resetCachesIfAccountChanged } from '../lib/deviceUserCache';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth, db, setAnalyticsUserId } from '../lib/firebase';
 import { doc, getDoc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, getDocs, limit } from 'firebase/firestore';
@@ -63,6 +64,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let currentAuthUid: string | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (authUser) => {
+      // A different account on this phone must not inherit the last one's remembered choices (the group the Talk sheet adds to, and so on).
+      if (authUser) resetCachesIfAccountChanged(authUser.uid);
       // Clean up previous profile listener if it exists immediately
       if (unsubscribeProfile) {
         unsubscribeProfile();

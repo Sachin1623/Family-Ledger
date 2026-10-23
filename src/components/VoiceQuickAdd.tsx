@@ -52,7 +52,8 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
       if (groupId) return;
       // Default: the group last added to; otherwise the only group; otherwise ask.
       const last = lastUsedGroupId();
-      setTargetId((cur) => cur || (list.find((g) => g.id === last)?.id ?? (list.length === 1 ? list[0].id : '')));
+      // keep the current choice only if it is one of MY groups; otherwise fall back to the last used one, the only group, or ask
+      setTargetId((cur) => (cur && list.some((g) => g.id === cur) ? cur : (list.find((g) => g.id === last)?.id ?? (list.length === 1 ? list[0].id : ''))));
     }).catch(() => {});
     return () => { alive = false; };
   }, [user, groupId]);

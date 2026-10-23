@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { clearPerAccountDeviceCaches } from '../lib/deviceUserCache';
 import React, { useEffect, useState, useRef } from 'react';
 import { getAppVersion } from '../lib/appVersion';
 import { useAuth } from '../context/AuthContext';
@@ -714,6 +715,7 @@ export default function Profile() {
     try {
       if (user) await removeCurrentDeviceToken(user);
       clearFieldCryptoCache(); // a shared device shouldn't let the next signed-in account decrypt this one's cached keys
+      clearPerAccountDeviceCaches(); // and shouldn't inherit this one's remembered group for the Talk sheet
       await auth.signOut();
       navigate('/login');
     } finally {
