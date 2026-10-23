@@ -36,6 +36,23 @@ function firstTimeToday(event: FunnelEvent): boolean {
   }
 }
 
+// A device is "new" until it has signed in once, and its first week after that still counts as new for the group-created step, so the
+// funnel can be read separately for brand-new devices and for devices that have been here before. Only a local timestamp is kept; nothing
+// identifying is sent. (Reinstalling the app starts a device over as "new".)
+const FIRST_SIGNIN_KEY = 'fl_first_signin_at';
+const SUCCESS_EVENTS: FunnelEvent[] = ['google_success_new', 'google_success_existing', 'email_login_ok', 'email_signup_ok', 'apple_success'];
+function segmentFor(event: FunnelEvent): 'new' | 'ret' {
+  try {
+    const first = Number(localStorage.getItem(FIRST_SIGNIN_KEY) || 0);
+    if (event === 'group_created') return first && Date.now() - first < 7 * 86_400_000 ? 'new' : 'ret';
+    const seg = first ? 'ret' : 'new';
+    if (!first && SUCCESS_EVENTS.includes(event)) localStorage.setItem(FIRST_SIGNIN_KEY, String(Date.now()));
+    return seg;
+  } catch {
+    return 'new';
+  }
+}
+
 export function trackFunnel(event: FunnelEvent, detail?: string) {
   // Same switch as the rest of analytics: never on the iPhone app (App Store guideline 5.1.1(ii) asks for consent even for anonymous usage data),
   // and only where analytics is allowed (on by default in the Android app outside Europe, otherwise after the person says yes).
@@ -44,7 +61,7 @@ export function trackFunnel(event: FunnelEvent, detail?: string) {
     void fetch('/api/funnel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event, detail: detail ? String(detail).slice(0, 40) : undefined, first: firstTimeToday(event) || undefined }),
+      body: JSON.stringify({ event, detail: detail ? String(detail).slice(0, 40) : undefined, first: firstTimeToday(event) || undefined, seg: segmentFor(event) }),
       keepalive: true,
     }).catch(() => {});
   } catch {

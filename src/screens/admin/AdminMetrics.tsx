@@ -32,7 +32,12 @@ interface Metrics {
   active: { byDay: { date: string; count: number }[]; totals: { current: number; previous: number } };
   retention: Record<'d1' | 'd7' | 'd30', { cohort: number; returned: number }>;
   activation: { cohort: number; firstExpense: number; threeExpenses: number };
-  funnel: { current: Record<string, number>; previous: Record<string, number> };
+  funnel: {
+    current: Record<string, number>;
+    previous: Record<string, number>;
+    segments?: { new: { current: Record<string, number>; previous: Record<string, number> }; ret: { current: Record<string, number>; previous: Record<string, number> } };
+    segmentsSince?: string | null;
+  };
   ops: Array<Record<string, any>>;
   attention: { feedback: number; chatReports: number; shopkeeper: number };
 }
@@ -89,6 +94,29 @@ function TrendCard({ title, totalLabel, data, totals, color }: { title: string; 
         </div>
       </div>
       <Bars color={color} data={data.map((d) => ({ label: shortDate(d.date), value: d.count, full: d.date }))} />
+    </div>
+  );
+}
+
+function FunnelCard({ title, note, steps, empty }: { title: string; note?: string; steps: { label: string; v: number; ofPrev?: boolean }[]; empty?: string }) {
+  const top = Math.max(1, steps[0]?.v || 0);
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle p-4 space-y-2">
+      <p className="text-sm font-black text-primary">{title}</p>
+      {note && <p className="text-[11px] text-text-muted -mt-1">{note}</p>}
+      {empty && steps[0]?.v === 0 ? (
+        <p className="text-xs text-text-muted py-3">{empty}</p>
+      ) : (
+        steps.map((s, i) => (
+          <div key={s.label}>
+            <div className="flex justify-between text-[11px] font-bold text-text-muted">
+              <span>{s.label}</span>
+              <span>{s.v.toLocaleString()}{i > 0 && s.ofPrev !== false ? ` · ${fmtPct(pct(s.v, steps[i - 1].v))} of previous step` : i > 0 ? ` · ${fmtPct(pct(s.v, steps[0].v))} of those who saw it` : ''}</span>
+            </div>
+            <div className="h-5 rounded-md bg-surface overflow-hidden"><div className="h-full rounded-md" style={{ width: `${Math.max(2, (s.v / top) * 100)}%`, background: 'linear-gradient(90deg,#4ade80,#3b82f6)' }} /></div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -265,25 +293,52 @@ export default function AdminMetrics() {
 
       {m && derived && tab === 'growth' && (
         <div className="space-y-5">
-          <Section title="Sign-in funnel · last 7 days (anonymous counters, Android and web)">
+          <Section title="Sign-in funnels · last 7 days (anonymous counters, Android and web)">
             {(() => {
+              const tapsOf = (f: Record<string, number>) => (f.google_tap || 0) + (f.email_tap || 0) + (f.apple_tap || 0);
+              const newAcctOf = (f: Record<string, number>) => (f.google_success_new || 0) + (f.email_signup_ok || 0);
+              const signedInOf = (f: Record<string, number>) => (f.google_success_new || 0) + (f.google_success_existing || 0) + (f.email_signup_ok || 0) + (f.email_login_ok || 0) + (f.apple_success || 0);
               const f = derived.f;
-              const steps = [
-                { label: 'Saw the login screen', v: f.login_screen_view || 0 },
-                { label: 'Tapped a sign-in button', v: (f.google_tap || 0) + (f.email_tap || 0) + (f.apple_tap || 0) },
-                { label: 'New account created', v: (f.google_success_new || 0) + (f.email_signup_ok || 0) },
-                { label: 'Created a group', v: f.group_created || 0 },
-              ];
-              const top = Math.max(1, steps[0].v);
+              const segNew = m.funnel.segments?.new.current || {};
+              const segRet = m.funnel.segments?.ret.current || {};
+              const since = m.funnel.segmentsSince;
+              const splitNote = since ? `Split by device started ${since}.` : 'Split by device starts with the next app update; nothing to show yet.';
               return (
-                <div className="bg-white rounded-2xl border border-border-subtle p-4 space-y-2">
-                  {steps.map((s, i) => (
-                    <div key={s.label}>
-                      <div className="flex justify-between text-[11px] font-bold text-text-muted"><span>{s.label}</span><span>{num(s.v)}{i > 0 ? ` · ${fmtPct(pct(s.v, steps[i - 1].v))} of previous step` : ''}</span></div>
-                      <div className="h-5 rounded-md bg-surface overflow-hidden"><div className="h-full rounded-md" style={{ width: `${Math.max(2, (s.v / top) * 100)}%`, background: 'linear-gradient(90deg,#4ade80,#3b82f6)' }} /></div>
-                    </div>
-                  ))}
-                  <p className="text-[11px] text-text-muted">Store visits and installs are in Google Play Console; the funnel starts when someone sees the login screen. A device is counted every time it opens the screen.</p>
+                <div className="space-y-3">
+                  <FunnelCard
+                    title="Overall"
+                    note="Everyone who opened the login screen."
+                    steps={[
+                      { label: 'Saw the login screen', v: f.login_screen_view || 0 },
+                      { label: 'Tapped a sign-in button', v: tapsOf(f) },
+                      { label: 'Signed in', v: signedInOf(f) },
+                      { label: 'New account created', v: newAcctOf(f), ofPrev: false },
+                      { label: 'Created a group', v: f.group_created || 0, ofPrev: false },
+                    ]}
+                  />
+                  <FunnelCard
+                    title="New devices"
+                    note={`Phones and browsers that had never signed in before. ${splitNote}`}
+                    empty="No data yet for new devices."
+                    steps={[
+                      { label: 'Saw the login screen', v: segNew.login_screen_view || 0 },
+                      { label: 'Tapped a sign-in button', v: tapsOf(segNew) },
+                      { label: 'Signed in', v: signedInOf(segNew) },
+                      { label: 'New account created', v: newAcctOf(segNew), ofPrev: false },
+                      { label: 'Created a group (first week)', v: segNew.group_created || 0, ofPrev: false },
+                    ]}
+                  />
+                  <FunnelCard
+                    title="Returning devices"
+                    note={`Devices that have signed in before (for example after signing out or being signed out). ${splitNote}`}
+                    empty="No data yet for returning devices."
+                    steps={[
+                      { label: 'Saw the login screen', v: segRet.login_screen_view || 0 },
+                      { label: 'Tapped a sign-in button', v: tapsOf(segRet) },
+                      { label: 'Signed in', v: signedInOf(segRet) },
+                    ]}
+                  />
+                  <p className="text-[11px] text-text-muted px-1">Store visits and installs are in Google Play Console; the funnels start when someone sees the login screen. A device is counted every time it opens the screen. Reinstalling the app makes a device "new" again.</p>
                 </div>
               );
             })()}

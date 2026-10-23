@@ -4328,7 +4328,23 @@ async function startServer() {
         });
         return out;
       };
-      const funnel = { current: sumDays(funnelSnap.docs.slice(0, 7)), previous: sumDays(funnelSnap.docs.slice(7, 14)) };
+      const sumSeg = (docs: FirebaseFirestore.QueryDocumentSnapshot[], seg: 'new' | 'ret') => {
+        const out: Record<string, number> = {};
+        docs.forEach((d) => {
+          const ev = (d.data().segs || {})[seg] || {};
+          Object.keys(ev).forEach((k) => { out[k] = (out[k] || 0) + Number(ev[k] || 0); });
+        });
+        return out;
+      };
+      const cur7 = funnelSnap.docs.slice(0, 7);
+      const prev7 = funnelSnap.docs.slice(7, 14);
+      const segStart = funnelSnap.docs.map((d) => d.id).filter((id) => funnelSnap.docs.find((x) => x.id === id)?.data().segs).sort()[0] || null;
+      const funnel = {
+        current: sumDays(cur7),
+        previous: sumDays(prev7),
+        segments: { new: { current: sumSeg(cur7, 'new'), previous: sumSeg(prev7, 'new') }, ret: { current: sumSeg(cur7, 'ret'), previous: sumSeg(prev7, 'ret') } },
+        segmentsSince: segStart,
+      };
 
       // ── server health, last 7 days ──
       const opsSnap = await db.collection('opsDaily').orderBy('date', 'desc').limit(7).get();
@@ -5131,6 +5147,7 @@ async function startServer() {
       // (only update() reads dots as paths), which the admin screen then could not find under `events`.
       const update: Record<string, any> = { date: day, events: { [event]: admin.firestore.FieldValue.increment(1) } };
       if (req.body?.first === true) update.unique = { [event]: admin.firestore.FieldValue.increment(1) };
+      if (req.body?.seg === 'new' || req.body?.seg === 'ret') update.segs = { [req.body.seg]: { [event]: admin.firestore.FieldValue.increment(1) } };
       if (detail && (event === 'google_error' || event === 'email_login_fail')) update.errors = { [`${event}__${detail.replace(/\./g, '_')}`]: admin.firestore.FieldValue.increment(1) };
       await adminDb.collection('funnelDaily').doc(day).set(update, { merge: true });
     } catch (error) {
