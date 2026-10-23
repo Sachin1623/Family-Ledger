@@ -9,7 +9,7 @@ export default function PrivacyPolicy() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Privacy Policy</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: October 16, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 23, 2026</p>
           <p>
             FamilyLedger ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our mobile application and services.
           </p>
@@ -93,6 +93,20 @@ export default function PrivacyPolicy() {
             <p>
               You control exactly what appears on your own public profile from Profile → Public Profile: level/XP, streaks, and badges are shown by default (matching how this page has always worked); per-game win/loss stats, your rank among your own friends, your active habits and their streaks, and your birthday (month and day only — we never show the year) are off by default and only appear if you turn them on yourself.
             </p>
+            <h3 className="font-semibold text-primary">I.1 Quests, Streaks &amp; Friend Streaks</h3>
+            <p>
+              The quest board (daily, weekly, monthly and milestone goals) works from counts of what you do in the app &mdash; for example how many expenses you logged on a day, or that you played a game or logged a health reading &mdash; kept as simple daily and lifetime counters tied to your account, along with which quests you have already collected. These are private to you. Completing a quest pays XP and coins, like other points (Section I).
+            </p>
+            <p>
+              Your expense-logging streak (how many days in a row you logged or tapped &ldquo;No spend today&rdquo;, your best streak, and any streak freezes you hold) is stored in your account. A day is counted in your own time zone, and we may send you a push notification in the evening if a streak is about to end. If a streak misses a day it stays frozen for up to three days; you can unfreeze or restore it with a freeze you earned or with coins, and we keep a private record of each such coin spend.
+            </p>
+            <p>
+              A <strong>friend streak</strong> is shared between you and one friend or group member, only after you invite them and they accept; you can have up to five at once, each with a different person. For each friend streak, you and your partner can see each other's name and profile picture, the day count, and whether each of you has logged today (a yes or no, never the amounts or what you logged). Either of you can end it at any time. We may send your partner a notification when you nudge them or invite them, and the same when you &ldquo;cheer&rdquo; a group member from the quest board; a cheer sends only a short friendly message with your name. Friend streaks and cheers involving you are deleted when you delete your account.
+            </p>
+            <h3 className="font-semibold text-primary">I.2 Alarm Pop-up (Display over other apps)</h3>
+            <p>
+              On Android, if you set up medicine alarms, the app may ask you to switch on &ldquo;Display over other apps&rdquo;. It is used only to show a small card with Snooze, Dismiss, Open app and Mark taken buttons over whatever is on your screen while a medicine alarm is ringing. It does not read what is on your screen, and no data is collected through it. You can switch it off at any time in your phone's settings; alarms still ring and show a notification without it.
+            </p>
             <h3 className="font-semibold text-primary">J. Goals &amp; Savings Data</h3>
             <p>
               If you use the Goals feature, we store the target amount, current progress, target date, and notes you enter for each savings goal, along with the running history of contributions ("ledger") behind it. These amounts are encrypted before being stored (see Section 3). A goal stays private to you unless you explicitly turn on sharing for it — you can share an individual goal with a specific group and/or specific friends, in which case those people can see its name, progress, and target, and can add manual contributions ("boosts") to it; they can never see or touch the linked accounts funding it.
@@ -132,7 +146,7 @@ export default function PrivacyPolicy() {
             <li>To operate the Personal Loans and Shopkeeper mode features you choose to use</li>
             <li>To notify you about changes to our service, group activities, loan reminders, or account-wide announcements from our team</li>
             <li>To read payment receipts you choose to share, or a short voice clip you record with the Talk button, and turn it into an expense for you to review</li>
-            <li>To run the games, leaderboards, and the ranking and turn alerts you've enabled</li>
+            <li>To run the games, leaderboards, quests, streaks and friend streaks, and the ranking, turn and streak alerts you've enabled</li>
             <li>To provide customer support</li>
             <li>To detect, prevent, and address technical issues</li>
           </ul>
@@ -168,6 +182,8 @@ export default function PrivacyPolicy() {
             <li>With the app you choose, when you share a win, poster, or weekly summary picture from your device</li>
             <li>With a group and/or specific friends you choose to share a savings goal, health reading, or reminder with — off by default, only shared if you explicitly turn sharing on for that item</li>
             <li>With a delegate/caregiver you've granted permission to log health data on your behalf, and vice versa if someone has granted that permission to you</li>
+            <li>With a friend you invite to a friend streak, once they accept: your name, picture, the streak's day count and whether you have logged today</li>
+            <li>With a group member you cheer: a short notification showing your name</li>
             <li>With our team, if you or someone else reports a chat message for review</li>
             <li>With service providers who assist us in operating the app</li>
             <li>If required by law or to protect our rights</li>

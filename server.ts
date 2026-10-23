@@ -708,6 +708,26 @@ async function hardDeleteUserData(
     if (ops.length > 0) await commitInChunks(db, ops);
   }
 
+  // Friend streaks: a streak is shared by exactly two people, so when one deletes their account the streak is deleted outright and taken out of the
+  // other person's list (their own streak count and everything else of theirs stays). Cheers received are removed as well (those sent are swept above).
+  {
+    const snap = await db.collection('friendStreaks').where('uids', 'array-contains', uid).get();
+    for (const pair of snap.docs) {
+      const data = pair.data();
+      for (const other of (data.uids as string[]).filter((u) => u !== uid)) {
+        await db.collection('friendStreakLinks').doc(other).set(
+          { active: { [pair.id]: admin.firestore.FieldValue.delete() }, outgoing: { [pair.id]: admin.firestore.FieldValue.delete() }, incoming: { [pair.id]: admin.firestore.FieldValue.delete() } },
+          { merge: true },
+        );
+      }
+      await pair.ref.delete();
+    }
+    const cheers = await db.collection('questCheers').where('to', '==', uid).get();
+    const cheerOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+    pushDeleteAll(cheerOps, cheers);
+    if (cheerOps.length > 0) await commitInChunks(db, cheerOps);
+  }
+
   // Health/baby-profile delegate+caregiver INVITES — two-party records (ownerUid + friendUid /
   // ownerUid + caregiverUid); delete wherever this uid appears on either side.
   for (const { name, fields } of [

@@ -9,7 +9,7 @@ export default function Terms() {
       <main className="flex-1 p-6 space-y-8 max-w-3xl mx-auto w-full pb-20 prose prose-slate">
         <header className="space-y-4 pt-4">
           <h1 className="text-3xl font-black tracking-tight text-primary">Terms of Service</h1>
-          <p className="text-sm text-text-muted italic">Last Updated: October 14, 2026</p>
+          <p className="text-sm text-text-muted italic">Last Updated: October 23, 2026</p>
           <p>
             Welcome to FamilyLedger. By using our application, you agree to these terms. Please read them carefully.
           </p>
@@ -67,7 +67,7 @@ export default function Terms() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-primary">8. Games, Points &amp; Leaderboards</h2>
           <p>
-            The games in FamilyLedger are for entertainment among friends and family. They are not gambling: you never stake or win real money, and nothing in the app can be bought or won for cash. Points, XP, coins, badges, levels and rankings are virtual, have no monetary value, cannot be exchanged or transferred, and may be adjusted, reset or removed by us (for example to fix a bug or an unfair result). You agree to play fairly: no cheating, exploiting bugs, using automation or scripts, or using several accounts to inflate scores or rankings. Some leaderboards show your display name, picture and scores to other users, and we may send you notifications about changes in your ranking — you can turn notifications off at any time.
+            The games in FamilyLedger are for entertainment among friends and family. They are not gambling: you never stake or win real money, and nothing in the app can be bought or won for cash. Points, XP, coins, badges, levels and rankings are virtual, have no monetary value, cannot be exchanged or transferred, can be spent only inside the app (for example to unfreeze a streak) with spent coins not refundable, and may be adjusted, reset or removed by us (for example to fix a bug or an unfair result). Quests, streaks and friend streaks are optional features for motivation: a friend streak starts only when both people agree, and either person can end it at any time. You agree to play fairly: no cheating, exploiting bugs, using automation or scripts, or using several accounts to inflate scores or rankings. Some leaderboards show your display name, picture and scores to other users, and we may send you notifications about changes in your ranking — you can turn notifications off at any time.
           </p>
         </section>
 

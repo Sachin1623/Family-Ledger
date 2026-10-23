@@ -209,6 +209,26 @@ const CATEGORIES: DataCategory[] = [
         why: 'Let you review your own recent activity in My Progress',
         sharedWith: 'Nobody — private to your account',
       },
+      {
+        data: 'Quest progress (daily and lifetime counts of what you did, and which quests you collected)',
+        why: 'Run the quest board and its rewards',
+        sharedWith: 'Nobody — private to your account',
+      },
+      {
+        data: 'Streak freezes and coin spends used to unfreeze a streak',
+        why: 'Let you save a streak that missed a day',
+        sharedWith: 'Nobody — private to your account',
+      },
+      {
+        data: 'Friend streaks: your partner, the day count, and whether each of you logged today',
+        why: 'Keep a streak going together with a friend you invited',
+        sharedWith: 'Only that one friend (they see your name, picture, day count and a yes/no for today), and only after they accept',
+      },
+      {
+        data: 'Cheers you send to a group member',
+        why: 'Send a friendly notification from the quest board',
+        sharedWith: 'Only the member you cheered',
+      },
     ],
   },
   {

@@ -47,6 +47,7 @@ export default function DataDeletion() {
             <li><strong>Financial Records:</strong> Every goal, financial account, and loan ledger you own privately (not shared with a group or friend), including their full history.</li>
             <li><strong>Health Tracking:</strong> Your blood pressure, glucose, and medicine records, including any medical incidents/illnesses and baby vaccination profiles you created — even ones you'd shared read-only access to.</li>
             <li><strong>Game History:</strong> Your personal gamification points, badges, and leaderboard entries.</li>
+            <li><strong>Quests, Streaks &amp; Friend Streaks:</strong> Your quest progress and daily counts, your expense streak and freezes, your record of coin spends, and the cheers you sent or received. Any friend streak you are part of is deleted and removed from your partner's list (their own streak and data are not affected).</li>
             <li><strong>Receipt Preferences:</strong> The payee names and categories we remembered for you, and the markers used to warn about duplicate receipts.</li>
             <li><strong>Usage History:</strong> Activity, login, and interaction logs.</li>
           </ul>
