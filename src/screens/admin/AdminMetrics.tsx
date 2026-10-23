@@ -107,15 +107,32 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
       {empty && steps[0]?.v === 0 ? (
         <p className="text-xs text-text-muted py-3">{empty}</p>
       ) : (
-        steps.map((s, i) => (
-          <div key={s.label}>
-            <div className="flex justify-between text-[11px] font-bold text-text-muted">
-              <span>{s.label}</span>
-              <span>{s.v.toLocaleString()}{i > 0 && s.ofPrev !== false ? ` · ${fmtPct(pct(s.v, steps[i - 1].v))} of previous step` : i > 0 ? ` · ${fmtPct(pct(s.v, steps[0].v))} of those who saw it` : ''}</span>
-            </div>
-            <div className="h-5 rounded-md bg-surface overflow-hidden"><div className="h-full rounded-md" style={{ width: `${Math.max(2, (s.v / top) * 100)}%`, background: 'linear-gradient(90deg,#4ade80,#3b82f6)' }} /></div>
-          </div>
-        ))
+        <div className="divide-y divide-border-subtle border-t border-border-subtle">
+          {steps.map((s, i) => {
+            const base = s.ofPrev !== false && i > 0 ? steps[i - 1].v : steps[0].v;
+            const share = i > 0 ? pct(s.v, base) : null;
+            return (
+              <div key={s.label} className="py-3 space-y-1.5">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="flex items-center gap-2 text-sm font-bold text-primary">
+                    <span className="w-5 h-5 shrink-0 rounded-full bg-primary/10 text-primary text-[11px] font-black flex items-center justify-center">{i + 1}</span>
+                    {s.label}
+                  </p>
+                  <p className="text-xl font-black text-primary leading-none">{s.v.toLocaleString()}</p>
+                </div>
+                <div className="h-3 rounded-full bg-surface overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${Math.max(2, (s.v / top) * 100)}%`, background: 'linear-gradient(90deg,#4ade80,#3b82f6)' }} />
+                </div>
+                {i > 0 && (
+                  <p className="text-[11px] font-bold text-text-muted">
+                    <span className="text-primary">{fmtPct(share)}</span> {s.ofPrev !== false ? 'of the step above' : 'of those who saw the login screen'}
+                    {s.ofPrev !== false && base > s.v ? <span className="text-red-600"> · {(base - s.v).toLocaleString()} dropped off</span> : null}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
