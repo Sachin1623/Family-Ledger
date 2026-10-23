@@ -463,6 +463,17 @@ export default function WeeklySummary() {
     }
   };
 
+  // WhatsApp Status keeps only one picture from a multi-picture share, so this sends the chosen pictures one at a time.
+  const sendOneToWhatsApp = async (index: number): Promise<boolean> => {
+    if (!active) return false;
+    const picked = chosenBlobs();
+    if (!picked[index]) return false;
+    const res = await shareImageToApp('whatsapp', picked[index].blob, buildShortShareMessage(active));
+    if (res.status === 'shared') return true;
+    setShareNote(res.status === 'not_installed' ? "WhatsApp doesn't seem to be installed on this phone." : 'Could not open WhatsApp from here. Use Share my recap instead.');
+    return false;
+  };
+
   const handleShareLinkOnly = async () => {
     if (!active) return;
     const result = await shareText('FamilyLedger', buildShareMessage(active));
@@ -511,6 +522,7 @@ export default function WeeklySummary() {
                     primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
                     primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? (chosen.length > 1 ? `Share ${chosen.length} pictures` : 'Share my recap') : 'Copy share message'}
                     note={shareNote}
+                    oneByOne={chosen.length > 1 ? { count: chosenBlobs().length, send: sendOneToWhatsApp } : undefined}
                   />
                 </div>
 

@@ -24,6 +24,8 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
   const [pickerTarget, setPickerTarget] = useState<ShareTarget | null>(null);
   // A short note under the share buttons (e.g. "Caption copied — paste it into your post").
   const [shareNote, setShareNote] = useState<string | null>(null);
+  // The posters last shared (several at once), kept so they can be sent to WhatsApp Status one at a time, which takes just one picture.
+  const [lastBatch, setLastBatch] = useState<{ blobs: Blob[]; caption: string } | null>(null);
 
   // Native-first (Capacitor Share + Filesystem): navigator.share's file support is unreliable inside the installed Android WebView, so
   // the picture goes through the native share plugin; only a browser without those plugins falls back to navigator.share.
@@ -82,6 +84,7 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
     setShareNote(null);
 
     // Several posters: one multi-picture share, straight to the chosen app (or the share sheet). The caption is copied as well.
+    setLastBatch(items.length > 1 ? { blobs: items.map((i) => i.blob), caption: buildShareMessages('all').shortMessage } : null);
     if (items.length > 1) {
       const multi = await shareImagesToApp(target === 'native' ? 'sheet' : (target as DirectShareTarget), items.map((i) => i.blob), text);
       if (multi.status === 'shared') {
@@ -133,6 +136,7 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
         primaryLabel={canShare ? t('profile.shareFamilyLedger') : t('profile.copyShareMessage')}
         linkOnlyLabel={t('profile.shareLinkOnly')}
         note={shareNote}
+        oneByOne={lastBatch ? { count: lastBatch.blobs.length, send: async (i) => (await shareImageToApp('whatsapp', lastBatch.blobs[i], lastBatch.caption)).status === 'shared' } : undefined}
       />
       <SpreadPosterPicker open={pickerTarget !== null} onClose={() => setPickerTarget(null)} onShare={handlePosterChosen} />
     </>
