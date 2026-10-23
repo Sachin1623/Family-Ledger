@@ -46,6 +46,8 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     openChatPopup({ kind: 'group', groupId: data.groupId });
   } else if (data.type === 'weekly_summary') {
     navigateTo('/weekly-summary');
+  } else if (data.type === 'streak_risk') {
+    navigateTo('/'); // the dashboard's streak card has Log now and No spend today
   } else if (data.type === 'account_goal_nudge') {
     // No special-case routing needed beyond landing on Dashboard — the popup itself is driven by
     // the `accountGoalNudge` field the cron job already wrote to this user's own doc (see

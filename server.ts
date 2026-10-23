@@ -580,6 +580,7 @@ async function hardDeleteUserData(
     { name: 'vaccineAppointments', field: 'ownerUid' },
     // Games — personal gamification state, no one else's record depends on it.
     { name: 'userPoints', field: '__docId' },
+    { name: 'streakWatch', field: '__docId' },
     { name: 'pointsLedger', field: 'uid' },
     { name: 'sudokuLeaderboard', field: 'userId' },
     { name: 'scrambleLeaderboard', field: 'userId' },
@@ -1116,6 +1117,23 @@ async function awardPointsInTx(
 function isoDateStr(iso: string): string {
   return iso.slice(0, 10); // YYYY-MM-DD, UTC calendar day — a Phase 1 simplification (no per-user timezone field exists to do better)
 }
+// The calendar day (YYYY-MM-DD) an instant falls on in a given IANA time zone. Streak days follow the person's own time zone, so logging at
+// 11 pm local time counts for that day, not the next one. Falls back to India time when the person has no time zone stored.
+function dayInTimezone(instant: Date | string | number, tz: string | null | undefined): string {
+  const d = instant instanceof Date ? instant : new Date(instant);
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  } catch {
+    return new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  }
+}
+function hourInTimezone(instant: Date, tz: string | null | undefined): number {
+  try {
+    return Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'Asia/Kolkata', hour: '2-digit', hour12: false }).format(instant)) % 24;
+  } catch {
+    return new Date(instant.getTime() + 5.5 * 3600e3).getUTCHours();
+  }
+}
 function daysBetween(aDateStr: string, bDateStr: string): number {
   const a = new Date(aDateStr + 'T00:00:00Z').getTime();
   const b = new Date(bDateStr + 'T00:00:00Z').getTime();
@@ -1134,7 +1152,7 @@ function daysBetween(aDateStr: string, bDateStr: string): number {
 // nothing real happened.
 interface StreakComputation {
   streakRef: FirebaseFirestore.DocumentReference;
-  newStreakState: { current: number; longest: number; lastDateStr: string };
+  newStreakState: { current: number; longest: number; lastDateStr: string; freezes?: number; lastFreezeUsedOn?: string };
   bonuses: PointsAward[];
   badgeRef?: FirebaseFirestore.DocumentReference;
   badgeAlreadyExists: boolean;
@@ -1151,6 +1169,7 @@ async function computeStreakBonusAwards(
   bonusXpAt7: number,
   bonusXpAt30?: number,
   badgeIdPrefix?: string,
+  useFreezes = false,
 ): Promise<StreakComputation | null> {
   const snap = await tx.get(streakRef);
   const data = snap.data() || {};
@@ -1159,8 +1178,20 @@ async function computeStreakBonusAwards(
   const lastDateStr: string | null = data.lastDateStr || null;
 
   if (lastDateStr === todayStr) return null; // already advanced today — nothing to compute or write
-  if (lastDateStr && daysBetween(lastDateStr, todayStr) === 1) current += 1;
-  else current = 1;
+  // A streak freeze protects ONE missed day: if exactly one day was skipped and a freeze is held, the streak carries on and the freeze is used.
+  // A freeze is earned for every 7 days in a row (never more than 2 held).
+  let freezes: number = Math.min(2, Math.max(0, Number(data.freezes) || 0));
+  let usedFreezeOn: string | undefined;
+  const gap = lastDateStr ? daysBetween(lastDateStr, todayStr) : null;
+  if (gap === 1) current += 1;
+  else if (useFreezes && gap === 2 && freezes > 0 && current > 0) {
+    current += 1;
+    freezes -= 1;
+    const missed = new Date(`${lastDateStr}T00:00:00Z`);
+    missed.setUTCDate(missed.getUTCDate() + 1);
+    usedFreezeOn = missed.toISOString().slice(0, 10);
+  } else current = 1;
+  if (useFreezes && current > 0 && current % 7 === 0) freezes = Math.min(2, freezes + 1);
 
   const bonuses: PointsAward[] = [];
   if (current > 0 && current % 7 === 0) {
@@ -1183,7 +1214,12 @@ async function computeStreakBonusAwards(
 
   return {
     streakRef,
-    newStreakState: { current, longest: Math.max(longest, current), lastDateStr: todayStr },
+    newStreakState: {
+      current,
+      longest: Math.max(longest, current),
+      lastDateStr: todayStr,
+      ...(useFreezes ? { freezes, ...(usedFreezeOn ? { lastFreezeUsedOn: usedFreezeOn } : {}) } : {}),
+    },
     bonuses,
     badgeRef,
     badgeAlreadyExists,
@@ -1339,7 +1375,17 @@ async function verifyExpenseLogged(db: Firestore, uid: string, body: any): Promi
   return {
     ok: true,
     award: { actionType: 'expense_logged', ledgerKey: `${uid}_expense_logged_${expenseId}`, xp: 5, coins: 5, sourceCollection: 'expenses', sourceDocId: expenseId },
-    streakDateStr: isoDateStr(data.createdAt),
+    streakDateStr: dayInTimezone(data.createdAt, await getUserTimezone(db, uid)),
+  };
+}
+
+// "No spend today": an honest zero day keeps the streak going. Once per person per day (the ledger key), a small XP award, no coins.
+async function verifyNoSpendToday(db: Firestore, uid: string, _body: any): Promise<PointsVerifyResult> {
+  const today = dayInTimezone(new Date(), await getUserTimezone(db, uid));
+  return {
+    ok: true,
+    award: { actionType: 'no_spend_today', ledgerKey: `${uid}_no_spend_${today}`, xp: 3, coins: 0, meta: { day: today } },
+    streakDateStr: today,
   };
 }
 
@@ -1491,6 +1537,7 @@ async function verifyLudoResult(db: Firestore, uid: string, body: any): Promise<
 
 const POINTS_VERIFIERS: Record<string, (db: Firestore, uid: string, body: any) => Promise<PointsVerifyResult>> = {
   expense_logged: verifyExpenseLogged,
+  no_spend_today: verifyNoSpendToday,
   todo_completed: verifyTodoCompleted,
   habit_occurrence: verifyHabitOccurrence,
   budget_set: verifyBudgetSet,
@@ -2720,6 +2767,30 @@ async function processHabitReminders(db: Firestore, habitDocs: FirebaseFirestore
 const MEDICINE_MISSED_GRACE_MINUTES = 45;
 const MEDICINE_MISSED_STALE_MINUTES = MEDICINE_MISSED_GRACE_MINUTES + 180;
 
+// "Your streak ends tonight": one push a day, at about 8 pm in the person's own time zone, to people with a streak of 3+ days who have not logged yet
+// today. Runs on every 15-minute tick but only acts for people whose local hour is 20, once per day (warnedDate).
+async function processStreakWarnings(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
+  const now = new Date();
+  const snap = await db.collection('streakWatch').where('current', '>=', 3).get();
+  let sent = 0;
+  await Promise.all(snap.docs.map(async (d) => {
+    const w = d.data();
+    const tz = await ctx.tz(d.id);
+    if (hourInTimezone(now, tz) !== 20) return;
+    const today = dayInTimezone(now, tz);
+    const yesterday = dayInTimezone(new Date(now.getTime() - 86400e3), tz);
+    if (w.lastDateStr !== yesterday || w.warnedDate === today) return; // already logged today, or the streak already lapsed, or already warned
+    const tokens = await collectPushTokens(db, [d.id], 'notificationsEnabled');
+    await d.ref.set({ warnedDate: today }, { merge: true });
+    if (tokens.length === 0) return;
+    const n = Number(w.current) || 0;
+    const body = (Number(w.freezes) || 0) > 0 ? 'One expense takes 10 seconds, and you also have a streak freeze if you need it.' : 'One expense takes 10 seconds. Tap to log it now.';
+    await sendPush(tokens, `Your ${n}-day streak ends tonight 🔥`, body, { type: 'streak_risk' });
+    sent += 1;
+  }));
+  return sent;
+}
+
 async function processMissedMedicineDoses(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   let sentCount = 0;
   const snap = await db.collection('medicines').where('active', '==', true).get();
@@ -3257,7 +3328,7 @@ async function startServer() {
             : db.collection('userPoints').doc(creditUid).collection('meta').doc('expenseStreak');
           streakComputation = result.habitTodoId
             ? await computeStreakBonusAwards(tx, db, creditUid, streakRef, result.streakDateStr, 'habit_streak7', `${creditUid}_habit_streak7_${result.habitTodoId}`, 20, 75, `habit30_${result.habitTodoId}`)
-            : await computeStreakBonusAwards(tx, db, creditUid, streakRef, result.streakDateStr, 'expense_streak7', `${creditUid}_expense_streak7`, 25);
+            : await computeStreakBonusAwards(tx, db, creditUid, streakRef, result.streakDateStr, 'expense_streak7', `${creditUid}_expense_streak7`, 25, undefined, undefined, true);
           if (streakComputation) awards.push(...streakComputation.bonuses);
         }
         const awardState = await readAwardPlan(tx, db, creditUid, awards);
@@ -3270,6 +3341,10 @@ async function startServer() {
         }
         if (streakComputation) {
           tx.set(streakComputation.streakRef, streakComputation.newStreakState, { merge: true });
+          // The warning job looks here (one small doc per person) instead of scanning every streak.
+          if (!result.habitTodoId) {
+            tx.set(db.collection('streakWatch').doc(creditUid), { current: streakComputation.newStreakState.current, lastDateStr: streakComputation.newStreakState.lastDateStr, freezes: streakComputation.newStreakState.freezes ?? 0 }, { merge: true });
+          }
           if (streakComputation.badgeRef && !streakComputation.badgeAlreadyExists) {
             tx.set(streakComputation.badgeRef, {
               awardedAt: new Date().toISOString(),
@@ -15626,7 +15701,7 @@ async function startServer() {
       const [
         recurringExpensesProcessed, recurringRemindersNudged, expenseRemindersSent, budgetRemindersSent,
         todoRemindersSent, recurringTodosProcessed, habitRemindersSent, loanRemindersSent,
-        scheduledBroadcastsSent, missedMedicineDosesAlerted,
+        scheduledBroadcastsSent, missedMedicineDosesAlerted, streakWarningsSent,
       ] = await Promise.all([
         run('recurringExpenses', () => processRecurringExpenses(db, ctx), 0),
         run('recurringNudges', () => processRecurringReminderNudges(db, ctx), 0),
@@ -15638,6 +15713,7 @@ async function startServer() {
         run('loans', () => processLoanReminders(db, ctx), 0),
         run('broadcasts', () => processScheduledBroadcasts(db), 0),
         run('missedMedicine', () => processMissedMedicineDoses(db, ctx), 0),
+        run('streakWarnings', () => processStreakWarnings(db, ctx), 0),
       ]);
       console.log(`cron/send-reminders done in ${Date.now() - startedAt}ms`, JSON.stringify({ timings, failed, slowTier: runSlowTier }));
 
@@ -15654,6 +15730,7 @@ async function startServer() {
         loanRemindersSent,
         scheduledBroadcastsSent,
         missedMedicineDosesAlerted,
+        streakWarningsSent,
       });
     } catch (error) {
       console.error('cron/send-reminders error:', error);
