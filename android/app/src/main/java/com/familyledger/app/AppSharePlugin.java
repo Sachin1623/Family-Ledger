@@ -30,7 +30,7 @@ public class AppSharePlugin extends Plugin {
     /**
      * Several pictures in one share. With a package it opens that app directly (WhatsApp, Instagram, Facebook ...); without one it
      * shows the phone's share sheet. The pictures are typed image/* so the receiving app treats them as pictures (Capacitor's own
-     * Share plugin types a multi-file share as */*, which WhatsApp answers by keeping only the caption).
+     * Share plugin types a multi-file share as "any file type", which WhatsApp answers by keeping only the caption).
      */
     @PluginMethod
     public void shareImages(PluginCall call) {
