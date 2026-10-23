@@ -37,7 +37,7 @@ export default function BroadcastBanner() {
   const navigate = useNavigate();
   const [dismissed, setDismissed] = React.useState(false);
   const [broadcastDoc] = useDocument(doc(db, 'app_config', 'broadcast'));
-  const broadcast = broadcastDoc?.data() as { id?: string; title?: string; message?: string; images?: string[] } | undefined;
+  const broadcast = broadcastDoc?.data() as { id?: string; title?: string; message?: string; images?: string[]; imageLinks?: string[] } | undefined;
 
   const shouldShow =
     !!broadcast?.id && !!profile && profile.lastSeenBroadcastId !== broadcast.id && !dismissed;
@@ -123,9 +123,18 @@ export default function BroadcastBanner() {
               <p className="text-sm text-on-surface whitespace-pre-wrap leading-relaxed">{renderMessage(broadcast?.message || '')}</p>
               {broadcast?.images && broadcast.images.length > 0 && (
                 <div className="space-y-3">
-                  {broadcast.images.map((src, idx) => (
-                    <img key={idx} src={src} alt="" className="w-full rounded-2xl border border-border-subtle object-cover" />
-                  ))}
+                  {broadcast.images.map((src, idx) => {
+                    const link = broadcast.imageLinks?.[idx];
+                    const picture = <img src={src} alt="" className="w-full rounded-2xl border border-border-subtle object-cover" />;
+                    // a picture with a link opens it when tapped
+                    return link ? (
+                      <button key={idx} type="button" onClick={() => openLink(link)} className="block w-full active:scale-[0.99] transition-transform">
+                        {picture}
+                      </button>
+                    ) : (
+                      <React.Fragment key={idx}>{picture}</React.Fragment>
+                    );
+                  })}
                 </div>
               )}
               {(instagramUrl || facebookUrl) && (

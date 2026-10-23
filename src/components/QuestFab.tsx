@@ -4,7 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
-import { claimQuest, fetchCheerPeople, fetchQuestBoard, sendCheer, type CheerPerson, type Quest, type QuestBoard } from '../lib/questsApi';
+import { Capacitor } from '@capacitor/core';
+import { claimQuest, fetchCheerPeople, fetchQuestBoard, questEvent, sendCheer, type CheerPerson, type Quest, type QuestBoard } from '../lib/questsApi';
 import Fireworks from './Fireworks';
 
 // The floating quest icon and the quest board it opens. A ring around the icon fills as today's quests get done, a red dot counts rewards waiting
@@ -200,6 +201,12 @@ export default function QuestFab() {
       openCheer();
       return;
     }
+    if (q.go && /^https?:\/\//.test(q.go)) {
+      // an outside page (the Google Play rating): opened from this button, and counted so the quest can be collected
+      window.open(q.go, '_blank');
+      if (q.id === 'j_playreview') questEvent('play_review_tap');
+      return;
+    }
     if (q.go) {
       setOpen(false);
       navigate(q.go);
@@ -360,7 +367,7 @@ export default function QuestFab() {
                   {board && tab === 'journey' && (
                     <>
                       <p className="text-xs text-text-muted px-1">Milestones that keep growing with you. Each one you finish unlocks a bigger one.</p>
-                      {board.journey.map((q) => <QuestCard key={q.key} q={q} onClaim={claim} onGo={go} busy={busyKey === q.key} />)}
+                      {board.journey.filter((q) => !(q.id === 'j_playreview' && Capacitor.getPlatform() === 'ios')).map((q) => <QuestCard key={q.key} q={q} onClaim={claim} onGo={go} busy={busyKey === q.key} />)}
                     </>
                   )}
                 </div>

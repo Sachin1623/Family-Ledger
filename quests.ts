@@ -17,6 +17,7 @@ type Metric =
   | { kind: 'days'; keys: string[] } // number of different days in the window with at least one of these actions
   | { kind: 'life'; keys: string[] } // total of these actions ever
   | { kind: 'streak' } // longest expense streak
+  | { kind: 'joined' } // people who joined because of me (a friend I invited who accepted, or someone in a group I own)
   | { kind: 'exists'; check: ExistsCheck }
   | { kind: 'anyOf'; metrics: Metric[] }; // the highest of several (used where two different things count)
 
@@ -46,6 +47,7 @@ const ONBOARDING: QuestDef[] = [
   { id: 'ob_voice', title: 'Try Talk to add', desc: 'Say "spent 500 for pizza" and watch it appear.', icon: 'mic', target: 1, xp: 15, coins: 15, metric: { kind: 'life', keys: ['ev_voice_used'] }, go: '/add-expense' },
   { id: 'ob_reminder', title: 'Set a reminder', desc: 'A bill, a payment or anything you must not forget.', icon: 'notifications_active', target: 1, xp: 15, coins: 15, metric: { kind: 'exists', check: 'reminder' }, go: '/reminders' },
   { id: 'ob_invite', title: 'Invite someone you love', desc: 'Send an invite to a family member or friend.', icon: 'person_add', target: 1, xp: 20, coins: 20, metric: { kind: 'life', keys: ['ev_invite_sent', 'friend_accepted', 'friend_request_converted'] }, go: '/friends' },
+  { id: 'ob_joined', title: 'Get a family member or friend to join', desc: 'Ticks when someone you invited joins FamilyLedger.', icon: 'diversity_3', target: 1, xp: 25, coins: 25, metric: { kind: 'joined' }, go: '/friends' },
   { id: 'ob_share', title: 'Share your progress', desc: 'Send your weekly recap or the app to family and friends.', icon: 'ios_share', target: 1, xp: 20, coins: 20, metric: { kind: 'life', keys: ['ev_recap_shared', 'ev_spread_shared'] }, go: '/weekly-summary' },
 ];
 const ONBOARDING_DONE: QuestDef = { id: 'ob_done', title: 'Guardian Starter', desc: 'You finished every Getting started quest.', icon: 'military_tech', target: ONBOARDING.length, xp: 50, coins: 50, metric: { kind: 'count', keys: [] } };
@@ -94,6 +96,7 @@ const JOURNEY: JourneyCat[] = [
   { id: 'games', title: (n) => `Play ${n} games`, desc: 'Family game nights add up.', icon: 'sports_esports', steps: [5, 10, 25, 50, 100, 250], metric: { kind: 'life', keys: ['game_played'] }, go: '/tools?category=games', rewardOf: (n) => Math.max(10, Math.round(n / 3)) },
   { id: 'budgets', title: (n) => `Meet ${n} budget${n === 1 ? '' : 's'}`, desc: 'Staying inside a budget is the real win.', icon: 'savings', steps: [1, 3, 5, 10, 25, 50], metric: { kind: 'life', keys: ['budget_met'] }, go: '/analysis', rewardOf: (n) => Math.max(40, n * 25) },
   { id: 'health', title: (n) => `${n} health logs`, desc: 'Care for the people who matter most.', icon: 'monitor_heart', steps: [5, 10, 25, 50, 100, 250], metric: { kind: 'life', keys: ['ev_health_log'] }, go: '/health', rewardOf: (n) => Math.max(10, Math.round(n / 2)) },
+  { id: 'joined', title: (n) => `${n} family member${n === 1 ? '' : 's'} or friend${n === 1 ? '' : 's'} joined`, desc: 'Invite people you love and watch your circle grow.', icon: 'diversity_3', steps: [1, 3, 5, 10, 25, 50, 100], metric: { kind: 'joined' }, go: '/friends', rewardOf: (n) => Math.max(30, n * 20) },
   { id: 'cheers', title: (n) => `Cheer ${n} time${n === 1 ? '' : 's'}`, desc: 'Be someone\'s reason to smile.', icon: 'celebration', steps: [1, 5, 10, 25, 50, 100], metric: { kind: 'life', keys: ['ev_cheer'] }, go: 'cheer', rewardOf: (n) => Math.max(10, n * 2) },
 ];
 
@@ -151,7 +154,8 @@ export interface QuestView {
   go?: string;
 }
 
-const EVENT_TYPES = new Set(['recap_shared', 'spread_shared', 'health_log', 'voice_used', 'invite_sent']);
+const EVENT_TYPES = new Set(['recap_shared', 'spread_shared', 'health_log', 'voice_used', 'invite_sent', 'play_review_tap']);
+const PLAY_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 const EVENT_DAILY_CAP = 30;
 
 // Called from wherever XP is awarded or an event is recorded: adds to today's counters and the lifetime counters. `tx` must be mid-write phase.
@@ -176,6 +180,7 @@ export function registerQuestRoutes(app: express.Express, deps: QuestDeps): void
     streakLongest: number;
     exists: Record<ExistsCheck, boolean>;
     hasFamily: boolean;
+    joined: number; // family members and friends who joined because of this person
     joinedDay: string | null;
     claimed: Set<string>; // ledger keys already paid
     journeyDone: Record<string, number>;
@@ -260,15 +265,33 @@ export function registerQuestRoutes(app: express.Express, deps: QuestDeps): void
         hasFamily = others.docs.some((d) => d.data().userId !== uid);
       }
     }
-    if (existsChanged || familyChecked) {
-      await qRef.set({ ...(existsChanged ? { exists } : {}), ...(familyChecked ? { hasFamily, familyCheckedAt: new Date().toISOString() } : {}) }, { merge: true });
+    // people who joined because of me: friends I invited who accepted, plus everyone else in the groups I own. Cached, looked at again every 6 hours.
+    let joined = Number(qState.joinedCount) || 0;
+    let joinedChecked = false;
+    if (!qState.joinedCheckedAt || Date.now() - new Date(qState.joinedCheckedAt).getTime() > 6 * 3600e3) {
+      joinedChecked = true;
+      const people = new Set<string>();
+      const conv = await db.collection('pointsLedger').where('uid', '==', uid).where('actionType', '==', 'friend_request_converted').select('sourceDocId').get().catch(() => null);
+      conv?.docs.forEach((d) => {
+        String(d.data().sourceDocId || '').split('_').forEach((u) => u && u !== uid && people.add(u));
+      });
+      const owned = await db.collection('members').where('userId', '==', uid).where('role', '==', 'owner').get().catch(() => null);
+      const ownedIds = Array.from(new Set((owned?.docs || []).map((d) => d.data().groupId as string))).slice(0, 10);
+      if (ownedIds.length) {
+        const others = await db.collection('members').where('groupId', 'in', ownedIds).limit(200).get().catch(() => null);
+        others?.docs.forEach((d) => d.data().userId && d.data().userId !== uid && people.add(d.data().userId));
+      }
+      joined = people.size;
+    }
+    if (existsChanged || familyChecked || joinedChecked) {
+      await qRef.set({ ...(existsChanged ? { exists } : {}), ...(familyChecked ? { hasFamily, familyCheckedAt: new Date().toISOString() } : {}), ...(joinedChecked ? { joinedCount: joined, joinedCheckedAt: new Date().toISOString() } : {}) }, { merge: true });
     }
 
     const streakData = streakSnap.data() || {};
     return {
       uid, today, weekStart, monthKey, lifetime, dayCounts,
       streakLongest: Number(streakData.longest) || 0,
-      exists, hasFamily,
+      exists, hasFamily, joined,
       joinedDay: typeof userSnap.data()?.createdAt === 'string' ? dayInTimezone(userSnap.data()!.createdAt, tz) : null,
       claimed: new Set<string>(),
       journeyDone: (qState.journeyDone as Record<string, number>) || {},
@@ -297,6 +320,8 @@ export function registerQuestRoutes(app: express.Express, deps: QuestDeps): void
         return sumKeys(c.lifetime, m.keys);
       case 'streak':
         return c.streakLongest;
+      case 'joined':
+        return c.joined;
       case 'exists':
         return c.exists[m.check] ? 1 : 0;
       case 'anyOf':
@@ -356,6 +381,12 @@ export function registerQuestRoutes(app: express.Express, deps: QuestDeps): void
       const claimed = c.claimed.has(key);
       return { key, id: `j_${cat.id}`, period: 'journey' as Period, title: cat.title(target), desc: cat.desc, icon: cat.icon, progress, target, xp: reward, coins: reward, claimed, claimable: !claimed && progress >= target, go: cat.go };
     });
+    // A one-time "rate us on Google Play" quest: tapping Go opens the store page and counts, collecting pays once, and then it is gone for good.
+    const playKey = 'j:playreview:0';
+    if (!c.claimed.has(playKey)) {
+      const tapped = sumKeys(c.lifetime, ['ev_play_review_tap']) > 0;
+      journey.push({ key: playKey, id: 'j_playreview', period: 'journey', title: 'Rate us on Google Play', desc: 'A quick rating helps other families find us. One time only.', icon: 'star', progress: tapped ? 1 : 0, target: 1, xp: 30, coins: 30, claimed: false, claimable: tapped, go: PLAY_URL });
+    }
     if (c.joinedDay) {
       const days = Math.max(0, Math.floor((new Date(`${c.today}T00:00:00Z`).getTime() - new Date(`${c.joinedDay}T00:00:00Z`).getTime()) / 86400e3));
       const years = Math.floor(days / 365);

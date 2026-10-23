@@ -2,7 +2,7 @@
 // Each one fills the title and message and attaches its pictures (public/community/*.jpg, made for these messages). The admin can edit anything
 // before sending. Messages are kept under the 800-character limit.
 
-export const INSTAGRAM_URL = 'https://www.instagram.com/family.ledger';
+export const INSTAGRAM_URL = 'https://www.instagram.com/family.ledger/';
 export const FACEBOOK_URL = 'https://www.facebook.com/profile.php?id=61594046441653';
 export const PLAY_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 export const FEEDBACK_URL = 'https://familyledger.thirteenapps.com/feedback'; // opens the Feedback screen inside the app
@@ -15,6 +15,7 @@ export interface BroadcastTemplate {
   title: string;
   message: string;
   images: string[]; // paths under /community
+  imageLinks: string[]; // where tapping each picture goes, in the same order
 }
 
 export const BROADCAST_TEMPLATES: BroadcastTemplate[] = [
@@ -41,6 +42,7 @@ Three small things that mean a lot:
 Every share helps another family get organised. Thank you! 💙
 Team FamilyLedger`,
     images: ['join-community.jpg', 'join-instagram.jpg', 'join-facebook.jpg'],
+    imageLinks: [INSTAGRAM_URL, INSTAGRAM_URL, FACEBOOK_URL],
   },
   {
     id: 'instagram',
@@ -57,6 +59,7 @@ Tap Follow, and share a post with someone who'd love it. Tag us @family.ledger a
 Thank you for helping our family grow. 💜
 Team FamilyLedger`,
     images: ['join-instagram.jpg'],
+    imageLinks: [INSTAGRAM_URL],
   },
   {
     id: 'facebook',
@@ -73,6 +76,7 @@ Please like and follow the page, and share a post with a friend or relative who 
 Thank you for being part of the family. 💙
 Team FamilyLedger`,
     images: ['join-facebook.jpg'],
+    imageLinks: [FACEBOOK_URL],
   },
   {
     id: 'share',
@@ -92,6 +96,7 @@ You can also share your weekly recap from inside the app: one tap to WhatsApp, I
 Every share helps another family get organised. Thank you! 💚
 Team FamilyLedger`,
     images: ['join-community.jpg'],
+    imageLinks: [PLAY_URL],
   },
   {
     id: 'feedback',
@@ -111,6 +116,7 @@ ${FEEDBACK_URL}
 Every message is read by our team. Thank you for helping us get better! 🙏
 Team FamilyLedger`,
     images: ['join-feedback.jpg'],
+    imageLinks: [FEEDBACK_URL],
   },
   {
     id: 'ideas',
@@ -129,6 +135,7 @@ Share it here: ${FEEDBACK_URL}
 The most-asked ideas go on our list first, and we'll tell you when they ship. Thank you! 🚀
 Team FamilyLedger`,
     images: ['join-feedback.jpg'],
+    imageLinks: [FEEDBACK_URL],
   },
   {
     id: 'rate',
@@ -145,5 +152,6 @@ It takes about 10 seconds. If something isn't right, please tell us first and we
 Thank you for being part of FamilyLedger! 💚
 Team FamilyLedger`,
     images: ['join-rate.jpg'],
+    imageLinks: [PLAY_URL],
   },
 ];

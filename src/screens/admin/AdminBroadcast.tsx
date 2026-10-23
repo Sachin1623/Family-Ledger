@@ -11,6 +11,7 @@ interface BroadcastRecord {
   title: string;
   message: string;
   images?: string[];
+  imageLinks?: string[];
   status: 'sent' | 'scheduled' | 'canceled';
   createdAt: string;
   createdBy?: string;
@@ -81,6 +82,8 @@ export default function AdminBroadcast() {
   const [title, setTitle] = useState('FamilyLedger');
   const [message, setMessage] = useState('');
   const [images, setImages] = useState<string[]>([]);
+  // where tapping each picture goes (aligned with `images`; empty = nothing)
+  const [imageLinks, setImageLinks] = useState<string[]>([]);
   const [processingImages, setProcessingImages] = useState(false);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledForLocal, setScheduledForLocal] = useState('');
@@ -134,6 +137,7 @@ export default function AdminBroadcast() {
       setTitle(t.title);
       setMessage(t.message);
       setImages(loaded);
+      setImageLinks(t.imageLinks);
       setTemplateHint(t.hint);
     } catch {
       setError('Could not load that template. Check your connection and try again.');
@@ -147,6 +151,7 @@ export default function AdminBroadcast() {
     setTitle('FamilyLedger');
     setMessage('');
     setImages([]);
+    setImageLinks([]);
     setScheduleEnabled(false);
     setScheduledForLocal('');
   };
@@ -165,6 +170,7 @@ export default function AdminBroadcast() {
     try {
       const resized = await Promise.all(files.map((f) => resizeImage(f)));
       setImages((prev) => [...prev, ...resized].slice(0, MAX_IMAGES));
+      setImageLinks((prev) => [...prev, ...resized.map(() => '')].slice(0, MAX_IMAGES));
     } catch (err) {
       console.error('Image resize failed:', err);
     } finally {
@@ -178,6 +184,7 @@ export default function AdminBroadcast() {
     setTitle(b.title);
     setMessage(b.message);
     setImages(b.images || []);
+    setImageLinks(b.imageLinks || []);
     setScheduleEnabled(false);
     setScheduledForLocal('');
     setResult(null);
@@ -190,6 +197,7 @@ export default function AdminBroadcast() {
     setTitle(b.title);
     setMessage(b.message);
     setImages(b.images || []);
+    setImageLinks(b.imageLinks || []);
     setScheduleEnabled(true);
     setScheduledForLocal(toDatetimeLocalValue(b.scheduledFor));
     setResult(null);
@@ -257,9 +265,9 @@ export default function AdminBroadcast() {
     setResult(null);
     try {
       if (editingId) {
-        await adminPost(`/api/admin/broadcast/${editingId}`, { title, message: message.trim(), images, scheduledFor });
+        await adminPost(`/api/admin/broadcast/${editingId}`, { title, message: message.trim(), images, imageLinks, scheduledFor });
       } else {
-        const data = await adminPost('/api/admin/broadcast', { title, message: message.trim(), images, scheduledFor });
+        const data = await adminPost('/api/admin/broadcast', { title, message: message.trim(), images, imageLinks, scheduledFor });
         if (!scheduledFor) {
           setResult({ recipientCount: data.recipientCount, pushSent: data.pushSent });
           setCurrent({ id: data.broadcastId, title, message: message.trim(), images, createdAt: new Date().toISOString() });
@@ -412,7 +420,7 @@ export default function AdminBroadcast() {
                       <img src={src} alt="" className="h-20 w-20 object-cover rounded-xl border border-border-subtle" />
                       <button
                         type="button"
-                        onClick={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
+                        onClick={() => { setImages((prev) => prev.filter((_, i) => i !== idx)); setImageLinks((prev) => prev.filter((_, i) => i !== idx)); }}
                         className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-error text-white rounded-full flex items-center justify-center shadow-sm"
                       >
                         <span className="material-symbols-outlined text-[12px]">close</span>

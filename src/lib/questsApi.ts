@@ -67,7 +67,7 @@ export async function claimQuest(key: string): Promise<{ xp: number; coins: numb
 export const fetchCheerPeople = () => call<{ people: CheerPerson[] }>('/api/quests/cheer-targets').then((r) => r.people);
 export const sendCheer = (toUid: string) => call<{ ok: boolean; already: boolean }>('/api/quests/cheer', 'POST', { toUid });
 
-export type QuestEventType = 'recap_shared' | 'spread_shared' | 'health_log' | 'invite_sent';
+export type QuestEventType = 'recap_shared' | 'spread_shared' | 'health_log' | 'invite_sent' | 'play_review_tap';
 
 // Fire-and-forget: tells the server something a quest may count happened. Never blocks or throws into the caller's own action, and tells the open
 // quest board (if any) to refresh.

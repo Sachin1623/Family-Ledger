@@ -3194,6 +3194,7 @@ async function processScheduledBroadcasts(db: Firestore): Promise<number> {
         title,
         message,
         images: b.images || [],
+        imageLinks: b.imageLinks || [],
         createdAt: new Date().toISOString(),
         createdBy: b.createdBy,
       });
@@ -6317,6 +6318,8 @@ async function startServer() {
     const images = Array.isArray(req.body?.images)
       ? req.body.images.filter((s: unknown) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 5)
       : [];
+    // Where tapping each picture goes (a web address, or empty), one entry per picture.
+    const imageLinks: string[] = images.map((_: string, i: number) => { const l = Array.isArray(req.body?.imageLinks) ? req.body.imageLinks[i] : ''; return typeof l === 'string' && /^https?:\/\//.test(l) ? l.slice(0, 300) : ''; });
     const scheduledFor = req.body?.scheduledFor ? String(req.body.scheduledFor) : null;
     if (!message) {
       return res.status(400).json({ error: 'message is required.' });
@@ -6340,6 +6343,7 @@ async function startServer() {
           title,
           message,
           images,
+          imageLinks,
           status: 'scheduled',
           scheduledFor,
           createdAt: new Date().toISOString(),
@@ -6353,6 +6357,7 @@ async function startServer() {
         title,
         message,
         images,
+        imageLinks,
         createdAt: new Date().toISOString(),
         createdBy,
       });
@@ -6366,6 +6371,7 @@ async function startServer() {
         title,
         message,
         images,
+        imageLinks,
         status: 'sent',
         createdAt: new Date().toISOString(),
         sentAt: new Date().toISOString(),
@@ -6401,6 +6407,8 @@ async function startServer() {
       const images = Array.isArray(req.body?.images)
         ? req.body.images.filter((s: unknown) => typeof s === 'string' && s.startsWith('data:image/')).slice(0, 5)
         : [];
+      // Where tapping each picture goes (a web address, or empty), one entry per picture.
+      const imageLinks: string[] = images.map((_: string, i: number) => { const l = Array.isArray(req.body?.imageLinks) ? req.body.imageLinks[i] : ''; return typeof l === 'string' && /^https?:\/\//.test(l) ? l.slice(0, 300) : ''; });
       const scheduledFor = req.body?.scheduledFor ? String(req.body.scheduledFor) : null;
       if (!message) return res.status(400).json({ error: 'message is required.' });
       if (message.length > 800) return res.status(400).json({ error: 'message must be 800 characters or fewer.' });
@@ -6411,7 +6419,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Those images are too large combined — remove one or use smaller photos.' });
       }
 
-      await ref.update({ title, message, images, scheduledFor });
+      await ref.update({ title, message, images, imageLinks, scheduledFor });
       return res.json({ ok: true });
     } catch (error) {
       console.error('admin/broadcast update error:', error);
