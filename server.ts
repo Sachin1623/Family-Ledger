@@ -4259,7 +4259,7 @@ async function startServer() {
       const startOfTodayUtc = Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
       const count = (fn: (u: { joined: number; active: number }) => boolean) => users.filter(fn).length;
       const newByDay: Record<string, number> = {};
-      for (let i = 0; i < 30; i++) newByDay[istKey(now - i * DAY)] = 0;
+      for (let i = 0; i < 60; i++) newByDay[istKey(now - i * DAY)] = 0; // 60 days: the last 30 for the chart, the 30 before for the comparison
       users.forEach((u) => { if (u.joined) { const k = istKey(u.joined); if (k in newByDay) newByDay[k] += 1; } });
       const usersOut = {
         total: users.length,
@@ -4267,7 +4267,29 @@ async function startServer() {
         dau: count((u) => u.active >= startOfTodayUtc),
         wau: count((u) => u.active >= now - 7 * DAY),
         mau: count((u) => u.active >= now - 30 * DAY),
-        newByDay: Object.keys(newByDay).sort().map((date) => ({ date, count: newByDay[date] })),
+        newByDay: Object.keys(newByDay).sort().slice(-30).map((date) => ({ date, count: newByDay[date] })),
+        newTotals: {
+          current: Object.keys(newByDay).sort().slice(-30).reduce((n, k) => n + newByDay[k], 0),
+          previous: Object.keys(newByDay).sort().slice(0, 30).reduce((n, k) => n + newByDay[k], 0),
+        },
+      };
+
+      // ── active users per day, from the app-open (login) events: how many different people opened the app each Indian day ──
+      const loginSnap = await db.collection('loginEvents').where('createdAt', '>=', new Date(now - 62 * DAY).toISOString()).select('uid', 'createdAt').get();
+      const activeDays = new Map<string, Set<string>>();
+      loginSnap.docs.forEach((d) => {
+        const at = Date.parse(String(d.data().createdAt || ''));
+        const uid = d.data().uid;
+        if (!at || !uid) return;
+        const k = istKey(at);
+        if (!activeDays.has(k)) activeDays.set(k, new Set());
+        activeDays.get(k)!.add(uid);
+      });
+      const dayKeys60 = Array.from({ length: 60 }, (_, i) => istKey(now - (59 - i) * DAY));
+      const unique = (keys: string[]) => { const s = new Set<string>(); keys.forEach((k) => activeDays.get(k)?.forEach((u) => s.add(u))); return s.size; };
+      const activeOut = {
+        byDay: dayKeys60.slice(-30).map((date) => ({ date, count: activeDays.get(date)?.size || 0 })),
+        totals: { current: unique(dayKeys60.slice(-30)), previous: unique(dayKeys60.slice(0, 30)) },
       };
 
       // ── retention: of people who joined long enough ago, how many came back on or after day N ──
@@ -4324,7 +4346,7 @@ async function startServer() {
         shopkeeper: skSnap.docs.filter((d) => d.data().status === 'pending').length,
       };
 
-      const data = { generatedAt: new Date().toISOString(), revision: process.env.K_REVISION || 'local', users: usersOut, retention, activation, funnel, ops, attention };
+      const data = { generatedAt: new Date().toISOString(), revision: process.env.K_REVISION || 'local', users: usersOut, active: activeOut, retention, activation, funnel, ops, attention };
       metricsCache = { at: Date.now(), data };
       return res.json(data);
     } catch (error) {

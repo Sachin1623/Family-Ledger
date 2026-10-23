@@ -28,7 +28,8 @@ const GOALS = {
 interface Metrics {
   generatedAt: string;
   revision: string;
-  users: { total: number; newToday: number; dau: number; wau: number; mau: number; newByDay: { date: string; count: number }[] };
+  users: { total: number; newToday: number; dau: number; wau: number; mau: number; newByDay: { date: string; count: number }[]; newTotals: { current: number; previous: number } };
+  active: { byDay: { date: string; count: number }[]; totals: { current: number; previous: number } };
   retention: Record<'d1' | 'd7' | 'd30', { cohort: number; returned: number }>;
   activation: { cohort: number; firstExpense: number; threeExpenses: number };
   funnel: { current: Record<string, number>; previous: Record<string, number> };
@@ -64,6 +65,30 @@ function Tile({ label, value, sub, level, tone }: { label: string; value: React.
           <span className={`text-[11px] font-bold ${tone === 'up' ? 'text-green-600' : tone === 'down' ? 'text-red-600' : 'text-text-muted'}`}>{sub}</span>
         )}
       </div>
+    </div>
+  );
+}
+
+// A chart with its 30-day total and how that compares with the 30 days before.
+function TrendCard({ title, totalLabel, data, totals, color }: { title: string; totalLabel: string; data: { date: string; count: number }[]; totals: { current: number; previous: number }; color?: string }) {
+  const change = totals.previous === 0 ? (totals.current > 0 ? null : 0) : Math.round(((totals.current - totals.previous) / totals.previous) * 100);
+  const up = (change ?? 0) >= 0;
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle p-3">
+      <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{title}</p>
+      <div className="flex items-end justify-between gap-2 flex-wrap mt-1 mb-1">
+        <div>
+          <p className="text-3xl font-black text-primary leading-none">{totals.current.toLocaleString()}</p>
+          <p className="text-[11px] font-bold text-text-muted mt-1">{totalLabel}</p>
+        </div>
+        <div className="text-right">
+          <p className={`text-sm font-black ${change === null ? 'text-text-muted' : up ? 'text-green-600' : 'text-red-600'}`}>
+            {change === null ? 'new' : `${up ? '▲' : '▼'} ${Math.abs(change)}%`}
+          </p>
+          <p className="text-[11px] text-text-muted">vs previous 30 days ({totals.previous.toLocaleString()})</p>
+        </div>
+      </div>
+      <Bars color={color} data={data.map((d) => ({ label: shortDate(d.date), value: d.count, full: d.date }))} />
     </div>
   );
 }
@@ -208,11 +233,9 @@ export default function AdminMetrics() {
               <Tile label="Active 7 days" value={m.users.wau} sub={fmtPct(pct(m.users.dau, m.users.wau)) + ' daily/weekly'} />
               <Tile label="Active 30 days" value={m.users.mau} sub={fmtPct(pct(m.users.wau, m.users.mau)) + ' weekly/monthly'} />
             </div>
-            <div className="bg-white rounded-2xl border border-border-subtle p-3">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">New users · last 30 days</p>
-              <Bars data={m.users.newByDay.map((d) => ({ label: shortDate(d.date), value: d.count, full: d.date }))} />
-              <Link to="/admin/users" className="text-xs font-bold text-primary underline">Open Users for days and weeks</Link>
-            </div>
+            <TrendCard title="New users · last 30 days" totalLabel="new users in 30 days" data={m.users.newByDay} totals={m.users.newTotals} />
+            <TrendCard title="Active users · last 30 days" totalLabel="different people opened the app" data={m.active.byDay} totals={m.active.totals} color="#3b82f6" />
+            <Link to="/admin/users" className="text-xs font-bold text-primary underline">Open Users for days and weeks</Link>
           </Section>
 
           <Section title="Money">
