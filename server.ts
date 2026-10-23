@@ -5355,7 +5355,7 @@ async function startServer() {
   const voiceHits = new Map<string, { n: number; resetAt: number }>();
   // Google retires older Gemini models for a project over time (gemini-2.5-flash started answering 404 here), so the model is configurable
   // and a second, lighter model is tried when the first is not found.
-  const VOICE_MODELS = [process.env.VOICE_AI_MODEL || 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+  const VOICE_MODELS = [process.env.VOICE_AI_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.5-flash'];
   const VOICE_LOCATION = process.env.VOICE_AI_LOCATION || 'asia-south1';
   let voiceAi: GoogleGenAI | null = null;
   app.post('/api/voice-expense', async (req, res) => {
