@@ -33,7 +33,10 @@ import androidx.core.app.NotificationCompat;
  * startActivity() below is ever refused by a stricter OEM.
  */
 public class AlarmRingingService extends Service {
-    static final String CHANNEL_ID = "familyledger_alarms";
+    // "_v2": a silent channel. The service plays the alarm sound and vibration itself, and the old channel ALSO played its own sound for the
+    // notification, so every alarm sounded twice about half a second apart.
+    static final String CHANNEL_ID = "familyledger_alarms_v2";
+    static final String OLD_CHANNEL_ID = "familyledger_alarms";
     static final String ACTION_STOP = "com.familyledger.app.ACTION_STOP_ALARM";
     static final String ACTION_SNOOZE = "com.familyledger.app.ACTION_SNOOZE_ALARM";
     // Sent when the person swipes the alarm notification away while it is still ringing: it is put straight back.
@@ -166,8 +169,10 @@ public class AlarmRingingService extends Service {
             startForeground(notificationId, notification);
         }
 
+        // With the pop-up banner available (the person switched on "Display over other apps") the banner is all that shows: no full-screen page.
+        // Without it, the full-screen page is tried as before.
         try {
-            startActivity(activityIntent);
+            if (!AlarmOverlay.canShow(this)) startActivity(activityIntent);
         } catch (Exception ignored) {
             // The ongoing notification above is still up as a fallback if this direct launch is
             // refused (e.g. a stricter OEM background-start policy) — tapping it still opens
@@ -190,15 +195,11 @@ public class AlarmRingingService extends Service {
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Alarms", NotificationManager.IMPORTANCE_HIGH);
         channel.setDescription("Medicine and other reminders that ring like an alarm clock.");
         channel.setBypassDnd(true);
-        channel.enableVibration(true);
-        AudioAttributes attrs = new AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build();
-        Uri sound = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM);
-        if (sound == null) sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-        channel.setSound(sound, attrs);
+        // silent: the ringing service makes the sound and the vibration itself
+        channel.setSound(null, null);
+        channel.enableVibration(false);
         nm.createNotificationChannel(channel);
+        nm.deleteNotificationChannel(OLD_CHANNEL_ID);
     }
 
     private void startRinging() {

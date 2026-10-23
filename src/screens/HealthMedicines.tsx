@@ -335,7 +335,7 @@ export default function HealthMedicines() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [confirm, confirmDialog] = useConfirm();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<'today' | 'medicines' | 'log' | 'dashboard'>('today');
 
   const [membershipsValue] = useCollection(
@@ -1145,9 +1145,9 @@ export default function HealthMedicines() {
   }, [dueTodayAll],
   );
 
-  const handleMarkDose = async (medicine: Medicine, doseTime: MedicineDoseTime, status: MedicineLogStatus, dateStr: string = logDate) => {
+  const handleMarkDose = async (medicine: Medicine, doseTime: MedicineDoseTime, status: MedicineLogStatus, dateStr: string = logDate, ownerUid?: string) => {
     if (!user) return;
-    const targetUid = manageTargetUid || user.uid;
+    const targetUid = ownerUid || manageTargetUid || user.uid;
     const id = medicineLogId(targetUid, medicine.id, doseTime.id, dateStr);
     const loggedAt = new Date().toISOString();
     // A medicine created before groupId/sharedFriendUids existed on this schema (or via any path
@@ -1220,6 +1220,33 @@ export default function HealthMedicines() {
   // same-pattern navigations — see feedback_mount_only_query_param_effects memory), and waits for
   // the two delegatedToMe queries to have loaded at least once so a cold-start tap doesn't
   // misjudge "not a delegate" just because that data hasn't arrived yet.
+  // "Mark taken" on a ringing alarm's pop-up card opens this page with ?markTaken=owner:medicine:dose,... : those doses are ticked off as taken today,
+  // then the parameter is removed. Reactive on the value (not mount-only) and run once per value and day.
+  const handledMarkRef = useRef<string>('');
+  useEffect(() => {
+    const param = searchParams.get('markTaken');
+    if (!param || !user || medicines.length === 0) return;
+    const key = `${param}@${todayLocalDateString()}`;
+    if (handledMarkRef.current === key) return;
+    handledMarkRef.current = key;
+    (async () => {
+      for (const token of param.split(',')) {
+        const [owner, medId, slotId] = token.split(':');
+        const med = medicines.find((m) => m.id === medId);
+        const dose = med?.times.find((tm) => tm.id === slotId);
+        if (!med || !dose) continue;
+        await handleMarkDose(med, dose, 'taken', todayLocalDateString(), owner || undefined);
+      }
+      setTab('today');
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('markTaken');
+        return next;
+      }, { replace: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, user, medicines]);
+
   const appliedForUidRef = useRef<string | null>(null);
   useEffect(() => {
     const forUidParam = searchParams.get('forUid');

@@ -115,7 +115,8 @@ public class AlarmActivity extends Activity {
     // ACTION_VIEW resolution) since this is an in-app launch, not an externally-tapped link — no
     // dependency on App Links domain verification having succeeded on this device.
     private void openApp() {
-        String path = (route != null && !route.isEmpty()) ? route : "/health/medicines";
+        // the route also carries the "mark taken" list for the pop-up card's own button; plain "Open app" just opens the page
+        String path = (route != null && !route.isEmpty()) ? (route.indexOf('?') >= 0 ? route.substring(0, route.indexOf('?')) : route) : "/health/medicines";
         Intent launch = new Intent(Intent.ACTION_VIEW, Uri.parse("https://familyledger.thirteenapps.com" + path));
         launch.setClass(this, MainActivity.class);
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);

@@ -76,29 +76,34 @@ final class AlarmOverlay {
                 card.addView(text);
             }
 
-            LinearLayout row = new LinearLayout(context);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(0, dp(context, 12), 0, 0);
-            row.addView(button(context, "Snooze 10 min", false, AlarmRingingService.ACTION_SNOOZE), new LinearLayout.LayoutParams(0, dp(context, 46), 1f));
-            View gap = new View(context);
-            row.addView(gap, new LinearLayout.LayoutParams(dp(context, 10), 1));
-            row.addView(button(context, "Dismiss", true, AlarmRingingService.ACTION_STOP), new LinearLayout.LayoutParams(0, dp(context, 46), 1f));
-            card.addView(row);
+            // Four buttons: Snooze and Dismiss, then Open app and (for medicine alarms) Mark taken. "Mark taken" opens the app on the Medicines
+            // page with the doses of this alarm to tick off; "Open app" opens it without ticking anything.
+            final String openPath = route == null || route.isEmpty() ? "/health/medicines" : (route.indexOf('?') >= 0 ? route.substring(0, route.indexOf('?')) : route);
+            final boolean canMark = route != null && route.contains("markTaken=");
+            LinearLayout row1 = new LinearLayout(context);
+            row1.setOrientation(LinearLayout.HORIZONTAL);
+            row1.setPadding(0, dp(context, 12), 0, 0);
+            row1.addView(button(context, "Snooze 10 min", false, v -> sendToService(context, AlarmRingingService.ACTION_SNOOZE)), new LinearLayout.LayoutParams(0, dp(context, 46), 1f));
+            row1.addView(new View(context), new LinearLayout.LayoutParams(dp(context, 10), 1));
+            row1.addView(button(context, "Dismiss", true, v -> sendToService(context, AlarmRingingService.ACTION_STOP)), new LinearLayout.LayoutParams(0, dp(context, 46), 1f));
+            card.addView(row1);
 
-            // tapping the text opens the full-screen alarm page
-            final Intent open = new Intent(context, AlarmActivity.class);
-            open.putExtra(AlarmReceiver.EXTRA_ID, id);
-            open.putExtra(AlarmReceiver.EXTRA_TITLE, title);
-            open.putExtra(AlarmReceiver.EXTRA_BODY, body);
-            open.putExtra(AlarmReceiver.EXTRA_ROUTE, route);
-            open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            heading.setOnClickListener(v -> {
-                try {
-                    context.startActivity(open);
-                } catch (Exception ignored) {
-                    /* the buttons still work */
-                }
-            });
+            LinearLayout row2 = new LinearLayout(context);
+            row2.setOrientation(LinearLayout.HORIZONTAL);
+            row2.setPadding(0, dp(context, 8), 0, 0);
+            row2.addView(button(context, "Open app", false, v -> {
+                sendToService(context, AlarmRingingService.ACTION_STOP);
+                openApp(context, openPath);
+            }), new LinearLayout.LayoutParams(0, dp(context, 46), 1f));
+            if (canMark) {
+                row2.addView(new View(context), new LinearLayout.LayoutParams(dp(context, 10), 1));
+                final String markPath = route;
+                row2.addView(button(context, "Mark taken ✓", true, v -> {
+                    sendToService(context, AlarmRingingService.ACTION_STOP);
+                    openApp(context, markPath);
+                }), new LinearLayout.LayoutParams(0, dp(context, 46), 1f));
+            }
+            card.addView(row2);
 
             wrapper.addView(card, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -122,7 +127,27 @@ final class AlarmOverlay {
         }
     }
 
-    private static TextView button(final Context context, String label, boolean primary, final String action) {
+    private static void sendToService(Context context, String action) {
+        try {
+            context.startService(new Intent(context, AlarmRingingService.class).setAction(action));
+        } catch (Exception ignored) {
+            /* if the service is already gone the alarm is already over */
+        }
+    }
+
+    // Opens the app on a page (same deep-link route the alarm screen's own "Open app" button uses).
+    private static void openApp(Context context, String path) {
+        try {
+            Intent launch = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://familyledger.thirteenapps.com" + path));
+            launch.setClass(context, MainActivity.class);
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            context.startActivity(launch);
+        } catch (Exception ignored) {
+            /* nothing more to do */
+        }
+    }
+
+    private static TextView button(final Context context, String label, boolean primary, View.OnClickListener onClick) {
         TextView b = new TextView(context);
         b.setText(label);
         b.setGravity(Gravity.CENTER);
@@ -138,13 +163,7 @@ final class AlarmOverlay {
             b.setTextColor(Color.parseColor("#1E3A8A"));
         }
         b.setBackground(bg);
-        b.setOnClickListener(v -> {
-            try {
-                context.startService(new Intent(context, AlarmRingingService.class).setAction(action));
-            } catch (Exception ignored) {
-                /* if the service is already gone the alarm is already over */
-            }
-        });
+        b.setOnClickListener(onClick);
         return b;
     }
 

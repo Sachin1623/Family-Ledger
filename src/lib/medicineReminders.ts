@@ -260,7 +260,8 @@ async function runSchedule(medicines: Medicine[], currentUid?: string, ownerName
           weekdays: group.weekdays,
           intervalDays: group.intervalDays,
           startDate: group.startDate,
-          route: '/health/medicines',
+          // "Mark taken" on the alarm's pop-up card opens this page with the doses of this alarm to tick off (owner:medicine:dose, comma separated).
+          route: `/health/medicines?markTaken=${group.items.map((it) => `${it.med.userId}:${it.med.id}:${it.slot.id}`).join(',')}`,
           feature: 'medicine',
           // The phone silences this alarm itself once every medicine in it has finished its course
           // (a group is only open-ended if one of its medicines is).
