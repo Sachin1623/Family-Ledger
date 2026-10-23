@@ -44,6 +44,13 @@
         android:gravity="center"
         android:orientation="vertical">
 
+        <!-- the animated FamilyLedger icon (BrandAnim.java adds it) -->
+        <FrameLayout
+            android:id="@+id/alarmBrand"
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_marginBottom="20dp" />
+
         <TextView
             android:id="@+id/alarmTime"
             android:layout_width="wrap_content"

@@ -49,6 +49,7 @@ public class AlarmActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         setContentView(R.layout.activity_alarm);
+        ((android.view.ViewGroup) findViewById(R.id.alarmBrand)).addView(BrandAnim.create(this, 120));
         // Full screen: the layout fills the whole window (a window size only; no full-screen-intent permission is involved).
         bind(getIntent());
 

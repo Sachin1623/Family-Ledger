@@ -65,14 +65,32 @@ final class AlarmOverlay {
             heading.setTextColor(Color.parseColor("#0F172A"));
             heading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
             heading.setTypeface(Typeface.DEFAULT_BOLD);
-            card.addView(heading);
+
+            // FamilyLedger branding: the animated icon beside the app name and what is ringing
+            LinearLayout head = new LinearLayout(context);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            head.addView(BrandAnim.create(context, 52));
+            LinearLayout titles = new LinearLayout(context);
+            titles.setOrientation(LinearLayout.VERTICAL);
+            titles.setPadding(dp(context, 12), 0, 0, 0);
+            TextView brand = new TextView(context);
+            brand.setText("FAMILYLEDGER");
+            brand.setTextColor(Color.parseColor("#16A34A"));
+            brand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            brand.setTypeface(Typeface.DEFAULT_BOLD);
+            brand.setLetterSpacing(0.14f);
+            titles.addView(brand);
+            titles.addView(heading);
+            head.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            card.addView(head);
 
             if (body != null && !body.isEmpty()) {
                 TextView text = new TextView(context);
                 text.setText(body);
                 text.setTextColor(Color.parseColor("#334155"));
                 text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-                text.setPadding(0, dp(context, 4), 0, 0);
+                text.setPadding(0, dp(context, 8), 0, 0);
                 card.addView(text);
             }
 
