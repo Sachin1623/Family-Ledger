@@ -6,7 +6,8 @@ import { loadSpreadPosters, peekSpreadPosters, ensurePng } from '../lib/spreadPo
 
 // "Pick a poster to share": every time it opens it draws a fresh set of themed posters (each with
 // 4–6 features, the logo and a Play Store QR code) and lets the person choose the one that fits who
-// they're sending it to. Choosing hands the picture back to the caller, which does the sharing.
+// they're sending it to. Like the weekly recap, every poster starts selected; tap one to leave it out. Sharing hands the chosen
+// pictures back to the caller, which does the sharing.
 export default function SpreadPosterPicker({
   open,
   onClose,
@@ -14,11 +15,11 @@ export default function SpreadPosterPicker({
 }: {
   open: boolean;
   onClose: () => void;
-  onShare: (blob: Blob, id: SpreadVariantId) => void | Promise<void>;
+  onShare: (items: { blob: Blob; id: SpreadVariantId }[]) => void | Promise<void>;
 }) {
   const [posters, setPosters] = useState<SpreadPoster[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
-  const [selected, setSelected] = useState<SpreadVariantId | null>(null);
+  const [selected, setSelected] = useState<SpreadVariantId[]>([]);
   const [loading, setLoading] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export default function SpreadPosterPicker({
   const apply = (set: { posters: SpreadPoster[]; urls: Record<string, string> }) => {
     setPosters(set.posters);
     setUrls(set.urls);
-    setSelected((cur) => (cur && set.posters.some((p) => p.id === cur) ? cur : set.posters[0]?.id ?? null));
+    setSelected(set.posters.map((p) => p.id)); // every poster starts selected
   };
 
   useEffect(() => {
@@ -72,11 +73,11 @@ export default function SpreadPosterPicker({
   };
 
   const handleShare = async () => {
-    const poster = posters.find((p) => p.id === selected);
-    if (!poster) return;
+    const chosen = posters.filter((p) => selected.includes(p.id));
+    if (chosen.length === 0) return;
     setSharing(true);
     try {
-      await onShare(await ensurePng(poster.blob), poster.id);
+      await onShare(await Promise.all(chosen.map(async (p) => ({ blob: await ensurePng(p.blob), id: p.id }))));
     } finally {
       setSharing(false);
     }
@@ -96,8 +97,8 @@ export default function SpreadPosterPicker({
           >
             <div className="p-4 border-b border-border-subtle flex items-center justify-between shrink-0">
               <div>
-                <h2 className="text-base font-black text-primary">Pick a poster to share</h2>
-                <p className="text-[11px] text-text-muted">This week’s posters — tap the one you like, or shuffle for more.</p>
+                <h2 className="text-base font-black text-primary">Pick posters to share</h2>
+                <p className="text-[11px] text-text-muted">{selected.length === 0 ? 'None selected' : `${selected.length} selected`}. All are ready: tap one to leave it out, or shuffle for more.</p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={shuffle} disabled={loading} className="p-2 hover:bg-surface rounded-full disabled:opacity-40" aria-label="Shuffle posters">
@@ -116,21 +117,20 @@ export default function SpreadPosterPicker({
                 {posters.map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => setSelected(p.id)}
+                    onClick={() => setSelected((cur) => (cur.includes(p.id) ? cur.filter((x) => x !== p.id) : [...cur, p.id]))}
                     className={clsx(
                       'relative rounded-xl overflow-hidden border-2 text-left transition-all active:scale-[0.98]',
-                      selected === p.id ? 'border-primary ring-4 ring-primary/20' : 'border-transparent',
+                      selected.includes(p.id) ? 'border-primary ring-4 ring-primary/20' : 'border-transparent',
                     )}
                   >
                     <img src={urls[p.id]} alt={`${p.label} poster`} className="w-full block" />
                     <span className="absolute left-1.5 top-1.5 bg-black/55 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                       {p.emoji} {p.label}
                     </span>
-                    {selected === p.id && (
-                      <span className="absolute right-1.5 top-1.5 bg-primary text-white rounded-full w-5 h-5 flex items-center justify-center">
-                        <span className="material-symbols-outlined text-[14px]">check</span>
-                      </span>
-                    )}
+                    <span className={clsx('absolute right-1.5 top-1.5 rounded-full w-6 h-6 flex items-center justify-center shadow', selected.includes(p.id) ? 'bg-primary text-white' : 'bg-white/90 text-text-muted border border-border-subtle')}>
+                      <span className="material-symbols-outlined text-[16px]">{selected.includes(p.id) ? 'check' : 'add'}</span>
+                    </span>
+                    {selected.includes(p.id) && <span className="absolute bottom-0 inset-x-0 bg-primary text-white text-[10px] font-black py-0.5 text-center">Selected to share</span>}
                   </button>
                 ))}
               </div>
@@ -139,11 +139,11 @@ export default function SpreadPosterPicker({
             <div className="p-4 border-t border-border-subtle shrink-0">
               <button
                 onClick={handleShare}
-                disabled={!selected || sharing}
+                disabled={selected.length === 0 || sharing}
                 className="w-full py-3 bg-primary text-white font-bold rounded-2xl text-sm disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <span className="material-symbols-outlined text-[18px]">ios_share</span>
-                {sharing ? 'Opening share…' : 'Share this poster'}
+                {sharing ? 'Opening share…' : selected.length > 1 ? `Share ${selected.length} posters` : 'Share this poster'}
               </button>
             </div>
           </motion.div>

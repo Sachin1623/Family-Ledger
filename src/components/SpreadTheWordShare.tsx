@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { blobToBase64, shareText } from '../lib/fileShare';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
-import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
+import { shareImageToApp, shareImagesToApp, DirectShareTarget } from '../lib/appShare';
 import { logGrowthEvent } from '../lib/growthEvents';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
 import SpreadPosterPicker from './SpreadPosterPicker';
@@ -69,14 +69,32 @@ export default function SpreadTheWordShare({ onShared }: { onShared?: () => void
   // Every Share button opens the poster picker; once a poster is chosen this shares it.
   const handleShareApp = (target: ShareTarget) => setPickerTarget(target);
 
-  const handlePosterChosen = async (blob: Blob, posterId: SpreadVariantId) => {
+  const handlePosterChosen = async (items: { blob: Blob; id: SpreadVariantId }[]) => {
     const target = pickerTarget;
-    if (!target) return;
-    // The post text follows the poster the person picked (money / health / family / games / all).
+    if (!target || items.length === 0) return;
+    const blob = items[0].blob;
+    // The post text follows the poster the person picked (money / health / family / games / all); several posters get the general text.
+    const posterId: SpreadVariantId = items.length === 1 ? items[0].id : 'all';
     const { message, shortMessage } = buildShareMessages(posterId);
-    const text = target === 'twitter' ? shortMessage : message;
+    // X has a short limit and a WhatsApp status refuses more than 700 characters, so both get the short caption.
+    const text = target === 'twitter' || target === 'whatsapp' ? shortMessage : message;
     setPickerTarget(null);
     setShareNote(null);
+
+    // Several posters: one multi-picture share, straight to the chosen app (or the share sheet). The caption is copied as well.
+    if (items.length > 1) {
+      const multi = await shareImagesToApp(target === 'native' ? 'sheet' : (target as DirectShareTarget), items.map((i) => i.blob), text);
+      if (multi.status === 'shared') {
+        logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
+        setShareNote(`Caption copied. If the app did not fill it in, paste it into your post. (${items.length} posters sent.)`);
+        onShared?.();
+        return;
+      }
+      if (multi.status === 'not_installed') {
+        setShareNote("That app doesn't seem to be installed. Choose another app, or use Share to pick from your phone's list.");
+        return;
+      }
+    }
 
     // A specific platform button opens THAT app directly (its own composer — post / story / reel options where the app offers them),
     // when the installed build supports it and the app is on the phone. Otherwise it falls through to the normal share sheet.
