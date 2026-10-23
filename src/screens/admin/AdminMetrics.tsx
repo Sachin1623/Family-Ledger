@@ -33,6 +33,7 @@ interface Metrics {
   retention: Record<'d1' | 'd7' | 'd30', { cohort: number; returned: number }>;
   activation: { cohort: number; firstExpense: number; threeExpenses: number };
   funnel: {
+    signinDays?: { date: string; taps: number; errors: number; cancels: number; codes: Record<string, number> }[];
     current: Record<string, number>;
     previous: Record<string, number>;
     segments?: { new: { current: Record<string, number>; previous: Record<string, number> }; ret: { current: Record<string, number>; previous: Record<string, number> } };
@@ -132,6 +133,104 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What each stored Google sign-in error code means, in plain words.
+function explainCode(code: string): { label: string; hint: string } {
+  const c = code.replace(/:$/, '');
+  if (c.includes('network-request-failed')) return { label: 'Lost connection', hint: 'The phone lost its internet connection during sign-in.' };
+  if (c === '8') return { label: 'Google error 8', hint: 'A temporary failure inside Google sign-in, usually a hiccup in Google Play services.' };
+  if (c === '12501') return { label: 'Cancelled / not finished', hint: 'The person closed the Google account box without finishing.' };
+  if (c === '12500') return { label: 'Google error 12500', hint: 'Google sign-in is misconfigured or Play services is out of date.' };
+  if (c === '10') return { label: 'Developer error 10', hint: 'The app signature is not registered with Google (a build or key problem).' };
+  if (c.includes('internal-error')) return { label: 'Google internal error', hint: 'Google reported a temporary problem.' };
+  if (c.includes('popup')) return { label: 'Sign-in window blocked', hint: 'The browser blocked or closed the Google window.' };
+  return { label: code, hint: 'Other error code.' };
+}
+
+// The Google sign-in errors: what they were, and how they are trending by day or by week. Collapsed until opened.
+function SignInErrors({ days }: { days: NonNullable<Metrics['funnel']['signinDays']> }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<'days' | 'weeks'>('days');
+  const recent = days.slice(-7);
+  const taps7 = recent.reduce((n, d) => n + d.taps, 0);
+  const errors7 = recent.reduce((n, d) => n + d.errors, 0);
+  const codes7: Record<string, number> = {};
+  recent.forEach((d) => Object.entries(d.codes).forEach(([k, v]) => { codes7[k] = (codes7[k] || 0) + v; }));
+  const codeRows = Object.entries(codes7).sort((a, b) => b[1] - a[1]);
+
+  let series: { label: string; full: string; value: number; taps: number }[];
+  if (mode === 'days') {
+    series = days.slice(-30).map((d) => ({ label: shortDate(d.date), full: d.date, value: d.errors, taps: d.taps }));
+  } else {
+    const weeks = new Map<string, { errors: number; taps: number }>();
+    days.forEach((d) => {
+      const dt = new Date(`${d.date}T00:00:00Z`);
+      dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+      const k = dt.toISOString().slice(0, 10);
+      const w = weeks.get(k) || { errors: 0, taps: 0 };
+      w.errors += d.errors;
+      w.taps += d.taps;
+      weeks.set(k, w);
+    });
+    series = Array.from(weeks.entries()).sort().slice(-10).map(([k, w]) => ({ label: shortDate(k), full: `Week of ${shortDate(k)}`, value: w.errors, taps: w.taps }));
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left">
+        <span>
+          <span className="block text-sm font-black text-primary">Sign-in errors · what they were, trend, days, weeks</span>
+          <span className="block text-[11px] text-text-muted">{errors7} errors in {taps7} Google taps over the last 7 days</span>
+        </span>
+        <span className="material-symbols-outlined text-text-muted">{open ? 'expand_less' : 'expand_more'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 space-y-3 border-t border-border-subtle pt-3">
+          <div>
+            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">What the errors were · last 7 days</p>
+            {codeRows.length === 0 ? (
+              <p className="text-xs text-text-muted">No errors in the last 7 days.</p>
+            ) : (
+              <div className="divide-y divide-border-subtle">
+                {codeRows.map(([code, n]) => {
+                  const info = explainCode(code);
+                  return (
+                    <div key={code} className="py-2 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-primary">{info.label}</p>
+                        <p className="text-[11px] text-text-muted">{info.hint}</p>
+                      </div>
+                      <p className="text-lg font-black text-primary">{n}</p>
+                    </div>
+                  );
+                })}
+                {recent.reduce((n, d) => n + d.cancels, 0) > 0 && (
+                  <div className="py-2 flex items-start justify-between gap-3">
+                    <div><p className="text-sm font-bold text-primary">Cancelled</p><p className="text-[11px] text-text-muted">Closed the Google box (not counted as an error).</p></div>
+                    <p className="text-lg font-black text-primary">{recent.reduce((n, d) => n + d.cancels, 0)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Trend · errors per {mode === 'days' ? 'day' : 'week'}</p>
+              <div className="flex rounded-xl border border-border-subtle overflow-hidden text-xs font-bold">
+                {(['days', 'weeks'] as const).map((m2) => (
+                  <button key={m2} type="button" onClick={() => setMode(m2)} className={`px-3 py-1 ${mode === m2 ? 'bg-primary text-white' : 'bg-white text-text-muted'}`}>{m2 === 'days' ? 'Days' : 'Weeks'}</button>
+                ))}
+              </div>
+            </div>
+            <Bars color="#dc2626" data={series.map((s) => ({ label: s.label, value: s.value, full: `${s.full} · ${s.value} errors of ${s.taps} taps (${s.taps ? Math.round((s.value / s.taps) * 100) : 0}%)` }))} />
+            <p className="text-[11px] text-text-muted">The retry for dropped connections and the plain error messages went live on 21 Oct. Counters started on 16 Oct.</p>
+          </div>
         </div>
       )}
     </div>
@@ -272,6 +371,7 @@ export default function AdminMetrics() {
             <div key={a.text} className={`rounded-xl px-3 py-2 text-xs font-bold ${a.level === 'bad' ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>⚠ {a.text}</div>
           ))}
 
+          {m.funnel.signinDays && m.funnel.signinDays.length > 0 && <SignInErrors days={m.funnel.signinDays} />}
           <Section title="Growth">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <Tile label="New users today" value={m.users.newToday} sub={derived.avg30 > 0 ? `${m.users.newToday >= derived.avg30 ? '▲' : '▼'} avg ${Math.round(derived.avg30 * 10) / 10}/day` : undefined} tone={m.users.newToday >= derived.avg30 ? 'up' : 'down'} />

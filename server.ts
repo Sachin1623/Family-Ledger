@@ -4318,7 +4318,8 @@ async function startServer() {
       const activation = { cohort: cohort.length, firstExpense: ge1, threeExpenses: ge3 };
 
       // ── sign-in funnel: this 7 days and the 7 before ──
-      const funnelSnap = await db.collection('funnelDaily').orderBy('date', 'desc').limit(14).get();
+      const funnelAll = await db.collection('funnelDaily').orderBy('date', 'desc').limit(70).get();
+      const funnelSnap = { docs: funnelAll.docs.slice(0, 14) } as { docs: FirebaseFirestore.QueryDocumentSnapshot[] };
       const sumDays = (docs: FirebaseFirestore.QueryDocumentSnapshot[]) => {
         const out: Record<string, number> = {};
         docs.forEach((d) => {
@@ -4339,7 +4340,21 @@ async function startServer() {
       const cur7 = funnelSnap.docs.slice(0, 7);
       const prev7 = funnelSnap.docs.slice(7, 14);
       const segStart = funnelSnap.docs.map((d) => d.id).filter((id) => funnelSnap.docs.find((x) => x.id === id)?.data().segs).sort()[0] || null;
+      // Sign-in outcomes per day (for the "Sign-in errors" trend): taps, Google errors, cancels, and which error each one was.
+      const signinDays = funnelAll.docs
+        .map((d) => {
+          const x = d.data();
+          const ev: Record<string, number> = { ...(x.events || {}) };
+          Object.keys(x).forEach((k) => { if (k.startsWith('events.')) ev[k.slice(7)] = (ev[k.slice(7)] || 0) + Number(x[k] || 0); });
+          const er: Record<string, number> = { ...(x.errors || {}) };
+          Object.keys(x).forEach((k) => { if (k.startsWith('errors.')) er[k.slice(7)] = (er[k.slice(7)] || 0) + Number(x[k] || 0); });
+          const codes: Record<string, number> = {};
+          Object.keys(er).forEach((k) => { if (k.startsWith('google_error__')) codes[k.slice(14)] = (codes[k.slice(14)] || 0) + Number(er[k] || 0); });
+          return { date: d.id, taps: Number(ev.google_tap || 0), errors: Number(ev.google_error || 0), cancels: Number(ev.google_cancel || 0), codes };
+        })
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
       const funnel = {
+        signinDays,
         current: sumDays(cur7),
         previous: sumDays(prev7),
         segments: { new: { current: sumSeg(cur7, 'new'), previous: sumSeg(prev7, 'new') }, ret: { current: sumSeg(cur7, 'ret'), previous: sumSeg(prev7, 'ret') } },
