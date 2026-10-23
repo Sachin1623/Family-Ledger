@@ -5,7 +5,9 @@ import { Capacitor } from '@capacitor/core';
 import { renderRecapCard } from '../lib/recapCardImage';
 import { buildRecapView } from '../lib/recapFeatures';
 import { installLinksText } from '../lib/cardCanvas';
-import { shareOrDownloadFile, shareText } from '../lib/fileShare';
+import { shareOrDownloadFiles, shareText } from '../lib/fileShare';
+import { thoughtFor, recapHabits } from '../lib/recapThoughts';
+import type { RecapVariant } from '../lib/recapCardImage';
 import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import { logGrowthEvent } from '../lib/growthEvents';
 import type { ShareTarget } from '../lib/spreadTheWord';
@@ -92,23 +94,10 @@ function buildShareMessage(summary: SummaryDoc): string {
 }
 
 
-// What financially steady families tend to do, in plain words, with where the idea comes from. These are widely repeated rules of thumb
-// from financial planners and consumer-finance research, offered as encouragement, never as a promise of a result.
-const COMMUNITY_THOUGHTS: { icon: string; text: string; source: string }[] = [
-  { icon: 'savings', text: 'Financial planners commonly suggest keeping 3 to 6 months of living expenses aside as an emergency fund, and keeping it separate from everyday savings.', source: 'Common planner guidance' },
-  { icon: 'pie_chart', text: 'The popular 50/30/20 guide splits income into needs, wants and savings. It only works if you know where the money actually goes, and you are finding that out.', source: '50/30/20 rule of thumb (Elizabeth Warren)' },
-  { icon: 'visibility', text: 'In a UK study of people who used a budgeting method for three months, about half said it helped them keep track of what they spend, and over a third said they understood their income and spending better.', source: 'Royal London, "Looking after the pennies" (2017)' },
-  { icon: 'event_repeat', text: 'Money habits stick when they are small and regular. A quick check-in each week matters more than a long review once a year.', source: 'Habit-building principle widely used by planners' },
-  { icon: 'family_restroom', text: 'Families who talk about money openly, with everyone seeing the same numbers, tend to argue less about it. Shared groups give you exactly that.', source: 'Common family-finance advice' },
-  { icon: 'flag', text: 'Writing a goal down, with an amount and a date, makes it far easier to act on than a vague wish to save more.', source: 'Goal-setting guidance used by planners' },
-  { icon: 'health_and_safety', text: 'Health is a money topic too. Medical costs are one of the biggest surprises in a family budget, and staying on top of check-ups and medicines helps avoid them.', source: 'Common family-finance advice' },
-];
-
 function AppreciationCard({ summary }: { summary: SummaryDoc }) {
   const p = summary.praise;
   const w = summary.week;
-  const weekNumber = Math.floor(new Date(summary.generatedAt).getTime() / (7 * 86400000));
-  const thought = COMMUNITY_THOUGHTS[weekNumber % COMMUNITY_THOUGHTS.length];
+  const thought = thoughtFor(summary.generatedAt);
   const trackedMoney = (p?.loggedDays30 ?? 0) > 0 || w.expenseLinesAdded > 0 || w.expensesTracked > 0;
   const planning = (summary.goalsTracked ?? 0) > 0 || (summary.accountsMonitored ?? 0) > 0;
   const health = (p?.healthDays30 ?? 0) > 0 || (w.bpReadings ?? 0) + (w.glucoseReadings ?? 0) + (w.medicineDoses ?? 0) + (w.vaccinesGiven ?? 0) > 0;
@@ -126,11 +115,7 @@ function AppreciationCard({ summary }: { summary: SummaryDoc }) {
   if (p && p.weeksActive8 > 0) badges.push({ icon: 'event_available', value: `${p.weeksActive8}/8`, label: 'recent weeks you stayed on top of it' });
   if (p && p.healthDays30 > 0) badges.push({ icon: 'favorite', value: String(p.healthDays30), label: 'days you looked after family health' });
 
-  const habits = [
-    { done: trackedMoney, icon: 'receipt_long', title: 'Knows where the money goes', text: 'You track spending, which is the first step planners ask of every family.' },
-    { done: planning, icon: 'flag', title: 'Plans ahead', text: planning ? `You are tracking ${summary.goalsTracked ?? 0} goal${(summary.goalsTracked ?? 0) === 1 ? '' : 's'} and ${summary.accountsMonitored ?? 0} account${(summary.accountsMonitored ?? 0) === 1 ? '' : 's'}.` : 'Set one goal with an amount and a date to join the planners.' },
-    { done: health, icon: 'favorite', title: 'Protects the family\'s health', text: health ? 'You are keeping health records, which helps avoid costly surprises.' : 'Add a medicine or health log to cover the other half of family wellbeing.' },
-  ];
+  const habits = recapHabits({ trackedMoney, planning, health, goalsTracked: summary.goalsTracked ?? 0, accountsMonitored: summary.accountsMonitored ?? 0 });
 
   return (
     <div className="space-y-3">
@@ -300,11 +285,13 @@ export default function WeeklySummary() {
   const { user } = useAuth();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [showHistory, setShowHistory] = React.useState(false);
-  // The picture that gets shared, drawn on a canvas (see recapCardImage.ts) — also shown here as the
-  // preview, so what you see is exactly what goes out.
-  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
-  const [previewFailed, setPreviewFailed] = React.useState(false);
+  // The pictures that can be shared, drawn on a canvas (see recapCardImage.ts). Each is shown as a tappable thumbnail and the person ticks
+  // the ones to send, so what they see is exactly what goes out.
+  const [pictures, setPictures] = React.useState<Partial<Record<RecapVariant, { url: string; blob: Blob }>>>({});
+  const [failedVariants, setFailedVariants] = React.useState<Set<RecapVariant>>(new Set());
+  const [chosen, setChosen] = React.useState<RecapVariant[]>(['achievement']);
   const [previewAttempt, setPreviewAttempt] = React.useState(0);
+  const [zoomed, setZoomed] = React.useState<RecapVariant | null>(null);
 
   const [summariesSnap, loading] = useCollection(
     user ? query(collection(db, 'userWeeklySummaries'), where('userId', '==', user.uid), orderBy('generatedAt', 'desc'), limit(20)) : null,
@@ -317,57 +304,94 @@ export default function WeeklySummary() {
 
   const close = () => navigate('/');
 
+  // The picture styles available for this recap. The caring-for-family one only appears when there is health data to show.
+  const variantsFor = (summary: SummaryDoc): { id: RecapVariant; title: string; blurb: string }[] => {
+    const w = summary.week;
+    const hasHealth = (summary.praise?.healthDays30 ?? 0) > 0 || (w.bpReadings ?? 0) + (w.glucoseReadings ?? 0) + (w.medicineDoses ?? 0) + (w.vaccinesGiven ?? 0) > 0;
+    const list: { id: RecapVariant; title: string; blurb: string }[] = [
+      { id: 'achievement', title: 'My achievement', blurb: 'Top ranking, streak and week' },
+      { id: 'numbers', title: 'My week in numbers', blurb: 'What I did, vs last week' },
+      { id: 'habits', title: 'Steady family habits', blurb: 'Habits and a money thought' },
+    ];
+    if (hasHealth) list.push({ id: 'care', title: 'Caring for my family', blurb: 'Health and care this week' });
+    return list;
+  };
+
   // What the picture features depends on where THIS person was most engaged this week (health, games,
   // money, planning, chat...) — at least six different features, most-used first.
-  const buildRecapBlob = (summary: SummaryDoc) =>
-    renderRecapCard({
+  const buildRecapBlob = (summary: SummaryDoc, variant: RecapVariant) => {
+    const w = summary.week;
+    const p = summary.praise;
+    const habits = recapHabits({
+      trackedMoney: (p?.loggedDays30 ?? 0) > 0 || w.expenseLinesAdded > 0 || w.expensesTracked > 0,
+      planning: (summary.goalsTracked ?? 0) > 0 || (summary.accountsMonitored ?? 0) > 0,
+      health: (p?.healthDays30 ?? 0) > 0 || (w.bpReadings ?? 0) + (w.glucoseReadings ?? 0) + (w.medicineDoses ?? 0) + (w.vaccinesGiven ?? 0) > 0,
+      goalsTracked: summary.goalsTracked ?? 0,
+      accountsMonitored: summary.accountsMonitored ?? 0,
+    });
+    const t = thoughtFor(summary.generatedAt);
+    return renderRecapCard({
+      variant,
       periodLabel: summary.periodLabel,
       kudos: summary.kudos,
       view: buildRecapView(summary.week, summary.prevWeek, { goalsTracked: summary.goalsTracked, accountsMonitored: summary.accountsMonitored }),
       praise: summary.praise,
+      habits: habits.map((h) => ({ done: h.done, emoji: h.emoji, title: h.title, text: h.text })),
+      thought: { emoji: t.emoji, text: t.text, source: t.source },
+      care: { medicineDoses: w.medicineDoses ?? 0, bpReadings: w.bpReadings ?? 0, glucoseReadings: w.glucoseReadings ?? 0, vaccinesGiven: w.vaccinesGiven ?? 0 },
     });
+  };
 
-  // Preview of the exact image that will be shared, regenerated whenever the selected recap changes.
+  // Draw every picture for the selected recap, one after another, and show each as soon as it is ready.
   React.useEffect(() => {
     if (!active) {
-      setPreviewUrl(null);
+      setPictures({});
       return;
     }
     let cancelled = false;
-    let url: string | null = null;
-    // Start from "creating…" every time (another recap selected, or a retry), never leaving the previous picture or a blank box up.
-    setPreviewUrl(null);
-    setPreviewFailed(false);
-    buildRecapBlob(active)
-      .then((blob) => {
-        if (cancelled) return;
-        url = URL.createObjectURL(blob);
-        setPreviewUrl(url);
-      })
-      .catch((err) => {
-        console.error('Recap preview failed:', err);
-        if (!cancelled) setPreviewFailed(true);
-      });
+    const urls: string[] = [];
+    setPictures({});
+    setFailedVariants(new Set());
+    setChosen(['achievement']);
+    (async () => {
+      for (const v of variantsFor(active)) {
+        try {
+          const blob = await buildRecapBlob(active, v.id);
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          urls.push(url);
+          setPictures((prev) => ({ ...prev, [v.id]: { url, blob } }));
+        } catch (err) {
+          console.error('Recap picture failed:', v.id, err);
+          if (!cancelled) setFailedVariants((prev) => new Set(prev).add(v.id));
+        }
+      }
+    })();
     return () => {
       cancelled = true;
-      if (url) URL.revokeObjectURL(url);
+      urls.forEach((u) => URL.revokeObjectURL(u));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, previewAttempt]);
 
-  // All three buttons below try the SAME best path first — hand the recap picture (plus the full
-  // text) to the phone's own share sheet, so whichever app the user picks (WhatsApp — a contact or
-  // Status, Facebook, Instagram, anything else registered as a share target) receives the actual
-  // image with real numbers baked in. On the installed app this goes through the native share
-  // plugin (the WebView's own navigator.share can't reliably carry files); in a browser it uses the
-  // Web Share API. They only diverge in their FALLBACK when neither is available.
+  const toggleChosen = (id: RecapVariant) => setChosen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // The chosen pictures, in the order they are listed, that have finished drawing.
+  const chosenBlobs = (): { blob: Blob; filename: string }[] =>
+    (active ? variantsFor(active) : [])
+      .filter((v) => chosen.includes(v.id) && pictures[v.id])
+      .map((v) => ({ blob: pictures[v.id]!.blob, filename: `familyledger-recap-${v.id}.png` }));
+
+  // All three buttons below try the SAME best path first — hand the chosen picture(s) (plus the full text) to the phone's own share
+  // sheet, so whichever app the user picks (WhatsApp — a contact or Status, Facebook, Instagram, anything else registered as a share
+  // target) receives the actual image(s) with real numbers baked in. On the installed app this goes through the native share plugin; in a
+  // browser it uses the Web Share API. One picture can also open a brand app's own composer directly; several always use the share sheet.
   const shareViaOsSheet = async (message: string): Promise<boolean> => {
-    if (!active) return false;
+    const files = chosenBlobs();
+    if (!active || files.length === 0) return false;
     const nav = navigator as any;
     if (!Capacitor.isNativePlatform() && !nav.share) return false;
     try {
-      const blob = await buildRecapBlob(active);
-      await shareOrDownloadFile(blob, 'familyledger-weekly-recap.png', 'image/png', message);
+      await shareOrDownloadFiles(files, 'image/png', message);
       return true;
     } catch (err) {
       console.error('Image share failed, falling back:', err);
@@ -385,7 +409,13 @@ export default function WeeklySummary() {
     const message = buildShareMessage(active);
     const text = target === 'twitter' ? buildShortShareMessage(active) : message;
     logGrowthEvent(`share_${target}` as Parameters<typeof logGrowthEvent>[0], user?.uid);
-    const blob = await buildRecapBlob(active).catch(() => null);
+    const picked = chosenBlobs();
+    if (picked.length === 0) {
+      setShareNote('Tap at least one picture above to choose what to share.');
+      return;
+    }
+    const blob = picked.length === 1 ? picked[0].blob : null;
+    if (picked.length > 1) setShareNote(`Sharing ${picked.length} pictures: pick the app in your phone's share sheet.`);
     if (blob && target !== 'native') {
       const direct = await shareImageToApp(target as DirectShareTarget, blob, text);
       if (direct.status === 'shared') {
@@ -394,7 +424,7 @@ export default function WeeklySummary() {
       }
       if (direct.status === 'not_installed') setShareNote("That app doesn't seem to be installed — choose another app from the share sheet instead.");
     }
-    if (blob && (await shareViaOsSheet(text))) return;
+    if (picked.length > 0 && (await shareViaOsSheet(text))) return;
     // No image sharing here — fall back to the same text/link shares as everywhere else.
     if (target === 'native') {
       navigator.clipboard?.writeText(message).catch(() => {});
@@ -448,32 +478,72 @@ export default function WeeklySummary() {
               <>
                 <AppreciationCard summary={active} />
 
-                {previewUrl ? (
-                  <motion.img
-                    key={previewUrl}
-                    initial={{ opacity: 0, scale: 0.98 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.35 }}
-                    src={previewUrl}
-                    alt="Your weekly recap picture"
-                    className="w-full rounded-2xl shadow-md"
-                  />
-                ) : (
-                  <RecapPreviewPlaceholder failed={previewFailed} onRetry={() => setPreviewAttempt((n) => n + 1)} />
+                <div className="space-y-2">
+                  <div className="flex items-end justify-between px-1">
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Pick what to share</p>
+                    <p className="text-[11px] font-black text-primary">{chosen.length === 0 ? 'None selected' : `${chosen.length} selected`}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {variantsFor(active).map((v) => {
+                      const pic = pictures[v.id];
+                      const on = chosen.includes(v.id);
+                      const failed = failedVariants.has(v.id);
+                      return (
+                        <div key={v.id} className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => pic && toggleChosen(v.id)}
+                            aria-pressed={on}
+                            aria-label={`${on ? 'Selected' : 'Not selected'}: ${v.title}`}
+                            className={`relative block w-full aspect-[4/5] rounded-2xl overflow-hidden transition-all active:scale-[0.98] ${on ? 'ring-4 ring-primary shadow-lg' : 'ring-1 ring-border-subtle opacity-80'}`}
+                          >
+                            {pic ? (
+                              <img src={pic.url} alt={v.title} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-[#0b3a4f] flex items-center justify-center text-white/80 text-[11px] font-bold px-3 text-center">
+                                {failed ? 'Could not draw this one' : 'Drawing…'}
+                              </div>
+                            )}
+                            <span className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center shadow-md ${on ? 'bg-primary text-white' : 'bg-white/90 text-text-muted border border-border-subtle'}`}>
+                              <span className="material-symbols-outlined text-[20px]">{on ? 'check' : 'add'}</span>
+                            </span>
+                            {on && <span className="absolute bottom-0 inset-x-0 bg-primary text-white text-[11px] font-black py-1 text-center">Selected to share</span>}
+                          </button>
+                          <div className="flex items-start justify-between gap-1 px-0.5">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-black text-primary leading-tight truncate">{v.title}</p>
+                              <p className="text-[10px] text-text-muted leading-tight truncate">{v.blurb}</p>
+                            </div>
+                            {pic && <button type="button" onClick={() => setZoomed(v.id)} className="shrink-0 text-[10px] font-bold text-primary underline">View</button>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {failedVariants.size > 0 && (
+                    <button type="button" onClick={() => setPreviewAttempt((n) => n + 1)} className="w-full py-2 rounded-xl bg-primary/5 text-primary text-xs font-black">Try drawing again</button>
+                  )}
+                </div>
+
+                {zoomed && pictures[zoomed] && (
+                  <div className="fixed inset-0 z-[300] bg-black/85 flex items-center justify-center p-4" onClick={() => setZoomed(null)}>
+                    <img src={pictures[zoomed]!.url} alt="Recap picture" className="max-h-full max-w-full rounded-2xl" />
+                    <button type="button" onClick={() => setZoomed(null)} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 flex items-center justify-center" aria-label="Close"><span className="material-symbols-outlined">close</span></button>
+                  </div>
                 )}
 
                 <div className="rounded-3xl border-2 border-primary/20 bg-primary/5 p-4 space-y-3">
                   <div className="text-center space-y-1">
                     <p className="text-sm font-black text-primary">Be proud of this. Inspire another family.</p>
                     <p className="text-xs text-text-muted leading-snug">
-                      Share your recap in one tap. The picture already has your achievements, the app link, a QR code, the Google Play badge, and our Instagram and Facebook pages, and the caption carries the links too.
+                      Choose the pictures above, then share in one tap. Each has your achievements, the app link, a QR code, the Google Play badge, and our Instagram and Facebook pages, and the caption carries the links too.
                     </p>
                   </div>
                   <ShareAppButtons
                     onShare={handleShareApp}
                     onLinkOnly={handleShareLinkOnly}
                     primaryIcon={typeof navigator !== 'undefined' && (navigator as any).share ? 'share' : 'content_copy'}
-                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? 'Share my recap' : 'Copy share message'}
+                    primaryLabel={typeof navigator !== 'undefined' && (navigator as any).share ? (chosen.length > 1 ? `Share ${chosen.length} pictures` : 'Share my recap') : 'Copy share message'}
                     note={shareNote}
                   />
                 </div>

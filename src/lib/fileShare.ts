@@ -108,6 +108,48 @@ export async function shareOrDownloadFile(blob: Blob, filename: string, mimeType
   URL.revokeObjectURL(url);
 }
 
+// Several pictures (and one caption) in a single share sheet — what the weekly recap uses when more than one picture is chosen. The native
+// Share plugin takes a list of files; in a browser the Web Share API does when it can, otherwise each picture is saved.
+export async function shareOrDownloadFiles(files: { blob: Blob; filename: string }[], mimeType: string, text?: string) {
+  if (files.length === 1) return shareOrDownloadFile(files[0].blob, files[0].filename, mimeType, text);
+  if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Filesystem') && Capacitor.isPluginAvailable('Share')) {
+    try {
+      const uris: string[] = [];
+      for (const f of files) {
+        const written = await Filesystem.writeFile({ path: f.filename, data: await blobToBase64(f.blob), directory: Directory.Cache });
+        uris.push(written.uri);
+      }
+      let attempt = 0;
+      for (;;) {
+        try {
+          await Share.share({ title: 'My FamilyLedger recap', ...(text ? { text } : {}), files: uris });
+          return;
+        } catch (e: any) {
+          if (!/in progress/i.test(String(e?.message || '')) || attempt >= 3) throw e;
+          attempt += 1;
+          await new Promise((r) => setTimeout(r, 900));
+        }
+      }
+    } catch (err: any) {
+      if (typeof err?.message === 'string' && /cancel/i.test(err.message)) return;
+      console.error('Native multi-file share failed:', err);
+      throw err;
+    }
+  }
+  try {
+    const nav = navigator as any;
+    const list = files.map((f) => new File([f.blob], f.filename, { type: mimeType }));
+    if (nav.share && nav.canShare?.({ files: list })) {
+      await nav.share({ files: list, ...(text ? { text } : {}) });
+      return;
+    }
+  } catch (err) {
+    if ((err as any)?.name === 'AbortError') return;
+    console.error('multi-file web share failed, saving instead:', err);
+  }
+  for (const f of files) await shareOrDownloadFile(f.blob, f.filename, mimeType);
+}
+
 // Plain-text sharing (no file involved) — e.g. AccountsHub's "Share account details". Same native
 // vs. web split as shareOrDownloadFile above, but text-only sharing IS reliably supported by both
 // the Capacitor Share plugin and a browser's navigator.share, so there's no file-specific WebView

@@ -15,14 +15,195 @@ export interface RecapPraiseInput {
   weeksActive8: number;
 }
 
+export type RecapVariant = 'achievement' | 'numbers' | 'habits' | 'care';
+
+export interface RecapHabitInput { done: boolean; emoji: string; title: string; text: string }
+export interface RecapThoughtInput { emoji: string; text: string; source: string }
+
 export interface RecapCardInput {
   periodLabel: string;
   kudos: string;
   view: RecapView;
   praise?: RecapPraiseInput | null;
+  variant?: RecapVariant;
+  habits?: RecapHabitInput[];
+  thought?: RecapThoughtInput | null;
+  care?: { medicineDoses: number; bpReadings: number; glucoseReadings: number; vaccinesGiven: number };
 }
 
-export async function renderRecapCard({ periodLabel, kudos, view, praise }: RecapCardInput): Promise<Blob> {
+export async function renderRecapCard(input: RecapCardInput): Promise<Blob> {
+  if (input.variant === 'habits') return renderHabitsCard(input);
+  if (input.variant === 'care') return renderCareCard(input);
+  return renderTilesCard(input);
+}
+
+function gold(ctx: CanvasRenderingContext2D) {
+  const g = ctx.createLinearGradient(W / 2 - 320, 0, W / 2 + 320, 0);
+  g.addColorStop(0, '#FFE58A');
+  g.addColorStop(1, '#FFA629');
+  return g;
+}
+
+function paintTitle(ctx: CanvasRenderingContext2D, small: string, headline: string) {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#FFC93C';
+  ctx.font = `800 26px ${FONT}`;
+  (ctx as any).letterSpacing = '6px';
+  ctx.fillText(small.toUpperCase(), W / 2, 190);
+  (ctx as any).letterSpacing = '0px';
+  ctx.save();
+  ctx.shadowColor = 'rgba(255, 170, 40, 0.5)';
+  ctx.shadowBlur = 28;
+  ctx.fillStyle = gold(ctx);
+  ctx.fillText(fitText(ctx, headline, W - 120, 84, '900', 44), W / 2, 282);
+  ctx.restore();
+}
+
+// "Steady family habits": the three habits ticked from what this person did, and the week's thought with its source.
+async function renderHabitsCard({ periodLabel, habits = [], thought }: RecapCardInput): Promise<Blob> {
+  await fontsReady();
+  const { canvas, ctx } = newPosterCanvas();
+  paintBackground(ctx, '74, 222, 128', 20261015);
+  paintLogoBadge(ctx);
+  paintTitle(ctx, `Steady family habits  ·  ${periodLabel}`, 'Building financial peace of mind');
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.font = `600 29px ${FONT}`;
+  ctx.fillText('Planning, awareness and small daily habits', W / 2, 340);
+
+  let y = 392;
+  habits.slice(0, 3).forEach((h) => {
+    roundRectPath(ctx, 70, y, W - 140, 126, 32);
+    ctx.fillStyle = h.done ? 'rgba(74, 222, 128, 0.16)' : 'rgba(255, 255, 255, 0.08)';
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = h.done ? 'rgba(74, 222, 128, 0.7)' : 'rgba(255, 255, 255, 0.22)';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(70 + 20 + 40, y + 63, 40, 0, Math.PI * 2);
+    ctx.fillStyle = h.done ? '#22C55E' : 'rgba(255, 255, 255, 0.12)';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FFFFFF';
+    if (h.done) {
+      ctx.font = `900 46px ${FONT}`;
+      ctx.fillText('✓', 70 + 60, y + 79);
+    } else {
+      ctx.font = `38px ${EMOJI_FONT}`;
+      ctx.fillText(h.emoji, 70 + 60, y + 76);
+    }
+    const tx = 70 + 20 + 80 + 26;
+    ctx.textAlign = 'left';
+    ctx.font = `900 34px ${FONT}`;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(fitText(ctx, h.title, W - 70 - tx - 30, 34, '900', 22), tx, y + 50);
+    ctx.font = `600 23px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+    wrapLines(ctx, h.text, W - 70 - tx - 30, 2).forEach((l, i) => ctx.fillText(l, tx, y + 84 + i * 30));
+    y += 126 + 12;
+  });
+
+  if (thought) {
+    const top = y + 4;
+    const hgt = 1050 - top;
+    roundRectPath(ctx, 70, top, W - 140, hgt, 34);
+    ctx.fillStyle = 'rgba(255, 201, 60, 0.14)';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255, 201, 60, 0.7)';
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#FFC93C';
+    ctx.font = `800 22px ${FONT}`;
+    (ctx as any).letterSpacing = '3px';
+    ctx.fillText(`${thought.emoji}  A THOUGHT FOR THE WEEK`, 70 + 30, top + 44);
+    (ctx as any).letterSpacing = '0px';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `600 26px ${FONT}`;
+    const lines = wrapLines(ctx, thought.text, W - 140 - 60, 4);
+    lines.forEach((l, i) => ctx.fillText(l, 70 + 30, top + 90 + i * 34));
+    ctx.fillStyle = 'rgba(255, 229, 138, 0.9)';
+    ctx.font = `700 21px ${FONT}`;
+    ctx.fillText(fitText(ctx, thought.source, W - 140 - 60, 21, '700', 14), 70 + 30, top + hgt - 20);
+  }
+  paintInstallFooter(ctx, 'Join me on FamilyLedger 👉', { playBadge: true });
+  return canvasToPng(canvas);
+}
+
+// "Caring for my family": the health and care numbers for the week, with the consistency badges.
+async function renderCareCard({ periodLabel, praise, care }: RecapCardInput): Promise<Blob> {
+  await fontsReady();
+  const { canvas, ctx } = newPosterCanvas();
+  paintBackground(ctx, '255, 120, 140', 20261016);
+  paintLogoBadge(ctx);
+  paintTitle(ctx, `Caring for my family  ·  ${periodLabel}`, 'Looking after the ones I love');
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.font = `600 29px ${FONT}`;
+  ctx.fillText('Health is part of a family\u2019s financial wellbeing too', W / 2, 340);
+
+  const tiles = [
+    { emoji: '💊', value: care?.medicineDoses ?? 0, label: 'Medicine doses taken' },
+    { emoji: '❤️', value: care?.bpReadings ?? 0, label: 'BP readings logged' },
+    { emoji: '🩸', value: care?.glucoseReadings ?? 0, label: 'Glucose readings logged' },
+    { emoji: '💉', value: care?.vaccinesGiven ?? 0, label: 'Vaccines recorded' },
+  ];
+  const gap = 20;
+  const tw = (W - 140 - gap) / 2;
+  tiles.forEach((t, i) => {
+    const x = 70 + (i % 2) * (tw + gap);
+    const y = 396 + Math.floor(i / 2) * (200 + gap);
+    roundRectPath(ctx, x, y, tw, 200, 34);
+    ctx.fillStyle = t.value > 0 ? 'rgba(255, 138, 160, 0.16)' : 'rgba(255, 255, 255, 0.08)';
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = t.value > 0 ? 'rgba(255, 138, 160, 0.7)' : 'rgba(255, 255, 255, 0.2)';
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.font = `52px ${EMOJI_FONT}`;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(t.emoji, x + 28, y + 80);
+    ctx.font = `900 84px ${FONT}`;
+    ctx.fillStyle = t.value > 0 ? '#FFE0E6' : 'rgba(255, 255, 255, 0.5)';
+    ctx.fillText(String(t.value), x + 28 + 78, y + 84);
+    ctx.font = `700 25px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillText(fitText(ctx, t.label, tw - 56, 25, '700', 16), x + 28, y + 156);
+  });
+
+  const badges: { emoji: string; value: string; label: string }[] = [];
+  if (praise && praise.healthDays30 > 0) badges.push({ emoji: '❤️', value: String(praise.healthDays30), label: 'days caring for health this month' });
+  if (praise && praise.streakDays > 0) badges.push({ emoji: '🔥', value: String(praise.streakDays), label: 'days in a row watching my spending' });
+  badges.slice(0, 2).forEach((b, i, arr) => {
+    const bw = (W - 140 - 20 * (arr.length - 1)) / arr.length;
+    const bx = 70 + i * (bw + 20);
+    const by = 396 + 2 * (200 + gap) + 4;
+    roundRectPath(ctx, bx, by, bw, 110, 28);
+    ctx.fillStyle = 'rgba(255, 201, 60, 0.14)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 201, 60, 0.5)';
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.font = `36px ${EMOJI_FONT}`;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(b.emoji, bx + 20, by + 68);
+    ctx.font = `900 44px ${FONT}`;
+    ctx.fillStyle = '#FFE58A';
+    ctx.fillText(b.value, bx + 78, by + 56);
+    ctx.font = `700 19px ${FONT}`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillText(fitText(ctx, b.label, bw - 90, 19, '700', 12), bx + 78, by + 88);
+  });
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.font = `700 28px ${FONT}`;
+  ctx.fillText('Small, steady care adds up for the whole family 💚', W / 2, 1010);
+  paintInstallFooter(ctx, 'Join me on FamilyLedger 👉', { playBadge: true });
+  return canvasToPng(canvas);
+}
+
+// "Achievement" (with the appreciation strip) and "My week in numbers" (the classic tile picture, no ranking).
+async function renderTilesCard({ periodLabel, kudos, view, praise, variant }: RecapCardInput): Promise<Blob> {
+  if (variant === 'numbers') praise = null;
   await fontsReady();
   const { canvas, ctx } = newPosterCanvas();
   paintBackground(ctx, '255, 196, 61', 20261014);
