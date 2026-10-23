@@ -135,6 +135,7 @@ export default function FriendStreakCard() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [sheet, setSheet] = useState<string | null>(null); // the streak or invite whose details are open
   const [people, setPeople] = useState<(FriendPerson & { taken: boolean })[] | null>(null);
   const loadedAt = useRef(0);
 
@@ -196,51 +197,118 @@ export default function FriendStreakCard() {
   if (!user || !data) return null;
 
   const me = { name: profile?.displayName || user.displayName || 'You', photoURL: profile?.photoURL || user.photoURL || null };
-  const used = data.streaks.length + data.outgoing.length;
-  const hasAny = used > 0 || data.incoming.length > 0;
+
+  // Five slots in one row: running streaks first, then invites for me, then invites I sent, then empty "+" slots.
+  type Slot =
+    | { kind: 'active'; s: ActiveFriendStreak }
+    | { kind: 'incoming'; inv: FriendStreaks['incoming'][number] }
+    | { kind: 'outgoing'; o: FriendStreaks['outgoing'][number] }
+    | { kind: 'empty' };
+  const items: Slot[] = [
+    ...data.streaks.map((s) => ({ kind: 'active' as const, s })),
+    ...data.incoming.map((inv) => ({ kind: 'incoming' as const, inv })),
+    ...data.outgoing.map((o) => ({ kind: 'outgoing' as const, o })),
+  ];
+  const slots: Slot[] = [...items.slice(0, data.max), ...Array.from({ length: Math.max(0, data.max - items.length) }, () => ({ kind: 'empty' as const }))];
+  const hiddenInvites = Math.max(0, items.length - data.max);
+
+  const first = (n: string) => n.split(' ')[0];
+  const tile = 'relative rounded-2xl px-1 py-2 flex flex-col items-center justify-center gap-1 min-w-0 h-[104px] active:scale-95 transition-transform';
+
+  const selected = sheet ? slots.find((x) => (x.kind === 'active' && x.s.pairId === sheet) || (x.kind === 'incoming' && x.inv.pairId === sheet) || (x.kind === 'outgoing' && x.o.pairId === sheet)) : null;
+  const filled = items.length;
 
   return (
     <>
-      <div className="space-y-2">
-        {data.incoming.map((inv) => (
-          <div key={inv.pairId} className={FRAME} style={{ background: 'linear-gradient(135deg,#7c2d12 0%,#ea580c 100%)' }}>
-            <p className="text-sm font-black leading-tight">🔥 {inv.name} invited you to a streak</p>
-            <p className="text-[12px] text-white/85 leading-snug mt-0.5">Log something every day, both of you, and watch the days add up.</p>
-            <div className="flex gap-2 mt-3">
-              <button type="button" disabled={busy !== null} onClick={() => run(`accept${inv.pairId}`, () => answerStreakInvite(inv.pairId, true), 'Streak started! Log something today.')} className="flex-1 py-2.5 rounded-xl bg-white text-orange-900 text-sm font-black active:scale-95 disabled:opacity-60">{busy === `accept${inv.pairId}` ? '…' : 'Accept'}</button>
-              <button type="button" disabled={busy !== null} onClick={() => run(`decline${inv.pairId}`, () => answerStreakInvite(inv.pairId, false))} className="flex-1 py-2.5 rounded-xl bg-white/15 text-white text-sm font-black active:scale-95 disabled:opacity-60">Not now</button>
-            </div>
-          </div>
-        ))}
-
-        {data.streaks.map((s) => (
-          <ActiveStreakCard key={s.pairId} s={s} me={me} onChanged={refresh} />
-        ))}
-
-        {data.outgoing.map((o) => (
-          <div key={o.pairId} className="rounded-2xl p-3 text-white flex items-center gap-3" style={{ background: 'linear-gradient(135deg,#334155 0%,#475569 100%)' }}>
-            <Avatar p={o.partner} size={36} />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-black leading-tight truncate">Waiting for {o.partner.name}</p>
-              <p className="text-[11px] text-white/75 leading-snug">Your streak invite is waiting for them.</p>
-            </div>
-            <button type="button" disabled={busy !== null} onClick={() => run(`cancel${o.pairId}`, () => endFriendStreak(o.pairId))} className="shrink-0 px-3 py-2 rounded-xl bg-white/15 text-xs font-black active:scale-95 disabled:opacity-60">Cancel</button>
-          </div>
-        ))}
-
-        {used < data.max && (
-          <button type="button" onClick={openPicker} className="w-full rounded-2xl border-2 border-dashed border-orange-300 bg-orange-50 p-3.5 flex items-center gap-3 text-left active:scale-[0.99]">
-            <span className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shrink-0"><span className="material-symbols-outlined">{hasAny ? 'group_add' : 'local_fire_department'}</span></span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-black text-orange-900 leading-tight">{hasAny ? 'Start a streak with another friend' : 'Keep a streak with a friend'}</span>
-              <span className="block text-[11px] text-orange-800/80 leading-snug">{hasAny ? `You can keep up to ${data.max} streaks going.` : 'Invite someone you love. You both log every day, and the days add up together.'}</span>
-            </span>
-            <span className="material-symbols-outlined text-orange-500">chevron_right</span>
-          </button>
-        )}
-        {note && <p className="text-[11px] font-bold text-emerald-700 px-1">{note}</p>}
-        {error && <p className="text-[11px] font-bold text-error px-1">{error}</p>}
+      <div className="rounded-2xl bg-white border border-slate-200 p-3 shadow-sm">
+        <div className="flex items-center justify-between px-0.5 mb-2">
+          <p className="text-[11px] font-black uppercase tracking-[0.14em] text-orange-700">Friend streaks</p>
+          <p className="text-[11px] font-black text-text-muted tabular-nums">{Math.min(filled, data.max)}/{data.max}</p>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          {slots.map((slot, i) => {
+            if (slot.kind === 'active') {
+              const { s } = slot;
+              const frozen = s.state === 'frozen';
+              return (
+                <button key={s.pairId} type="button" onClick={() => setSheet(s.pairId)} className={clsx(tile, 'text-white shadow-sm')} style={{ background: frozen ? 'linear-gradient(160deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(160deg,#3a1208 0%,#9a3412 60%,#ea580c 100%)' }} aria-label={`Streak with ${s.partner.name}: ${s.current} days`}>
+                  <Avatar p={s.partner} size={32} ring />
+                  <span className="text-[10px] font-bold truncate w-full text-center leading-none">{first(s.partner.name)}</span>
+                  <span className="flex items-center gap-0.5 leading-none">
+                    <span className="w-[22px] h-[26px] -ml-1 overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={22} /></span>
+                    <span className="text-sm font-black tabular-nums">{s.current}</span>
+                  </span>
+                  <span className="flex gap-1">
+                    <span className={clsx('w-2 h-2 rounded-full', s.myDone ? 'bg-emerald-400' : 'bg-white/35')} />
+                    <span className={clsx('w-2 h-2 rounded-full', s.partnerDone ? 'bg-emerald-400' : 'bg-white/35')} />
+                  </span>
+                </button>
+              );
+            }
+            if (slot.kind === 'incoming') {
+              return (
+                <button key={slot.inv.pairId} type="button" onClick={() => setSheet(slot.inv.pairId)} className={clsx(tile, 'bg-orange-50 border-2 border-orange-400 animate-pulse')} aria-label={`${slot.inv.name} invited you to a streak`}>
+                  <span className="w-8 h-8 rounded-full bg-orange-500 text-white font-black flex items-center justify-center text-sm">{slot.inv.name.slice(0, 1).toUpperCase()}</span>
+                  <span className="text-[10px] font-bold truncate w-full text-center leading-none text-orange-900">{first(slot.inv.name)}</span>
+                  <span className="text-[10px] font-black text-orange-700 leading-tight text-center">Invited you</span>
+                </button>
+              );
+            }
+            if (slot.kind === 'outgoing') {
+              return (
+                <button key={slot.o.pairId} type="button" onClick={() => setSheet(slot.o.pairId)} className={clsx(tile, 'bg-slate-100 border border-slate-300')} aria-label={`Waiting for ${slot.o.partner.name}`}>
+                  <span className="opacity-70"><Avatar p={{ name: slot.o.partner.name, photoURL: slot.o.partner.photoURL }} size={32} /></span>
+                  <span className="text-[10px] font-bold truncate w-full text-center leading-none text-slate-700">{first(slot.o.partner.name)}</span>
+                  <span className="text-[10px] font-black text-slate-500 leading-tight text-center">⏳ Waiting</span>
+                </button>
+              );
+            }
+            return (
+              <button key={`empty${i}`} type="button" onClick={openPicker} className={clsx(tile, 'border-2 border-dashed border-orange-300 bg-orange-50/60 text-orange-500')} aria-label="Invite a friend to a streak">
+                <span className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center"><span className="material-symbols-outlined text-[22px]">add</span></span>
+                <span className="text-[10px] font-black leading-tight text-center text-orange-700">Invite</span>
+              </button>
+            );
+          })}
+        </div>
+        {hiddenInvites > 0 && <p className="text-[10px] font-bold text-text-muted mt-2 px-0.5">{hiddenInvites} more invite{hiddenInvites === 1 ? '' : 's'} waiting. End a streak to free a slot.</p>}
+        {note && <p className="text-[11px] font-bold text-emerald-700 mt-2 px-0.5">{note}</p>}
+        {error && <p className="text-[11px] font-bold text-error mt-2 px-0.5">{error}</p>}
       </div>
+
+      {selected && selected.kind !== 'empty' &&
+        createPortal(
+          <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setSheet(null)} />
+            <div className="relative w-full sm:max-w-sm max-h-[88vh] overflow-y-auto p-3 pb-6">
+              <button type="button" onClick={() => setSheet(null)} className="absolute right-4 top-4 z-20 w-8 h-8 rounded-full bg-black/40 text-white flex items-center justify-center" aria-label="Close"><span className="material-symbols-outlined text-[20px]">close</span></button>
+              {selected.kind === 'active' && <ActiveStreakCard s={selected.s} me={me} onChanged={refresh} />}
+              {selected.kind === 'incoming' && (
+                <div className={FRAME} style={{ background: 'linear-gradient(135deg,#7c2d12 0%,#ea580c 100%)' }}>
+                  <p className="text-base font-black leading-tight pr-8">🔥 {selected.inv.name} invited you to a streak</p>
+                  <p className="text-[12px] text-white/85 leading-snug mt-1">Log something every day, both of you, and watch the days add up.</p>
+                  <div className="flex gap-2 mt-4">
+                    <button type="button" disabled={busy !== null} onClick={async () => { await run('accept', () => answerStreakInvite(selected.inv.pairId, true), 'Streak started! Log something today.'); setSheet(null); }} className="flex-1 py-2.5 rounded-xl bg-white text-orange-900 text-sm font-black active:scale-95 disabled:opacity-60">{busy === 'accept' ? '…' : 'Accept'}</button>
+                    <button type="button" disabled={busy !== null} onClick={async () => { await run('decline', () => answerStreakInvite(selected.inv.pairId, false)); setSheet(null); }} className="flex-1 py-2.5 rounded-xl bg-white/15 text-white text-sm font-black active:scale-95 disabled:opacity-60">Not now</button>
+                  </div>
+                </div>
+              )}
+              {selected.kind === 'outgoing' && (
+                <div className={FRAME} style={{ background: 'linear-gradient(135deg,#334155 0%,#475569 100%)' }}>
+                  <div className="flex items-center gap-3 pr-8">
+                    <Avatar p={selected.o.partner} size={44} />
+                    <div className="min-w-0">
+                      <p className="text-base font-black leading-tight truncate">Waiting for {selected.o.partner.name}</p>
+                      <p className="text-[12px] text-white/80 leading-snug">Your streak invite is waiting for them to accept.</p>
+                    </div>
+                  </div>
+                  <button type="button" disabled={busy !== null} onClick={async () => { await run('cancel', () => endFriendStreak(selected.o.pairId)); setSheet(null); }} className="mt-4 w-full py-2.5 rounded-xl bg-white/15 text-white text-sm font-black active:scale-95 disabled:opacity-60">{busy === 'cancel' ? '…' : 'Cancel the invite'}</button>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {picking &&
         createPortal(
