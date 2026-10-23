@@ -5353,7 +5353,9 @@ async function startServer() {
   // the expense. The clip is processed once and not stored by us. Only a signed-in person can use it, with a small per-person limit,
   // because every call costs a little.
   const voiceHits = new Map<string, { n: number; resetAt: number }>();
-  const VOICE_MODEL = 'gemini-2.5-flash';
+  // Google retires older Gemini models for a project over time (gemini-2.5-flash started answering 404 here), so the model is configurable
+  // and a second, lighter model is tried when the first is not found.
+  const VOICE_MODELS = [process.env.VOICE_AI_MODEL || 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
   const VOICE_LOCATION = process.env.VOICE_AI_LOCATION || 'asia-south1';
   let voiceAi: GoogleGenAI | null = null;
   app.post('/api/voice-expense', async (req, res) => {
@@ -5398,8 +5400,8 @@ async function startServer() {
         'Do not invent anything that was not said. If the audio is silent or not about money, return amount null and an empty description.',
       ].join('\n');
 
-      const response = await voiceAi.models.generateContent({
-        model: VOICE_MODEL,
+      const voiceRequest = (model: string) => voiceAi!.models.generateContent({
+        model,
         contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: audio } }] }],
         config: {
           temperature: 0,
@@ -5419,6 +5421,19 @@ async function startServer() {
           },
         },
       });
+      let response: Awaited<ReturnType<typeof voiceRequest>> | null = null;
+      let lastError: any = null;
+      for (const model of VOICE_MODELS) {
+        try {
+          response = await voiceRequest(model);
+          break;
+        } catch (err: any) {
+          lastError = err;
+          if (!/NOT_FOUND|404/.test(String(err?.message || err))) throw err; // only a missing model moves on to the next one
+          console.error(`voice-expense: model ${model} not available, trying the next`);
+        }
+      }
+      if (!response) throw lastError || new Error('no voice model available');
 
       let parsed: any = {};
       try { parsed = JSON.parse(response.text || '{}'); } catch { parsed = {}; }

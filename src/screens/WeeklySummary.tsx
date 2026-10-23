@@ -8,7 +8,7 @@ import { installLinksText } from '../lib/cardCanvas';
 import { shareOrDownloadFiles, shareText } from '../lib/fileShare';
 import { thoughtFor, recapHabits, guardianLevel, GUARDIAN_DAYS_NAME } from '../lib/recapThoughts';
 import type { RecapVariant } from '../lib/recapCardImage';
-import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
+import { shareImageToApp, shareImagesToApp, DirectShareTarget } from '../lib/appShare';
 import { logGrowthEvent } from '../lib/growthEvents';
 import type { ShareTarget } from '../lib/spreadTheWord';
 import ShareAppButtons from '../components/ShareAppButtons';
@@ -417,7 +417,18 @@ export default function WeeklySummary() {
       return;
     }
     const blob = picked.length === 1 ? picked[0].blob : null;
-    if (picked.length > 1) setShareNote(`Sharing ${picked.length} pictures: pick the app in your phone's share sheet.`);
+    // Several pictures: straight to the chosen app as one multi-picture share (or the share sheet for 'Share my recap'). The caption is copied too.
+    if (picked.length > 1) {
+      const multi = await shareImagesToApp(target === 'native' ? 'sheet' : (target as DirectShareTarget), picked.map((p) => p.blob), text);
+      if (multi.status === 'shared') {
+        setShareNote(`Caption copied. If the app did not fill it in, paste it into your post. (${picked.length} pictures sent.)`);
+        return;
+      }
+      if (multi.status === 'not_installed') {
+        setShareNote("That app doesn't seem to be installed. Choose another app, or Share my recap to pick from your phone's list.");
+        return;
+      }
+    }
     if (blob && target !== 'native') {
       const direct = await shareImageToApp(target as DirectShareTarget, blob, text);
       if (direct.status === 'shared') {
@@ -427,6 +438,7 @@ export default function WeeklySummary() {
       if (direct.status === 'not_installed') setShareNote("That app doesn't seem to be installed — choose another app from the share sheet instead.");
     }
     if (picked.length > 0 && (await shareViaOsSheet(text))) return;
+    if (picked.length > 1) setShareNote('Your pictures could not be attached on this phone, so only the text was shared. Update the app, or choose one picture at a time.');
     // No image sharing here — fall back to the same text/link shares as everywhere else.
     if (target === 'native') {
       navigator.clipboard?.writeText(message).catch(() => {});

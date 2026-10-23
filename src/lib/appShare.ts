@@ -13,6 +13,7 @@ export const META_APP_ID = '1857746475636342';
 // 'unavailable' and the caller falls back to the normal share sheet, so nothing breaks.
 interface AppSharePlugin {
   shareImage(options: { package: string; fileName: string; text?: string }): Promise<{ success: boolean; reason?: string }>;
+  shareImages(options: { package?: string; fileNames: string[]; text?: string }): Promise<{ success: boolean; reason?: string }>;
   shareInstagramStory(options: { backgroundFile: string; stickerFile?: string; appId?: string; topColor?: string; bottomColor?: string }): Promise<{ success: boolean; reason?: string }>;
   shareFacebookStory(options: { backgroundFile: string; stickerFile?: string; appId: string; topColor?: string; bottomColor?: string }): Promise<{ success: boolean; reason?: string }>;
 }
@@ -74,6 +75,37 @@ function chooseShareMode(network: 'instagram' | 'facebook'): Promise<'story' | '
 
 export function canShareDirectly(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('AppShare') && Capacitor.isPluginAvailable('Filesystem');
+}
+
+// Several pictures at once, to one app or (target 'sheet') to the phone's share sheet. The caption is always copied as well, because
+// apps often drop the text that comes with several pictures; the person can paste it into the post.
+export async function shareImagesToApp(target: DirectShareTarget | 'sheet', blobs: Blob[], caption: string): Promise<DirectShareResult> {
+  if (!canShareDirectly()) return { status: 'unavailable' };
+  try {
+    const stamp = Date.now();
+    const names: string[] = [];
+    for (let i = 0; i < blobs.length; i++) {
+      const name = `familyledger-share-${stamp}-${i}.png`;
+      await Filesystem.writeFile({ path: name, data: await blobToBase64(blobs[i]), directory: Directory.Cache });
+      names.push(name);
+    }
+    let captionCopied = false;
+    try {
+      await navigator.clipboard.writeText(caption);
+      captionCopied = true;
+    } catch {
+      /* clipboard unavailable: the pictures still go through */
+    }
+    const packages = target === 'sheet' ? [''] : PACKAGES[target];
+    for (const pkg of packages) {
+      const res = await AppShareNative.shareImages({ package: pkg || undefined, fileNames: names, text: caption });
+      if (res.success) return { status: 'shared', captionCopied };
+    }
+    return { status: 'not_installed' };
+  } catch (err) {
+    console.error('Multi-picture share failed:', err);
+    return { status: 'unavailable' };
+  }
 }
 
 export async function shareImageToApp(target: DirectShareTarget, blob: Blob, caption: string): Promise<DirectShareResult> {
