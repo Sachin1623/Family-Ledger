@@ -7,11 +7,13 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { claimPoints } from '../lib/pointsApi';
 import Fireworks from './Fireworks';
+import { restoreStreak, COST_PER_MISSED_DAY } from '../lib/streakApi';
 
 // The streak flame on the dashboard: how many days in a row this person has looked after their family's spending, and what to do next.
 //   lit    : logged today          -> a steady flame
 //   risk   : logged yesterday only -> a pulsing flame, "Log now" and "No spend today"
-//   out    : the streak has lapsed  -> a dim flame and a kind nudge to start again
+//   frozen : 1 to 3 days missed     -> an icy flame; the count is kept and can be unfrozen with coins or an earned freeze
+//   out    : the streak has lapsed  -> a dim flame and a kind nudge to start again (a just-broken streak can still be restored for a few days)
 // A flare plays when the number goes up while the card is on screen, and a celebration for the big milestones (7, 14, 30, 60, 100, 365).
 // Days follow the person's own time zone, the same way the server counts them.
 
@@ -36,7 +38,9 @@ export default function StreakCard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [snap] = useDocument(user ? doc(db, 'userPoints', user.uid, 'meta', 'expenseStreak') : null);
-  const data = snap?.data() as { current?: number; longest?: number; lastDateStr?: string; freezes?: number } | undefined;
+  const data = snap?.data() as { current?: number; longest?: number; lastDateStr?: string; freezes?: number; lostStreak?: { value: number; missedDays: number; until: string } } | undefined;
+  const [restoring, setRestoring] = useState<'coins' | 'freeze' | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const [flare, setFlare] = useState(0);
   const [milestone, setMilestone] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -46,7 +50,15 @@ export default function StreakCard() {
   const yesterday = localDay(new Date(Date.now() - 86_400_000));
   const current = data?.current ?? 0;
   const last = data?.lastDateStr;
-  const state: 'lit' | 'risk' | 'out' | 'none' = !data || !current ? 'none' : last === today ? 'lit' : last === yesterday ? 'risk' : 'out';
+  const gapDays = last ? Math.round((Date.parse(today) - Date.parse(last)) / 86_400_000) : null;
+  const state: 'lit' | 'risk' | 'frozen' | 'out' | 'none' = !data || !current ? 'none' : last === today ? 'lit' : last === yesterday ? 'risk' : gapDays !== null && gapDays >= 2 && gapDays <= 4 ? 'frozen' : 'out';
+  // frozen: the missed days so far, and how many days are left to save the streak (it ends once 3 days have been missed)
+  const missedDays = state === 'frozen' && gapDays !== null ? gapDays - 1 : 0;
+  const daysToSave = state === 'frozen' && gapDays !== null ? 5 - gapDays : 0;
+  const unfreezeCost = COST_PER_MISSED_DAY * missedDays;
+  // a streak that was broken by logging again can still be restored for a few days
+  const lost = data?.lostStreak && today <= data.lostStreak.until ? data.lostStreak : null;
+  const restoreCost = lost ? COST_PER_MISSED_DAY * lost.missedDays : 0
   const shown = state === 'out' ? 0 : current;
 
   // Flare when the number goes up while this card is on screen; celebrate a new milestone once.
@@ -69,15 +81,28 @@ export default function StreakCard() {
   const message = useMemo(() => {
     if (state === 'lit') return shown >= 7 ? `${shown} days in a row. You are building real family-finance habits.` : 'Flame lit for today. See you tomorrow!';
     if (state === 'risk') return `Log one expense today to keep your ${shown}-day streak.`;
+    if (state === 'frozen') return `Your ${current}-day streak is frozen. ${daysToSave} day${daysToSave === 1 ? '' : 's'} left to save it.`;
     if (state === 'out') return data?.longest ? `Your best was ${data.longest} days. Start a new streak today.` : 'Log an expense today to light your flame.';
     return 'Log an expense to light your flame and start a streak.';
-  }, [state, shown, data?.longest]);
+  }, [state, shown, data?.longest, current, daysToSave]);
 
   const noSpend = async () => {
     if (busy) return;
     setBusy(true);
     await claimPoints('no_spend_today', {});
     setBusy(false);
+  };
+
+  const doRestore = async (method: 'coins' | 'freeze') => {
+    setRestoring(method);
+    setRestoreError(null);
+    try {
+      await restoreStreak(method);
+    } catch (e: any) {
+      setRestoreError(e?.message || 'Could not unfreeze right now.');
+    } finally {
+      setRestoring(null);
+    }
   };
 
   if (!user) return null;
@@ -92,19 +117,22 @@ export default function StreakCard() {
         .sc-risk svg{animation:scPulse 1s ease-in-out infinite;transform-origin:50% 90%}
         .sc-risk .sc-out{fill:#FF5A36}
         .sc-out-state .sc-out,.sc-out-state .sc-mid,.sc-out-state .sc-in,.sc-none .sc-out,.sc-none .sc-mid,.sc-none .sc-in{fill:#8498A8}
+        .sc-frozen .sc-out{fill:#38BDF8}.sc-frozen .sc-mid{fill:#7DD3FC}.sc-frozen .sc-in{fill:#E0F2FE}
+        .sc-frozen svg{animation:scShiver 2.4s ease-in-out infinite;transform-origin:50% 90%}
+        @keyframes scShiver{0%,100%{transform:translateX(0)}25%{transform:translateX(-1.5px)}75%{transform:translateX(1.5px)}}
         .sc-flare svg{animation:scIgnite .9s cubic-bezier(.2,1.4,.4,1) both}
         @keyframes scSway{0%,100%{transform:rotate(-2deg) scale(1)}50%{transform:rotate(2deg) scale(1.04)}}
         @keyframes scPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 rgba(255,90,54,0))}50%{transform:scale(1.08);filter:drop-shadow(0 0 10px rgba(255,90,54,.8))}}
         @keyframes scIgnite{0%{transform:scale(.3) translateY(10px);opacity:.2}60%{transform:scale(1.3)}100%{transform:scale(1);opacity:1}}
         @keyframes scRoll{0%{transform:translateY(12px) scale(.8);opacity:.2}100%{transform:none;opacity:1}}
         .sc-roll{animation:scRoll .5s cubic-bezier(.2,1.6,.4,1)}
-        @media (prefers-reduced-motion: reduce){.sc-lit svg,.sc-risk svg,.sc-flare svg,.sc-roll{animation:none!important}}
+        @media (prefers-reduced-motion: reduce){.sc-lit svg,.sc-risk svg,.sc-flare svg,.sc-roll,.sc-frozen svg{animation:none!important}}
       `}</style>
-      <div className={`rounded-2xl p-4 text-white shadow-sm ${risky ? 'ring-2 ring-orange-400' : ''}`} style={{ background: 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
+      <div className={`rounded-2xl p-4 text-white shadow-sm ${risky ? 'ring-2 ring-orange-400' : ''}`} style={{ background: state === 'frozen' ? 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
         <div className="flex items-center gap-4">
           <div
             key={flare}
-            className={`w-14 h-16 shrink-0 ${flare ? 'sc-flare' : ''} ${state === 'lit' ? 'sc-lit' : state === 'risk' ? 'sc-risk' : state === 'out' ? 'sc-out-state' : 'sc-none'}`}
+            className={`w-14 h-16 shrink-0 ${flare ? 'sc-flare' : ''} ${state === 'lit' ? 'sc-lit' : state === 'risk' ? 'sc-risk' : state === 'frozen' ? 'sc-frozen' : state === 'out' ? 'sc-out-state' : 'sc-none'}`}
           >
             <FlameSvg className="w-full h-full overflow-visible" />
           </div>
@@ -117,6 +145,31 @@ export default function StreakCard() {
             <p className="text-[12px] text-white/80 leading-snug mt-1">{message}</p>
           </div>
         </div>
+        {state === 'frozen' && (
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-2">
+              <button type="button" disabled={restoring !== null} onClick={() => doRestore('coins')} className="flex-1 py-2.5 rounded-xl bg-white text-sky-900 text-sm font-black active:scale-95 disabled:opacity-60">
+                {restoring === 'coins' ? '…' : `Unfreeze · ${unfreezeCost} 🪙`}
+              </button>
+              {freezes >= missedDays && (
+                <button type="button" disabled={restoring !== null} onClick={() => doRestore('freeze')} className="flex-1 py-2.5 rounded-xl bg-sky-400/30 text-white text-sm font-black active:scale-95 disabled:opacity-60">
+                  {restoring === 'freeze' ? '…' : `Use ${missedDays} ❄ freeze${missedDays === 1 ? '' : 's'}`}
+                </button>
+              )}
+            </div>
+            <button type="button" onClick={() => navigate('/add-expense')} className="w-full py-2 rounded-xl bg-white/10 text-white/90 text-xs font-bold active:scale-95">Or log now and start a new streak</button>
+            {restoreError && <p className="text-[11px] font-bold text-amber-200">{restoreError}</p>}
+          </div>
+        )}
+        {lost && state !== 'frozen' && (
+          <div className="mt-3 rounded-xl bg-white/10 p-2.5 flex items-center gap-2">
+            <p className="flex-1 text-[12px] text-white/90 leading-snug">Bring back your {lost.value}-day streak. It is on ice until {lost.until.slice(5)}.</p>
+            <button type="button" disabled={restoring !== null} onClick={() => doRestore('coins')} className="shrink-0 px-3 py-2 rounded-xl bg-white text-sky-900 text-xs font-black active:scale-95 disabled:opacity-60">
+              {restoring === 'coins' ? '…' : `Restore · ${restoreCost} 🪙`}
+            </button>
+          </div>
+        )}
+        {lost && state !== 'frozen' && restoreError && <p className="mt-1 text-[11px] font-bold text-amber-200">{restoreError}</p>}
         {(risky || state === 'out' || state === 'none') && (
           <div className="flex gap-2 mt-3">
             <button type="button" onClick={() => navigate('/add-expense')} className="flex-1 py-2.5 rounded-xl bg-[#FF7A1A] text-white text-sm font-black active:scale-95">

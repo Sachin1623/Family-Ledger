@@ -22,6 +22,7 @@ import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpen
 import { setExpandGroupTileFn } from '../lib/dashboardTileRef';
 import AccountsExplainerModal from '../components/AccountsExplainerModal';
 import StreakCard from '../components/StreakCard';
+import FriendStreakCard from '../components/FriendStreakCard';
 import VoiceQuickAdd from '../components/VoiceQuickAdd';
 import { QUICK_ADDED_EVENT } from '../lib/voiceQuickAdd';
 import { speechAvailableHere } from '../lib/speech';
@@ -331,6 +332,7 @@ export default function Dashboard() {
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-24">
       <StreakCard />
+      <FriendStreakCard />
       {showAccountsGoalsBanner && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
           <span className="text-2xl shrink-0">💰</span>

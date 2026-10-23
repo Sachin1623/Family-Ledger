@@ -46,6 +46,8 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     openChatPopup({ kind: 'group', groupId: data.groupId });
   } else if (data.type === 'weekly_summary') {
     navigateTo('/weekly-summary');
+  } else if (data.type === 'friend_streak_invite' || data.type === 'friend_streak_started' || data.type === 'friend_streak_nudge') {
+    navigateTo('/'); // the friend streak card sits under the streak flame
   } else if (data.type === 'streak_risk') {
     navigateTo('/'); // the dashboard's streak card has Log now and No spend today
   } else if (data.type === 'account_goal_nudge') {

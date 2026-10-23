@@ -15,6 +15,7 @@ import { getWordsList as getMostCommonWordsList } from "most-common-words-by-lan
 import { z } from "zod";
 import { GoogleGenAI, Type as GenAiType } from "@google/genai";
 import { registerQuestRoutes, bumpQuestCounts, recordServerQuestEvent } from "./quests";
+import { registerStreakRoutes, advanceFriendStreak } from "./streaks";
 
 dotenv.config();
 
@@ -584,6 +585,8 @@ async function hardDeleteUserData(
     { name: 'streakWatch', field: '__docId' },
     { name: 'pointsLedger', field: 'uid' },
     { name: 'questCounters', field: 'uid' },
+    { name: 'coinSpends', field: 'uid' },
+    { name: 'friendStreakLinks', field: '__docId' },
     { name: 'userQuests', field: '__docId' },
     { name: 'questCheers', field: 'from' },
     { name: 'sudokuLeaderboard', field: 'userId' },
@@ -1161,7 +1164,7 @@ function daysBetween(aDateStr: string, bDateStr: string): number {
 // nothing real happened.
 interface StreakComputation {
   streakRef: FirebaseFirestore.DocumentReference;
-  newStreakState: { current: number; longest: number; lastDateStr: string; freezes?: number; lastFreezeUsedOn?: string };
+  newStreakState: { current: number; longest: number; lastDateStr: string; freezes?: number; lastFreezeUsedOn?: string; lostStreak?: { value: number; missedDays: number; until: string } | FirebaseFirestore.FieldValue };
   bonuses: PointsAward[];
   badgeRef?: FirebaseFirestore.DocumentReference;
   badgeAlreadyExists: boolean;
@@ -1191,6 +1194,7 @@ async function computeStreakBonusAwards(
   // A freeze is earned for every 7 days in a row (never more than 2 held).
   let freezes: number = Math.min(2, Math.max(0, Number(data.freezes) || 0));
   let usedFreezeOn: string | undefined;
+  let lostStreak: { value: number; missedDays: number; until: string } | undefined;
   const gap = lastDateStr ? daysBetween(lastDateStr, todayStr) : null;
   if (gap === 1) current += 1;
   else if (useFreezes && gap === 2 && freezes > 0 && current > 0) {
@@ -1199,7 +1203,16 @@ async function computeStreakBonusAwards(
     const missed = new Date(`${lastDateStr}T00:00:00Z`);
     missed.setUTCDate(missed.getUTCDate() + 1);
     usedFreezeOn = missed.toISOString().slice(0, 10);
-  } else current = 1;
+  } else {
+    // A streak that missed 1 to 3 days is "frozen", not gone: if it was broken by logging again, the old count is remembered for the same few
+    // days so it can still be restored with coins (see streaks.ts).
+    if (useFreezes && lastDateStr && gap !== null && gap >= 2 && gap <= 4 && current > 0) {
+      const until = new Date(`${lastDateStr}T00:00:00Z`);
+      until.setUTCDate(until.getUTCDate() + 4);
+      lostStreak = { value: current, missedDays: gap - 1, until: until.toISOString().slice(0, 10) };
+    }
+    current = 1;
+  }
   if (useFreezes && current > 0 && current % 7 === 0) freezes = Math.min(2, freezes + 1);
 
   const bonuses: PointsAward[] = [];
@@ -1228,6 +1241,7 @@ async function computeStreakBonusAwards(
       longest: Math.max(longest, current),
       lastDateStr: todayStr,
       ...(useFreezes ? { freezes, ...(usedFreezeOn ? { lastFreezeUsedOn: usedFreezeOn } : {}) } : {}),
+      ...(useFreezes ? (lostStreak ? { lostStreak } : data.lostStreak ? { lostStreak: admin.firestore.FieldValue.delete() } : {}) : {}),
     },
     bonuses,
     badgeRef,
@@ -3368,6 +3382,10 @@ async function startServer() {
           }
         }
       });
+      // the other half of a friend streak: this person logged, so check whether both have now
+      if (result.streakDateStr && !result.habitTodoId && (actionType === 'expense_logged' || actionType === 'no_spend_today')) {
+        advanceFriendStreak(db, creditUid, result.streakDateStr).catch((e) => console.error('friend streak advance failed:', e));
+      }
       return res.json({ ok: true, alreadyAwarded: !awarded, xp: xpAwarded, coins: coinsAwarded });
     } catch (error) {
       console.error('points/claim error:', error);
@@ -3398,6 +3416,15 @@ async function startServer() {
     getUserTimezone,
     dayInTimezone,
     awardMultipleInTx,
+    collectPushTokens,
+    sendPush,
+  });
+
+  registerStreakRoutes(app, {
+    getDb: () => adminDb,
+    verifyAuth: verifyAuthHeader,
+    getUserTimezone,
+    dayInTimezone,
     collectPushTokens,
     sendPush,
   });
