@@ -11,11 +11,12 @@ import type { Firestore } from 'firebase-admin/firestore';
 //
 // A friend streak is one shared streak between two people, started by invitation and accepted by the other person. It grows on a day when BOTH
 // of them logged (an expense or "No spend today", in their own time zone). When a day is missed it freezes the same way, and either of them can
-// pay to unfreeze it, up to 2 rescues per streak. One friend streak at a time per person.
+// pay to unfreeze it, up to 2 rescues per streak. A person can keep streaks going with several friends at once (up to 5), one per friend.
 
 const FROZEN_MAX_MISSED = 3;
 const COST_PER_MISSED_DAY = 15;
 const MAX_RESCUES = 2;
+const MAX_FRIEND_STREAKS = 5;
 
 const daysBetween = (a: string, b: string): number => Math.round((new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86400000);
 const addDays = (day: string, n: number): string => {
@@ -52,11 +53,21 @@ interface Pair {
 
 type FieldValueDelete = ReturnType<typeof admin.firestore.FieldValue.delete>;
 
-// Called right after a day was logged for `uid` (an expense or "No spend today"). Best effort: a failure here never affects the logging itself.
+interface Links {
+  active?: Record<string, string>; // pairId -> the friend's uid
+  outgoing?: Record<string, string>; // invites I sent that are waiting: pairId -> their uid
+  incoming?: Record<string, { from: string; name: string; at: string }>;
+}
+
+// Called right after a day was logged for `uid` (an expense or "No spend today"). Moves every friend streak this person is in. Best effort: a
+// failure here never affects the logging itself.
 export async function advanceFriendStreak(db: Firestore, uid: string, day: string): Promise<void> {
-  const links = await db.collection('friendStreakLinks').doc(uid).get();
-  const pairId = links.data()?.activeId as string | undefined;
-  if (!pairId) return;
+  const links = ((await db.collection('friendStreakLinks').doc(uid).get()).data() || {}) as Links;
+  const pairIds = Object.keys(links.active || {});
+  await Promise.all(pairIds.map((pairId) => advanceOne(db, uid, day, pairId)));
+}
+
+async function advanceOne(db: Firestore, uid: string, day: string, pairId: string): Promise<void> {
   const ref = db.collection('friendStreaks').doc(pairId);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -165,14 +176,19 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     }
   });
 
-  // ---------------- friend streak ----------------
-  interface Links { activeId?: string | null; outgoingId?: string | null; incoming?: Record<string, { from: string; name: string; at: string }> }
+  // ---------------- friend streaks ----------------
   const linksRef = (db: Firestore, uid: string) => db.collection('friendStreakLinks').doc(uid);
+  const del = () => admin.firestore.FieldValue.delete();
 
   async function personCard(db: Firestore, uid: string): Promise<{ uid: string; name: string; photoURL: string | null }> {
     const snap = await db.collection('users').doc(uid).get();
     const d = snap.data() || {};
     return { uid, name: d.displayName || 'Someone', photoURL: d.photoURL || null };
+  }
+
+  // Takes a finished streak out of both people's lists.
+  function unlinkBoth(batch: FirebaseFirestore.WriteBatch, db: Firestore, pairId: string, uids: string[]) {
+    uids.forEach((u) => batch.set(linksRef(db, u), { active: { [pairId]: del() }, outgoing: { [pairId]: del() }, incoming: { [pairId]: del() } }, { merge: true }));
   }
 
   // Ends a streak that has been frozen too long (looked at whenever someone opens it).
@@ -181,7 +197,7 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     if (!base || daysBetween(base, today) < FROZEN_MAX_MISSED + 2) return false;
     const batch = db.batch();
     batch.update(db.collection('friendStreaks').doc(pairId), { status: 'ended', endedAt: new Date().toISOString(), endReason: 'expired' });
-    p.uids.forEach((u) => batch.set(linksRef(db, u), { activeId: null }, { merge: true }));
+    unlinkBoth(batch, db, pairId, p.uids);
     await batch.commit();
     return true;
   }
@@ -196,60 +212,59 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
       const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
       const incoming = Object.entries(links.incoming || {}).map(([pairId, v]) => ({ pairId, ...v }));
 
-      if (links.activeId) {
-        const ref = db.collection('friendStreaks').doc(links.activeId);
-        const p = (await ref.get()).data() as Pair | undefined;
-        if (p && p.status === 'active') {
-          if (await endIfExpired(db, links.activeId, p, today)) return res.json({ status: 'ended', incoming });
-          const otherUid = p.uids.find((u) => u !== uid)!;
-          const partner = await personCard(db, otherUid);
-          const partnerToday = await todayFor(db, otherUid);
-          const base = p.lastBothDay || p.startedDay || today;
-          const gap = daysBetween(base, today);
-          const lit = p.lastBothDay === today;
-          const frozen = !lit && (p.current || 0) > 0 && gap >= 2 && gap <= FROZEN_MAX_MISSED + 1;
-          const lostOk = !!p.lost && today <= p.lost.until;
-          const missed = frozen ? gap - 1 : lostOk ? p.lost!.missedDays : 0;
-          return res.json({
-            status: 'active',
-            pairId: links.activeId,
-            partner,
-            current: p.current || 0,
-            longest: p.longest || 0,
-            state: lit ? 'lit' : frozen ? 'frozen' : 'waiting',
-            myDone: p.lastLogged?.[uid] === today,
-            partnerDone: p.lastLogged?.[otherUid] === partnerToday,
-            frozenDaysLeft: frozen ? FROZEN_MAX_MISSED + 2 - gap : 0,
-            canRescue: (frozen || lostOk) && (p.rescues || 0) < MAX_RESCUES,
-            rescueKind: frozen ? 'frozen' : lostOk ? 'lost' : null,
-            lostValue: lostOk ? p.lost!.value : 0,
-            rescueCost: COST_PER_MISSED_DAY * missed,
-            rescuesLeft: Math.max(0, MAX_RESCUES - (p.rescues || 0)),
-            incoming,
-          });
-        }
-      }
-      if (links.outgoingId) {
-        const p = (await db.collection('friendStreaks').doc(links.outgoingId).get()).data() as Pair | undefined;
-        if (p && p.status === 'invited') {
-          const to = await personCard(db, p.uids.find((u) => u !== uid)!);
-          return res.json({ status: 'invited_out', pairId: links.outgoingId, partner: to, incoming });
-        }
-      }
-      return res.json({ status: 'none', incoming });
+      const streaks = (
+        await Promise.all(
+          Object.keys(links.active || {}).map(async (pairId) => {
+            const p = (await db.collection('friendStreaks').doc(pairId).get()).data() as Pair | undefined;
+            if (!p || p.status !== 'active') return null;
+            if (await endIfExpired(db, pairId, p, today)) return null;
+            const otherUid = p.uids.find((u) => u !== uid)!;
+            const [partner, partnerToday] = await Promise.all([personCard(db, otherUid), todayFor(db, otherUid)]);
+            const base = p.lastBothDay || p.startedDay || today;
+            const gap = daysBetween(base, today);
+            const lit = p.lastBothDay === today;
+            const frozen = !lit && (p.current || 0) > 0 && gap >= 2 && gap <= FROZEN_MAX_MISSED + 1;
+            const lostOk = !!p.lost && today <= p.lost.until;
+            const missed = frozen ? gap - 1 : lostOk ? p.lost!.missedDays : 0;
+            return {
+              pairId,
+              partner,
+              current: p.current || 0,
+              longest: p.longest || 0,
+              state: lit ? 'lit' : frozen ? 'frozen' : 'waiting',
+              myDone: p.lastLogged?.[uid] === today,
+              partnerDone: p.lastLogged?.[otherUid] === partnerToday,
+              frozenDaysLeft: frozen ? FROZEN_MAX_MISSED + 2 - gap : 0,
+              canRescue: (frozen || lostOk) && (p.rescues || 0) < MAX_RESCUES,
+              rescueKind: frozen ? 'frozen' : lostOk ? 'lost' : null,
+              lostValue: lostOk ? p.lost!.value : 0,
+              rescueCost: COST_PER_MISSED_DAY * missed,
+              rescuesLeft: Math.max(0, MAX_RESCUES - (p.rescues || 0)),
+            };
+          }),
+        )
+      ).filter(Boolean);
+      streaks.sort((a: any, b: any) => b.current - a.current);
+
+      const outgoing = await Promise.all(
+        Object.entries(links.outgoing || {}).map(async ([pairId, toUid]) => ({ pairId, partner: await personCard(db, toUid) })),
+      );
+      return res.json({ streaks, outgoing, incoming, max: MAX_FRIEND_STREAKS });
     } catch (err) {
       console.error('friend streak state error:', err);
-      return res.status(500).json({ error: 'Could not load the friend streak.' });
+      return res.status(500).json({ error: 'Could not load the friend streaks.' });
     }
   });
 
-  // Friends and group members the person can invite.
+  // Friends and group members the person can invite (people already in a streak with them, or invited, are marked).
   app.get('/api/friend-streak/candidates', async (req, res) => {
     const decoded = await verifyAuth(req);
     const db = getDb();
     if (!decoded || !db) return res.status(401).json({ error: 'Unauthorized.' });
     const uid = decoded.uid;
     try {
+      const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
+      const taken = new Set<string>([...Object.values(links.active || {}), ...Object.values(links.outgoing || {}), ...Object.values(links.incoming || {}).map((v) => v.from)]);
       const ids = new Set<string>();
       const fs = await db.collection('friendships').where('participants', 'array-contains', uid).get();
       fs.docs.forEach((d) => {
@@ -264,7 +279,7 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
       }
       const list = Array.from(ids).slice(0, 60);
       const cards = await Promise.all(list.map((u) => personCard(db, u)));
-      return res.json({ people: cards.sort((a, b) => a.name.localeCompare(b.name)) });
+      return res.json({ people: cards.map((c) => ({ ...c, taken: taken.has(c.uid) })).sort((a, b) => a.name.localeCompare(b.name)) });
     } catch (err) {
       console.error('friend streak candidates error:', err);
       return res.status(500).json({ error: 'Could not load people.' });
@@ -296,12 +311,16 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
         const [mineSnap, theirsSnap] = await Promise.all([tx.get(linksRef(db, uid)), tx.get(linksRef(db, toUid))]);
         const mine = (mineSnap.data() || {}) as Links;
         const theirs = (theirsSnap.data() || {}) as Links;
-        if (mine.activeId) { failure = 'You already have a friend streak. End it first to start a new one.'; return; }
-        if (mine.outgoingId) { failure = 'You already have an invite waiting. Cancel it to invite someone else.'; return; }
-        if (theirs.activeId) { failure = 'They are already in a friend streak.'; return; }
+        const count = (l: Links) => Object.keys(l.active || {}).length + Object.keys(l.outgoing || {}).length;
+        if (count(mine) >= MAX_FRIEND_STREAKS) { failure = `You can have up to ${MAX_FRIEND_STREAKS} friend streaks at a time. End one to start another.`; return; }
+        if (Object.values(mine.active || {}).includes(toUid) || Object.values(mine.outgoing || {}).includes(toUid) || Object.values(mine.incoming || {}).some((v) => v.from === toUid)) {
+          failure = 'You already have a streak or an invite with this friend.';
+          return;
+        }
+        if (Object.keys(theirs.active || {}).length >= MAX_FRIEND_STREAKS) { failure = 'They already have as many friend streaks as they can keep.'; return; }
         const pair: Pair = { uids: [uid, toUid], status: 'invited', invitedBy: uid, createdAt: new Date().toISOString(), current: 0, longest: 0, lastLogged: {}, rescues: 0 };
         tx.set(pairRef, pair);
-        tx.set(linksRef(db, uid), { outgoingId: pairRef.id }, { merge: true });
+        tx.set(linksRef(db, uid), { outgoing: { [pairRef.id]: toUid } }, { merge: true });
         tx.set(linksRef(db, toUid), { incoming: { [pairRef.id]: { from: uid, name: me.name, at: pair.createdAt } } }, { merge: true });
       });
       if (failure) return res.status(409).json({ error: failure });
@@ -333,15 +352,15 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
         inviter = p.invitedBy;
         const [myLinks, theirLinks] = await Promise.all([tx.get(linksRef(db, uid)), tx.get(linksRef(db, inviter))]);
         if (accept) {
-          if (((myLinks.data() || {}) as Links).activeId) { failure = 'You already have a friend streak. End it first.'; return; }
-          if (((theirLinks.data() || {}) as Links).activeId) { failure = 'They started another streak in the meantime.'; return; }
+          if (Object.keys(((myLinks.data() || {}) as Links).active || {}).length >= MAX_FRIEND_STREAKS) { failure = `You already have ${MAX_FRIEND_STREAKS} friend streaks. End one first.`; return; }
+          if (Object.keys(((theirLinks.data() || {}) as Links).active || {}).length >= MAX_FRIEND_STREAKS) { failure = 'They already have as many friend streaks as they can keep.'; return; }
           tx.update(pairRef, { status: 'active', startedAt: new Date().toISOString(), startedDay: today });
-          tx.set(linksRef(db, uid), { activeId: pairId, incoming: { [pairId]: admin.firestore.FieldValue.delete() } }, { merge: true });
-          tx.set(linksRef(db, inviter), { activeId: pairId, outgoingId: null }, { merge: true });
+          tx.set(linksRef(db, uid), { active: { [pairId]: inviter }, incoming: { [pairId]: del() } }, { merge: true });
+          tx.set(linksRef(db, inviter), { active: { [pairId]: uid }, outgoing: { [pairId]: del() } }, { merge: true });
         } else {
           tx.update(pairRef, { status: 'declined', endedAt: new Date().toISOString() });
-          tx.set(linksRef(db, uid), { incoming: { [pairId]: admin.firestore.FieldValue.delete() } }, { merge: true });
-          tx.set(linksRef(db, inviter), { outgoingId: null }, { merge: true });
+          tx.set(linksRef(db, uid), { incoming: { [pairId]: del() } }, { merge: true });
+          tx.set(linksRef(db, inviter), { outgoing: { [pairId]: del() } }, { merge: true });
         }
       });
       if (failure) return res.status(409).json({ error: failure });
@@ -357,22 +376,20 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     }
   });
 
-  // End an active streak, or cancel an invite that is still waiting.
+  // End one active streak, or cancel an invite that is still waiting.
   app.post('/api/friend-streak/end', async (req, res) => {
     const decoded = await verifyAuth(req);
     const db = getDb();
     if (!decoded || !db) return res.status(401).json({ error: 'Unauthorized.' });
     const uid = decoded.uid;
+    const pairId = String(req.body?.pairId || '');
     try {
-      const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
-      const pairId = links.activeId || links.outgoingId;
-      if (!pairId) return res.json({ ok: true });
       const pRef = db.collection('friendStreaks').doc(pairId);
       const p = (await pRef.get()).data() as Pair | undefined;
       if (!p || !p.uids.includes(uid)) return res.json({ ok: true });
       const batch = db.batch();
       batch.update(pRef, { status: p.status === 'invited' ? 'declined' : 'ended', endedAt: new Date().toISOString(), endReason: 'left' });
-      p.uids.forEach((u) => batch.set(linksRef(db, u), { activeId: null, outgoingId: null, ...(p.status === 'invited' ? { incoming: { [pairId]: admin.firestore.FieldValue.delete() } } : {}) }, { merge: true }));
+      unlinkBoth(batch, db, pairId, p.uids);
       await batch.commit();
       return res.json({ ok: true });
     } catch (err) {
@@ -381,24 +398,30 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     }
   });
 
+  // loads one of MY active friend streaks, or null
+  async function myActivePair(db: Firestore, uid: string, pairId: string): Promise<{ ref: FirebaseFirestore.DocumentReference; p: Pair } | null> {
+    const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
+    if (!links.active?.[pairId]) return null;
+    const ref = db.collection('friendStreaks').doc(pairId);
+    const p = (await ref.get()).data() as Pair | undefined;
+    return p && p.status === 'active' ? { ref, p } : null;
+  }
+
   app.post('/api/friend-streak/nudge', async (req, res) => {
     const decoded = await verifyAuth(req);
     const db = getDb();
     if (!decoded || !db) return res.status(401).json({ error: 'Unauthorized.' });
     const uid = decoded.uid;
     try {
-      const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
-      if (!links.activeId) return res.status(400).json({ error: 'No friend streak.' });
+      const mine = await myActivePair(db, uid, String(req.body?.pairId || ''));
+      if (!mine) return res.status(400).json({ error: 'No friend streak.' });
       const today = await todayFor(db, uid);
-      const ref = db.collection('friendStreaks').doc(links.activeId);
-      const p = (await ref.get()).data() as Pair | undefined;
-      if (!p || p.status !== 'active') return res.status(400).json({ error: 'No friend streak.' });
-      if (p.lastNudge?.[uid] === today) return res.json({ ok: true, already: true });
-      await ref.update({ [`lastNudge.${uid}`]: today });
-      const other = p.uids.find((u) => u !== uid)!;
+      if (mine.p.lastNudge?.[uid] === today) return res.json({ ok: true, already: true });
+      await mine.ref.update({ [`lastNudge.${uid}`]: today });
+      const other = mine.p.uids.find((u) => u !== uid)!;
       const me = await personCard(db, uid);
       const tokens = await deps.collectPushTokens(db, [other], 'notificationsEnabled');
-      await deps.sendPush(tokens, `${me.name} is keeping your streak alive 🔥`, `Log something today so your ${p.current || 0}-day streak keeps going.`, { type: 'friend_streak_nudge' });
+      await deps.sendPush(tokens, `${me.name} is keeping your streak alive 🔥`, `Log something today so your ${mine.p.current || 0}-day streak keeps going.`, { type: 'friend_streak_nudge' });
       return res.json({ ok: true });
     } catch (err) {
       console.error('friend streak nudge error:', err);
@@ -406,7 +429,7 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     }
   });
 
-  // Either partner pays coins to unfreeze (or restore) the shared streak. At most 2 rescues per streak.
+  // Either partner pays coins to unfreeze (or restore) a shared streak. At most 2 rescues per streak.
   app.post('/api/friend-streak/rescue', async (req, res) => {
     const decoded = await verifyAuth(req);
     const db = getDb();
@@ -414,9 +437,9 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     const uid = decoded.uid;
     try {
       const today = await todayFor(db, uid);
-      const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
-      if (!links.activeId) return res.status(400).json({ error: 'No friend streak.' });
-      const pairRef = db.collection('friendStreaks').doc(links.activeId);
+      const mine = await myActivePair(db, uid, String(req.body?.pairId || ''));
+      if (!mine) return res.status(400).json({ error: 'No friend streak.' });
+      const pairRef = mine.ref;
       const pointsRef = db.collection('userPoints').doc(uid);
       let out: Record<string, unknown> | { error: string } = { error: 'Nothing to unfreeze.' };
       await db.runTransaction(async (tx) => {

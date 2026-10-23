@@ -31,28 +31,34 @@ export interface FriendPerson {
   photoURL: string | null;
 }
 
-export interface FriendStreakState {
-  status: 'none' | 'invited_out' | 'active' | 'ended';
-  pairId?: string;
-  partner?: FriendPerson;
-  current?: number;
-  longest?: number;
-  state?: 'lit' | 'waiting' | 'frozen';
-  myDone?: boolean;
-  partnerDone?: boolean;
-  frozenDaysLeft?: number;
-  canRescue?: boolean;
-  rescueKind?: 'frozen' | 'lost' | null;
-  lostValue?: number;
-  rescueCost?: number;
-  rescuesLeft?: number;
-  incoming: { pairId: string; from: string; name: string; at: string }[];
+export interface ActiveFriendStreak {
+  pairId: string;
+  partner: FriendPerson;
+  current: number;
+  longest: number;
+  state: 'lit' | 'waiting' | 'frozen';
+  myDone: boolean;
+  partnerDone: boolean;
+  frozenDaysLeft: number;
+  canRescue: boolean;
+  rescueKind: 'frozen' | 'lost' | null;
+  lostValue: number;
+  rescueCost: number;
+  rescuesLeft: number;
 }
 
-export const fetchFriendStreak = () => call<FriendStreakState>('/api/friend-streak');
-export const fetchStreakCandidates = () => call<{ people: FriendPerson[] }>('/api/friend-streak/candidates').then((r) => r.people);
+// Everything about my friend streaks: the ones running (up to `max` at once, one per friend), invites I sent that are waiting, and invites I received.
+export interface FriendStreaks {
+  streaks: ActiveFriendStreak[];
+  outgoing: { pairId: string; partner: FriendPerson }[];
+  incoming: { pairId: string; from: string; name: string; at: string }[];
+  max: number;
+}
+
+export const fetchFriendStreaks = () => call<FriendStreaks>('/api/friend-streak');
+export const fetchStreakCandidates = () => call<{ people: (FriendPerson & { taken: boolean })[] }>('/api/friend-streak/candidates').then((r) => r.people);
 export const inviteToStreak = async (toUid: string) => { await call('/api/friend-streak/invite', 'POST', { toUid }); changed(); };
 export const answerStreakInvite = async (pairId: string, accept: boolean) => { await call('/api/friend-streak/respond', 'POST', { pairId, accept }); changed(); };
-export const endFriendStreak = async () => { await call('/api/friend-streak/end', 'POST', {}); changed(); };
-export const nudgeFriend = () => call<{ ok: boolean; already?: boolean }>('/api/friend-streak/nudge', 'POST', {});
-export const rescueFriendStreak = async () => { await call('/api/friend-streak/rescue', 'POST', {}); changed(); };
+export const endFriendStreak = async (pairId: string) => { await call('/api/friend-streak/end', 'POST', { pairId }); changed(); };
+export const nudgeFriend = (pairId: string) => call<{ ok: boolean; already?: boolean }>('/api/friend-streak/nudge', 'POST', { pairId });
+export const rescueFriendStreak = async (pairId: string) => { await call('/api/friend-streak/rescue', 'POST', { pairId }); changed(); };
