@@ -48,9 +48,7 @@ public class AlarmActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         setContentView(R.layout.activity_alarm);
-        // A compact card at the top of whatever is on screen — the window is only as tall as the card.
-        getWindow().setGravity(Gravity.TOP);
-        getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        // Full screen: the layout fills the whole window (a window size only; no full-screen-intent permission is involved).
         bind(getIntent());
 
         findViewById(R.id.alarmDismissButton).setOnClickListener(v -> {

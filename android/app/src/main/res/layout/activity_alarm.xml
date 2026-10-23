@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The native "alarm is ringing" card (see AlarmActivity.java): a compact card pinned to the top of
-     the screen over whatever is showing, saying plainly WHAT is ringing — not a full-screen takeover.
-     Deliberately plain Android widgets, not a WebView — this has to render instantly and reliably
-     regardless of network conditions or whether the app's JS bundle has loaded. Colors match the
-     app's own brand tokens. -->
+<!-- The native "alarm is ringing" screen (see AlarmActivity.java): a full-screen alarm in the app's navy, with the time, what is ringing
+     in large type, and big Dismiss / Snooze / Open buttons. Deliberately plain Android widgets, not a WebView — this has to render
+     instantly and reliably regardless of network conditions or whether the app's JS bundle has loaded. Showing it full screen is a window
+     size only: it does NOT use (and must never add) the USE_FULL_SCREEN_INTENT permission that Play Console rejected. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_marginStart="12dp"
-    android:layout_marginEnd="12dp"
-    android:layout_marginTop="12dp"
+    android:layout_height="match_parent"
+    android:background="@drawable/alarm_full_bg"
+    android:fitsSystemWindows="true"
     android:orientation="vertical"
-    android:background="@drawable/alarm_card_bg"
-    android:padding="16dp">
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="24dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -28,65 +28,87 @@
             android:contentDescription="@string/app_name" />
 
         <TextView
-            android:id="@+id/alarmTitle"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:layout_marginStart="10dp"
+            android:text="FamilyLedger"
             android:textColor="#FFFFFF"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            tools:text="Medicine reminder (2 due)" />
+            android:textSize="16sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
 
         <TextView
             android:id="@+id/alarmTime"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="#F59E0B"
-            android:textSize="14sp"
+            android:textSize="64sp"
             android:textStyle="bold"
             tools:text="4:00 PM" />
+
+        <TextView
+            android:id="@+id/alarmTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:textColor="#FFFFFF"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            tools:text="Medicine reminder (2 due)" />
+
+        <!-- What is ringing: one line per medicine / item, large and plain. -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fillViewport="false">
+
+            <TextView
+                android:id="@+id/alarmBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:lineSpacingExtra="8dp"
+                android:textColor="#E2F1F8"
+                android:textSize="20sp"
+                tools:text="preeti rajput: LINID (1 tab) — Afternoon\npreeti rajput: Ashpro (1) — Afternoon" />
+        </ScrollView>
     </LinearLayout>
 
-    <!-- What is ringing: one line per medicine / item, large and plain. -->
-    <TextView
-        android:id="@+id/alarmBody"
+    <Button
+        android:id="@+id/alarmDismissButton"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:layout_marginBottom="14dp"
+        android:layout_height="64dp"
+        android:text="Dismiss"
         android:textColor="#FFFFFF"
-        android:textSize="18sp"
-        android:lineSpacingExtra="4dp"
-        tools:text="preeti rajput: LINID (1 tab) — Afternoon\npreeti rajput: Ashpro (1) — Afternoon" />
+        android:textSize="20sp"
+        android:textAllCaps="false"
+        android:textStyle="bold"
+        android:backgroundTint="#DC2626" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
         android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/alarmDismissButton"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_weight="1"
-            android:layout_marginEnd="6dp"
-            android:text="Dismiss"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textAllCaps="false"
-            android:textStyle="bold"
-            android:backgroundTint="#DC2626" />
 
         <Button
             android:id="@+id/alarmSnoozeButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="56dp"
             android:layout_weight="1"
             android:layout_marginEnd="6dp"
             android:text="Snooze 10"
             android:textColor="#003044"
-            android:textSize="14sp"
+            android:textSize="16sp"
             android:textAllCaps="false"
             android:textStyle="bold"
             android:backgroundTint="#F59E0B" />
@@ -94,11 +116,12 @@
         <Button
             android:id="@+id/alarmOpenButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="56dp"
             android:layout_weight="1"
-            android:text="Open"
+            android:layout_marginStart="6dp"
+            android:text="Open app"
             android:textColor="#FFFFFF"
-            android:textSize="14sp"
+            android:textSize="16sp"
             android:textAllCaps="false"
             android:backgroundTint="#0F4761" />
     </LinearLayout>
