@@ -3,13 +3,15 @@ import { auth } from './firebase';
 // Flame styles and badges (see cosmetics.ts on the server). The server owns the catalogue, the prices and what has been earned; the app only shows it.
 
 export interface FlameOption { id: string; name: string; price: number; hint: string | null; unlocked: boolean; earnedOnly: boolean }
-export interface BadgeOption { id: string; name: string; icon: string; hint: string; earned: boolean }
+export type BadgeTier = 'bronze' | 'silver' | 'gold' | 'legend';
+export interface BadgeOption { id: string; name: string; icon: string; hint: string; tier: BadgeTier; target: number; progress: number; earned: boolean }
 export interface CosmeticsState {
   coins: number;
   equipped: { flame: string; badges: string[] };
   maxBadges: number;
   flames: FlameOption[];
   badges: BadgeOption[];
+  newlyEarned: string[]; // badges earned since the screen was last opened, for the celebration
 }
 
 async function call<T>(path: string, method: 'GET' | 'POST' = 'GET', body?: unknown): Promise<T> {

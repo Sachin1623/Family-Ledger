@@ -55,6 +55,7 @@ export interface FriendStreaks {
   outgoing: { pairId: string; partner: FriendPerson }[];
   incoming: { pairId: string; from: string; name: string; at: string }[];
   max: number;
+  me?: { flame: string; badges: string[] }; // my own flame style and shown badges
 }
 
 export const fetchFriendStreaks = () => call<FriendStreaks>('/api/friend-streak');

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import StreakFlame from '../components/StreakFlame';
-import { buyFlame, equipStyle, fetchCosmetics, type CosmeticsState } from '../lib/cosmeticsApi';
+import BadgeMedal, { TIERS } from '../components/BadgeMedal';
+import Fireworks from '../components/Fireworks';
+import { buyFlame, equipStyle, fetchCosmetics, type BadgeOption, type CosmeticsState } from '../lib/cosmeticsApi';
 
 // "My style": pick the flame style your streak uses and the badges shown next to your name. Flame styles are bought with coins (one earned by a milestone);
 // badges are earned. The server decides what is yours (see cosmetics.ts), so this screen only shows it and sends your choices.
@@ -13,10 +16,14 @@ export default function MyStyle() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [openBadge, setOpenBadge] = useState<string | null>(null);
+  const [celebrate, setCelebrate] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
-      setData(await fetchCosmetics());
+      const d = await fetchCosmetics();
+      setData(d);
+      if (d.newlyEarned?.length) setCelebrate(d.newlyEarned);
     } catch (e: any) {
       setError(e?.message || 'Could not load your style.');
     }
@@ -40,6 +47,12 @@ export default function MyStyle() {
     }
   };
 
+  // the badge closest to being earned: the reason to come back tomorrow
+  const nextUp = useMemo(() => {
+    const open = (data?.badges || []).filter((b) => !b.earned && b.progress > 0);
+    return open.sort((a, b) => b.progress / b.target - a.progress / a.target)[0] || (data?.badges || []).find((b) => !b.earned) || null;
+  }, [data]);
+
   if (!data) {
     return <div className="p-6 text-center text-sm text-text-muted">{error || 'Loading your style…'}</div>;
   }
@@ -50,6 +63,8 @@ export default function MyStyle() {
     run('badge', () => equipStyle({ badges: next }));
   };
   const earnedCount = data.badges.filter((b) => b.earned).length;
+  const sheetBadge: BadgeOption | undefined = openBadge ? data.badges.find((b) => b.id === openBadge) : undefined;
+  const celebrateBadge: BadgeOption | undefined = celebrate.length ? data.badges.find((b) => b.id === celebrate[0]) : undefined;
 
   return (
     <div className="p-4 md:p-8 max-w-xl mx-auto space-y-4" style={{ paddingBottom: 'calc(9rem + env(safe-area-inset-bottom))' }}>
@@ -114,25 +129,57 @@ export default function MyStyle() {
       )}
 
       {tab === 'badges' && (
-        <div className="space-y-2">
-          <p className="text-[11px] text-text-muted px-1">Earn badges by using the app. Tap an earned badge to show it next to your name (up to {data.maxBadges}).</p>
-          {data.badges.map((b) => {
-            const on = shown.includes(b.id);
-            return (
-              <button
-                key={b.id}
-                type="button"
-                disabled={!b.earned || busy !== null}
-                onClick={() => toggleBadge(b.id)}
-                className={clsx('w-full flex items-center gap-3 rounded-2xl border-2 p-3 text-left bg-white transition-all', on ? 'border-orange-500 bg-orange-50' : 'border-border-subtle', !b.earned && 'opacity-60')}
-              >
-                <span className={clsx('text-3xl w-10 text-center', !b.earned && 'grayscale')}>{b.icon}</span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-sm font-black text-primary">{b.name}</span>
-                  <span className="block text-[11px] text-text-muted">{b.earned ? (on ? 'Shown next to your name' : 'Earned · tap to show') : `🔒 ${b.hint}`}</span>
+        <div className="space-y-4">
+          {/* collection summary */}
+          <div className="rounded-2xl border border-border-subtle bg-white p-3.5">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-black text-primary">Your collection</p>
+              <p className="text-sm font-black text-primary tabular-nums">{earnedCount}/{data.badges.length}</p>
+            </div>
+            <div className="mt-2 h-2 rounded-full bg-surface overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-orange-400 to-amber-300 transition-all duration-700" style={{ width: `${(earnedCount / data.badges.length) * 100}%` }} /></div>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+              {(['bronze', 'silver', 'gold', 'legend'] as const).map((tier) => (
+                <span key={tier} className="text-[11px] font-bold text-text-muted">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full mr-1 align-middle" style={{ background: TIERS[tier].glow }} />
+                  {TIERS[tier].label} {data.badges.filter((b) => b.tier === tier && b.earned).length}/{data.badges.filter((b) => b.tier === tier).length}
                 </span>
-                {on && <span className="material-symbols-outlined text-orange-500">check_circle</span>}
-              </button>
+              ))}
+            </div>
+          </div>
+
+          {/* the closest one: the reason to come back tomorrow */}
+          {nextUp && (
+            <button type="button" onClick={() => setOpenBadge(nextUp.id)} className="w-full text-left rounded-2xl p-3.5 text-white flex items-center gap-3.5 active:scale-[0.99] transition-transform" style={{ background: 'linear-gradient(135deg,#1e1b4b,#4c1d95 60%,#7c3aed)' }}>
+              <BadgeMedal badge={nextUp} size={64} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-violet-200">Next up</span>
+                <span className="block text-base font-black truncate">{nextUp.name}</span>
+                <span className="block text-[12px] text-violet-100">{nextUp.hint} · {nextUp.target - nextUp.progress} to go</span>
+                <span className="block mt-1.5 h-1.5 rounded-full bg-white/20 overflow-hidden"><span className="block h-full rounded-full bg-gradient-to-r from-amber-300 to-yellow-100" style={{ width: `${Math.max(4, (nextUp.progress / nextUp.target) * 100)}%` }} /></span>
+              </span>
+            </button>
+          )}
+
+          {/* the shelf: rarest first, so the legendary ones are always in sight */}
+          {(['legend', 'gold', 'silver', 'bronze'] as const).map((tier) => {
+            const list = data.badges.filter((b) => b.tier === tier);
+            if (list.length === 0) return null;
+            return (
+              <div key={tier}>
+                <p className="text-[11px] font-black uppercase tracking-[0.16em] mb-2 px-1" style={{ color: tier === 'legend' ? '#7c3aed' : tier === 'gold' ? '#b07c00' : tier === 'silver' ? '#5f6b7b' : '#8a4b14' }}>{TIERS[tier].label}</p>
+                <div className="grid grid-cols-3 gap-2.5">
+                  {list.map((b) => {
+                    const on = shown.includes(b.id);
+                    return (
+                      <button key={b.id} type="button" onClick={() => setOpenBadge(b.id)} className={clsx('relative flex flex-col items-center gap-1.5 rounded-2xl border-2 bg-white px-1.5 py-3 active:scale-95 transition-transform', on ? 'border-orange-500 bg-orange-50' : 'border-border-subtle')}>
+                        <BadgeMedal badge={b} size={68} />
+                        <span className="text-[11px] font-black text-primary text-center leading-tight line-clamp-2">{b.earned ? b.name : '???'}</span>
+                        <span className="text-[10px] font-bold text-text-muted tabular-nums">{b.earned ? (on ? 'Shown' : 'Earned') : `${b.progress}/${b.target}`}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -140,6 +187,48 @@ export default function MyStyle() {
 
       {note && <p className="text-xs font-bold text-success px-1">{note}</p>}
       {error && <p className="text-xs font-bold text-error px-1">{error}</p>}
+
+      {sheetBadge &&
+        createPortal(
+          <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setOpenBadge(null)} />
+            <div className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-3xl p-6 text-center shadow-2xl" style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
+              <div className="flex justify-center"><BadgeMedal badge={sheetBadge} size={120} /></div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] mt-3" style={{ color: TIERS[sheetBadge.tier].glow }}>{TIERS[sheetBadge.tier].label}</p>
+              <p className="text-xl font-black text-primary">{sheetBadge.earned ? sheetBadge.name : 'Locked badge'}</p>
+              <p className="text-sm text-text-muted mt-1">{sheetBadge.hint}</p>
+              {!sheetBadge.earned && (
+                <div className="mt-3">
+                  <div className="h-2 rounded-full bg-surface overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-orange-400 to-amber-300" style={{ width: `${Math.max(3, (sheetBadge.progress / sheetBadge.target) * 100)}%` }} /></div>
+                  <p className="text-xs font-bold text-text-muted mt-1.5">{sheetBadge.progress} of {sheetBadge.target} · {sheetBadge.target - sheetBadge.progress} to go</p>
+                </div>
+              )}
+              {sheetBadge.earned && (
+                <button type="button" disabled={busy !== null} onClick={() => { toggleBadge(sheetBadge.id); setOpenBadge(null); }} className="mt-4 w-full py-3 rounded-2xl bg-orange-500 text-white font-black active:scale-95 disabled:opacity-60">
+                  {shown.includes(sheetBadge.id) ? 'Hide from my name' : 'Show next to my name'}
+                </button>
+              )}
+              <button type="button" onClick={() => setOpenBadge(null)} className="mt-2 w-full py-2.5 rounded-2xl bg-surface text-text-muted text-sm font-black active:scale-95">Close</button>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {celebrateBadge &&
+        createPortal(
+          <div className="fixed inset-0 z-[320] bg-black/70 flex items-center justify-center p-6" onClick={() => setCelebrate((c) => c.slice(1))}>
+            <div className="relative w-full max-w-xs rounded-3xl p-6 text-center text-white overflow-hidden" style={{ background: 'linear-gradient(160deg,#1e1b4b,#4c1d95)' }} onClick={(e) => e.stopPropagation()}>
+              <Fireworks />
+              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-violet-200">New badge unlocked</p>
+              <div className="flex justify-center mt-4"><BadgeMedal badge={celebrateBadge} size={130} /></div>
+              <p className="text-2xl font-black mt-3">{celebrateBadge.name}</p>
+              <p className="text-sm text-violet-100 mt-1">{celebrateBadge.hint}</p>
+              <button type="button" onClick={() => { if (!shown.includes(celebrateBadge.id)) toggleBadge(celebrateBadge.id); setCelebrate((c) => c.slice(1)); }} className="mt-5 w-full py-3 rounded-2xl bg-amber-400 text-orange-950 font-black active:scale-95">Show it next to my name</button>
+              <button type="button" onClick={() => setCelebrate((c) => c.slice(1))} className="mt-2 w-full py-2 rounded-2xl bg-white/10 text-white/90 text-sm font-bold active:scale-95">Not now</button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

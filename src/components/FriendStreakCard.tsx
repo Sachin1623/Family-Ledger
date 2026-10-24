@@ -35,7 +35,7 @@ function Avatar({ p, size = 40, ring }: { p: { name: string; photoURL: string | 
 const FRAME = 'relative overflow-hidden rounded-2xl p-4 text-white shadow-sm';
 
 // One running streak with one friend.
-function ActiveStreakCard({ s, me, onChanged }: React.Attributes & { s: ActiveFriendStreak; me: { name: string; photoURL: string | null }; onChanged: () => void }) {
+function ActiveStreakCard({ s, me, onChanged }: React.Attributes & { s: ActiveFriendStreak; me: { name: string; photoURL: string | null; flame?: string }; onChanged: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -65,8 +65,10 @@ function ActiveStreakCard({ s, me, onChanged }: React.Attributes & { s: ActiveFr
         <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000" style={{ opacity: frozen ? 1 : 0, background: 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 60%,#38bdf8 140%)' }} />
         <Snowfield show={frozen} />
         <div className="relative flex items-center gap-3">
-          <div className="shrink-0" style={{ width: 52 }}>
-            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={50} burst={burst} flame={s.partner.flame} />
+          {/* both people's flames, each in the style that person picked */}
+          <div className="shrink-0 flex items-end -space-x-3" style={{ width: 78 }}>
+            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={40} burst={burst} flame={me.flame} />
+            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={40} burst={burst} flame={s.partner.flame} />
           </div>
           <div className="flex -space-x-2 shrink-0">
             <Avatar p={me} size={34} ring />
@@ -203,7 +205,7 @@ export default function FriendStreakCard() {
 
   if (!user || !data) return null;
 
-  const me = { name: profile?.displayName || user.displayName || 'You', photoURL: profile?.photoURL || user.photoURL || null };
+  const me = { name: profile?.displayName || user.displayName || 'You', photoURL: profile?.photoURL || user.photoURL || null, flame: data.me?.flame };
 
   // Five slots in one row: running streaks first, then invites for me, then invites I sent, then empty "+" slots.
   type Slot =
@@ -245,8 +247,12 @@ export default function FriendStreakCard() {
                   <span className="text-[10px] font-bold truncate w-full text-center leading-none">{first(s.partner.name)}{s.partner.badges && s.partner.badges.length > 0 ? ` ${s.partner.badges.join('')}` : ''}</span>
                   <span className="flex items-center gap-1.5 leading-none">
                     <span className="flex items-center gap-0.5">
-                      <span className="w-[18px] h-[22px] -ml-1 overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={18} flame={s.partner.flame} /></span>
-                      <span className="text-sm font-black tabular-nums">{s.current}</span>
+                      {/* both flames, mine and my friend's, each in its own chosen style */}
+                      <span className="flex items-end -space-x-1.5">
+                        <span className="w-[16px] h-[20px] overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={16} flame={data.me?.flame} /></span>
+                        <span className="w-[16px] h-[20px] overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={16} flame={s.partner.flame} /></span>
+                      </span>
+                      <span className="text-sm font-black tabular-nums ml-0.5">{s.current}</span>
                     </span>
                     <span className="flex gap-1" title="You and your friend: logged today">
                       <span className={clsx('w-2 h-2 rounded-full', s.myDone ? 'bg-emerald-400' : 'bg-white/35')} />

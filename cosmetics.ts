@@ -15,7 +15,9 @@ import type { Firestore } from 'firebase-admin/firestore';
 export const MAX_SHOWN_BADGES = 3;
 
 interface FlameItem { id: string; name: string; price: number; earnedBy?: string; hint?: string }
-interface BadgeItem { id: string; name: string; icon: string; hint: string }
+export type BadgeTier = 'bronze' | 'silver' | 'gold' | 'legend';
+type Metric = 'streak' | 'groups' | 'settled' | 'buddy' | 'quests';
+interface BadgeItem { id: string; name: string; icon: string; hint: string; tier: BadgeTier; metric: Metric; target: number }
 
 export const FLAMES: FlameItem[] = [
   { id: 'classic', name: 'Classic', price: 0 },
@@ -26,15 +28,20 @@ export const FLAMES: FlameItem[] = [
   { id: 'frost', name: 'Frostfire', price: 0, earnedBy: 'streak_30', hint: 'Reach a 30-day streak' },
 ];
 
+// Every badge is earned by reaching a number (`target`) on one measure (`metric`), so the app can show exactly how far along a person is. Four tiers: the higher the tier, the rarer.
 export const BADGES: BadgeItem[] = [
-  { id: 'streak_7', name: 'Week of fire', icon: '🔥', hint: 'Reach a 7-day streak' },
-  { id: 'streak_30', name: 'Month strong', icon: '🏅', hint: 'Reach a 30-day streak' },
-  { id: 'streak_100', name: 'Hundred club', icon: '💯', hint: 'Reach a 100-day streak' },
-  { id: 'streak_365', name: 'A whole year', icon: '👑', hint: 'Reach a 365-day streak' },
-  { id: 'first_group', name: 'Group builder', icon: '🏠', hint: 'Create a group' },
-  { id: 'settled_up', name: 'Settled up', icon: '🤝', hint: 'Pay someone back through Settlements' },
-  { id: 'buddy_7', name: 'Streak buddy', icon: '👯', hint: 'Reach 7 days in a friend streak' },
-  { id: 'quest_10', name: 'Quest master', icon: '🎯', hint: 'Finish 10 quests' },
+  { id: 'streak_7', name: 'Week of fire', icon: '🔥', hint: 'Keep a 7-day streak', tier: 'bronze', metric: 'streak', target: 7 },
+  { id: 'streak_30', name: 'Month strong', icon: '🏅', hint: 'Keep a 30-day streak', tier: 'silver', metric: 'streak', target: 30 },
+  { id: 'streak_100', name: 'Hundred club', icon: '💯', hint: 'Keep a 100-day streak', tier: 'gold', metric: 'streak', target: 100 },
+  { id: 'streak_365', name: 'A whole year', icon: '👑', hint: 'Keep a 365-day streak', tier: 'legend', metric: 'streak', target: 365 },
+  { id: 'first_group', name: 'Group builder', icon: '🏠', hint: 'Create a group', tier: 'bronze', metric: 'groups', target: 1 },
+  { id: 'settled_up', name: 'Settled up', icon: '🤝', hint: 'Pay someone back in Settlements', tier: 'bronze', metric: 'settled', target: 1 },
+  { id: 'settle_10', name: 'Debt crusher', icon: '💸', hint: 'Record 10 payments', tier: 'silver', metric: 'settled', target: 10 },
+  { id: 'buddy_7', name: 'Streak buddy', icon: '👯', hint: 'Reach 7 days in a friend streak', tier: 'silver', metric: 'buddy', target: 7 },
+  { id: 'buddy_30', name: 'Inseparable', icon: '💞', hint: 'Reach 30 days in a friend streak', tier: 'gold', metric: 'buddy', target: 30 },
+  { id: 'quest_10', name: 'Quest master', icon: '🎯', hint: 'Finish 10 quests', tier: 'bronze', metric: 'quests', target: 10 },
+  { id: 'quest_50', name: 'Quest hero', icon: '⚔️', hint: 'Finish 50 quests', tier: 'gold', metric: 'quests', target: 50 },
+  { id: 'quest_150', name: 'Legend of the ledger', icon: '🌟', hint: 'Finish 150 quests', tier: 'legend', metric: 'quests', target: 150 },
 ];
 
 const FLAME_IDS = new Set(FLAMES.map((f) => f.id));
@@ -57,41 +64,38 @@ function hasFlame(c: Cosmetics, id: string): boolean {
   return f.price === 0 && !f.earnedBy ? true : f.earnedBy ? c.earned.includes(f.earnedBy) : c.owned.includes(id);
 }
 
-// What the person has reached so far, worked out from their own history. Only ever adds to `earned`.
-async function reached(db: Firestore, uid: string): Promise<Set<string>> {
-  const out = new Set<string>();
-  const [streakSnap, groupSnap, paySnap, oldPaySnap, pairSnap, questCount] = await Promise.all([
+// How far along the person is on each measure, worked out from their own history.
+async function measures(db: Firestore, uid: string): Promise<Record<Metric, number>> {
+  const countOf = async (q: FirebaseFirestore.Query) => (await q.count().get().catch(() => null))?.data().count || 0;
+  const [streakSnap, groups, paid, oldPaid, pairSnap, quests] = await Promise.all([
     db.collection('userPoints').doc(uid).collection('meta').doc('expenseStreak').get(),
-    db.collection('groups').where('createdBy', '==', uid).limit(1).get(),
-    db.collection('settlements').where('fromUid', '==', uid).limit(1).get(),
-    db.collection('expenses').where('addedBy', '==', uid).where('isSettlement', '==', true).limit(1).get(),
+    countOf(db.collection('groups').where('createdBy', '==', uid)),
+    countOf(db.collection('settlements').where('fromUid', '==', uid)),
+    countOf(db.collection('expenses').where('addedBy', '==', uid).where('isSettlement', '==', true)),
     db.collection('friendStreaks').where('uids', 'array-contains', uid).get(),
-    db.collection('pointsLedger').where('uid', '==', uid).where('actionType', '==', 'quest_claim').count().get().catch(() => null),
+    countOf(db.collection('pointsLedger').where('uid', '==', uid).where('actionType', '==', 'quest_claim')),
   ]);
   const s = streakSnap.data() || {};
-  const best = Math.max(Number(s.longest) || 0, Number(s.current) || 0);
-  if (best >= 7) out.add('streak_7');
-  if (best >= 30) out.add('streak_30');
-  if (best >= 100) out.add('streak_100');
-  if (best >= 365) out.add('streak_365');
-  if (!groupSnap.empty) out.add('first_group');
-  if (!paySnap.empty || !oldPaySnap.empty) out.add('settled_up');
-  if (pairSnap.docs.some((d) => (Number(d.data().longest) || 0) >= 7 || (Number(d.data().current) || 0) >= 7)) out.add('buddy_7');
-  if ((questCount?.data().count || 0) >= 10) out.add('quest_10');
-  return out;
+  return {
+    streak: Math.max(Number(s.longest) || 0, Number(s.current) || 0),
+    groups,
+    settled: paid + oldPaid,
+    buddy: pairSnap.docs.reduce((m, d) => Math.max(m, Number(d.data().longest) || 0, Number(d.data().current) || 0), 0),
+    quests,
+  };
 }
 
-// Adds anything newly reached to the person's record and returns it.
-async function refreshEarned(db: Firestore, uid: string): Promise<Cosmetics> {
+// Adds anything newly reached to the person's record. Returns the record, the measures, and the badges earned just now (for the celebration).
+async function refreshEarned(db: Firestore, uid: string): Promise<{ c: Cosmetics; m: Record<Metric, number>; fresh: string[] }> {
   const ref = cosRef(db, uid);
   const current = normalise((await ref.get()).data() as Partial<Cosmetics> | undefined);
-  const got = await reached(db, uid);
-  const fresh = [...got].filter((id) => !current.earned.includes(id));
+  const m = await measures(db, uid);
+  const fresh = BADGES.filter((b) => m[b.metric] >= b.target && !current.earned.includes(b.id)).map((b) => b.id);
   if (fresh.length > 0) {
     current.earned = [...current.earned, ...fresh];
     await ref.set({ earned: admin.firestore.FieldValue.arrayUnion(...fresh) }, { merge: true });
   }
-  return current;
+  return { c: current, m, fresh };
 }
 
 // What other people see of someone: the flame id and the icons of the badges they chose to show.
@@ -115,13 +119,14 @@ export function registerCosmeticsRoutes(app: express.Express, deps: CosmeticsDep
     if (!decoded || !db) return res.status(401).json({ error: 'Unauthorized.' });
     const uid = decoded.uid;
     try {
-      const [c, pts] = await Promise.all([refreshEarned(db, uid), db.collection('userPoints').doc(uid).get()]);
+      const [{ c, m, fresh }, pts] = await Promise.all([refreshEarned(db, uid), db.collection('userPoints').doc(uid).get()]);
       return res.json({
         coins: Number(pts.data()?.coins) || 0,
         equipped: { flame: hasFlame(c, c.flame) ? c.flame : 'classic', badges: c.badges.filter((b) => c.earned.includes(b)) },
         maxBadges: MAX_SHOWN_BADGES,
         flames: FLAMES.map((f) => ({ id: f.id, name: f.name, price: f.price, hint: f.hint || null, unlocked: hasFlame(c, f.id), earnedOnly: !!f.earnedBy })),
-        badges: BADGES.map((b) => ({ id: b.id, name: b.name, icon: b.icon, hint: b.hint, earned: c.earned.includes(b.id) })),
+        badges: BADGES.map((b) => ({ id: b.id, name: b.name, icon: b.icon, hint: b.hint, tier: b.tier, target: b.target, progress: Math.min(b.target, m[b.metric]), earned: c.earned.includes(b.id) })),
+        newlyEarned: fresh,
       });
     } catch (err) {
       console.error('cosmetics load error:', err);
@@ -167,7 +172,7 @@ export function registerCosmeticsRoutes(app: express.Express, deps: CosmeticsDep
     if (!decoded || !db) return res.status(401).json({ error: 'Unauthorized.' });
     const uid = decoded.uid;
     try {
-      const c = await refreshEarned(db, uid);
+      const { c } = await refreshEarned(db, uid);
       const patch: Record<string, unknown> = {};
       if (typeof req.body?.flame === 'string') {
         if (!hasFlame(c, req.body.flame)) return res.status(400).json({ error: 'You do not have that style yet.' });

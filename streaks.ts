@@ -295,7 +295,9 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
       const outgoing = await Promise.all(
         Object.entries(links.outgoing || {}).filter(([pairId]) => !dropped.has(pairId)).map(async ([pairId, toUid]) => ({ pairId, partner: await personCard(db, toUid) })),
       );
-      return res.json({ streaks, outgoing, incoming, max: MAX_FRIEND_STREAKS });
+      // `me`: my own flame style, so each tile can show both people's flames
+      const me = await publicStyle(db, uid).catch(() => ({ flame: 'classic', badges: [] as string[] }));
+      return res.json({ streaks, outgoing, incoming, max: MAX_FRIEND_STREAKS, me });
     } catch (err) {
       console.error('friend streak state error:', err);
       return res.status(500).json({ error: 'Could not load the friend streaks.' });
