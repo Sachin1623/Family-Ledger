@@ -11,6 +11,7 @@ import { parseLocalDate } from '../lib/dateUtils';
 import { useLanguage } from '../context/LanguageContext';
 import SettlementDetailModal, { SettlementDetailInfo } from '../components/SettlementDetailModal';
 import ExpenseQuickView from '../components/ExpenseQuickView';
+import SettleSheet from '../components/SettleSheet';
 import { netBalances, simplifyDebts } from '../lib/settleMath';
 
 interface Balance {
@@ -53,6 +54,10 @@ export default function Settlements() {
   const [loading, setLoading] = useState(false);
   const [selectedSettlement, setSelectedSettlement] = useState<SettlementDetailInfo | null>(null);
   const [quickViewExpense, setQuickViewExpense] = useState<any>(null);
+  // The Settle sheet (choose how much to pay back), which spend item is open, and the All / Mine / I paid chips over the list
+  const [settleTarget, setSettleTarget] = useState<SettlementInfo | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [spendScope, setSpendScope] = useState<'all' | 'mine' | 'paid'>('all');
 
   // Fetch groups
   const [membershipsValue] = useCollection(
@@ -235,6 +240,43 @@ export default function Settlements() {
       .sort((a: any, b: any) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
   }, [selectedSettlement, expenses]);
 
+  // Paying someone back is saved as an ordinary expense that the form marks `isSettlement` (older ones are recognised by their description).
+  const isSettlementExpense = (e: any) => !!e.isSettlement || /^settlement to /i.test(String(e.description || ''));
+
+  // My balance in each group, shown on the group chips: red when I owe, green when I am owed.
+  const myGroupBalances = useMemo(() => {
+    const out: Record<string, number> = {};
+    splitEnabledGroupIds.forEach((gid: string) => {
+      out[gid] = netBalances(expenses.filter((e) => e.groupId === gid))[user?.uid || ''] || 0;
+    });
+    return out;
+  }, [expenses, splitEnabledGroupIds, user]);
+
+  // One plain sentence at the top: what the person owes or is owed in this view.
+  const netLine = useMemo(() => {
+    const fmtc = (code: string, amt: number) => `${getCurrencySymbol(code)}${formatAmountCompact(amt, code, profile?.numberSystem)}`;
+    const owe = summary.oweByCurrency.map((x) => fmtc(x.currencyCode, x.amount)).join(' + ');
+    const owed = summary.owedByCurrency.map((x) => fmtc(x.currencyCode, x.amount)).join(' + ');
+    if (owe && owed) return { text: `You owe ${owe} · You are owed ${owed}`, tone: 'mixed' as const };
+    if (owe) return { text: `You owe ${owe}${selectedGroupId === 'overall' ? ' overall' : ''}`, tone: 'owe' as const };
+    if (owed) return { text: `You are owed ${owed}${selectedGroupId === 'overall' ? ' overall' : ''}`, tone: 'owed' as const };
+    return { text: 'All settled 🎉', tone: 'settled' as const };
+  }, [summary, selectedGroupId, profile?.numberSystem]);
+
+  // Payments made to settle up, newest first, for the Settlement history section (only ones that involve me).
+  const settlementHistory = useMemo(
+    () =>
+      expenses
+        .filter((e) => isSettlementExpense(e) && (selectedGroupId === 'overall' || e.groupId === selectedGroupId))
+        .filter((e) => {
+          const toId = e.settledWith || e.splitInfo?.splits?.[0]?.userId;
+          return e.paidBy === user?.uid || toId === user?.uid;
+        })
+        .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')))
+        .slice(0, 5),
+    [expenses, selectedGroupId, user],
+  );
+
   const membersArray = useMemo(
     () => Object.entries(allMembers).map(([userId, m]: [string, any]) => ({ userId, ...m })),
     [allMembers],
@@ -288,6 +330,7 @@ export default function Settlements() {
   };
   // AND logic: when multiple people are selected, only show expenses that involve every one of
   // them (as payer or split participant) — not expenses that involve any one of them.
+  // (the list under Spend items hides settlement payments, which have their own section, and follows the All / Mine / I paid chips)
   const filteredSpendExpenses = useMemo(() => {
     if (spendUserFilter.size === 0) return scopedSpendExpenses;
     return scopedSpendExpenses.filter((e: any) => {
@@ -316,6 +359,19 @@ export default function Settlements() {
   // `members` is the multi-person form of the same thing (comma-separated uids): it's how the
   // quick view's "edit" round-trip (see `quickViewReturnTo` below) puts the person filter back after
   // the user finishes editing/deleting on the Group Expenses screen.
+  const visibleSpend = useMemo(
+    () =>
+      filteredSpendExpenses.filter((e: any) => {
+        if (isSettlementExpense(e)) return false;
+        const inSplit = (e.splitInfo?.splits || []).some((x: any) => x.userId === user?.uid);
+        const iPaid = e.paidBy === user?.uid || (Array.isArray(e.payers) && e.payers.some((p: any) => p.userId === user?.uid));
+        if (spendScope === 'mine') return inSplit || iPaid;
+        if (spendScope === 'paid') return iPaid;
+        return true;
+      }),
+    [filteredSpendExpenses, spendScope, user],
+  );
+
   const memberParam = searchParams.get('members') || searchParams.get('member');
   const appliedMemberParamRef = useRef<string | null>(null);
   useEffect(() => {
@@ -340,43 +396,47 @@ export default function Settlements() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-6 max-w-2xl mx-auto w-full space-y-6 pb-24">
+      <main className="flex-1 p-4 md:p-6 max-w-2xl mx-auto w-full space-y-6 pb-36">
         {hasStaleDataWarning && (
           <div className="p-3 bg-warning/10 text-warning text-xs font-bold rounded-xl border border-warning/20 text-center">
             {t('settlements.serverTrouble')}
           </div>
         )}
-        <header className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-black text-primary tracking-tight">{t('settlements.title')}</h1>
-            <div className="flex bg-white rounded-xl border border-border-subtle p-1 shadow-sm">
-              <button
-                onClick={() => setSelectedGroupId('overall')}
-                className={clsx(
-                  "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
-                  selectedGroupId === 'overall' ? "bg-primary text-white shadow-md" : "text-text-muted hover:bg-surface"
-                )}
-              >
-                {t('settlements.overall')}
-              </button>
-            </div>
-          </div>
+        <header className="space-y-3">
+          <h1 className="text-2xl font-black text-primary tracking-tight">{t('settlements.title')}</h1>
+          <p className={clsx('text-[15px] font-black', netLine.tone === 'owe' ? 'text-error' : netLine.tone === 'owed' ? 'text-success' : 'text-primary')}>{netLine.text}</p>
 
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-tour="settlements-filter">
-            {splitEnabledGroups.map(group => (
-              <button
-                key={group.id}
-                onClick={() => setSelectedGroupId(group.id)}
-                className={clsx(
-                  "flex-none px-4 py-2 rounded-xl font-bold border text-xs transition-all active:scale-95 shadow-sm whitespace-nowrap min-w-max",
-                  selectedGroupId === group.id 
-                    ? "bg-primary text-white border-primary" 
-                    : "bg-white text-on-surface border-border-subtle hover:bg-surface-container"
-                )}
-              >
-                {group.name}
-              </button>
-            ))}
+            <button
+              onClick={() => setSelectedGroupId('overall')}
+              className={clsx(
+                'flex-none px-4 py-2 rounded-xl font-bold border text-xs transition-all active:scale-95 shadow-sm whitespace-nowrap',
+                selectedGroupId === 'overall' ? 'bg-primary text-white border-primary' : 'bg-white text-on-surface border-border-subtle hover:bg-surface-container',
+              )}
+            >
+              {t('settlements.overall') === 'Overall' ? 'All' : t('settlements.overall')}
+            </button>
+            {splitEnabledGroups.map((group) => {
+              const bal = myGroupBalances[group.id] || 0;
+              const sym = getCurrencySymbol(group.currency);
+              return (
+                <button
+                  key={group.id}
+                  onClick={() => setSelectedGroupId(group.id)}
+                  className={clsx(
+                    'flex-none px-4 py-2 rounded-xl font-bold border text-xs transition-all active:scale-95 shadow-sm whitespace-nowrap min-w-max',
+                    selectedGroupId === group.id ? 'bg-primary text-white border-primary' : 'bg-white text-on-surface border-border-subtle hover:bg-surface-container',
+                  )}
+                >
+                  {group.name}
+                  {Math.abs(bal) > 0.01 && (
+                    <span className={clsx('ml-1.5 font-black', selectedGroupId === group.id ? 'text-white' : bal < 0 ? 'text-error' : 'text-success')}>
+                      {bal < 0 ? '−' : '+'}{sym}{formatAmountCompact(Math.abs(bal), group.currency, profile?.numberSystem)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </header>
 
@@ -432,7 +492,7 @@ export default function Settlements() {
                   transition={{ delay: idx * 0.05 }}
                   key={`${s.groupId}-${s.owerId}-${s.receiverId}`}
                   onClick={() => setSelectedSettlement(s)}
-                  className="bg-white p-4 rounded-3xl border border-border-subtle shadow-sm flex items-center gap-4 transition-all active:scale-[0.98] cursor-pointer hover:bg-surface"
+                  className="bg-white p-4 rounded-3xl border border-border-subtle shadow-sm flex flex-wrap items-center gap-x-4 gap-y-3 transition-all active:scale-[0.98] cursor-pointer hover:bg-surface"
                 >
                   <div className="relative">
                     <div className="w-10 h-10 rounded-full overflow-hidden bg-primary/10 border-2 border-white shadow-sm">
@@ -467,11 +527,65 @@ export default function Settlements() {
                       {formatAmountCompact(s.amount, selectedGroupId === 'overall' ? groups.find((g: any) => g.id === s.groupId)?.currency : undefined, profile?.numberSystem)}
                     </div>
                   </div>
+                  {(s.owerId === user?.uid || s.receiverId === user?.uid) && (
+                    <div className="w-full flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      {s.owerId === user?.uid ? (
+                        <button type="button" onClick={() => setSettleTarget(s)} className="flex-1 py-2.5 rounded-xl bg-primary text-white text-xs font-black active:scale-95 transition-all">
+                          {t('settlements.settle') === 'settlements.settle' ? 'Settle' : t('settlements.settle')}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const sym = getCurrencySymbol(groups.find((g: any) => g.id === s.groupId)?.currency);
+                            const msg = `Hey ${s.owerName.split(' ')[0]}! Friendly reminder: you owe me ${sym}${formatAmountCompact(s.amount, undefined, profile?.numberSystem)} in "${s.groupName}" on FamilyLedger. 🙏`;
+                            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                          }}
+                          className="flex-1 py-2.5 rounded-xl bg-[#25D366]/15 text-[#128C4A] text-xs font-black active:scale-95 transition-all"
+                        >
+                          Remind
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setSelectedSettlement(s)} className="px-4 py-2.5 rounded-xl bg-surface text-text-muted text-xs font-black active:scale-95 transition-all">
+                        Details
+                      </button>
+                    </div>
+                  )}
                 </motion.div>
               ))
             )}
           </div>
         </section>
+
+        {settlementHistory.length > 0 && (
+          <section className="space-y-3">
+            <h2 className="text-sm font-black text-primary uppercase tracking-wider px-1">Settlement history</h2>
+            <div className="bg-white rounded-3xl border border-border-subtle shadow-sm divide-y divide-border-subtle/60">
+              {settlementHistory.map((e: any) => {
+                const toId = e.settledWith || e.splitInfo?.splits?.[0]?.userId;
+                const fromName = e.paidBy === user?.uid ? 'You' : (allMembers[e.paidBy]?.displayName || t('common.unknown')).split(' ')[0];
+                const toName = toId === user?.uid ? 'you' : (allMembers[toId]?.displayName || t('common.unknown')).split(' ')[0];
+                const sym = getCurrencySymbol(groups.find((g: any) => g.id === e.groupId)?.currency);
+                return (
+                  <button key={e.id} type="button" onClick={() => setQuickViewExpense(e)} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-surface transition-colors">
+                    <span className="w-8 h-8 rounded-full bg-success/15 text-success flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-[18px]">check</span>
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[13px] font-bold text-primary truncate">
+                        {fromName} paid {toName} <span className="font-black">{sym}{formatAmountCompact(e.amount, undefined, profile?.numberSystem)}</span>
+                      </span>
+                      <span className="block text-[10px] text-text-muted">
+                        {parseLocalDate(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {groups.find((g: any) => g.id === e.groupId)?.name || ''}
+                      </span>
+                    </span>
+                    <span className="text-[11px] font-black text-primary/70">View</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* Details of items */}
         <section id="spend-items-section" className="space-y-4">
@@ -504,18 +618,35 @@ export default function Settlements() {
               </button>
             </div>
           </div>
+          <div className="flex gap-2">
+            {([['all', 'All'], ['mine', 'Mine'], ['paid', 'I paid']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setSpendScope(id)}
+                className={clsx('px-3.5 py-1.5 rounded-full text-[11px] font-black border transition-all active:scale-95', spendScope === id ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-text-muted border-border-subtle')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="space-y-2">
-            {filteredSpendExpenses.length === 0 ? (
+            {visibleSpend.length === 0 ? (
               <p className="text-xs text-text-muted text-center py-6">{t('settlements.noMatchingSpendItems')}</p>
-            ) : filteredSpendExpenses.slice(0, 10).map((expense) => {
+            ) : visibleSpend.slice(0, 10).map((expense) => {
               const payerName = allMembers[expense.paidBy]?.displayName || t('common.unknown');
               const payerIsMe = expense.paidBy === user?.uid;
+              // what this spend means for ME: what I lent (green) or my share of it (red)
+              const myShare = (expense.splitInfo?.splits || []).find((x: any) => x.userId === user?.uid)?.amount || 0;
+              const iPaid = payerIsMe || (Array.isArray(expense.payers) && expense.payers.some((p: any) => p.userId === user?.uid));
+              const myNet = iPaid ? Number(expense.amount) - myShare : -myShare;
+              const rowCurrency = groups.find((g: any) => g.id === expense.groupId)?.currency;
               
               return (
                 <div 
                   key={expense.id}
-                  onClick={() => setQuickViewExpense(expense)}
-                  className="bg-white p-4 rounded-3xl border border-border-subtle shadow-sm flex flex-col gap-3 active:scale-[0.98] transition-all cursor-pointer"
+                  onClick={() => setExpandedId((cur) => (cur === expense.id ? null : expense.id))}
+                  className="bg-white p-4 rounded-3xl border border-border-subtle shadow-sm flex flex-col gap-3 active:scale-[0.99] transition-all cursor-pointer"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0">
@@ -534,13 +665,13 @@ export default function Settlements() {
                         {selectedGroupId === 'overall' ? getCurrencySymbol(groups.find(g => g.id === expense.groupId)?.currency) : currencySymbol}
                         {formatAmountCompact(expense.amount, selectedGroupId === 'overall' ? groups.find(g => g.id === expense.groupId)?.currency : undefined, profile?.numberSystem)}
                       </div>
-                      <div className="text-[8px] font-black text-text-muted uppercase tracking-widest bg-surface px-1.5 py-0.5 rounded-full inline-block mt-0.5 border border-border-subtle">
-                        {expense.splitInfo.splitType === 'equally' ? t('addExpense.equally') : expense.splitInfo.splitType === 'percentage' ? t('addExpense.percent') : t('common.amount')}
+                      <div className={clsx('text-[11px] font-black mt-0.5', myNet > 0.01 ? 'text-success' : myNet < -0.01 ? 'text-error' : 'text-text-muted')}>
+                        {Math.abs(myNet) < 0.01 ? 'not in this' : `${myNet > 0 ? 'you lent ' : 'your share '}${myNet > 0 ? '+' : '−'}${getCurrencySymbol(rowCurrency)}${formatAmountCompact(Math.abs(myNet), rowCurrency, profile?.numberSystem)}`}
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border-subtle/50">
+                  <div className={clsx('grid grid-cols-2 gap-4 pt-2 border-t border-border-subtle/50', expandedId !== expense.id && 'hidden')}>
                     <div className="space-y-1">
                       {/* This was labeled "Added by" but always showed expense.paidBy, not
                           expense.addedBy — a real mislabel (who paid vs. who happened to log it
@@ -586,6 +717,7 @@ export default function Settlements() {
                       )}
                     </div>
                     <div className="space-y-1">
+                      <button type="button" onClick={(ev) => { ev.stopPropagation(); setQuickViewExpense(expense); }} className="float-right text-[10px] font-black text-primary underline">Open</button>
                       <span className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('addExpense.splitWith')}</span>
                       <div className="flex flex-wrap gap-1">
                         {expense.splitInfo.splits.map((s: any) => {
@@ -603,12 +735,20 @@ export default function Settlements() {
                 </div>
               );
             })}
-            {filteredSpendExpenses.length > 10 && (
+            {visibleSpend.length > 10 && (
               <p className="text-center text-[10px] text-text-muted italic">{t('settlements.onlyShowingRecent')}</p>
             )}
           </div>
         </section>
       </main>
+
+      {settleTarget && (
+        <SettleSheet
+          settlement={settleTarget}
+          currencySymbol={getCurrencySymbol(groups.find((g: any) => g.id === settleTarget.groupId)?.currency)}
+          onClose={() => setSettleTarget(null)}
+        />
+      )}
 
       {selectedSettlement && (
         <SettlementDetailModal

@@ -14,7 +14,7 @@ import Fireworks from './Fireworks';
 
 type Tab = 'start' | 'daily' | 'weekly' | 'journey';
 
-const HIDE_PREFIXES = ['/games', '/admin', '/login', '/add-expense', '/profile', '/chat', '/join', '/groups/join', '/onboarding'];
+const HIDE_PREFIXES = ['/settlements', '/games', '/admin', '/login', '/add-expense', '/profile', '/chat', '/join', '/groups/join', '/onboarding'];
 
 function ring(fraction: number, size: number, stroke: number) {
   const r = (size - stroke) / 2;

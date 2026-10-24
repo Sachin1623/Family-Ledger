@@ -529,6 +529,8 @@ export default function AddExpense() {
         createdAt: new Date().toISOString(),
         favoritedBy: isFavorite ? [user.uid] : [],
         ...(images.length > 0 ? { images } : {}),
+        // paying someone back (opened from Settle): remembered so the Settlements page can list it under Settlement history
+        ...(settleWith ? { isSettlement: true, settledWith: settleWith } : {}),
       };
 
       if (!isIncome && selectedGroup?.splitEnabled) {
