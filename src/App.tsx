@@ -84,6 +84,7 @@ import HealthGlucose from './screens/HealthGlucose';
 import HealthBloodPressure from './screens/HealthBloodPressure';
 import HealthMedicines from './screens/HealthMedicines';
 import PublicProfile from './screens/PublicProfile';
+import ProfileVisibility from './screens/ProfileVisibility';
 import ShoppingLists from './screens/ShoppingLists';
 import ShoppingListDetail from './screens/ShoppingListDetail';
 import ExpenseReminders from './screens/ExpenseReminders';
@@ -413,6 +414,7 @@ export default function App() {
               <Route path="/baby-vaccinations/caregivers/:profileId" element={<AuthenticatedLayout><VaccineCaregivers /></AuthenticatedLayout>} />
               <Route path="/baby-vaccinations/reminders/:profileId" element={<AuthenticatedLayout><VaccineReminders /></AuthenticatedLayout>} />
               <Route path="/u/:uid" element={<AuthenticatedLayout><PublicProfile /></AuthenticatedLayout>} />
+              <Route path="/profile/visibility" element={<AuthenticatedLayout><ProfileVisibility /></AuthenticatedLayout>} />
               <Route path="/calculator" element={<AuthenticatedLayout><Calculator /></AuthenticatedLayout>} />
               <Route path="/financial-calculators" element={<AuthenticatedLayout><FinancialCalculators /></AuthenticatedLayout>} />
               <Route path="/games" element={<AuthenticatedLayout><GamesHub /></AuthenticatedLayout>} />

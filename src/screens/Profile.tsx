@@ -146,51 +146,24 @@ const PUBLIC_PROFILE_TOGGLES: { key: keyof PublicProfileSettings; icon: string; 
 // keys fall back to DEFAULT_PUBLIC_PROFILE_SETTINGS so a profile that's never touched this
 // screen still behaves exactly like the pre-existing always-on level/streaks/badges behavior.
 function PublicProfileSettingsSection() {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const saved: Partial<PublicProfileSettings> = (profile as any)?.publicProfileSettings || {};
-  const settings: PublicProfileSettings = { ...DEFAULT_PUBLIC_PROFILE_SETTINGS, ...saved };
-
-  const handleToggle = async (key: keyof PublicProfileSettings) => {
-    if (!user) return;
-    const next = { ...settings, [key]: !settings[key] };
-    try {
-      await updateDoc(doc(db, 'users', user.uid), { publicProfileSettings: next });
-    } catch (err) {
-      console.error('Failed to update public profile settings:', err);
-    }
-  };
-
+  const rows: { icon: string; label: string; hint: string; to: string }[] = [
+    { icon: 'badge', label: 'My profile', hint: 'See how it looks to others', to: user ? `/u/${user.uid}` : '/profile' },
+    { icon: 'shield_person', label: 'Who sees what', hint: 'Only me, friends or all members, per section', to: '/profile/visibility' },
+    { icon: 'palette', label: 'My style', hint: 'Flame styles and badges', to: '/my-style' },
+  ];
   return (
     <div className="divide-y divide-border-subtle">
-      {user && (
-        <button
-          onClick={() => navigate(`/u/${user.uid}`)}
-          className="w-full p-4 flex items-center justify-between text-primary font-bold text-sm hover:bg-surface-container/20 transition-colors text-left"
-        >
-          <span>Preview my public profile</span>
-          <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+      {rows.map((r) => (
+        <button key={r.to} onClick={() => navigate(r.to)} className="w-full p-4 flex items-center gap-4 hover:bg-surface-container/20 transition-colors text-left">
+          <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary shrink-0"><span className="material-symbols-outlined">{r.icon}</span></div>
+          <div className="min-w-0 flex-1">
+            <p className="font-bold text-primary text-sm">{r.label}</p>
+            <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider truncate">{r.hint}</p>
+          </div>
+          <span className="material-symbols-outlined text-text-muted">chevron_right</span>
         </button>
-      )}
-      {PUBLIC_PROFILE_TOGGLES.map(({ key, icon, label, hint }) => (
-        <div
-          key={key}
-          onClick={() => handleToggle(key)}
-          className="p-4 flex items-center justify-between hover:bg-surface-container/20 transition-colors cursor-pointer group"
-        >
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary shrink-0">
-              <span className="material-symbols-outlined">{icon}</span>
-            </div>
-            <div className="min-w-0">
-              <p className="font-bold text-primary text-sm">{label}</p>
-              <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider truncate">{hint}</p>
-            </div>
-          </div>
-          <div className={clsx('w-10 h-5 rounded-full relative transition-all shrink-0', settings[key] ? 'bg-primary' : 'bg-gray-200')}>
-            <div className={clsx('w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow-md', settings[key] ? 'right-0.5' : 'left-0.5')} />
-          </div>
-        </div>
       ))}
     </div>
   );
@@ -1692,7 +1665,7 @@ export default function Profile() {
         <section className="space-y-1">
           <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Public Profile</h3>
           <p className="px-2 text-[11px] text-text-muted">
-            Choose what other signed-in FamilyLedger users can see on your public profile page.
+            Choose who can see your profile: only you, your friends, or all FamilyLedger members.
           </p>
           <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
             <PublicProfileSettingsSection />

@@ -46,6 +46,7 @@ const HIDDEN_FAB_EXACT_PATHS = new Set([
   '/progress',
   // flame styles and badges: a page of its own to browse and tap, so no floating buttons over it
   '/my-style',
+  '/profile/visibility',
   '/health/glucose',
   '/create-group',
   // Own account settings — "Add Expense" has no relationship to anything on this page.
@@ -54,6 +55,8 @@ const HIDDEN_FAB_EXACT_PATHS = new Set([
 function isHiddenFabPath(pathname: string): boolean {
   if (HIDDEN_FAB_EXACT_PATHS.has(pathname)) return true;
   if (pathname.startsWith('/games')) return true;
+  // a person's profile page (their own or someone else's): no floating buttons over it
+  if (pathname.startsWith('/u/')) return true;
   if (/^\/groups\/[^/]+\/manage$/.test(pathname)) return true;
   // Every baby-vaccinations screen except the dashboard itself already has its own primary
   // action (Save Visit, Send Invite, ...) in a bottom bar — a second "Add Expense"-flavored FAB
