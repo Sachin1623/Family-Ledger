@@ -184,6 +184,19 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
       : (groupId ? query(collection(db, 'expenses'), where('groupId', '==', groupId)) : null)
   );
   
+  // Payments between members ("Ravi paid Anita 500"): listed under the expenses but never counted in any total, filter or report.
+  const [paymentsValue] = useCollection(
+    groupId === 'all'
+      ? (userGroupIds.length > 0 ? query(collection(db, 'settlements'), where('groupId', 'in', selectedGroupIdFilter ? [selectedGroupIdFilter] : userGroupIds)) : null)
+      : (groupId ? query(collection(db, 'settlements'), where('groupId', '==', groupId)) : null)
+  );
+  const groupPayments = useMemo(
+    () =>
+      (paymentsValue?.docs.map((d) => ({ id: d.id, ...d.data() })) || [] as any[])
+        .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))),
+    [paymentsValue],
+  );
+
   const allExpenses = useMemo(() => {
     let exps = expensesValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
     // Filter to only include expenses from groups that actually exist and the user is a member of
@@ -1252,6 +1265,48 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
               <div className="px-6 py-10 text-center text-text-muted text-sm italic">{t('group.noTransactionsFound')}</div>
             )}
           </div>
+
+          {/* Payments between members: shown so nothing is hidden, but they are not expenses and are not in the totals above. */}
+          {groupPayments.length > 0 && !searchTerm && !selectedCategory && selectedType !== 'income' && (
+            <div className="border-t border-border-subtle bg-surface-container-low/40">
+              <div className="px-4 py-2.5 flex items-center justify-between">
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Payments between members</p>
+                <p className="text-[10px] text-text-muted">Not counted as spending</p>
+              </div>
+              <div className="divide-y divide-border-subtle/60">
+                {groupPayments.slice(0, 30).map((p: any) => {
+                  const sym = getCurrencySymbol(allGroups.find((g: any) => g.id === p.groupId)?.currency || groupData?.currency);
+                  const fromName = resolveMember(p.fromUid)?.displayName || p.fromName || t('common.unknown');
+                  const toName = resolveMember(p.toUid)?.displayName || p.toName || t('common.unknown');
+                  const canRemove = p.addedBy === user?.uid || (members.find((m: any) => m.userId === user?.uid) as any)?.role === 'admin' || (allGroups.find((g: any) => g.id === p.groupId) as any)?.createdBy === user?.uid;
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
+                      <span className="w-8 h-8 rounded-full bg-success/15 text-success flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[18px]">handshake</span>
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-bold text-primary truncate">{fromName} paid {toName}</p>
+                        <p className="text-[10px] text-text-muted">{p.date ? parseLocalDate(p.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : ''}</p>
+                      </div>
+                      <p className="text-sm font-black text-success shrink-0">{sym}{Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      {canRemove && (
+                        <button
+                          type="button"
+                          title="Remove this payment"
+                          onClick={() => {
+                            if (window.confirm('Remove this payment? The amount will be owed again.')) deleteDoc(doc(db, 'settlements', p.id)).catch(() => alert('Could not remove the payment.'));
+                          }}
+                          className="w-8 h-8 rounded-full text-text-muted hover:bg-surface flex items-center justify-center shrink-0"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">delete</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Pagination — 50 rows per page over the already-filtered/sorted array. */}
           {filteredExpenses.length > 0 && (

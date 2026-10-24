@@ -173,6 +173,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'group_deleted': return 'delete_forever';
       case 'weekly_summary': return 'insights';
       case 'add_income': return 'trending_up';
+      case 'settle_payment': return 'handshake';
       case 'leave': return 'logout';
       case 'comment': case 'dm_chat': return 'chat';
       case 'todo_created': return 'checklist';
@@ -222,7 +223,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
     if (type === 'admin_feedback' || type === 'feedback_reply') return 'bg-primary';
     if (type === 'made_admin') return 'bg-success';
     if (type === 'edit_expense' || type === 'recurring_created' || type === 'recurring_changed') return 'bg-secondary';
-    if (type === 'add_expense' || type === 'add_income' || type === 'join' || type === 'todo_completed') return 'bg-success';
+    if (type === 'add_expense' || type === 'add_income' || type === 'settle_payment' || type === 'join' || type === 'todo_completed') return 'bg-success';
     if (type.includes('group') || type === 'invite' || type === 'invite_received' || type === 'friend_request' || type === 'friend_accepted') return 'bg-primary';
     if (type === 'account_shared' || type === 'goal_shared' || type === 'reports_shared') return 'bg-primary';
     if (type === 'poke' || type.endsWith('_poke')) return 'bg-warning';
@@ -290,6 +291,21 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
               )}>
                 {getCurrencySymbol(groupsMap[activity.groupId]?.currency || activity.data?.currencyCode) || activity.data?.currencySymbol || '$'}
                 {(activity.data?.newAmount || activity.data?.amount)?.toLocaleString()}
+              </p>
+            </div>
+            <p className="text-[10px] text-text-muted font-bold tracking-tight">{groupsMap[activity.groupId]?.name || activity.data?.groupName || t('feed.inGroup')}</p>
+          </div>
+        );
+      case 'settle_payment':
+        // a payment between two members: shown as a payment, never as an expense, and not counted in any spending total
+        return (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-success">Payment</p>
+            <div className="flex items-baseline gap-2">
+              <p className="text-sm font-bold text-on-surface line-clamp-1">{activity.data?.fromName || t('common.someone')} paid {activity.data?.toName || t('common.someone')}</p>
+              <p className="text-sm font-bold shrink-0 text-success">
+                {getCurrencySymbol(groupsMap[activity.groupId]?.currency || activity.data?.currencyCode) || activity.data?.currencySymbol || '$'}
+                {activity.data?.amount?.toLocaleString()}
               </p>
             </div>
             <p className="text-[10px] text-text-muted font-bold tracking-tight">{groupsMap[activity.groupId]?.name || activity.data?.groupName || t('feed.inGroup')}</p>

@@ -1006,8 +1006,11 @@ export default function ManageGroup() {
       expensesSnapshot.forEach((doc) => {
         expenseBatch.delete(doc.ref);
       });
+      // also the payments between members of this group
+      const paymentsSnapshot = await getDocs(query(collection(db, 'settlements'), where('groupId', '==', groupId)));
+      paymentsSnapshot.forEach((d) => expenseBatch.delete(d.ref));
       await expenseBatch.commit();
-      
+
       // Update global stats
       await updateGlobalStats({
         groups: -1,

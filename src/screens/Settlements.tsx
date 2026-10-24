@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
@@ -89,6 +89,16 @@ export default function Settlements() {
   }
   const expenses = lastGoodExpensesRef.current;
 
+  // Payments between members (the `settlements` collection): not spending, they only move the balances below.
+  const [paymentsValue] = useCollection(
+    groupIds.length > 0 ? query(collection(db, 'settlements'), where('groupId', 'in', groupIds)) : null
+  );
+  const lastGoodPaymentsRef = useRef<any[]>([]);
+  if (paymentsValue) {
+    lastGoodPaymentsRef.current = paymentsValue.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  }
+  const payments = lastGoodPaymentsRef.current;
+
   // A group belongs in Balances (as an "Overall" contributor and as its own tab) if it's
   // CURRENTLY split-enabled, OR it has ever had a real split expense — that second clause is what
   // keeps a group's balance/settlement history visible after someone toggles splitting off.
@@ -155,7 +165,7 @@ export default function Settlements() {
       // Shared with Dashboard.tsx's GroupCard and the GroupExpenses retroactive-edit warning —
       // one netting implementation (including multi-payer expenses), not a second copy that could
       // silently drift out of sync with theirs. See settleMath.ts's own header comment.
-      const groupBalances = netBalances(groupExpenses);
+      const groupBalances = netBalances(groupExpenses, payments.filter((p) => p.groupId === gid));
       Object.entries(groupBalances).forEach(([uid, amt]) => {
         globalBalances[uid] = (globalBalances[uid] || 0) + amt;
       });
@@ -202,7 +212,7 @@ export default function Settlements() {
         oweByCurrency,
       }
     };
-  }, [selectedGroupId, expenses, allMembers, user, splitEnabledGroupIds, groups]);
+  }, [selectedGroupId, expenses, payments, allMembers, user, splitEnabledGroupIds, groups]);
 
   // Only meaningful as a single figure when exactly one currency is actually in play — the
   // "Overall" balance cards below use owedByCurrency/oweByCurrency instead, precisely because
@@ -247,10 +257,10 @@ export default function Settlements() {
   const myGroupBalances = useMemo(() => {
     const out: Record<string, number> = {};
     splitEnabledGroupIds.forEach((gid: string) => {
-      out[gid] = netBalances(expenses.filter((e) => e.groupId === gid))[user?.uid || ''] || 0;
+      out[gid] = netBalances(expenses.filter((e) => e.groupId === gid), payments.filter((p) => p.groupId === gid))[user?.uid || ''] || 0;
     });
     return out;
-  }, [expenses, splitEnabledGroupIds, user]);
+  }, [expenses, payments, splitEnabledGroupIds, user]);
 
   // One plain sentence at the top: what the person owes or is owed in this view.
   const netLine = useMemo(() => {
@@ -264,18 +274,30 @@ export default function Settlements() {
   }, [summary, selectedGroupId, profile?.numberSystem]);
 
   // Payments made to settle up, newest first, for the Settlement history section (only ones that involve me).
+  // Real payments, plus any older ones still saved as expenses (those are converted to payments by the migration).
   const settlementHistory = useMemo(
     () =>
-      expenses
-        .filter((e) => isSettlementExpense(e) && (selectedGroupId === 'overall' || e.groupId === selectedGroupId))
-        .filter((e) => {
-          const toId = e.settledWith || e.splitInfo?.splits?.[0]?.userId;
-          return e.paidBy === user?.uid || toId === user?.uid;
-        })
-        .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')))
+      [
+        ...payments.map((p) => ({ ...p, legacy: false })),
+        ...expenses
+          .filter((e) => isSettlementExpense(e))
+          .map((e) => ({ id: e.id, groupId: e.groupId, fromUid: e.paidBy, toUid: e.settledWith || e.splitInfo?.splits?.[0]?.userId, amount: e.amount, date: e.date, createdAt: e.createdAt, addedBy: e.addedBy, legacy: true, expense: e })),
+      ]
+        .filter((e: any) => selectedGroupId === 'overall' || e.groupId === selectedGroupId)
+        .filter((e: any) => e.fromUid === user?.uid || e.toUid === user?.uid)
+        .sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
         .slice(0, 5),
-    [expenses, selectedGroupId, user],
+    [expenses, payments, selectedGroupId, user],
   );
+
+  const undoPayment = async (id: string) => {
+    if (!window.confirm('Remove this payment? The amount will be owed again.')) return;
+    try {
+      await deleteDoc(doc(db, 'settlements', id));
+    } catch {
+      alert('Could not remove the payment. Only the person who recorded it or a group admin can.');
+    }
+  };
 
   const membersArray = useMemo(
     () => Object.entries(allMembers).map(([userId, m]: [string, any]) => ({ userId, ...m })),
@@ -562,12 +584,11 @@ export default function Settlements() {
             <h2 className="text-sm font-black text-primary uppercase tracking-wider px-1">Settlement history</h2>
             <div className="bg-white rounded-3xl border border-border-subtle shadow-sm divide-y divide-border-subtle/60">
               {settlementHistory.map((e: any) => {
-                const toId = e.settledWith || e.splitInfo?.splits?.[0]?.userId;
-                const fromName = e.paidBy === user?.uid ? 'You' : (allMembers[e.paidBy]?.displayName || t('common.unknown')).split(' ')[0];
-                const toName = toId === user?.uid ? 'you' : (allMembers[toId]?.displayName || t('common.unknown')).split(' ')[0];
+                const fromName = e.fromUid === user?.uid ? 'You' : (allMembers[e.fromUid]?.displayName || e.fromName || t('common.unknown')).split(' ')[0];
+                const toName = e.toUid === user?.uid ? 'you' : (allMembers[e.toUid]?.displayName || e.toName || t('common.unknown')).split(' ')[0];
                 const sym = getCurrencySymbol(groups.find((g: any) => g.id === e.groupId)?.currency);
                 return (
-                  <button key={e.id} type="button" onClick={() => setQuickViewExpense(e)} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-surface transition-colors">
+                  <button key={e.id} type="button" onClick={() => (e.legacy ? setQuickViewExpense(e.expense) : e.addedBy === user?.uid ? undoPayment(e.id) : undefined)} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-surface transition-colors">
                     <span className="w-8 h-8 rounded-full bg-success/15 text-success flex items-center justify-center shrink-0">
                       <span className="material-symbols-outlined text-[18px]">check</span>
                     </span>
@@ -579,7 +600,7 @@ export default function Settlements() {
                         {parseLocalDate(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {groups.find((g: any) => g.id === e.groupId)?.name || ''}
                       </span>
                     </span>
-                    <span className="text-[11px] font-black text-primary/70">View</span>
+                    <span className="text-[11px] font-black text-primary/70">{e.legacy ? 'View' : e.addedBy === user?.uid ? 'Undo' : ''}</span>
                   </button>
                 );
               })}

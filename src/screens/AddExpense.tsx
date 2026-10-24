@@ -10,6 +10,7 @@ import { clsx } from 'clsx';
 import { updateGlobalStats } from '../services/statsService';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { fireWrite } from '../lib/offlineWrite';
+import { recordSettlement } from '../lib/recordSettlement';
 import { claimPoints } from '../lib/pointsApi';
 import AmountKeypad from '../components/AmountKeypad';
 import ImageAttachments from '../components/ImageAttachments';
@@ -495,6 +496,35 @@ export default function AddExpense() {
 
     setLoading(true);
     try {
+      // Paying someone back (opened from Settle or a payment reminder) is a payment between two people, not an expense: it is saved on its own and never
+      // touches the group total, points or any report. It only moves the balance.
+      if (settleWith && !isIncome) {
+        const fromId = paidBy || user.uid;
+        const nameOf = (id: string) => (groupMembers.find((m: any) => m.userId === id) as any)?.displayName || (id === user.uid ? profile?.displayName || user.displayName : '') || 'Someone';
+        recordSettlement({
+          groupId,
+          groupName: selectedGroup?.name,
+          currencyCode: selectedGroup?.currency,
+          fromUid: fromId,
+          fromName: nameOf(fromId),
+          toUid: settleWith,
+          toName: nameOf(settleWith),
+          amount: evaluatedAmount,
+          date,
+          note: description,
+          addedBy: user.uid,
+          actorName: profile?.displayName || user.displayName || 'Someone',
+          actorPhoto: profile?.photoURL || user.photoURL || '',
+        });
+        setShowSuccess(true);
+        setAmount('');
+        setDescription('');
+        setFormErrors({});
+        setTimeout(() => setShowSuccess(false), 3000);
+        if (!keepOpen) handleClose();
+        return;
+      }
+
       // No transaction: transaction.get() requires a live server round trip and simply cannot
       // run at all while offline. Firestore write promises (setDoc/updateDoc) also don't resolve
       // until the server acks them — even though the write is already durably queued locally —
@@ -528,10 +558,7 @@ export default function AddExpense() {
         type: entryType,
         createdAt: new Date().toISOString(),
         favoritedBy: isFavorite ? [user.uid] : [],
-        ...(images.length > 0 ? { images } : {}),
-        // paying someone back (opened from Settle): remembered so the Settlements page can list it under Settlement history
-        ...(settleWith ? { isSettlement: true, settledWith: settleWith } : {}),
-      };
+        ...(images.length > 0 ? { images } : {}),      };
 
       if (!isIncome && selectedGroup?.splitEnabled) {
         let splits: any[] = [];

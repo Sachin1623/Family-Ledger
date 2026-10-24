@@ -421,6 +421,25 @@ async function mergeUidData(
   await commitInChunks(db, expenseOps);
   summary.expensesUpdated = expenseOps.length;
 
+  // 4b. Payments between members that point at the old uid.
+  const paymentDocs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  const [payAdded, payFrom, payTo] = await Promise.all([
+    db.collection("settlements").where("addedBy", "==", oldUid).get(),
+    db.collection("settlements").where("fromUid", "==", oldUid).get(),
+    db.collection("settlements").where("toUid", "==", oldUid).get(),
+  ]);
+  [...payAdded.docs, ...payFrom.docs, ...payTo.docs].forEach((d) => paymentDocs.set(d.id, d));
+  const paymentOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+  paymentDocs.forEach((docSnap) => {
+    const data = docSnap.data();
+    const update: Record<string, any> = {};
+    if (data.addedBy === oldUid) update.addedBy = newUid;
+    if (data.fromUid === oldUid) update.fromUid = newUid;
+    if (data.toUid === oldUid) update.toUid = newUid;
+    paymentOps.push((batch) => batch.update(docSnap.ref, update));
+  });
+  await commitInChunks(db, paymentOps);
+
   // 5. Activities logged by the old uid (cosmetic — keeps the activity feed attributed correctly).
   const activitiesSnap = await db.collection("activities").where("userId", "==", oldUid).get();
   const activityOps: Array<(batch: FirebaseFirestore.WriteBatch) => void> = activitiesSnap.docs.map(
@@ -5018,14 +5037,22 @@ async function startServer() {
           groupMembersSnap.docs.forEach((m) => ops.push((batch) => batch.delete(m.ref)));
           const groupExpensesSnap = await db.collection('expenses').where('groupId', '==', g.id).get();
           groupExpensesSnap.docs.forEach((e) => { ops.push((batch) => batch.delete(e.ref)); deletedExpenses.set(e.id, e.data()); });
+          // payments between members of a group that is being deleted
+          const groupPaymentsSnap = await db.collection('settlements').where('groupId', '==', g.id).get();
+          groupPaymentsSnap.docs.forEach((p) => ops.push((batch) => batch.delete(p.ref)));
           ops.push((batch) => batch.delete(g.ref));
         }
 
-        const [addedExpensesSnap, paidExpensesSnap, activitiesSnap] = await Promise.all([
+        const [addedExpensesSnap, paidExpensesSnap, activitiesSnap, myPaymentsAdded, myPaymentsFrom, myPaymentsTo] = await Promise.all([
           db.collection('expenses').where('addedBy', '==', uid).get(),
           db.collection('expenses').where('paidBy', '==', uid).get(),
           db.collection('activities').where('userId', '==', uid).get(),
+          db.collection('settlements').where('addedBy', '==', uid).get(),
+          db.collection('settlements').where('fromUid', '==', uid).get(),
+          db.collection('settlements').where('toUid', '==', uid).get(),
         ]);
+        // payments this person made, received or recorded go with the account, the same way their expenses do
+        [...myPaymentsAdded.docs, ...myPaymentsFrom.docs, ...myPaymentsTo.docs].forEach((p) => ops.push((batch) => batch.delete(p.ref)));
         addedExpensesSnap.docs.forEach((d) => { ops.push((batch) => batch.delete(d.ref)); deletedExpenses.set(d.id, d.data()); });
         paidExpensesSnap.docs.forEach((d) => { ops.push((batch) => batch.delete(d.ref)); deletedExpenses.set(d.id, d.data()); });
         activitiesSnap.docs.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
@@ -6724,6 +6751,7 @@ async function startServer() {
         todo_completed: 'completed a to-do',
         budget_set: 'set the group budget',
         income_added: 'added income',
+        payment_recorded: 'recorded a payment',
         glucose_logged: 'logged a glucose reading',
         bp_logged: 'logged a blood pressure reading',
         medicine_logged: 'logged a medicine dose',
@@ -15416,6 +15444,16 @@ async function startServer() {
           ops.push((batch) => batch.update(d.ref, update));
           expensesUpdated += 1;
         }
+      });
+
+      // payments between members that name the roster participant
+      const payLinkSnap = await db.collection('settlements').where('groupId', '==', groupId).get();
+      payLinkSnap.docs.forEach((d) => {
+        const data = d.data();
+        const update: Record<string, any> = {};
+        if (data.fromUid === participantId) update.fromUid = targetUid;
+        if (data.toUid === participantId) update.toUid = targetUid;
+        if (Object.keys(update).length > 0) ops.push((batch) => batch.update(d.ref, update));
       });
 
       const recSnap = await db.collection('recurringExpenses').where('groupId', '==', groupId).get();

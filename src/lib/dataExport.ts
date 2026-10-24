@@ -48,6 +48,15 @@ export async function exportMyData(uid: string): Promise<void> {
     .filter((d) => d.data().addedBy === uid)
     .map((d) => ({ id: d.id, ...d.data() }));
 
+  // Payments between members (not expenses) that this account made or received, queried per group like the expenses above.
+  const paymentsByGroup = await Promise.all(
+    myGroupIds.map((groupId) => getDocs(query(collection(db, 'settlements'), where('groupId', '==', groupId)))),
+  );
+  const myPayments = paymentsByGroup
+    .flatMap((snap) => snap.docs)
+    .filter((d) => d.data().fromUid === uid || d.data().toUid === uid || d.data().addedBy === uid)
+    .map((d) => ({ id: d.id, ...d.data() }));
+
   // Loan contact entries live in a subcollection per contact — fetched after the contacts
   // themselves so we know which contact IDs to walk.
   const ownedContactIds = myLoanContactsSnap.docs.map((d) => d.id);
@@ -64,6 +73,7 @@ export async function exportMyData(uid: string): Promise<void> {
     privateInfo: privateSnap.exists() ? privateSnap.data() : null,
     groupMemberships: membershipsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
     expensesIAdded: myExpenses,
+    paymentsBetweenMembers: myPayments,
     personalLoans: {
       contactsIOwn: myLoanContactsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
       contactsLinkedToMe: theirLoanContactsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),

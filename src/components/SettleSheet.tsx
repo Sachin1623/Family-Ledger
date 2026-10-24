@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { recordSettlement } from '../lib/recordSettlement';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
 import { formatAmountCompact } from '../lib/constants';
@@ -21,8 +21,7 @@ export interface SettleTarget {
 }
 
 export default function SettleSheet({ settlement, currencySymbol, onClose }: { settlement: SettleTarget; currencySymbol: string; onClose: () => void }) {
-  const navigate = useNavigate();
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const owed = Math.round(settlement.amount * 100) / 100;
   const [mode, setMode] = useState<'full' | 'half' | 'custom'>('full');
   const [custom, setCustom] = useState('');
@@ -37,16 +36,24 @@ export default function SettleSheet({ settlement, currencySymbol, onClose }: { s
   const fmt = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
   const firstName = settlement.receiverName.split(' ')[0];
 
+  const [done, setDone] = useState(false);
+  // Saves the payment on its own (never as an expense), so the balance drops by exactly this amount and the rest stays owed.
   const next = () => {
-    if (!valid) return;
-    const params = new URLSearchParams({
+    if (!valid || done || !user) return;
+    recordSettlement({
       groupId: settlement.groupId,
-      amount: amount.toFixed(2),
-      settleWith: settlement.receiverId,
-      description: `Settlement to ${firstName}`,
-      category: 'misc',
+      groupName: settlement.groupName,
+      fromUid: settlement.owerId,
+      fromName: profile?.displayName || user.displayName || 'Someone',
+      toUid: settlement.receiverId,
+      toName: settlement.receiverName,
+      amount,
+      addedBy: user.uid,
+      actorName: profile?.displayName || user.displayName || 'Someone',
+      actorPhoto: profile?.photoURL || user.photoURL || '',
     });
-    navigate(`/add-expense?${params.toString()}`);
+    setDone(true);
+    setTimeout(onClose, 900);
   };
 
   const Avatar = ({ photo, name }: { photo: string; name: string }) => (
@@ -111,13 +118,13 @@ export default function SettleSheet({ settlement, currencySymbol, onClose }: { s
 
         <button
           type="button"
-          disabled={!valid}
+          disabled={!valid || done}
           onClick={next}
           className="w-full mt-4 py-3.5 rounded-2xl bg-primary text-white font-black text-[15px] disabled:opacity-50 active:scale-[0.98] transition-all"
         >
-          Continue{valid ? ` · ${fmt(amount)}` : ''}
+          {done ? 'Payment recorded ✓' : `Record payment${valid ? ` · ${fmt(amount)}` : ''}`}
         </button>
-        <p className="text-center text-[11px] text-text-muted mt-2">You will check the details before it is saved.</p>
+        <p className="text-center text-[11px] text-text-muted mt-2">Saved as a payment between you and {firstName}. It is not counted as spending.</p>
       </motion.div>
     </div>,
     document.body,

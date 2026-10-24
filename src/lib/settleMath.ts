@@ -26,8 +26,23 @@ export function memberContribution(expense: any, memberId: string): number {
   return expense.paidBy === memberId ? (Number(expense.amount) || 0) : 0;
 }
 
-export function netBalances(expenses: any[]): Record<string, number> {
+// A payment between two people in a group (the `settlements` collection). It is NOT spending: it never counts toward a group's total, a budget, a report or
+// a category. It only moves the balance: `fromUid` handed `amount` to `toUid`, so what `fromUid` owed goes down and what `toUid` was owed goes down.
+export interface GroupPayment {
+  groupId: string;
+  fromUid: string;
+  toUid: string;
+  amount: number;
+}
+
+export function netBalances(expenses: any[], payments: GroupPayment[] = []): Record<string, number> {
   const bal: Record<string, number> = {};
+  for (const p of payments || []) {
+    const amt = Number(p.amount) || 0;
+    if (!p.fromUid || !p.toUid || amt <= 0) continue;
+    bal[p.fromUid] = (bal[p.fromUid] || 0) + amt;
+    bal[p.toUid] = (bal[p.toUid] || 0) - amt;
+  }
   for (const expense of expenses || []) {
     const splits = expense.splitInfo?.splits || [];
     if (splits.length === 0) continue;

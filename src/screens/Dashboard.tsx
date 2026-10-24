@@ -700,6 +700,12 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
     return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue]);
 
+  // Payments between members: not spending, they only move this group's balances (see settleMath.ts).
+  const [paymentsValue] = useCollection(
+    groupId ? query(collection(db, 'settlements'), where('groupId', '==', groupId)) : null
+  );
+  const payments = useMemo(() => (paymentsValue?.docs.map(d => d.data()) || []) as any[], [paymentsValue]);
+
   // The current user's own net balance within THIS group only — same per-split summation
   // Settlements.tsx's own balance calc uses (never netted against any other group's expenses),
   // just narrowed down to one person's running total instead of building the full owers/receivers
@@ -710,8 +716,8 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
     // Shared with Settlements.tsx and the GroupExpenses retroactive-edit warning — one netting
     // implementation (including multi-payer expenses), not a second copy that could silently
     // drift out of sync with theirs. See settleMath.ts's own header comment.
-    return netBalances(expenses)[user.uid] || 0;
-  }, [expenses, user]);
+    return netBalances(expenses, payments)[user.uid] || 0;
+  }, [expenses, payments, user]);
 
   // The per-person breakdown behind myGroupBalance above — same minimal-transaction settle-up
   // plan Settlements.tsx computes (via the shared simplifyDebts, extracted from there so this
@@ -722,9 +728,9 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   // one-line summary at tileState 2 stays a single line on purpose.
   const myGroupSettlements = useMemo(() => {
     if (!user) return [];
-    const allSettlements = simplifyDebts(netBalances(expenses));
+    const allSettlements = simplifyDebts(netBalances(expenses, payments));
     return allSettlements.filter((s) => s.owerId === user.uid || s.receiverId === user.uid);
-  }, [expenses, user]);
+  }, [expenses, payments, user]);
   // Which month this card's stats are scoped to — defaults to (and, on every fresh mount, always
   // starts back at) the real current month; see the month-picker button group's own comment for
   // why this is deliberately local, unpersisted state rather than something remembered across

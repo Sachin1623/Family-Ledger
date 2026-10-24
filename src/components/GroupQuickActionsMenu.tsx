@@ -438,6 +438,9 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
       expensesSnapshot.forEach((d) => { totalExpenseAmount += d.data().amount || 0; });
       const expenseBatch = writeBatch(db);
       expensesSnapshot.forEach((d) => expenseBatch.delete(d.ref));
+      // also the payments between members of this group
+      const paymentsSnapshot = await getDocs(query(collection(db, 'settlements'), where('groupId', '==', groupId)));
+      paymentsSnapshot.forEach((d) => expenseBatch.delete(d.ref));
       await expenseBatch.commit();
 
       await updateGlobalStats({ groups: -1, expenses: -expensesSnapshot.size, amount: -totalExpenseAmount });

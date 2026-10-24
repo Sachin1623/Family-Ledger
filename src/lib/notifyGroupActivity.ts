@@ -4,13 +4,13 @@ import { addDoc, collection } from 'firebase/firestore';
 type GroupActivityAction =
   | 'added' | 'updated' | 'deleted' | 'commented' | 'recurring_created' | 'recurring_changed'
   | 'recurring_deleted' | 'shopping_list_created' | 'member_left' | 'todo_created' | 'todo_completed'
-  | 'budget_set' | 'income_added' | 'glucose_logged' | 'bp_logged' | 'medicine_logged' | 'reminder_set';
+  | 'budget_set' | 'income_added' | 'glucose_logged' | 'bp_logged' | 'medicine_logged' | 'reminder_set' | 'payment_recorded';
 
 // Actions that already write their own purpose-built doc to `activities` at the call site
 // (add_expense/edit_expense/delete_expense, add_income, leave) — logging here too would
 // double them up in the Activity Feed. Everything else previously only ever fired a push
 // notification and never appeared in the Feed at all, even though the push claimed it happened.
-const ALREADY_LOGGED_ELSEWHERE = new Set<GroupActivityAction>(['added', 'updated', 'deleted', 'income_added', 'member_left']);
+const ALREADY_LOGGED_ELSEWHERE = new Set<GroupActivityAction>(['added', 'updated', 'deleted', 'income_added', 'member_left', 'payment_recorded']);
 
 const ACTIVITY_TYPE: Partial<Record<GroupActivityAction, string>> = {
   commented: 'comment',
