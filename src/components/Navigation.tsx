@@ -44,6 +44,8 @@ const HIDDEN_FAB_EXACT_PATHS = new Set([
   '/health/blood-pressure',
   '/friends',
   '/progress',
+  // flame styles and badges: a page of its own to browse and tap, so no floating buttons over it
+  '/my-style',
   '/health/glucose',
   '/create-group',
   // Own account settings — "Add Expense" has no relationship to anything on this page.
