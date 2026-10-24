@@ -15,11 +15,18 @@ import StreakFlame, { Snowfield, useFreezeBurst } from './StreakFlame';
 // several going at once (one per friend). A streak grows on a day when BOTH of you logged something. A missed day freezes it for up to 3 days;
 // either of you can pay coins to unfreeze it (2 times per streak).
 
+const AVATAR_TONES = ['#6b5fa0', '#c08a5a', '#3f8f7a', '#b4577a', '#4f7fb8', '#a8893a'];
+
+// A photo that cannot load (expired or blocked link) falls back to the person's initial on a coloured circle, never the browser's broken-image icon.
 function Avatar({ p, size = 40, ring }: { p: { name: string; photoURL: string | null }; size?: number; ring?: boolean }) {
-  return p.photoURL ? (
-    <img src={p.photoURL} alt="" className={clsx('rounded-full object-cover bg-white', ring && 'ring-2 ring-white/80')} style={{ width: size, height: size }} />
-  ) : (
-    <span className={clsx('rounded-full bg-white/20 text-white font-black flex items-center justify-center', ring && 'ring-2 ring-white/80')} style={{ width: size, height: size }}>
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [p.photoURL]);
+  if (p.photoURL && !failed) {
+    return <img src={p.photoURL} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} className={clsx('rounded-full object-cover bg-white', ring && 'ring-2 ring-white/80')} style={{ width: size, height: size }} />;
+  }
+  const tone = AVATAR_TONES[(p.name.charCodeAt(0) || 0) % AVATAR_TONES.length];
+  return (
+    <span className={clsx('rounded-full text-white font-black flex items-center justify-center shrink-0', ring && 'ring-2 ring-white/80')} style={{ width: size, height: size, background: tone, fontSize: size * 0.42 }}>
       {p.name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -213,34 +220,38 @@ export default function FriendStreakCard() {
   const hiddenInvites = Math.max(0, items.length - data.max);
 
   const first = (n: string) => n.split(' ')[0];
-  const tile = 'relative rounded-2xl px-1 py-2 flex flex-col items-center justify-center gap-1 min-w-0 h-[104px] active:scale-95 transition-transform';
+  const tile = 'relative rounded-2xl px-1 py-1.5 flex flex-col items-center justify-center gap-0.5 min-w-0 h-[84px] flex-1 basis-0 active:scale-95 transition-transform';
+  // a running streak is the tile with most to show, so it gets a wider slot than a waiting invite or an empty one
+  const wide = 'flex-[1.5]';
 
   const selected = sheet ? slots.find((x) => (x.kind === 'active' && x.s.pairId === sheet) || (x.kind === 'incoming' && x.inv.pairId === sheet) || (x.kind === 'outgoing' && x.o.pairId === sheet)) : null;
   const filled = items.length;
 
   return (
     <>
-      <div className="rounded-2xl bg-white border border-slate-200 p-3 shadow-sm">
-        <div className="flex items-center justify-between px-0.5 mb-2">
+      <div className="rounded-2xl bg-white border border-slate-200 px-3 py-2.5 shadow-sm">
+        <div className="flex items-center justify-between px-0.5 mb-1.5">
           <p className="text-[11px] font-black uppercase tracking-[0.14em] text-orange-700">Friend streaks</p>
           <p className="text-[11px] font-black text-text-muted tabular-nums">{Math.min(filled, data.max)}/{data.max}</p>
         </div>
-        <div className="grid grid-cols-5 gap-2">
+        <div className="flex gap-2">
           {slots.map((slot, i) => {
             if (slot.kind === 'active') {
               const { s } = slot;
               const frozen = s.state === 'frozen';
               return (
-                <button key={s.pairId} type="button" onClick={() => setSheet(s.pairId)} className={clsx(tile, 'text-white shadow-sm')} style={{ background: frozen ? 'linear-gradient(160deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(160deg,#3a1208 0%,#9a3412 60%,#ea580c 100%)' }} aria-label={`Streak with ${s.partner.name}: ${s.current} days`}>
-                  <Avatar p={s.partner} size={32} ring />
+                <button key={s.pairId} type="button" onClick={() => setSheet(s.pairId)} className={clsx(tile, wide, 'text-white shadow-sm')} style={{ background: frozen ? 'linear-gradient(160deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(160deg,#3a1208 0%,#9a3412 60%,#ea580c 100%)' }} aria-label={`Streak with ${s.partner.name}: ${s.current} days`}>
+                  <Avatar p={s.partner} size={28} ring />
                   <span className="text-[10px] font-bold truncate w-full text-center leading-none">{first(s.partner.name)}</span>
-                  <span className="flex items-center gap-0.5 leading-none">
-                    <span className="w-[22px] h-[26px] -ml-1 overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={22} /></span>
-                    <span className="text-sm font-black tabular-nums">{s.current}</span>
-                  </span>
-                  <span className="flex gap-1">
-                    <span className={clsx('w-2 h-2 rounded-full', s.myDone ? 'bg-emerald-400' : 'bg-white/35')} />
-                    <span className={clsx('w-2 h-2 rounded-full', s.partnerDone ? 'bg-emerald-400' : 'bg-white/35')} />
+                  <span className="flex items-center gap-1.5 leading-none">
+                    <span className="flex items-center gap-0.5">
+                      <span className="w-[18px] h-[22px] -ml-1 overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={18} /></span>
+                      <span className="text-sm font-black tabular-nums">{s.current}</span>
+                    </span>
+                    <span className="flex gap-1" title="You and your friend: logged today">
+                      <span className={clsx('w-2 h-2 rounded-full', s.myDone ? 'bg-emerald-400' : 'bg-white/35')} />
+                      <span className={clsx('w-2 h-2 rounded-full', s.partnerDone ? 'bg-emerald-400' : 'bg-white/35')} />
+                    </span>
                   </span>
                 </button>
               );
@@ -248,7 +259,7 @@ export default function FriendStreakCard() {
             if (slot.kind === 'incoming') {
               return (
                 <button key={slot.inv.pairId} type="button" onClick={() => setSheet(slot.inv.pairId)} className={clsx(tile, 'bg-orange-50 border-2 border-orange-400 animate-pulse')} aria-label={`${slot.inv.name} invited you to a streak`}>
-                  <span className="w-8 h-8 rounded-full bg-orange-500 text-white font-black flex items-center justify-center text-sm">{slot.inv.name.slice(0, 1).toUpperCase()}</span>
+                  <span className="w-7 h-7 rounded-full bg-orange-500 text-white font-black flex items-center justify-center text-sm">{slot.inv.name.slice(0, 1).toUpperCase()}</span>
                   <span className="text-[10px] font-bold truncate w-full text-center leading-none text-orange-900">{first(slot.inv.name)}</span>
                   <span className="text-[10px] font-black text-orange-700 leading-tight text-center">Invited you</span>
                 </button>
@@ -257,15 +268,17 @@ export default function FriendStreakCard() {
             if (slot.kind === 'outgoing') {
               return (
                 <button key={slot.o.pairId} type="button" onClick={() => setSheet(slot.o.pairId)} className={clsx(tile, 'bg-slate-100 border border-slate-300')} aria-label={`Waiting for ${slot.o.partner.name}`}>
-                  <span className="opacity-70"><Avatar p={{ name: slot.o.partner.name, photoURL: slot.o.partner.photoURL }} size={32} /></span>
-                  <span className="text-[10px] font-bold truncate w-full text-center leading-none text-slate-700">{first(slot.o.partner.name)}</span>
-                  <span className="text-[10px] font-black text-slate-500 leading-tight text-center">⏳ Waiting</span>
+                  <span className="relative opacity-70 grayscale">
+                    <Avatar p={{ name: slot.o.partner.name, photoURL: slot.o.partner.photoURL }} size={30} />
+                    <span className="absolute -right-1.5 -bottom-1 w-4 h-4 rounded-full bg-white text-[10px] leading-none flex items-center justify-center shadow ring-1 ring-slate-300 grayscale-0">⏳</span>
+                  </span>
+                  <span className="text-[10px] font-bold truncate w-full text-center leading-none text-slate-700 mt-0.5">{first(slot.o.partner.name)}</span>
                 </button>
               );
             }
             return (
               <button key={`empty${i}`} type="button" onClick={openPicker} className={clsx(tile, 'border-2 border-dashed border-orange-300 bg-orange-50/60 text-orange-500')} aria-label="Invite a friend to a streak">
-                <span className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center"><span className="material-symbols-outlined text-[22px]">add</span></span>
+                <span className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center"><span className="material-symbols-outlined text-[20px]">add</span></span>
                 <span className="text-[10px] font-black leading-tight text-center text-orange-700">Invite</span>
               </button>
             );

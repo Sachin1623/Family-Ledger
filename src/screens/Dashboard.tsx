@@ -331,8 +331,10 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-24">
-      <StreakCard />
-      <FriendStreakCard />
+      <div className="space-y-2">
+        <StreakCard />
+        <FriendStreakCard />
+      </div>
       {showAccountsGoalsBanner && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
           <span className="text-2xl shrink-0">💰</span>

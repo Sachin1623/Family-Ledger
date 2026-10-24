@@ -53,6 +53,15 @@ export default function StreakCard() {
   // the freeze and thaw animations play when the streak freezes, or when a frozen or broken streak is brought back
   const burst = useFreezeBurst(state === 'frozen', !!lost);
   const shown = state === 'out' ? 0 : current;
+  // the last 7 days (today last): a day is ticked when it falls inside the running streak, counted back from the last day logged
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(Date.now() - (6 - i) * 86_400_000);
+    const gap = last ? Math.round((Date.parse(last) - Date.parse(localDay(d))) / 86_400_000) : -1;
+    return { label: d.toLocaleDateString('en-US', { weekday: 'narrow' }), on: state !== 'out' && state !== 'none' && gap >= 0 && gap < current };
+  }).map((d, i) => ({ ...d, today: i === 6 }));
+  const nextMilestone = shown > 0 ? MILESTONES.find((m) => m > shown) ?? null : null;
+  const prevMilestone = [...MILESTONES].reverse().find((m) => m <= shown) ?? 0;
+  const milestonePct = nextMilestone ? Math.max(4, Math.round(((shown - prevMilestone) / (nextMilestone - prevMilestone)) * 100)) : 0;
 
   // Flare when the number goes up while this card is on screen; celebrate a new milestone once.
   useEffect(() => {
@@ -112,21 +121,38 @@ export default function StreakCard() {
         .sc-ice{text-shadow:0 0 14px rgba(125,211,252,.9)}
         @media (prefers-reduced-motion: reduce){.sc-roll,.sc-hot{animation:none!important}}
       `}</style>
-      <div className={`relative overflow-hidden rounded-2xl p-4 text-white shadow-sm ${risky ? 'ring-2 ring-orange-400' : ''}`} style={{ background: state === 'lit' || state === 'risk' ? 'linear-gradient(135deg,#3a1208 0%,#7c2d12 55%,#9a3412 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
+      <div className={`relative overflow-hidden rounded-2xl px-4 py-3 text-white shadow-sm ${risky ? 'ring-2 ring-orange-400' : ''}`} style={{ background: state === 'lit' || state === 'risk' ? 'linear-gradient(135deg,#3a1208 0%,#7c2d12 55%,#9a3412 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
         {/* the ice fades in over the card when the streak freezes and melts away when it thaws */}
         <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000" style={{ opacity: state === 'frozen' ? 1 : 0, background: 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 60%,#38bdf8 140%)' }} />
         <Snowfield show={state === 'frozen'} />
-        <div className="relative flex items-center gap-4">
-          <div className="shrink-0 pl-1" style={{ width: 84 }}>
-            <StreakFlame state={state} size={80} burst={burst} ignite={flare} />
+        <div className="relative flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2 sm:gap-x-5">
+          <div className="shrink-0" style={{ width: 60 }}>
+            <StreakFlame state={state} size={58} burst={burst} ignite={flare} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
-              <span key={shown} className={`sc-roll text-5xl font-black leading-none tabular-nums ${state === 'lit' || state === 'risk' ? 'sc-hot' : state === 'frozen' ? 'sc-ice' : ''}`}>{shown}</span>
-              <span className="text-sm font-black text-amber-300 uppercase tracking-wide">{shown === 1 ? 'day streak' : 'day streak'}</span>
-              {freezes > 0 && <span className="text-xs font-bold bg-sky-400/20 text-sky-200 rounded-full px-2 py-0.5">❄ {freezes}</span>}
+              <span key={shown} className={`sc-roll text-4xl sm:text-5xl font-black leading-none tabular-nums ${state === 'lit' || state === 'risk' ? 'sc-hot' : state === 'frozen' ? 'sc-ice' : ''}`}>{shown}</span>
+              <span className="text-sm font-black text-amber-300 uppercase tracking-wide">day streak</span>
+              {freezes > 0 && <span className="text-xs font-bold bg-sky-400/20 text-sky-200 rounded-full px-2 py-0.5" title="Streak freezes you have earned">❄ {freezes}</span>}
             </div>
-            <p className="text-[12px] text-white/80 leading-snug mt-1">{message}</p>
+            <p className="text-[12px] text-white/80 leading-snug mt-0.5">{message}</p>
+          </div>
+          {/* the last 7 days, and how close the next milestone is: fills the width instead of leaving it empty */}
+          <div className="w-full sm:w-[290px] shrink-0">
+            <div className="flex justify-between sm:justify-end sm:gap-2">
+              {week.map((d, i) => (
+                <div key={i} className="w-7 text-center text-[10px] font-bold text-white/65 leading-none">
+                  {d.label}
+                  <span className={`mt-1 mx-auto flex h-6 w-6 items-center justify-center rounded-full text-[12px] ${d.on ? 'bg-amber-400 text-orange-950' : 'bg-white/15'} ${d.today ? (d.on ? 'ring-2 ring-white' : 'ring-2 ring-amber-300/80') : ''}`}>{d.on ? '✓' : ''}</span>
+                </div>
+              ))}
+            </div>
+            {nextMilestone && (
+              <div className="mt-2">
+                <p className="text-[11px] text-white/75 leading-none">Next milestone: {nextMilestone} days · {nextMilestone - shown} to go</p>
+                <div className="mt-1 h-1.5 rounded-full bg-white/20 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-200 transition-all duration-700" style={{ width: `${milestonePct}%` }} /></div>
+              </div>
+            )}
           </div>
         </div>
         {state === 'frozen' && (
