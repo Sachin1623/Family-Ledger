@@ -119,6 +119,14 @@ export default function MyProgress() {
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24">
+        <button type="button" onClick={() => uid && navigate(`/u/${uid}`)} className="w-full rounded-2xl p-3.5 text-left text-white flex items-center gap-3 active:scale-[0.99] transition-transform" style={{ background: 'linear-gradient(135deg,#0f2b3d,#1d4e6f 55%,#2b8f9c)' }}>
+          <span className="text-2xl">🪪</span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-black">My public profile</span>
+            <span className="block text-[11px] text-white/80">See how friends see you, and choose who sees what</span>
+          </span>
+          <span className="material-symbols-outlined">chevron_right</span>
+        </button>
         <div>
           <h1 className="text-2xl font-black text-primary">{t('progress.title')}</h1>
           <p className="text-sm text-text-muted mt-1">{t('progress.subtitle')}</p>

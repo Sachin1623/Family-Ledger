@@ -1050,6 +1050,14 @@ export default function Profile() {
             other section below uses) so it visually reads as a highlighted callout, not just
             another settings row. */}
         <section className="space-y-1">
+          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">My profile</h3>
+          <p className="px-2 text-[11px] text-text-muted">Your public profile, who can see it, and your flame styles and badges.</p>
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
+            <PublicProfileSettingsSection />
+          </div>
+        </section>
+
+        <section className="space-y-1">
           <div
             ref={shareCardRef}
             className={clsx(
@@ -1662,15 +1670,6 @@ export default function Profile() {
           </div>
         </section>
 
-        <section className="space-y-1">
-          <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">Public Profile</h3>
-          <p className="px-2 text-[11px] text-text-muted">
-            Choose who can see your profile: only you, your friends, or all FamilyLedger members.
-          </p>
-          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-            <PublicProfileSettingsSection />
-          </div>
-        </section>
         </>
         )}
 
