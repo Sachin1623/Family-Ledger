@@ -186,6 +186,13 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     return { uid, name: d.displayName || 'Someone', photoURL: d.photoURL || null };
   }
 
+  // One lock document per PAIR of people (the two uids in sorted order), taken inside the invite transaction. Two invites for the same two people can never
+  // both get through, even if they are sent at the same moment from two phones: the second finds the lock. A lock whose streak is gone, ended or declined is stale
+  // and simply replaced, so nothing ever has to remember to release it.
+  function lockRef(db: Firestore, a: string, b: string) {
+    return db.collection('friendStreakLocks').doc(a < b ? `${a}_${b}` : `${b}_${a}`);
+  }
+
   // Takes a finished streak out of both people's lists.
   function unlinkBoth(batch: FirebaseFirestore.WriteBatch, db: Firestore, pairId: string, uids: string[]) {
     uids.forEach((u) => batch.set(linksRef(db, u), { active: { [pairId]: del() }, outgoing: { [pairId]: del() }, incoming: { [pairId]: del() } }, { merge: true }));
@@ -210,12 +217,49 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
     try {
       const today = await todayFor(db, uid);
       const links = ((await linksRef(db, uid).get()).data() || {}) as Links;
-      const incoming = Object.entries(links.incoming || {}).map(([pairId, v]) => ({ pairId, ...v }));
+
+      // One streak per friend, always. The invite and accept routes already refuse a second one; this is the safety net that quietly ends any
+      // extra it finds (keeping the one with more days, then the older one), and cancels an invite to or from someone who already has a streak with this person.
+      const loaded = await Promise.all(
+        Object.keys(links.active || {}).map(async (pairId) => ({ pairId, p: (await db.collection('friendStreaks').doc(pairId).get()).data() as Pair | undefined })),
+      );
+      const byPartner = new Map<string, { pairId: string; p: Pair }[]>();
+      loaded.forEach((x) => {
+        if (!x.p || x.p.status !== 'active') return;
+        const other = x.p.uids.find((u) => u !== uid)!;
+        byPartner.set(other, [...(byPartner.get(other) || []), { pairId: x.pairId, p: x.p }]);
+      });
+      const dropped = new Set<string>();
+      const dedupe = db.batch();
+      byPartner.forEach((list, other) => {
+        list.sort((a, b) => (b.p.current || 0) - (a.p.current || 0) || String(a.p.createdAt).localeCompare(String(b.p.createdAt)));
+        list.slice(1).forEach(({ pairId, p }) => {
+          dropped.add(pairId);
+          dedupe.update(db.collection('friendStreaks').doc(pairId), { status: 'ended', endedAt: new Date().toISOString(), endReason: 'duplicate' });
+          unlinkBoth(dedupe, db, pairId, p.uids);
+        });
+        dedupe.set(lockRef(db, uid, other), { pairId: list[0].pairId, uids: [uid, other], at: new Date().toISOString() });
+      });
+      const activePartners = new Set(byPartner.keys());
+      Object.entries(links.outgoing || {}).forEach(([pairId, toUid]) => {
+        if (!activePartners.has(toUid)) return;
+        dropped.add(pairId);
+        dedupe.update(db.collection('friendStreaks').doc(pairId), { status: 'declined', endedAt: new Date().toISOString(), endReason: 'duplicate' });
+        unlinkBoth(dedupe, db, pairId, [uid, toUid]);
+      });
+      Object.entries(links.incoming || {}).forEach(([pairId, v]) => {
+        if (!activePartners.has(v.from)) return;
+        dropped.add(pairId);
+        dedupe.update(db.collection('friendStreaks').doc(pairId), { status: 'declined', endedAt: new Date().toISOString(), endReason: 'duplicate' });
+        unlinkBoth(dedupe, db, pairId, [uid, v.from]);
+      });
+      if (dropped.size > 0) await dedupe.commit();
+
+      const incoming = Object.entries(links.incoming || {}).filter(([pairId]) => !dropped.has(pairId)).map(([pairId, v]) => ({ pairId, ...v }));
 
       const streaks = (
         await Promise.all(
-          Object.keys(links.active || {}).map(async (pairId) => {
-            const p = (await db.collection('friendStreaks').doc(pairId).get()).data() as Pair | undefined;
+          loaded.filter((x) => !dropped.has(x.pairId)).map(async ({ pairId, p }) => {
             if (!p || p.status !== 'active') return null;
             if (await endIfExpired(db, pairId, p, today)) return null;
             const otherUid = p.uids.find((u) => u !== uid)!;
@@ -247,7 +291,7 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
       streaks.sort((a: any, b: any) => b.current - a.current);
 
       const outgoing = await Promise.all(
-        Object.entries(links.outgoing || {}).map(async ([pairId, toUid]) => ({ pairId, partner: await personCard(db, toUid) })),
+        Object.entries(links.outgoing || {}).filter(([pairId]) => !dropped.has(pairId)).map(async ([pairId, toUid]) => ({ pairId, partner: await personCard(db, toUid) })),
       );
       return res.json({ streaks, outgoing, incoming, max: MAX_FRIEND_STREAKS });
     } catch (err) {
@@ -308,9 +352,23 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
       const pairRef = db.collection('friendStreaks').doc();
       let failure: string | null = null;
       await db.runTransaction(async (tx) => {
-        const [mineSnap, theirsSnap] = await Promise.all([tx.get(linksRef(db, uid)), tx.get(linksRef(db, toUid))]);
+        const [mineSnap, theirsSnap, lockSnap] = await Promise.all([tx.get(linksRef(db, uid)), tx.get(linksRef(db, toUid)), tx.get(lockRef(db, uid, toUid))]);
         const mine = (mineSnap.data() || {}) as Links;
         const theirs = (theirsSnap.data() || {}) as Links;
+        // The pair lock: if these two already have a streak or a waiting invite, a second one is refused outright. (A lock left behind by a finished
+        // streak is stale and ignored.) Also checks THEIR side, so an invite they sent me and one I send them can never both exist.
+        const lockedPairId = (lockSnap.data() as { pairId?: string } | undefined)?.pairId;
+        if (lockedPairId) {
+          const lockedPair = (await tx.get(db.collection('friendStreaks').doc(lockedPairId))).data() as Pair | undefined;
+          if (lockedPair && (lockedPair.status === 'invited' || lockedPair.status === 'active')) {
+            failure = 'You already have a streak or an invite with this friend.';
+            return;
+          }
+        }
+        if (Object.values(theirs.active || {}).includes(uid) || Object.values(theirs.outgoing || {}).includes(uid) || Object.values(theirs.incoming || {}).some((v) => v.from === uid)) {
+          failure = 'You already have a streak or an invite with this friend.';
+          return;
+        }
         const count = (l: Links) => Object.keys(l.active || {}).length + Object.keys(l.outgoing || {}).length;
         if (count(mine) >= MAX_FRIEND_STREAKS) { failure = `You can have up to ${MAX_FRIEND_STREAKS} friend streaks at a time. End one to start another.`; return; }
         if (Object.values(mine.active || {}).includes(toUid) || Object.values(mine.outgoing || {}).includes(toUid) || Object.values(mine.incoming || {}).some((v) => v.from === toUid)) {
@@ -320,6 +378,7 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
         if (Object.keys(theirs.active || {}).length >= MAX_FRIEND_STREAKS) { failure = 'They already have as many friend streaks as they can keep.'; return; }
         const pair: Pair = { uids: [uid, toUid], status: 'invited', invitedBy: uid, createdAt: new Date().toISOString(), current: 0, longest: 0, lastLogged: {}, rescues: 0 };
         tx.set(pairRef, pair);
+        tx.set(lockRef(db, uid, toUid), { pairId: pairRef.id, uids: [uid, toUid], at: pair.createdAt });
         tx.set(linksRef(db, uid), { outgoing: { [pairRef.id]: toUid } }, { merge: true });
         tx.set(linksRef(db, toUid), { incoming: { [pairRef.id]: { from: uid, name: me.name, at: pair.createdAt } } }, { merge: true });
       });
@@ -352,6 +411,11 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
         inviter = p.invitedBy;
         const [myLinks, theirLinks] = await Promise.all([tx.get(linksRef(db, uid)), tx.get(linksRef(db, inviter))]);
         if (accept) {
+          // never two streaks with the same person, whatever got us here
+          if (Object.values(((myLinks.data() || {}) as Links).active || {}).includes(inviter) || Object.values(((theirLinks.data() || {}) as Links).active || {}).includes(uid)) {
+            failure = 'You already have a streak with this friend.';
+            return;
+          }
           if (Object.keys(((myLinks.data() || {}) as Links).active || {}).length >= MAX_FRIEND_STREAKS) { failure = `You already have ${MAX_FRIEND_STREAKS} friend streaks. End one first.`; return; }
           if (Object.keys(((theirLinks.data() || {}) as Links).active || {}).length >= MAX_FRIEND_STREAKS) { failure = 'They already have as many friend streaks as they can keep.'; return; }
           tx.update(pairRef, { status: 'active', startedAt: new Date().toISOString(), startedDay: today });
