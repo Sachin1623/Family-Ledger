@@ -823,6 +823,60 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
       .reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
   }, [expenses, previousMonthKey]);
 
+  // Month | All time: the same tiles, either for the selected month or for everything since the group began. The choice is remembered per group.
+  const viewKey = `fl_group_alltime_${groupId}`;
+  const [viewAll, setViewAllState] = useState<boolean>(() => {
+    try { return localStorage.getItem(viewKey) === '1'; } catch { return false; }
+  });
+  const setViewAll = (on: boolean) => {
+    setViewAllState(on);
+    try { localStorage.setItem(viewKey, on ? '1' : '0'); } catch { /* the choice just is not remembered */ }
+  };
+  // Lifetime figures from the group's own entries. Older "settlement" expenses (paying someone back, saved before payments had their own place) are left
+  // out: they are not spending. Real payments are no longer expenses at all, so they never appear here.
+  const allTime = useMemo(() => {
+    const isOldSettlement = (e: any) => e.isSettlement === true || /^settlement( to .*)?$/i.test(String(e.description || '').trim());
+    const byMonth: Record<string, number> = {};
+    let income = 0;
+    let expense = 0;
+    let earliest = typeof group?.createdAt === 'string' ? group.createdAt.slice(0, 7) : '';
+    for (const e of expenses as any[]) {
+      if (isOldSettlement(e) || typeof e.date !== 'string') continue;
+      const mk = e.date.slice(0, 7);
+      if (!earliest || mk < earliest) earliest = mk;
+      if (e.type === 'income') income += e.amount || 0;
+      else {
+        expense += e.amount || 0;
+        byMonth[mk] = (byMonth[mk] || 0) + (e.amount || 0);
+      }
+    }
+    const first = earliest || todayMonthKey;
+    const [fy, fm] = first.split('-').map(Number);
+    const [ty, tm] = todayMonthKey.split('-').map(Number);
+    const months = Math.max(1, (ty - fy) * 12 + (tm - fm) + 1);
+    // the last 12 months, oldest first, for the small bar chart
+    const bars: { key: string; value: number }[] = [];
+    for (let i = Math.min(months, 12) - 1; i >= 0; i--) {
+      const d = new Date(ty, tm - 1 - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      bars.push({ key, value: byMonth[key] || 0 });
+    }
+    const best = Object.entries(byMonth).sort((a, b) => b[1] - a[1])[0];
+    const sinceDate = new Date(fy, fm - 1, 1);
+    return {
+      income,
+      expense,
+      months,
+      avgExpense: expense / months,
+      avgIncome: income / months,
+      bars,
+      barMax: Math.max(1, ...bars.map((b) => b.value)),
+      bestMonthKey: best?.[0] || '',
+      bestMonthValue: best?.[1] || 0,
+      sinceLabel: sinceDate.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+    };
+  }, [expenses, group?.createdAt, todayMonthKey]);
+
   // If loading is done and group doesn't exist, it means it was deleted
   if (!groupLoading && groupValue && !groupValue.exists()) {
     return null;
@@ -1008,11 +1062,11 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                 </span>
               </div>
             </div>
-            <div className="w-[30%] flex items-center">{monthPickerEl}</div>
+            <div className="w-[30%] flex items-center">{viewAll ? null : monthPickerEl}</div>
           </div>
         ) : (
           <div className="flex justify-end">
-            <div className="w-[30%]">{monthPickerEl}</div>
+            <div className="w-[30%]">{viewAll ? null : monthPickerEl}</div>
           </div>
         )}
 
@@ -1212,7 +1266,86 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             Only shown at tileState >= 2, same as the action row/budget card above. */}
         {tileState >= 2 && (
         <div className="pt-2 border-t border-gray-50 space-y-2.5">
-          {group?.incomeEnabled ? (
+          <div className="flex bg-surface-container/60 rounded-xl p-0.5" onClick={(e) => e.stopPropagation()}>
+            {([['month', 'Month'], ['all', 'All time']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={stopAnd(() => setViewAll(id === 'all'))}
+                className={clsx('flex-1 py-1.5 rounded-[10px] text-xs font-black transition-all', (id === 'all') === viewAll ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {viewAll ? (
+            <div className="space-y-2">
+              <p className="text-[10px] text-text-muted font-bold text-center">Since {allTime.sinceLabel} · {allTime.months} month{allTime.months === 1 ? '' : 's'}</p>
+              {group?.incomeEnabled ? (
+                <div className="grid grid-cols-3 gap-1.5">
+                  <div className="bg-[#0F7A38]/10 rounded-xl py-2 px-1 text-center">
+                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
+                    <p className="text-sm font-bold text-[#0F7A38] truncate">{currencySymbol}{formatAmountCompact(allTime.income, group?.currency, profile?.numberSystem)}</p>
+                  </div>
+                  <div className="bg-primary/5 rounded-xl py-2 px-1 text-center">
+                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
+                    <p className="text-sm font-bold text-primary truncate">{currencySymbol}{formatAmountCompact(allTime.expense, group?.currency, profile?.numberSystem)}</p>
+                  </div>
+                  <div className={clsx('rounded-xl py-2 px-1 text-center', allTime.income >= allTime.expense ? 'bg-success/10' : 'bg-error/10')}>
+                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{allTime.income >= allTime.expense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}</p>
+                    <p className={clsx('text-sm font-bold truncate', allTime.income >= allTime.expense ? 'text-success' : 'text-error')}>
+                      {currencySymbol}{formatAmountCompact(Math.abs(allTime.income - allTime.expense), group?.currency, profile?.numberSystem)}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-primary/5 rounded-xl px-3 py-2 text-center">
+                  <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">Total spent</p>
+                  <p className="text-lg font-bold text-primary">{currencySymbol}{allTime.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-1.5">
+                <div className="border border-border-subtle rounded-xl px-2 py-1.5">
+                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">Avg / month spend</p>
+                  <p className="text-xs font-black text-primary truncate">{currencySymbol}{formatAmountCompact(allTime.avgExpense, group?.currency, profile?.numberSystem)}</p>
+                </div>
+                {group?.incomeEnabled ? (
+                  <div className="border border-border-subtle rounded-xl px-2 py-1.5">
+                    <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">Avg / month income</p>
+                    <p className="text-xs font-black text-primary truncate">{currencySymbol}{formatAmountCompact(allTime.avgIncome, group?.currency, profile?.numberSystem)}</p>
+                  </div>
+                ) : <div />}
+                <div className="border border-border-subtle rounded-xl px-2 py-1.5">
+                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">Biggest month</p>
+                  <p className="text-xs font-black text-primary truncate">
+                    {allTime.bestMonthKey ? `${new Date(Number(allTime.bestMonthKey.slice(0, 4)), Number(allTime.bestMonthKey.slice(5, 7)) - 1, 1).toLocaleDateString(undefined, { month: 'short' })} · ${currencySymbol}${formatAmountCompact(allTime.bestMonthValue, group?.currency, profile?.numberSystem)}` : '-'}
+                  </p>
+                </div>
+              </div>
+              {allTime.bars.length > 1 && (
+                <div>
+                  <div className="flex items-end gap-[3px] h-9">
+                    {allTime.bars.map((b) => (
+                      <button
+                        key={b.key}
+                        type="button"
+                        title={`${b.key}: ${currencySymbol}${formatAmountCompact(b.value, group?.currency, profile?.numberSystem)}`}
+                        onClick={stopAnd(() => { setSelectedMonthKey(b.key); setViewAll(false); })}
+                        className={clsx('flex-1 rounded-t-[3px] min-h-[2px] transition-opacity hover:opacity-80', b.value === allTime.barMax ? 'bg-primary' : 'bg-primary/30')}
+                        style={{ height: `${Math.max(4, (b.value / allTime.barMax) * 100)}%` }}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex justify-between text-[8px] text-text-muted font-bold mt-0.5">
+                    <span>{allTime.bars[0].key.slice(2).replace('-', '/')}</span>
+                    <span>Spend per month · tap a bar</span>
+                    <span>{allTime.bars[allTime.bars.length - 1].key.slice(2).replace('-', '/')}</span>
+                  </div>
+                </div>
+              )}
+              <p className="text-[9px] text-text-muted text-center">Not counting payments between members</p>
+            </div>
+          ) : group?.incomeEnabled ? (
             <>
               {/* Tinted rounded tiles instead of a plain 3-column text grid — same numbers, more
                   visually distinct at a glance. */}
