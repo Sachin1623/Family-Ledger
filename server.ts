@@ -7469,6 +7469,57 @@ async function startServer() {
     }
   });
 
+  // "Nudge": a player who is waiting for someone else's turn taps a button and that person gets a friendly push ("Sachin is waiting for your move"),
+  // plus the in-app banner if they have the app open. Works for every multiplayer game. Safeguards: both people must be players in an active game, the
+  // person nudged must be a real player (never a bot), and a nudge is limited to one every 2 minutes and 6 per game per person, so it can never become spam.
+  const NUDGE_GAMES: Record<string, string> = {
+    rummy: 'rummyGames', rummy13: 'rummy13Tables', spadePledge: 'spadePledgeTables', sweep: 'sweepGames',
+    sequence: 'sequenceGames', business: 'businessGames', chess: 'chessGames', ludo: 'ludoGames',
+  };
+  const NUDGE_COOLDOWN_MS = 120_000;
+  const NUDGE_MAX_PER_GAME = 6;
+  app.post('/api/game-nudge', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const gameType = String(req.body?.gameType || '');
+    const gameId = String(req.body?.gameId || '');
+    const targetUid = String(req.body?.targetUid || '');
+    const collectionName = NUDGE_GAMES[gameType];
+    if (!collectionName || !gameId || !targetUid || targetUid === decoded.uid) return res.status(400).json({ error: 'Nothing to nudge.' });
+    try {
+      const gameSnap = await db.collection(collectionName).doc(gameId).get();
+      const game = gameSnap.data();
+      if (!game) return res.status(404).json({ error: 'That game no longer exists.' });
+      const players: any[] = Array.isArray(game.players) ? game.players : [];
+      const uids: string[] = Array.isArray(game.playerUids) ? game.playerUids : players.map((p) => p.uid);
+      if (!uids.includes(decoded.uid) || !uids.includes(targetUid)) return res.status(403).json({ error: 'You can only nudge players in this game.' });
+      if (game.status !== 'active' && game.status !== 'bidding') return res.status(400).json({ error: 'This game is not in progress.' });
+      if (players.find((p) => p.uid === targetUid)?.isBot) return res.status(400).json({ error: 'That seat is played by a bot.' });
+
+      const ref = db.collection('gameNudges').doc(`${gameType}_${gameId}_${decoded.uid}`);
+      const prev = (await ref.get()).data() || {};
+      const since = Date.now() - (prev.lastAt ? new Date(prev.lastAt).getTime() : 0);
+      if (since < NUDGE_COOLDOWN_MS) {
+        const retryAfter = Math.ceil((NUDGE_COOLDOWN_MS - since) / 1000);
+        return res.status(429).json({ error: `You nudged a moment ago. Try again in ${retryAfter}s.`, retryAfter });
+      }
+      if ((prev.count || 0) >= NUDGE_MAX_PER_GAME) return res.status(429).json({ error: 'You have nudged enough for this game.' });
+      await ref.set({ lastAt: new Date().toISOString(), count: (prev.count || 0) + 1, targetUid }, { merge: true });
+
+      const meta = GAME_TURN_META[gameType];
+      const callerName = players.find((p) => p.uid === decoded.uid)?.displayName || 'Your opponent';
+      const body = `${callerName} is waiting for your move 👋`;
+      const tokens = await collectPushTokens(db, [targetUid], 'notificationsEnabled');
+      const sent = await sendPush(tokens, meta?.label || 'Your turn', body, { type: meta?.pushType || 'game_turn', gameId });
+      await createInviteNotice(db, targetUid, 'game', meta?.label || 'Your turn', body, `${meta?.routeBase || '/games'}/${gameId}`);
+      return res.json({ ok: true, sent });
+    } catch (error) {
+      console.error('game-nudge error:', error);
+      return res.status(500).json({ error: 'Could not send the nudge.' });
+    }
+  });
+
   // ===================== 27-Hand Rummy =====================
   // A custom variant (NOT the traditional "27 Card Rummy") — three combined 52-card decks (156
   // cards), up to 4 players each dealt a 27-card hand. This game has genuine hidden information

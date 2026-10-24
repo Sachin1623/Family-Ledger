@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -830,6 +831,12 @@ export default function SweepGame() {
           <span className="px-4 py-1 rounded-full text-[11px] font-black tracking-wide" style={{ background: opts.bannerColor, boxShadow: `0 0 18px ${opts.bannerColor}99` }}>
             {opts.banner}
           </span>
+          {(() => {
+            const tp: any = game.players[game.currentTurnSeatIndex];
+            return (game.status === 'active' || game.status === 'bidding') && tp && user && tp.uid !== user.uid && !tp.isBot && gameId ? (
+              <span className="ml-2 self-center"><NudgeButton compact gameType="sweep" gameId={gameId} targetUid={tp.uid} targetName={tp.displayName || ''} /></span>
+            ) : null;
+          })()}
         </div>
 
         {/* the table */}

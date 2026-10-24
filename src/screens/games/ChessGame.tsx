@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameHeader } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -712,6 +713,9 @@ export default function ChessGame() {
               <span className={clsx('px-4 py-1 rounded-full text-[11px] font-extrabold border', bannerDanger ? 'bg-red-500/20 text-red-300 border-red-400/50 animate-pulse' : isMyTurn ? 'bg-amber-300/15 text-amber-300 border-amber-300/40' : 'bg-white/8 text-white/70 border-white/15')}>
                 {isMyTurn && !bannerDanger ? '♞ ' : ''}{bannerText}
               </span>
+              {game?.status === 'active' && isPlayer && !isMyTurn && opponent && !(opponent as any).isBot && gameId && (
+                <span className="ml-2 self-center"><NudgeButton compact gameType="chess" gameId={gameId} targetUid={opponent.uid} targetName={opponent.displayName || ''} /></span>
+              )}
             </div>
 
             <div className="flex-1 min-h-0 flex items-center justify-center">{boardView(board, true)}</div>

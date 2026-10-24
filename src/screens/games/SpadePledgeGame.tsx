@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameShell, GameHeader, GameLeaveButton, GameStatusBar, GAME_CARD, GAME_LABEL, GAME_BTN_PRIMARY } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -667,7 +668,11 @@ export default function SpadePledgeGame() {
           mine={isMyBidTurn || isMyPlayTurn}
           seconds={remainingSec}
           warn={timerWarning}
-          right={deal.spadesBroken ? <span className="text-[9px] font-black text-white/50 uppercase shrink-0">♠ broken</span> : undefined}
+          right={(() => {
+            const tp: any = table.players.find((x) => x.uid === currentTurnUid);
+            const nudge = deal.status === 'active' && !(isMyBidTurn || isMyPlayTurn) && tp && tp.uid !== user.uid && !tp.isBot && tableId ? <NudgeButton compact gameType="spadePledge" gameId={tableId} targetUid={tp.uid} targetName={tp.displayName || ''} /> : null;
+            return nudge || deal.spadesBroken ? <>{deal.spadesBroken && <span className="text-[9px] font-black text-white/50 uppercase shrink-0">♠ broken</span>}{nudge}</> : undefined;
+          })()}
         />
         {table.groups.some((g) => g.bags >= 5) && (
           <p className="relative shrink-0 mx-3 mt-2 text-[10px] font-bold text-amber-300 flex items-center gap-1">

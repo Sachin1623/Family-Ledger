@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameShell, GameHeader, GameLeaveButton, GameStatusBar } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1013,7 +1014,17 @@ export default function Rummy13Game() {
             </>
           }
         />
-        <GameStatusBar text={turnStatusText} mine={isMyTurn} seconds={remainingSec} warn={timerWarning} />
+        <GameStatusBar
+          text={turnStatusText}
+          mine={isMyTurn}
+          seconds={remainingSec}
+          warn={timerWarning}
+          right={(() => {
+            const tuid = deal?.players[deal.currentTurnSeatIndex]?.uid;
+            const tp: any = table?.players.find((x) => x.uid === tuid);
+            return deal?.status === 'active' && !isMyTurn && tp && tp.uid !== user.uid && !tp.isBot && tableId ? <NudgeButton compact gameType="rummy13" gameId={tableId} targetUid={tp.uid} targetName={tp.displayName || ''} /> : undefined;
+          })()}
+        />
 
         <div className="flex-1 min-h-0 flex flex-col gap-1.5 p-2">
           {/* Felt table: wooden rim, green baize with a soft spotlight. Three bands: the seats along the

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameHeader } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -717,6 +718,9 @@ export default function SequenceGame() {
               </span>
             );
           })()}
+          {game.status === 'active' && !isMyTurn && turnPlayer && user && turnPlayer.uid !== user.uid && !(turnPlayer as any).isBot && gameId && (
+            <span className="ml-2 self-center"><NudgeButton compact gameType="sequence" gameId={gameId} targetUid={turnPlayer.uid} targetName={turnPlayer.displayName || ''} /></span>
+          )}
         </div>
 
         {/* the board — scrolls on very short screens so the hand dock never gets squeezed out */}

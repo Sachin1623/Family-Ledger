@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1023,6 +1024,9 @@ export default function LudoGame() {
             >
               {bannerText}
             </span>
+            {game.status === 'active' && !isMyTurn && isPlayer && turnPlayer && user && turnPlayer.uid !== user.uid && !(turnPlayer as any).isBot && gameId && (
+              <span className="ml-2 self-center"><NudgeButton compact gameType="ludo" gameId={gameId} targetUid={turnPlayer.uid} targetName={turnPlayer.displayName || ''} /></span>
+            )}
           </div>
 
           <div className="relative flex-1 min-h-0 flex flex-col items-center justify-start gap-1.5 px-2 pt-2">

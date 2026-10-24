@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameShell, GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1086,6 +1087,12 @@ export default function RummyGame() {
           >
             <span aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center text-[8rem] leading-none text-white/[0.05] select-none">♥</span>
 
+            {(() => {
+              const tp: any = game.players[game.currentTurnSeatIndex];
+              return game.status === 'active' && !isMyTurn && tp && tp.uid !== user.uid && !tp.isBot && !tp.dropped && gameId ? (
+                <div className="relative flex justify-center pb-1"><NudgeButton compact gameType="rummy" gameId={gameId} targetUid={tp.uid} targetName={tp.displayName || ''} /></div>
+              ) : null;
+            })()}
             {/* seats */}
             <div className="relative flex items-center justify-center gap-1.5 flex-wrap">
               {game.players.map((p, i) => {

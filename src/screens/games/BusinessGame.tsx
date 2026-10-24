@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NudgeButton from '../../components/NudgeButton';
 import { GameHeader, GameLeaveButton } from '../../components/GameShell';
 import WaitingRoom from '../../components/WaitingRoom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1868,6 +1869,9 @@ export default function BusinessGame() {
               ? me?.inJail ? 'YOUR TURN · IN JAIL' : game.turnPhase === 'roll' ? (mustRollAgain ? 'DOUBLES! ROLL AGAIN' : 'YOUR TURN · ROLL') : 'YOUR TURN'
               : `${(turnPlayer?.displayName || '').toUpperCase()}'S TURN`}
           </span>
+          {game.status === 'active' && !isMyTurn && !me?.bankrupt && turnPlayer && user && turnPlayer.uid !== user.uid && !(turnPlayer as any).isBot && gameId && (
+            <span className="ml-2 self-center"><NudgeButton compact gameType="business" gameId={gameId} targetUid={turnPlayer.uid} targetName={turnPlayer.displayName || ''} /></span>
+          )}
         </div>
 
         {/* the tilted board */}
