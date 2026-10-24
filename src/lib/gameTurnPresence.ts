@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { useAuth } from '../context/AuthContext';
 
 // Shared presence + cleanup logic for the "it's your turn" indicator system (see server.ts's
@@ -24,7 +24,23 @@ export function useGameTurnPresence(gameType: string, gameId: string | undefined
     const setPresence = (val: { gameType: string; gameId: string } | null) => {
       setDoc(doc(db, 'users', user.uid), { activeGameRef: val }, { merge: true }).catch(() => {});
     };
-    const onVisibility = () => setPresence(document.visibilityState === 'visible' ? { gameType, gameId } : null);
+    // tells the server this person is in the game, so anyone who nudged them hears back (a no-op when nobody did)
+    const ack = () => {
+      auth.currentUser
+        ?.getIdToken()
+        .then((idToken) =>
+          fetch('/api/game-nudge/ack', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gameType, gameId }),
+          }),
+        )
+        .catch(() => {});
+    };
+    const onVisibility = () => {
+      setPresence(document.visibilityState === 'visible' ? { gameType, gameId } : null);
+      if (document.visibilityState === 'visible') ack();
+    };
     onVisibility();
     document.addEventListener('visibilitychange', onVisibility);
     return () => {

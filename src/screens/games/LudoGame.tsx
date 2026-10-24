@@ -7,7 +7,7 @@ import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc, setDoc, collection, query, where, documentId } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
-import { db } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useFriendships } from '../../lib/useFriendships';
 import { claimPoints } from '../../lib/pointsApi';
@@ -282,7 +282,17 @@ export default function LudoGame() {
     const setPresence = (val: string | null) => {
       setDoc(doc(db, 'users', user.uid), { activeLudoGameId: val }, { merge: true }).catch(() => {});
     };
-    const onVisibility = () => setPresence(document.visibilityState === 'visible' ? gameId : null);
+    // opening the game also answers any nudge sent to this person (a no-op when nobody nudged them), see /api/game-nudge/ack
+    const ack = () => {
+      auth.currentUser
+        ?.getIdToken()
+        .then((idToken) => fetch('/api/game-nudge/ack', { method: 'POST', headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ gameType: 'ludo', gameId }) }))
+        .catch(() => {});
+    };
+    const onVisibility = () => {
+      setPresence(document.visibilityState === 'visible' ? gameId : null);
+      if (document.visibilityState === 'visible') ack();
+    };
     onVisibility();
     document.addEventListener('visibilitychange', onVisibility);
     return () => {

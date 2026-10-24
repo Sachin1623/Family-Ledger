@@ -7505,7 +7505,12 @@ async function startServer() {
         return res.status(429).json({ error: `You nudged a moment ago. Try again in ${retryAfter}s.`, retryAfter });
       }
       if ((prev.count || 0) >= NUDGE_MAX_PER_GAME) return res.status(429).json({ error: 'You have nudged enough for this game.' });
-      await ref.set({ lastAt: new Date().toISOString(), count: (prev.count || 0) + 1, targetUid }, { merge: true });
+      // Already looking at this very game (the app reports it): no push needed, and the sender is told so instead of waiting for a reply.
+      const targetUser = (await db.collection('users').doc(targetUid).get()).data() || {};
+      const alreadyHere = (targetUser.activeGameRef?.gameType === gameType && targetUser.activeGameRef?.gameId === gameId) || (gameType === 'ludo' && targetUser.activeLudoGameId === gameId);
+      // `pending` stays true until the person opens the game, which sends the sender a "they are in the game" push (see /api/game-nudge/ack below)
+      await ref.set({ lastAt: new Date().toISOString(), count: (prev.count || 0) + 1, targetUid, gameType, gameId, pending: !alreadyHere }, { merge: true });
+      if (alreadyHere) return res.json({ ok: true, alreadyHere: true, name: targetUser.displayName || '' });
 
       const meta = GAME_TURN_META[gameType];
       const callerName = players.find((p) => p.uid === decoded.uid)?.displayName || 'Your opponent';
@@ -7517,6 +7522,41 @@ async function startServer() {
     } catch (error) {
       console.error('game-nudge error:', error);
       return res.status(500).json({ error: 'Could not send the nudge.' });
+    }
+  });
+
+  // The other half of a nudge: the person who was nudged has now opened the game, so the person who nudged hears back ("Neha is in the game"). The game
+  // screen calls this whenever it opens or comes back to the front. It only does anything if a nudge to THIS person for THIS game is still waiting and is
+  // under 30 minutes old, and it answers each nudge once.
+  app.post('/api/game-nudge/ack', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const gameType = String(req.body?.gameType || '');
+    const gameId = String(req.body?.gameId || '');
+    if (!NUDGE_GAMES[gameType] || !gameId) return res.json({ ok: true, answered: 0 });
+    try {
+      const snap = await db.collection('gameNudges').where('targetUid', '==', decoded.uid).where('gameId', '==', gameId).where('pending', '==', true).get();
+      if (snap.empty) return res.json({ ok: true, answered: 0 });
+      const meta = GAME_TURN_META[gameType];
+      const me = (await db.collection('users').doc(decoded.uid).get()).data() || {};
+      let answered = 0;
+      for (const d of snap.docs) {
+        const n = d.data();
+        await d.ref.set({ pending: false, ackAt: new Date().toISOString() }, { merge: true });
+        if (n.gameType !== gameType || Date.now() - new Date(n.lastAt || 0).getTime() > 30 * 60_000) continue;
+        const nudgerUid = d.id.slice(`${gameType}_${gameId}_`.length);
+        if (!nudgerUid) continue;
+        const body = `${me.displayName || 'Your opponent'} saw your nudge and is in the game 🎮`;
+        const tokens = await collectPushTokens(db, [nudgerUid], 'notificationsEnabled');
+        await sendPush(tokens, meta?.label || 'Your game', body, { type: meta?.pushType || 'game_turn', gameId });
+        await createInviteNotice(db, nudgerUid, 'game', meta?.label || 'Your game', body, `${meta?.routeBase || '/games'}/${gameId}`);
+        answered += 1;
+      }
+      return res.json({ ok: true, answered });
+    } catch (error) {
+      console.error('game-nudge ack error:', error);
+      return res.json({ ok: true, answered: 0 });
     }
   });
 

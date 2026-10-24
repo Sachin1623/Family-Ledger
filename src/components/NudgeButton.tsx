@@ -36,6 +36,11 @@ export default function NudgeButton({ gameType, gameId, targetUid, targetName, c
       if (res.ok) {
         setState('sent');
         setWait(120);
+        // they already have this game open, so there is nothing to wait for
+        if (data.alreadyHere) {
+          setMessage(`${first} is already in the game 👀`);
+          setTimeout(() => setMessage(null), 5000);
+        }
       } else {
         setState('idle');
         if (res.status === 429 && data.retryAfter) setWait(Number(data.retryAfter));
