@@ -65,14 +65,15 @@ function ActiveStreakCard({ s, me, onChanged }: React.Attributes & { s: ActiveFr
         <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000" style={{ opacity: frozen ? 1 : 0, background: 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 60%,#38bdf8 140%)' }} />
         <Snowfield show={frozen} />
         <div className="relative flex items-center gap-3">
-          {/* both people's flames, each in the style that person picked */}
-          <div className="shrink-0 flex items-end -space-x-3" style={{ width: 78 }}>
-            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={40} burst={burst} flame={me.flame} />
-            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={40} burst={burst} flame={s.partner.flame} />
-          </div>
-          <div className="flex -space-x-2 shrink-0">
-            <Avatar p={me} size={34} ring />
-            <Avatar p={s.partner} size={34} ring />
+          {/* each person with their own flame right under their photo, in the style they picked */}
+          <div className="shrink-0 flex items-end gap-3">
+            {[{ p: me, label: 'You' }, { p: s.partner, label: first }].map(({ p, label }, i) => (
+              <div key={i} className="flex flex-col items-center">
+                <Avatar p={p} size={30} ring />
+                <div className="-mt-0.5"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={34} burst={burst} flame={p.flame} /></div>
+                <span className="text-[10px] font-black text-white/85 leading-none max-w-[56px] truncate">{label}</span>
+              </div>
+            ))}
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/70">Friend streak</p>
@@ -243,21 +244,21 @@ export default function FriendStreakCard() {
               const frozen = s.state === 'frozen';
               return (
                 <button key={s.pairId} type="button" onClick={() => setSheet(s.pairId)} className={clsx(tile, wide, 'text-white shadow-sm')} style={{ background: frozen ? 'linear-gradient(160deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(160deg,#3a1208 0%,#9a3412 60%,#ea580c 100%)' }} aria-label={`Streak with ${s.partner.name}: ${s.current} days`}>
-                  <Avatar p={s.partner} size={28} ring />
-                  <span className="text-[10px] font-bold truncate w-full text-center leading-none">{first(s.partner.name)}{s.partner.badges && s.partner.badges.length > 0 ? ` ${s.partner.badges.join('')}` : ''}</span>
-                  <span className="flex items-center gap-1.5 leading-none">
-                    <span className="flex items-center gap-0.5">
-                      {/* both flames, mine and my friend's, each in its own chosen style */}
-                      <span className="flex items-end -space-x-1.5">
-                        <span className="w-[16px] h-[20px] overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={16} flame={data.me?.flame} /></span>
-                        <span className="w-[16px] h-[20px] overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={16} flame={s.partner.flame} /></span>
+                  {/* you on the left, your friend on the right: each photo has its own flame right under it (in the style that person picked) and a green tick once they have logged today */}
+                  <span className="flex items-end justify-center gap-1 leading-none">
+                    {[{ p: me, done: s.myDone, flame: data.me?.flame }, { p: s.partner, done: s.partnerDone, flame: s.partner.flame }].map((x, i) => (
+                      <span key={i} className="flex flex-col items-center">
+                        <span className="relative">
+                          <Avatar p={x.p} size={24} ring />
+                          {x.done && <span className="absolute -right-1 -bottom-0.5 w-3 h-3 rounded-full bg-emerald-400 text-emerald-950 flex items-center justify-center text-[8px] font-black ring-1 ring-black/30">✓</span>}
+                        </span>
+                        <span className="w-[16px] h-[19px] overflow-visible mt-0.5"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={16} flame={x.flame} /></span>
                       </span>
-                      <span className="text-sm font-black tabular-nums ml-0.5">{s.current}</span>
-                    </span>
-                    <span className="flex gap-1" title="You and your friend: logged today">
-                      <span className={clsx('w-2 h-2 rounded-full', s.myDone ? 'bg-emerald-400' : 'bg-white/35')} />
-                      <span className={clsx('w-2 h-2 rounded-full', s.partnerDone ? 'bg-emerald-400' : 'bg-white/35')} />
-                    </span>
+                    ))}
+                  </span>
+                  <span className="flex items-baseline justify-center gap-1 leading-none w-full min-w-0">
+                    <span className="text-sm font-black tabular-nums">{s.current}</span>
+                    <span className="text-[10px] font-bold truncate">{first(s.partner.name)}{s.partner.badges && s.partner.badges.length > 0 ? ` ${s.partner.badges.join('')}` : ''}</span>
                   </span>
                 </button>
               );
