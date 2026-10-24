@@ -52,7 +52,7 @@ export default function MyStyle() {
   const earnedCount = data.badges.filter((b) => b.earned).length;
 
   return (
-    <div className="p-4 md:p-8 max-w-xl mx-auto space-y-4 pb-24">
+    <div className="p-4 md:p-8 max-w-xl mx-auto space-y-4" style={{ paddingBottom: 'calc(9rem + env(safe-area-inset-bottom))' }}>
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-full hover:bg-surface" aria-label="Back">
           <span className="material-symbols-outlined">arrow_back</span>
