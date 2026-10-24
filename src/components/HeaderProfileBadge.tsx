@@ -72,7 +72,7 @@ export default function HeaderProfileBadge() {
     <motion.button
       ref={ref}
       data-tour="header-profile"
-      onClick={() => navigate('/profile')}
+      onClick={() => navigate(user ? `/u/${user.uid}` : '/profile')}
       animate={pulsing ? { scale: [1, 1.15, 1] } : { scale: 1 }}
       transition={{ duration: 0.5 }}
       className="relative w-12 h-12 shrink-0 active:scale-95 transition-transform"

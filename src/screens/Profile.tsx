@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import ProfileTabs from '../components/ProfileTabs';
 import { clearPerAccountDeviceCaches } from '../lib/deviceUserCache';
 import React, { useEffect, useState, useRef } from 'react';
 import { getAppVersion } from '../lib/appVersion';
@@ -926,6 +927,7 @@ export default function Profile() {
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 pb-24 max-w-2xl mx-auto w-full space-y-8 pt-4">
+        <ProfileTabs active="settings" />
         {/* Installed version/build, always — plus an Update button once the store has a newer one. */}
         <div className="flex justify-end">
           <AppVersionChip />

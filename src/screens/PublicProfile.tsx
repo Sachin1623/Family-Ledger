@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import StreakFlame from '../components/StreakFlame';
+import ProfileTabs from '../components/ProfileTabs';
 import BadgeMedal from '../components/BadgeMedal';
 import { fetchProfile, VISIBILITY_LABEL, type ProfileData } from '../lib/profileApi';
 import { inviteToStreak } from '../lib/streakApi';
@@ -79,6 +80,7 @@ export default function PublicProfile() {
 
   return (
     <div className="max-w-xl mx-auto pb-40" style={{ paddingBottom: 'calc(9rem + env(safe-area-inset-bottom))' }}>
+      {self && <div className="px-4 pt-3 pb-2"><ProfileTabs active="profile" /></div>}
       {/* cover and photo */}
       <div className="relative h-32 sm:rounded-b-3xl overflow-hidden" style={{ background: 'linear-gradient(135deg,#0f2b3d,#1d4e6f 55%,#2b8f9c)' }}>
         <button type="button" onClick={() => navigate(-1)} className="absolute left-3 top-3 w-9 h-9 rounded-full bg-black/35 text-white flex items-center justify-center" aria-label="Back">
