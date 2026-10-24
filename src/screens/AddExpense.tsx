@@ -226,6 +226,15 @@ export default function AddExpense() {
   // have a group, which isn't true here before the user's picked one.
   const currencySymbol = groupId ? getCurrencySymbol(selectedGroup?.currency) : '';
   const evaluatedAmount = evaluateAmountSum(amount);
+
+  // Settling up: the whole amount typed goes to the person being paid, so changing it (paying back only part of what is owed) keeps that one split
+  // equal to the amount. The rest simply stays owed, because the balances are worked out from what was actually paid.
+  React.useEffect(() => {
+    if (settleWith && splitType === 'amount' && splitMembers.length === 1 && splitMembers[0] === settleWith && evaluatedAmount !== null && evaluatedAmount !== undefined) {
+      const next = Number.isFinite(evaluatedAmount) ? evaluatedAmount : 0;
+      setMemberSplits((prev) => (prev[settleWith] === next ? prev : { [settleWith]: next }));
+    }
+  }, [settleWith, splitType, splitMembers, evaluatedAmount]);
   const voiceAvailable = speechAvailableHere();
   // Group-aware: hides whatever this group's admin has hidden and appends its custom categories —
   // falls back to the raw global list before a group is picked (nothing to scope it to yet).
