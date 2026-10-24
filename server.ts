@@ -16,6 +16,7 @@ import { z } from "zod";
 import { GoogleGenAI, Type as GenAiType } from "@google/genai";
 import { registerQuestRoutes, bumpQuestCounts, recordServerQuestEvent } from "./quests";
 import { registerStreakRoutes, advanceFriendStreak } from "./streaks";
+import { registerCosmeticsRoutes } from "./cosmetics";
 
 dotenv.config();
 
@@ -3459,6 +3460,8 @@ async function startServer() {
     collectPushTokens,
     sendPush,
   });
+
+  registerCosmeticsRoutes(app, { getDb: () => adminDb, verifyAuth: verifyAuthHeader });
 
   registerStreakRoutes(app, {
     getDb: () => adminDb,

@@ -66,7 +66,7 @@ function ActiveStreakCard({ s, me, onChanged }: React.Attributes & { s: ActiveFr
         <Snowfield show={frozen} />
         <div className="relative flex items-center gap-3">
           <div className="shrink-0" style={{ width: 52 }}>
-            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={50} burst={burst} />
+            <StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={50} burst={burst} flame={s.partner.flame} />
           </div>
           <div className="flex -space-x-2 shrink-0">
             <Avatar p={me} size={34} ring />
@@ -242,10 +242,10 @@ export default function FriendStreakCard() {
               return (
                 <button key={s.pairId} type="button" onClick={() => setSheet(s.pairId)} className={clsx(tile, wide, 'text-white shadow-sm')} style={{ background: frozen ? 'linear-gradient(160deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(160deg,#3a1208 0%,#9a3412 60%,#ea580c 100%)' }} aria-label={`Streak with ${s.partner.name}: ${s.current} days`}>
                   <Avatar p={s.partner} size={28} ring />
-                  <span className="text-[10px] font-bold truncate w-full text-center leading-none">{first(s.partner.name)}</span>
+                  <span className="text-[10px] font-bold truncate w-full text-center leading-none">{first(s.partner.name)}{s.partner.badges && s.partner.badges.length > 0 ? ` ${s.partner.badges.join('')}` : ''}</span>
                   <span className="flex items-center gap-1.5 leading-none">
                     <span className="flex items-center gap-0.5">
-                      <span className="w-[18px] h-[22px] -ml-1 overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={18} /></span>
+                      <span className="w-[18px] h-[22px] -ml-1 overflow-visible"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={18} flame={s.partner.flame} /></span>
                       <span className="text-sm font-black tabular-nums">{s.current}</span>
                     </span>
                     <span className="flex gap-1" title="You and your friend: logged today">

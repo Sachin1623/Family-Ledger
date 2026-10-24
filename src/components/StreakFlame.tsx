@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { FLAME_FILTERS } from '../lib/cosmeticsApi';
 
 // The streak flame and its weather. One flame that looks alive (three layers flickering on their own beat, a pulsing glow, embers rising),
 // that turns to ice when a streak freezes (the colours melt from orange to ice blue, a ring of frost bursts out, snow starts to fall), and that
@@ -98,12 +99,12 @@ function Styles() {
   return <style>{CSS}</style>;
 }
 
-export default function StreakFlame({ state, size = 84, burst = null, ignite = 0 }: { state: FlameState; size?: number; burst?: FlameBurst; ignite?: number }) {
+export default function StreakFlame({ state, size = 84, burst = null, ignite = 0, flame = 'classic' }: { state: FlameState; size?: number; burst?: FlameBurst; ignite?: number; flame?: string }) {
   const alive = state === 'lit' || state === 'risk';
   const frozen = state === 'frozen';
   const cls = ['sf-wrap', `sf-${state}`, burst === 'freeze' ? 'sf-freezing' : '', burst === 'thaw' ? 'sf-thawing' : '', ignite > 0 && !burst ? 'sf-bigger' : ''].filter(Boolean).join(' ');
   return (
-    <div className={cls} style={{ width: size, height: size * 1.2 }} key={`flame-${ignite}`}>
+    <div className={cls} style={{ width: size, height: size * 1.2, ...(alive && FLAME_FILTERS[flame] && FLAME_FILTERS[flame] !== 'none' ? { filter: FLAME_FILTERS[flame] } : {}) }} key={`flame-${ignite}`}>
       <Styles />
       <div className="sf-glow" />
       <svg viewBox="0 0 100 120" className="sf-svg" aria-hidden="true">

@@ -30,6 +30,9 @@ export default function StreakCard() {
   const navigate = useNavigate();
   const [snap] = useDocument(user ? doc(db, 'userPoints', user.uid, 'meta', 'expenseStreak') : null);
   const data = snap?.data() as { current?: number; longest?: number; lastDateStr?: string; freezes?: number; lostStreak?: { value: number; missedDays: number; until: string } } | undefined;
+  // the flame style this person picked (their own record, written by the server)
+  const [styleSnap] = useDocument(user ? doc(db, 'userPoints', user.uid, 'meta', 'cosmetics') : null);
+  const myFlame = (styleSnap?.data() as { flame?: string } | undefined)?.flame || 'classic';
   const [restoring, setRestoring] = useState<'coins' | 'freeze' | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [flare, setFlare] = useState(0);
@@ -127,13 +130,14 @@ export default function StreakCard() {
         <Snowfield show={state === 'frozen'} />
         <div className="relative flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2 sm:gap-x-5">
           <div className="shrink-0" style={{ width: 60 }}>
-            <StreakFlame state={state} size={58} burst={burst} ignite={flare} />
+            <StreakFlame state={state} size={58} burst={burst} ignite={flare} flame={myFlame} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
               <span key={shown} className={`sc-roll text-4xl sm:text-5xl font-black leading-none tabular-nums ${state === 'lit' || state === 'risk' ? 'sc-hot' : state === 'frozen' ? 'sc-ice' : ''}`}>{shown}</span>
               <span className="text-sm font-black text-amber-300 uppercase tracking-wide">day streak</span>
               {freezes > 0 && <span className="text-xs font-bold bg-sky-400/20 text-sky-200 rounded-full px-2 py-0.5" title="Streak freezes you have earned">❄ {freezes}</span>}
+              <button type="button" onClick={() => navigate('/my-style')} className="text-[11px] font-bold bg-white/15 text-white/90 rounded-full px-2 py-0.5 active:scale-95" title="Flame styles and badges">🎨 Style</button>
             </div>
             <p className="text-[12px] text-white/80 leading-snug mt-0.5">{message}</p>
           </div>

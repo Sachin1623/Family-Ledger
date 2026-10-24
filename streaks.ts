@@ -1,6 +1,7 @@
 import type express from 'express';
 import admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
+import { publicStyle } from './cosmetics';
 
 // Streak freeze rescue and friend streaks.
 //
@@ -180,10 +181,11 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
   const linksRef = (db: Firestore, uid: string) => db.collection('friendStreakLinks').doc(uid);
   const del = () => admin.firestore.FieldValue.delete();
 
-  async function personCard(db: Firestore, uid: string): Promise<{ uid: string; name: string; photoURL: string | null }> {
-    const snap = await db.collection('users').doc(uid).get();
+  // Name, photo and the person's chosen flame style and badge icons (what a friend sees of them).
+  async function personCard(db: Firestore, uid: string, withStyle = true): Promise<{ uid: string; name: string; photoURL: string | null; flame: string; badges: string[] }> {
+    const [snap, style] = await Promise.all([db.collection('users').doc(uid).get(), (withStyle ? publicStyle(db, uid).catch(() => ({ flame: 'classic', badges: [] as string[] })) : Promise.resolve({ flame: 'classic', badges: [] as string[] }))]);
     const d = snap.data() || {};
-    return { uid, name: d.displayName || 'Someone', photoURL: d.photoURL || null };
+    return { uid, name: d.displayName || 'Someone', photoURL: d.photoURL || null, flame: style.flame, badges: style.badges };
   }
 
   // One lock document per PAIR of people (the two uids in sorted order), taken inside the invite transaction. Two invites for the same two people can never
@@ -322,7 +324,7 @@ export function registerStreakRoutes(app: express.Express, deps: StreakDeps): vo
         others.docs.forEach((d) => d.data().userId !== uid && ids.add(d.data().userId));
       }
       const list = Array.from(ids).slice(0, 60);
-      const cards = await Promise.all(list.map((u) => personCard(db, u)));
+      const cards = await Promise.all(list.map((u) => personCard(db, u, false)));
       return res.json({ people: cards.map((c) => ({ ...c, taken: taken.has(c.uid) })).sort((a, b) => a.name.localeCompare(b.name)) });
     } catch (err) {
       console.error('friend streak candidates error:', err);

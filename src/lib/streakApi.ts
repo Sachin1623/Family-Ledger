@@ -29,6 +29,8 @@ export interface FriendPerson {
   uid: string;
   name: string;
   photoURL: string | null;
+  flame?: string; // the flame style they use
+  badges?: string[]; // icons of the badges they show
 }
 
 export interface ActiveFriendStreak {

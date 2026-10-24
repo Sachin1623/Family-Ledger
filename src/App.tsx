@@ -77,6 +77,7 @@ import Tools from './screens/Tools';
 import MembersChat from './screens/MembersChat';
 import Friends from './screens/Friends';
 import MyProgress from './screens/MyProgress';
+import MyStyle from './screens/MyStyle';
 import Health from './screens/Health';
 import CareCircle from './screens/CareCircle';
 import HealthGlucose from './screens/HealthGlucose';
@@ -396,6 +397,7 @@ export default function App() {
               <Route path="/chat" element={<AuthenticatedLayout><MembersChat /></AuthenticatedLayout>} />
               <Route path="/friends" element={<AuthenticatedLayout><Friends /></AuthenticatedLayout>} />
               <Route path="/progress" element={<AuthenticatedLayout><MyProgress /></AuthenticatedLayout>} />
+              <Route path="/my-style" element={<AuthenticatedLayout><MyStyle /></AuthenticatedLayout>} />
               <Route path="/health" element={<AuthenticatedLayout><Health /></AuthenticatedLayout>} />
               <Route path="/health/glucose" element={<AuthenticatedLayout><HealthGlucose /></AuthenticatedLayout>} />
               <Route path="/health/blood-pressure" element={<AuthenticatedLayout><HealthBloodPressure /></AuthenticatedLayout>} />
