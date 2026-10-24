@@ -26,6 +26,36 @@ export function memberContribution(expense: any, memberId: string): number {
   return expense.paidBy === memberId ? (Number(expense.amount) || 0) : 0;
 }
 
+// Who BEARS the cost of one expense, as a list of { userId, amount } adding up to the expense amount.
+//   - split expense: each member's own split amount (scaled if the splits do not add up to the amount, so the shares always total the expense)
+//   - income, or an expense with no split (family pool): whoever paid it, exactly as memberContribution() says
+// Used by every "spending by person" view so a ₹3,000 dinner paid by one person and split three ways shows ₹1,000 against each of the three, in the
+// expense's own category and month, without any link to settlements. "Who paid at the time" stays on the expense itself (paidBy / payers).
+export function memberShareList(expense: any): { userId: string; amount: number }[] {
+  const total = Number(expense?.amount) || 0;
+  const splits: any[] = expense?.splitInfo?.splits || [];
+  if (expense?.type !== 'income' && splits.length > 0) {
+    const sum = splits.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const factor = sum > 0 && Math.abs(sum - total) > 0.01 ? total / sum : 1;
+    const byId: Record<string, number> = {};
+    for (const s of splits) {
+      if (!s.userId) continue;
+      byId[s.userId] = (byId[s.userId] || 0) + (Number(s.amount) || 0) * factor;
+    }
+    const out = Object.entries(byId).map(([userId, amount]) => ({ userId, amount })).filter((x) => x.amount > 0);
+    if (out.length > 0) return out;
+  }
+  if (Array.isArray(expense?.payers) && expense.payers.length > 0) {
+    return expense.payers.map((p: any) => ({ userId: p.userId, amount: Number(p.amount) || 0 })).filter((p: any) => p.userId && p.amount > 0);
+  }
+  return expense?.paidBy && total > 0 ? [{ userId: expense.paidBy, amount: total }] : [];
+}
+
+export function memberShare(expense: any, memberId: string): number {
+  if (!expense || !memberId) return 0;
+  return memberShareList(expense).find((x) => x.userId === memberId)?.amount || 0;
+}
+
 // A payment between two people in a group (the `settlements` collection). It is NOT spending: it never counts toward a group's total, a budget, a report or
 // a category. It only moves the balance: `fromUid` handed `amount` to `toUid`, so what `fromUid` owed goes down and what `toUid` was owed goes down.
 export interface GroupPayment {

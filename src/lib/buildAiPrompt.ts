@@ -1,7 +1,12 @@
+import { memberShareList } from './settleMath';
+
 interface PromptExpense {
   amount: number;
   category: string;
   paidBy: string;
+  // How the expense was split, when it was (see settleMath.ts's memberShareList())
+  splitInfo?: { splits?: { userId: string; amount: number }[] };
+  type?: string;
   // Multiple payers (each person's own contribution) — see settleMath.ts's memberContribution()
   // for the same convention used everywhere else this app attributes "how much did X pay."
   payers?: { userId: string; amount: number }[];
@@ -36,17 +41,21 @@ export function buildGroupAiPrompt(params: {
     .map(([cat, amt]) => `- ${categoryNames[cat] || cat}: ${currencySymbol}${amt.toFixed(2)} (${((amt / totalSpend) * 100 || 0).toFixed(0)}%)`)
     .join('\n');
 
+  // Each member's SHARE of the cost (split expenses are divided by their split, others go to whoever paid), with what they paid at the time beside it.
   const byMember: Record<string, number> = {};
+  const paidByMember: Record<string, number> = {};
   expenses.forEach((e) => {
+    memberShareList(e).forEach((s) => { byMember[s.userId] = (byMember[s.userId] || 0) + s.amount; });
     if (e.payers && e.payers.length > 0) {
-      e.payers.forEach((p) => { byMember[p.userId] = (byMember[p.userId] || 0) + p.amount; });
+      e.payers.forEach((p) => { paidByMember[p.userId] = (paidByMember[p.userId] || 0) + p.amount; });
     } else {
-      byMember[e.paidBy] = (byMember[e.paidBy] || 0) + e.amount;
+      paidByMember[e.paidBy] = (paidByMember[e.paidBy] || 0) + e.amount;
     }
   });
+  Object.keys(paidByMember).forEach((uid) => { if (!(uid in byMember)) byMember[uid] = 0; });
   const memberLines = Object.entries(byMember)
     .sort((a, b) => b[1] - a[1])
-    .map(([uid, amt]) => `- ${memberName(uid)}: ${currencySymbol}${amt.toFixed(2)}`)
+    .map(([uid, amt]) => `- ${memberName(uid)}: ${currencySymbol}${amt.toFixed(2)}${Math.abs((paidByMember[uid] || 0) - amt) > 0.5 ? ` (paid ${currencySymbol}${(paidByMember[uid] || 0).toFixed(2)})` : ''}`)
     .join('\n');
 
   const dates = expenses.map((e) => e.date).filter(Boolean).sort();
@@ -74,7 +83,7 @@ SUMMARY
 SPENDING BY CATEGORY
 ${categoryLines || '(no expenses yet)'}
 
-SPENDING BY MEMBER (who paid)
+SPENDING BY MEMBER (each person's share of the cost; what they paid at the time is in brackets when different)
 ${memberLines || '(no expenses yet)'}
 
 Please:
