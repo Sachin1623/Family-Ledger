@@ -105,6 +105,26 @@ export async function publicStyle(db: Firestore, uid: string): Promise<{ flame: 
   return { flame, badges: c.badges.filter((b) => c.earned.includes(b)).map((b) => BADGE_BY_ID.get(b)?.icon || '').filter(Boolean) };
 }
 
+// The whole collection a profile shows: what is earned (with tier), what is owned, and what is currently chosen.
+export async function publicCosmetics(db: Firestore, uid: string): Promise<{
+  style: { flame: string; badges: string[] };
+  badges: { earned: { id: string; name: string; icon: string; tier: BadgeTier }[]; total: number; shown: string[] };
+  flames: { owned: { id: string; name: string }[]; equipped: string };
+}> {
+  const c = normalise((await cosRef(db, uid).get()).data() as Partial<Cosmetics> | undefined);
+  const flame = hasFlame(c, c.flame) ? c.flame : 'classic';
+  const shown = c.badges.filter((b) => c.earned.includes(b));
+  return {
+    style: { flame, badges: shown.map((b) => BADGE_BY_ID.get(b)?.icon || '').filter(Boolean) },
+    badges: {
+      earned: BADGES.filter((b) => c.earned.includes(b.id)).map((b) => ({ id: b.id, name: b.name, icon: b.icon, tier: b.tier })),
+      total: BADGES.length,
+      shown,
+    },
+    flames: { owned: FLAMES.filter((f) => hasFlame(c, f.id)).map((f) => ({ id: f.id, name: f.name })), equipped: flame },
+  };
+}
+
 export interface CosmeticsDeps {
   getDb: () => Firestore | null;
   verifyAuth: (req: express.Request) => Promise<admin.auth.DecodedIdToken | null>;
