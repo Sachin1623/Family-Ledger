@@ -19,10 +19,10 @@ interface BadgeItem { id: string; name: string; icon: string; hint: string }
 
 export const FLAMES: FlameItem[] = [
   { id: 'classic', name: 'Classic', price: 0 },
-  { id: 'blue', name: 'Blue flame', price: 100 },
-  { id: 'gold', name: 'Golden', price: 150 },
-  { id: 'green', name: 'Emerald', price: 150 },
-  { id: 'purple', name: 'Royal purple', price: 250 },
+  { id: 'blue', name: 'Blue flame', price: 1000 },
+  { id: 'gold', name: 'Golden', price: 1500 },
+  { id: 'green', name: 'Emerald', price: 1500 },
+  { id: 'purple', name: 'Royal purple', price: 2500 },
   { id: 'frost', name: 'Frostfire', price: 0, earnedBy: 'streak_30', hint: 'Reach a 30-day streak' },
 ];
 
