@@ -212,6 +212,7 @@ export default function GroupAnalysisSummary() {
   const [ovMonthKey, setOvMonthKey] = useState(() => currentLocalMonthKey());
   // The filter card is collapsed behind one button by default — it used to take half of the first screen.
   const [showFilters, setShowFilters] = useState(false);
+  const [openInfoFor, setOpenInfoFor] = useState<Record<string, boolean>>({});
   const [openCatsFor, setOpenCatsFor] = useState<Record<string, boolean>>({});
   const [showAllMembers, setShowAllMembers] = useState(false);
 
@@ -1861,7 +1862,7 @@ export default function GroupAnalysisSummary() {
                         numberSystem={profile?.numberSystem}
                         t={t}
                       />
-                      {/* the numbers explained: what the share is, what was paid when, and what is still to settle */}
+                      {/* the money story in one glance: share, paid at the bills, settled between members, and where that leaves this person */}
                       {(() => {
                         const st = memberSettled[member.userId];
                         const settledPaid = st?.paid || 0;
@@ -1870,34 +1871,50 @@ export default function GroupAnalysisSummary() {
                         const differs = Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5;
                         if (memberExpenseTotal <= 0 || (!differs && settledPaid < 0.5 && settledGot < 0.5)) return null;
                         const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
-                        const net = memberPaidTotal - memberExpenseTotal + settledPaid - settledGot;
+                        const hasSettle = settleScopeOn && (settledPaid >= 0.5 || settledGot >= 0.5);
+                        const net = memberPaidTotal - memberExpenseTotal + (settleScopeOn ? settledPaid - settledGot : 0);
+                        const status = !settleScopeOn ? null : Math.abs(net) < 0.5 ? { text: 'All settled', tone: 'ok' } : net > 0 ? { text: `To receive ${f(net)}`, tone: 'get' } : { text: `To pay ${f(-net)}`, tone: 'owe' };
+                        const open = !!openInfoFor[member.userId];
                         return (
-                          <div className="rounded-xl bg-surface-container/50 px-3 py-2 space-y-1.5 text-[11px]">
-                            <div className="flex items-start justify-between gap-3">
-                              <span className="text-text-muted"><b className="font-black text-primary">Your share</b><br />what you are supposed to pay</span>
-                              <b className="font-black text-primary shrink-0">{f(memberExpenseTotal)}</b>
+                          <div className="rounded-xl bg-surface-container/50 p-2 space-y-2">
+                            <div className={`grid gap-1.5 ${hasSettle ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                              <div className="rounded-lg bg-white px-2 py-1.5 text-center">
+                                <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Your share</p>
+                                <p className="text-sm font-black text-primary tabular-nums">{f(memberExpenseTotal)}</p>
+                              </div>
+                              <div className="rounded-lg bg-white px-2 py-1.5 text-center">
+                                <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Paid at bills</p>
+                                <p className="text-sm font-black text-primary tabular-nums">{f(memberPaidTotal)}</p>
+                              </div>
+                              {hasSettle && (
+                                <div className="rounded-lg bg-white px-2 py-1.5 text-center">
+                                  <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Settled</p>
+                                  <p className="text-sm font-black tabular-nums">
+                                    {settledPaid >= 0.5 && <span className="text-success">↑{f(settledPaid)}</span>}
+                                    {settledPaid >= 0.5 && settledGot >= 0.5 && <span className="text-text-muted"> </span>}
+                                    {settledGot >= 0.5 && <span className="text-primary">↓{f(settledGot)}</span>}
+                                  </p>
+                                </div>
+                              )}
                             </div>
-                            <div className="flex items-start justify-between gap-3">
-                              <span className="text-text-muted"><b className="font-black text-primary">Paid when the bills were added</b><br />money you put in at the time</span>
-                              <b className="font-black text-primary shrink-0">{f(memberPaidTotal)}</b>
+                            <div className="flex items-center justify-between gap-2">
+                              {status ? (
+                                <span className={`text-[11px] font-black rounded-full px-2.5 py-1 ${status.tone === 'ok' ? 'bg-success/15 text-success' : status.tone === 'get' ? 'bg-success/15 text-success' : 'bg-error/10 text-error'}`}>
+                                  {status.tone === 'ok' ? '✓ ' : ''}{status.text}
+                                </span>
+                              ) : <span />}
+                              <button type="button" onClick={(e) => { e.stopPropagation(); setOpenInfoFor((o) => ({ ...o, [member.userId]: !o[member.userId] })); }} className="text-[10px] font-black text-text-muted flex items-center gap-0.5">
+                                What do these mean?
+                                <span className="material-symbols-outlined text-[14px]">{open ? 'expand_less' : 'info'}</span>
+                              </button>
                             </div>
-                            {settleScopeOn && settledPaid >= 0.5 && (
-                              <div className="flex items-start justify-between gap-3">
-                                <span className="text-text-muted"><b className="font-black text-primary">Paid to members in settlements</b><br />payments you recorded</span>
-                                <b className="font-black text-success shrink-0">{f(settledPaid)}</b>
-                              </div>
-                            )}
-                            {settleScopeOn && settledGot >= 0.5 && (
-                              <div className="flex items-start justify-between gap-3">
-                                <span className="text-text-muted"><b className="font-black text-primary">Received from members in settlements</b><br />payments made to you</span>
-                                <b className="font-black text-primary shrink-0">{f(settledGot)}</b>
-                              </div>
-                            )}
-                            {settleScopeOn && Math.abs(net) >= 0.5 && (
-                              <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-1.5">
-                                <b className="font-black text-primary">{net > 0 ? 'Still to receive' : 'Still to pay'}</b>
-                                <b className={`font-black shrink-0 ${net > 0 ? 'text-success' : 'text-error'}`}>{f(Math.abs(net))}</b>
-                              </div>
+                            {open && (
+                              <ul className="text-[10.5px] text-text-muted leading-snug space-y-0.5 list-disc pl-4" onClick={(e) => e.stopPropagation()}>
+                                <li><b className="text-primary">Your share</b>: your part of the costs, what you are supposed to pay.</li>
+                                <li><b className="text-primary">Paid at bills</b>: money you put in when the bills were added.</li>
+                                {hasSettle && <li><b className="text-primary">Settled</b>: <span className="text-success font-bold">↑ paid to</span> other members, <span className="text-primary font-bold">↓ received from</span> them, through Settle.</li>}
+                                {status && <li><b className="text-primary">{status.tone === 'ok' ? 'All settled' : status.tone === 'get' ? 'To receive' : 'To pay'}</b>: paid at bills − your share + settled up. Nothing left to settle when it is zero.</li>}
+                              </ul>
                             )}
                           </div>
                         );
