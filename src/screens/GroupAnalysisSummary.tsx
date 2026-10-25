@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { getBudgetStatus } from '../lib/budget';
 import CategoryBadge from '../components/CategoryBadge';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -133,6 +134,44 @@ function loadBookmarks(uid: string): AnalysisBookmark[] {
   } catch {
     return [];
   }
+}
+
+// A donut and a list side by side: the donut shows how a total divides, the list gives the exact amounts and percentages, in the same colours. The six
+// biggest items get their own slice; anything smaller is folded into one grey "+N more" slice so the donut never fills with slivers.
+function DonutList({ items, currencySymbol, numberSystem, centerNote }: { items: { id: string; label: string; amount: number; color: string }[]; currencySymbol: string; numberSystem?: string; centerNote: string }) {
+  const sorted = [...items].filter((i) => i.amount > 0).sort((a, b) => b.amount - a.amount);
+  const total = sorted.reduce((sum, i) => sum + i.amount, 0);
+  if (total <= 0) return null;
+  const top = sorted.slice(0, 6);
+  const rest = sorted.slice(6);
+  const shown = rest.length > 0 ? [...top, { id: '__more', label: `+${rest.length} more`, amount: rest.reduce((sum, i) => sum + i.amount, 0), color: '#9aa3ae' }] : top;
+  let acc = 0;
+  const stops = shown.map((i) => {
+    const from = acc;
+    acc += (i.amount / total) * 100;
+    return `${i.color} ${from}% ${acc}%`;
+  }).join(',');
+  const money = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, numberSystem as any)}`;
+  return (
+    <div className="flex items-center gap-3.5">
+      <div className="shrink-0 rounded-full flex items-center justify-center" style={{ width: 108, height: 108, background: `conic-gradient(${stops})` }}>
+        <div className="rounded-full bg-white flex flex-col items-center justify-center text-center" style={{ width: 70, height: 70 }}>
+          <b className="text-[13px] font-black text-primary leading-tight">{money(total)}</b>
+          <span className="text-[8px] font-black uppercase tracking-wider text-text-muted leading-tight">{centerNote}</span>
+        </div>
+      </div>
+      <div className="flex-1 min-w-0 space-y-1">
+        {shown.map((i) => (
+          <div key={i.id} className="flex items-center gap-1.5 text-[11px]">
+            <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: i.color }} />
+            <span className="flex-1 min-w-0 truncate font-bold text-primary">{i.label}</span>
+            <b className="font-black text-primary tabular-nums">{money(i.amount)}</b>
+            <span className="w-8 text-right text-text-muted font-bold tabular-nums text-[10px]">{Math.round((i.amount / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function GroupAnalysisSummary() {
@@ -339,6 +378,15 @@ export default function GroupAnalysisSummary() {
     groupBudgetsValue?.docs.forEach((d) => {
       const data = d.data();
       map[data.month] = data.amount;
+    });
+    return map;
+  }, [groupBudgetsValue]);
+
+  const budgetDocsByMonth = useMemo(() => {
+    const map: Record<string, { amount: number; categoryAllocations?: Record<string, number> }> = {};
+    groupBudgetsValue?.docs.forEach((d) => {
+      const data: any = d.data();
+      if (data.month) map[data.month] = { amount: Number(data.amount) || 0, categoryAllocations: data.categoryAllocations };
     });
     return map;
   }, [groupBudgetsValue]);
@@ -580,6 +628,19 @@ export default function GroupAnalysisSummary() {
     });
     return out;
   }, [categoryMemberExpenses]);
+
+  const budgetMonthSpend = useMemo(() => {
+    const byCat: Record<string, number> = {};
+    let total = 0;
+    if (!selectedGroupId || selectedGroupId === 'all') return { byCat, total };
+    insightExpenses.forEach((exp: any) => {
+      if (exp.groupId !== selectedGroupId || exp.type === 'income' || exp.isSettlement === true) return;
+      if (typeof exp.date !== 'string' || !exp.date.startsWith(ovMonthKey)) return;
+      byCat[exp.category] = (byCat[exp.category] || 0) + (exp.amount || 0);
+      total += exp.amount || 0;
+    });
+    return { byCat, total };
+  }, [insightExpenses, selectedGroupId, ovMonthKey]);
 
   // What each member paid out to, and received from, other members in settlements, within the same scope the member card is showing (groups, months and
   // years). A settlement belongs to no category, so with a category or essential/optional filter on, it is left out rather than guessed at.
@@ -1702,6 +1763,83 @@ export default function GroupAnalysisSummary() {
                   </div>
                 </div>
 
+                {/* the month's budget against what was really spent, overall and per category */}
+                {selectedGroupId && selectedGroupId !== 'all' && (() => {
+                  const b = budgetDocsByMonth[ovMonthKey];
+                  const monthName = `${MONTH_LABELS[Number(ovMonthKey.slice(5, 7)) - 1]} ${ovMonthKey.slice(0, 4)}`;
+                  const fm = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
+                  if (!b || b.amount <= 0) {
+                    return (
+                      <div className="mb-5 rounded-2xl border border-dashed border-border-subtle p-3.5 text-center">
+                        <p className="text-xs font-black text-primary">No budget set for {monthName}</p>
+                        <button type="button" onClick={() => navigate(`/groups/${selectedGroupId}/manage`)} className="mt-1 text-[11px] font-black text-primary underline decoration-dotted">Set a budget for this group</button>
+                      </div>
+                    );
+                  }
+                  const total = budgetMonthSpend.total;
+                  const status = getBudgetStatus(total, b.amount);
+                  const left = b.amount - total;
+                  const alloc = Object.entries(b.categoryAllocations || {}).filter(([, pctv]) => Number(pctv) > 0);
+                  const allocated = new Set(alloc.map(([id]) => id));
+                  const unbudgeted = Object.entries(budgetMonthSpend.byCat).filter(([id]) => !allocated.has(id)).reduce((sum, [, v]) => sum + Number(v), 0);
+                  const rows = alloc
+                    .map(([id, pctv]) => {
+                      const budget = (b.amount * Number(pctv)) / 100;
+                      const spent = budgetMonthSpend.byCat[id] || 0;
+                      return { id, budget, spent, status: getBudgetStatus(spent, budget) };
+                    })
+                    .sort((x, y) => y.status.percent - x.status.percent);
+                  return (
+                    <div className="mb-5 rounded-2xl bg-surface-container/40 p-3.5 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-black text-primary">Budget vs spend · {monthName}</p>
+                          <p className="text-[11px] text-text-muted mt-0.5"><b className="text-primary">{fm(total)}</b> spent of <b className="text-primary">{fm(b.amount)}</b></p>
+                        </div>
+                        <span className={clsx('shrink-0 text-[11px] font-black rounded-full px-2.5 py-1', status.bgClass, status.textClass)}>
+                          {left >= 0 ? `${fm(left)} left` : `${fm(-left)} over`}
+                        </span>
+                      </div>
+                      <div className="h-2.5 rounded-full bg-white overflow-hidden">
+                        <div className={clsx('h-full rounded-full transition-all', status.barClass)} style={{ width: `${Math.min(100, status.percent)}%` }} />
+                      </div>
+                      <p className={clsx('text-[10px] font-black text-right -mt-1.5', status.textClass)}>{Math.round(status.percent)}% used</p>
+                      {rows.length > 0 && (
+                        <div className="space-y-2.5 pt-1 border-t border-border-subtle/70">
+                          {rows.map((r) => (
+                            <div key={r.id} className="space-y-1">
+                              <div className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="font-bold text-primary truncate">{CATEGORIES_LIST.find((c0) => c0.id === r.id) ? `${categoryIconOf(r.id)} ${categoryLabel(r.id)}` : r.id}</span>
+                                <span className="shrink-0 tabular-nums"><b className={clsx('font-black', r.status.textClass)}>{fm(r.spent)}</b> <span className="text-text-muted">of {fm(r.budget)}</span></span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-white overflow-hidden">
+                                <div className={clsx('h-full rounded-full', r.status.barClass)} style={{ width: `${Math.min(100, r.status.percent)}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                          {unbudgeted > 0.5 && <p className="text-[10.5px] text-text-muted">Spent outside the budgeted categories: <b className="text-primary">{fm(unbudgeted)}</b></p>}
+                        </div>
+                      )}
+                      {rows.length === 0 && <p className="text-[10.5px] text-text-muted">This budget is not split by category. Split it in Manage group to see each category against its share.</p>}
+                    </div>
+                  );
+                })()}
+
+                {(() => {
+                  const rows = categoryData.filter((d) => d.value > 0 && !isIncomeCategoryId(d.name));
+                  if (rows.length === 0) return null;
+                  return (
+                    <div className="mb-5 rounded-2xl bg-surface-container/40 p-3.5">
+                      <DonutList
+                        items={rows.map((d, i) => ({ id: d.name, label: CATEGORIES_LIST.find((c) => c.id === d.name) ? categoryLabel(d.name) : d.name, amount: d.value, color: CATEGORY_COLORS[d.name.toLowerCase()] || COLORS[i % COLORS.length] }))}
+                        currencySymbol={currencySymbol}
+                        numberSystem={profile?.numberSystem}
+                        centerNote={`${rows.length} ${rows.length === 1 ? 'category' : 'categories'}`}
+                      />
+                    </div>
+                  );
+                })()}
+
                 <div className="space-y-6 overflow-y-auto">
                   {(() => {
                     // A category with nothing spent/earned this period isn't worth a row — every
@@ -1944,6 +2082,21 @@ export default function GroupAnalysisSummary() {
                         );
                       })()}
 
+                      {/* where this person's share went */}
+                      {sortedCats.length > 0 && memberExpenseTotal > 0 && (
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] font-black text-primary mb-1.5">
+                            <span>Spend by category</span>
+                            <span className="text-text-muted font-bold">{sortedCats.length} · biggest first</span>
+                          </div>
+                          <DonutList
+                            items={sortedCats.map(([cat, amount]) => ({ id: cat, label: categoryLabel(cat), amount, color: CATEGORY_COLORS[cat] || '#71787d' }))}
+                            currencySymbol={currencySymbol}
+                            numberSystem={profile?.numberSystem}
+                            centerNote={`${sortedCats.length} ${sortedCats.length === 1 ? 'category' : 'categories'}`}
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
