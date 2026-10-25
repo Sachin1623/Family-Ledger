@@ -433,6 +433,14 @@ export default function GroupAnalysisSummary() {
       : (selectedGroupId ? query(collection(db, 'expenses'), where('groupId', '==', selectedGroupId)) : null)
   );
   
+  // Payments between members ("Ravi paid Anita 500"): not spending, so they are not in any chart, but the member card shows what each person paid and
+  // received through them next to what they paid at the bills.
+  const [paymentsValue] = useCollection(
+    selectedGroupId === 'all'
+      ? (groupIds.length > 0 ? query(collection(db, 'settlements'), where('groupId', 'in', groupIds)) : null)
+      : (selectedGroupId ? query(collection(db, 'settlements'), where('groupId', '==', selectedGroupId)) : null)
+  );
+
   const allExpenses = useMemo(() => {
     const exps = expensesValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
     // Only include expenses from groups that actually exist and the user is a member of.
@@ -553,6 +561,26 @@ export default function GroupAnalysisSummary() {
     return includeArchivedInCategoryMember ? categoryFilteredExpenses : categoryFilteredExpenses.filter((exp: any) => !isArchivedExpense(exp));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryFilteredExpenses, allGroups, includeArchivedInCategoryMember]);
+
+  // What each member paid out to, and received from, other members in settlements, within the same scope the member card is showing (groups, months and
+  // years). A settlement belongs to no category, so with a category or essential/optional filter on, it is left out rather than guessed at.
+  const memberSettled = useMemo(() => {
+    const out: Record<string, { paid: number; received: number }> = {};
+    if ((selectedCategory && selectedCategory !== 'all') || selectedClassification !== 'all' || entryTypeFilter === 'income') return out;
+    const activeIds = new Set(allGroups.filter((g: any) => includeArchivedInCategoryMember || !g.archived).map((g: any) => g.id));
+    (paymentsValue?.docs || []).forEach((d) => {
+      const p: any = d.data();
+      if (!activeIds.has(p.groupId) || typeof p.date !== 'string') return;
+      const dt = parseLocalDate(p.date);
+      if (selectedMonths.length > 0 && !selectedMonths.includes(dt.getMonth())) return;
+      if (selectedYears.length > 0 && !selectedYears.includes(dt.getFullYear())) return;
+      const amt = Number(p.amount) || 0;
+      if (!amt) return;
+      out[p.fromUid] = { paid: (out[p.fromUid]?.paid || 0) + amt, received: out[p.fromUid]?.received || 0 };
+      out[p.toUid] = { paid: out[p.toUid]?.paid || 0, received: (out[p.toUid]?.received || 0) + amt };
+    });
+    return out;
+  }, [paymentsValue, allGroups, includeArchivedInCategoryMember, selectedCategory, selectedClassification, entryTypeFilter, selectedMonths, selectedYears]);
 
   // This-month/last-month readouts for the same three sections — deliberately built from
   // `allExpenses` (group-scoped + entryTypeFilter-respecting, but NOT re-filtered by whatever
@@ -1808,9 +1836,21 @@ export default function GroupAnalysisSummary() {
                             )}
                           </div>
                           <span className="text-[10px] text-text-muted font-medium">{t('analysis.transactionsCount', { count: memberExpenses.length })}</span>
-                          {Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5 && (
-                            <span className="block text-[10px] text-text-muted font-medium">Paid {currencySymbol}{formatAmountCompact(memberPaidTotal, undefined, profile?.numberSystem)}</span>
-                          )}
+                          {(() => {
+                            const st = memberSettled[member.userId];
+                            const settledPaid = st?.paid || 0;
+                            const settledGot = st?.received || 0;
+                            const differs = Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5;
+                            if (!differs && settledPaid < 0.5 && settledGot < 0.5) return null;
+                            const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
+                            return (
+                              <span className="block text-[10px] text-text-muted font-medium">
+                                Paid {f(memberPaidTotal)} at bills
+                                {settledPaid >= 0.5 && <> · <b className="font-black text-success">{f(settledPaid)} settled</b></>}
+                                {settledGot >= 0.5 && <> · <b className="font-black text-primary">{f(settledGot)} received</b></>}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                       <div className="h-3 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
