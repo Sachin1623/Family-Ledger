@@ -212,6 +212,7 @@ export default function GroupAnalysisSummary() {
   const [ovMonthKey, setOvMonthKey] = useState(() => currentLocalMonthKey());
   // The filter card is collapsed behind one button by default — it used to take half of the first screen.
   const [showFilters, setShowFilters] = useState(false);
+  const [openCatsFor, setOpenCatsFor] = useState<Record<string, boolean>>({});
   const [showAllMembers, setShowAllMembers] = useState(false);
 
   // Every "view transactions" link on this screen carries the currently-active filters over to
@@ -1835,22 +1836,8 @@ export default function GroupAnalysisSummary() {
                               </span>
                             )}
                           </div>
+                          {memberExpenseTotal > 0 && <span className="block text-[10px] font-black text-primary/80 uppercase tracking-wider">Your share</span>}
                           <span className="text-[10px] text-text-muted font-medium">{t('analysis.transactionsCount', { count: memberExpenses.length })}</span>
-                          {(() => {
-                            const st = memberSettled[member.userId];
-                            const settledPaid = st?.paid || 0;
-                            const settledGot = st?.received || 0;
-                            const differs = Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5;
-                            if (!differs && settledPaid < 0.5 && settledGot < 0.5) return null;
-                            const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
-                            return (
-                              <span className="block text-[10px] text-text-muted font-medium">
-                                Paid {f(memberPaidTotal)} at bills
-                                {settledPaid >= 0.5 && <> · <b className="font-black text-success">{f(settledPaid)} settled</b></>}
-                                {settledGot >= 0.5 && <> · <b className="font-black text-primary">{f(settledGot)} received</b></>}
-                              </span>
-                            );
-                          })()}
                         </div>
                       </div>
                       <div className="h-3 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
@@ -1874,17 +1861,73 @@ export default function GroupAnalysisSummary() {
                         numberSystem={profile?.numberSystem}
                         t={t}
                       />
-                      {/* Legend for this member's categories */}
-                      <div className="flex flex-wrap gap-x-3 gap-y-1">
-                        {sortedCats.map(([cat, amount]) => (
-                          <div key={cat} className="flex items-center gap-1">
-                            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[cat] || '#71787d' }} />
-                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-tighter">
-                              {categoryLabel(cat)}
-                            </span>
+                      {/* the numbers explained: what the share is, what was paid when, and what is still to settle */}
+                      {(() => {
+                        const st = memberSettled[member.userId];
+                        const settledPaid = st?.paid || 0;
+                        const settledGot = st?.received || 0;
+                        const settleScopeOn = !((selectedCategory && selectedCategory !== 'all') || selectedClassification !== 'all' || entryTypeFilter === 'income');
+                        const differs = Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5;
+                        if (memberExpenseTotal <= 0 || (!differs && settledPaid < 0.5 && settledGot < 0.5)) return null;
+                        const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
+                        const net = memberPaidTotal - memberExpenseTotal + settledPaid - settledGot;
+                        return (
+                          <div className="rounded-xl bg-surface-container/50 px-3 py-2 space-y-1.5 text-[11px]">
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="text-text-muted"><b className="font-black text-primary">Your share</b><br />what you are supposed to pay</span>
+                              <b className="font-black text-primary shrink-0">{f(memberExpenseTotal)}</b>
+                            </div>
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="text-text-muted"><b className="font-black text-primary">Paid when the bills were added</b><br />money you put in at the time</span>
+                              <b className="font-black text-primary shrink-0">{f(memberPaidTotal)}</b>
+                            </div>
+                            {settleScopeOn && settledPaid >= 0.5 && (
+                              <div className="flex items-start justify-between gap-3">
+                                <span className="text-text-muted"><b className="font-black text-primary">Paid to members in settlements</b><br />payments you recorded</span>
+                                <b className="font-black text-success shrink-0">{f(settledPaid)}</b>
+                              </div>
+                            )}
+                            {settleScopeOn && settledGot >= 0.5 && (
+                              <div className="flex items-start justify-between gap-3">
+                                <span className="text-text-muted"><b className="font-black text-primary">Received from members in settlements</b><br />payments made to you</span>
+                                <b className="font-black text-primary shrink-0">{f(settledGot)}</b>
+                              </div>
+                            )}
+                            {settleScopeOn && Math.abs(net) >= 0.5 && (
+                              <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-1.5">
+                                <b className="font-black text-primary">{net > 0 ? 'Still to receive' : 'Still to pay'}</b>
+                                <b className={`font-black shrink-0 ${net > 0 ? 'text-success' : 'text-error'}`}>{f(Math.abs(net))}</b>
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })()}
+
+                      {/* categories, biggest first, with the real amounts: opens and closes */}
+                      {sortedCats.length > 0 && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setOpenCatsFor((o) => ({ ...o, [member.userId]: !o[member.userId] })); }}
+                            className="w-full flex items-center justify-between text-[11px] font-black text-primary py-1"
+                          >
+                            <span>Spend by category · {sortedCats.length}</span>
+                            <span className="material-symbols-outlined text-[18px] transition-transform" style={{ transform: openCatsFor[member.userId] ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+                          </button>
+                          {openCatsFor[member.userId] && (
+                            <div className="mt-1 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                              {sortedCats.map(([cat, amount]) => (
+                                <div key={cat} className="flex items-center gap-2 text-[11px]">
+                                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: CATEGORY_COLORS[cat] || '#71787d' }} />
+                                  <span className="flex-1 min-w-0 truncate font-bold text-primary">{categoryLabel(cat)}</span>
+                                  <span className="text-text-muted tabular-nums">{contribution > 0 ? `${Math.round((amount / contribution) * 100)}%` : ''}</span>
+                                  <b className="w-20 text-right font-black text-primary tabular-nums">{currencySymbol}{formatAmountCompact(amount, undefined, profile?.numberSystem)}</b>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
