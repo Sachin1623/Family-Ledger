@@ -212,7 +212,7 @@ export default function GroupAnalysisSummary() {
   const [ovMonthKey, setOvMonthKey] = useState(() => currentLocalMonthKey());
   // The filter card is collapsed behind one button by default — it used to take half of the first screen.
   const [showFilters, setShowFilters] = useState(false);
-  const [openCatsFor, setOpenCatsFor] = useState<Record<string, boolean>>({});
+  const [openWhoFor, setOpenWhoFor] = useState<Record<string, boolean>>({}); // Categories tab: which category rows have their 'who spent it' list open
   const [showAllMembers, setShowAllMembers] = useState(false);
 
   // Every "view transactions" link on this screen carries the currently-active filters over to
@@ -563,6 +563,24 @@ export default function GroupAnalysisSummary() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryFilteredExpenses, allGroups, includeArchivedInCategoryMember]);
 
+  // For each category, each member's share of it (a split expense counts against everyone in the split), biggest first. Shown under the category on
+  // the Categories tab, so the People tab can stay about the money (share, paid, settled) instead of repeating category splits.
+  const whoByCategory = useMemo(() => {
+    const out: Record<string, { userId: string; amount: number }[]> = {};
+    const per: Record<string, Record<string, number>> = {};
+    categoryMemberExpenses.forEach((exp: any) => {
+      if (exp.type === 'income') return;
+      memberShareList(exp).forEach(({ userId, amount }) => {
+        per[exp.category] = per[exp.category] || {};
+        per[exp.category][userId] = (per[exp.category][userId] || 0) + amount;
+      });
+    });
+    Object.entries(per).forEach(([cat, m]) => {
+      out[cat] = Object.entries(m).map(([userId, amount]) => ({ userId, amount })).filter((x) => x.amount > 0.005).sort((a, b) => b.amount - a.amount);
+    });
+    return out;
+  }, [categoryMemberExpenses]);
+
   // What each member paid out to, and received from, other members in settlements, within the same scope the member card is showing (groups, months and
   // years). A settlement belongs to no category, so with a category or essential/optional filter on, it is left out rather than guessed at.
   const memberSettled = useMemo(() => {
@@ -910,12 +928,12 @@ export default function GroupAnalysisSummary() {
   const CATEGORY_COLORS: Record<string, string> = {
     'housing': '#0F4761',
     'food': '#16A34A',
-    'groceries': '#10B981',
+    'groceries': '#84CC16',
     'travel': '#F59E0B',
     'bills': '#F87171',
     'personal': '#818CF8',
     'health': '#F472B6',
-    'education': '#10B981',
+    'education': '#06B6D4',
     'ent': '#3B82F6',
     'finance': '#6366F1',
     'shopping': '#EC4899',
@@ -1732,6 +1750,56 @@ export default function GroupAnalysisSummary() {
                               {Math.round(pct)}% Share
                             </div>
                           </div>
+                          {/* who spent it: each member's share of this category */}
+                          {!isIncome && (whoByCategory[entry.name]?.length || 0) > 0 && (() => {
+                            const people = whoByCategory[entry.name];
+                            const open = !!openWhoFor[entry.name];
+                            const catTotal = people.reduce((sum, x) => sum + x.amount, 0);
+                            const color = CATEGORY_COLORS[entry.name.toLowerCase()] || COLORS[index % COLORS.length];
+                            return (
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenWhoFor((o) => ({ ...o, [entry.name]: !o[entry.name] }))}
+                                  className="w-full flex items-center justify-between text-[10.5px] font-black text-primary pt-1"
+                                >
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="flex -space-x-1.5">
+                                      {people.slice(0, 3).map((pp) => {
+                                        const m: any = groupMembers.find((g: any) => g.userId === pp.userId);
+                                        return (
+                                          <span key={pp.userId} className="w-5 h-5 rounded-full border border-white bg-primary/10 text-primary text-[9px] font-black flex items-center justify-center overflow-hidden">
+                                            {m?.photoURL ? <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (m?.displayName || '?').slice(0, 1).toUpperCase()}
+                                          </span>
+                                        );
+                                      })}
+                                    </span>
+                                    Who spent it · {people.length}
+                                  </span>
+                                  <span className="material-symbols-outlined text-[18px] transition-transform text-text-muted" style={{ transform: open ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+                                </button>
+                                {open && (
+                                  <div className="mt-1.5 space-y-1.5 rounded-xl bg-surface-container/40 p-2.5">
+                                    {people.map((pp) => {
+                                      const m: any = groupMembers.find((g: any) => g.userId === pp.userId);
+                                      const share = catTotal > 0 ? (pp.amount / catTotal) * 100 : 0;
+                                      return (
+                                        <div key={pp.userId} className="flex items-center gap-2 text-[11px]">
+                                          <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-black flex items-center justify-center overflow-hidden shrink-0">
+                                            {m?.photoURL ? <img src={m.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (m?.displayName || '?').slice(0, 1).toUpperCase()}
+                                          </span>
+                                          <span className="w-24 truncate font-bold text-primary">{m?.displayName || 'Member'}</span>
+                                          <span className="flex-1 h-1.5 rounded-full bg-white overflow-hidden"><span className="block h-full rounded-full" style={{ width: `${share}%`, backgroundColor: color }} /></span>
+                                          <span className="text-text-muted tabular-nums w-8 text-right">{Math.round(share)}%</span>
+                                          <b className="w-16 text-right font-black text-primary tabular-nums">{currencySymbol}{formatAmountCompact(pp.amount, undefined, profile?.numberSystem)}</b>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     }) : (
@@ -1840,20 +1908,6 @@ export default function GroupAnalysisSummary() {
                           <span className="text-[10px] text-text-muted font-medium">{t('analysis.transactionsCount', { count: memberExpenses.length })}</span>
                         </div>
                       </div>
-                      <div className="h-3 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
-                        {sortedCats.map(([cat, amount], i) => (
-                          <motion.div 
-                            key={cat}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${(amount / contribution) * 100}%` }}
-                            className="h-full"
-                            style={{ 
-                              backgroundColor: CATEGORY_COLORS[cat] || '#71787d',
-                              zIndex: 10 - i
-                            }}
-                          />
-                        ))}
-                      </div>
                       <MonthComparisonLine
                         thisMonth={monthComparisonByMember.thisMonth[member.userId] || 0}
                         lastMonth={monthComparisonByMember.lastMonth[member.userId] || 0}
@@ -1861,7 +1915,7 @@ export default function GroupAnalysisSummary() {
                         numberSystem={profile?.numberSystem}
                         t={t}
                       />
-                      {/* the money story in plain words: how much of the share is covered, what was paid and where, and what is left */}
+                      {/* the money story as a sum: paid at the bills + paid to members (- received) = covered, set against the share */}
                       {(() => {
                         const st = memberSettled[member.userId];
                         const settledPaid = st?.paid || 0;
@@ -1869,59 +1923,27 @@ export default function GroupAnalysisSummary() {
                         const settleScopeOn = !((selectedCategory && selectedCategory !== 'all') || selectedClassification !== 'all' || entryTypeFilter === 'income');
                         if (memberExpenseTotal <= 0 && memberPaidTotal <= 0 && settledPaid < 0.5 && settledGot < 0.5) return null;
                         const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
-                        // what this person has put in so far toward their share: the bills they paid plus what they paid to members, less what members paid them
                         const covered = memberPaidTotal + (settleScopeOn ? settledPaid - settledGot : 0);
                         const left = memberExpenseTotal - covered; // > 0: still to pay, < 0: still to receive
-                        const pct = memberExpenseTotal > 0 ? Math.max(0, Math.min(100, (covered / memberExpenseTotal) * 100)) : 100;
-                        const status = !settleScopeOn ? null : Math.abs(left) < 0.5 ? { text: '✓ All settled', cls: 'bg-success/15 text-success' } : left > 0 ? { text: `To pay ${f(left)}`, cls: 'bg-error/10 text-error' } : { text: `To receive ${f(-left)}`, cls: 'bg-success/15 text-success' };
-                        const chips: { label: string; value: string; cls?: string }[] = [{ label: 'Paid at bills', value: f(memberPaidTotal) }];
-                        if (settleScopeOn) {
-                          chips.push({ label: 'Paid to members', value: f(settledPaid), cls: settledPaid >= 0.5 ? 'text-success' : 'text-text-muted' });
-                          chips.push({ label: 'Received from members', value: f(settledGot), cls: settledGot >= 0.5 ? 'text-primary' : 'text-text-muted' });
-                        }
+                        const status = !settleScopeOn ? null : Math.abs(left) < 0.5 ? { text: '✓ Settled', cls: 'bg-success/15 text-success' } : left > 0 ? { text: `To pay ${f(left)}`, cls: 'bg-error/10 text-error' } : { text: `To get ${f(-left)}`, cls: 'bg-success/15 text-success' };
+                        const cell = (label: string, value: string, cls = 'text-primary') => (
+                          <div className="flex-1 min-w-0 text-center">
+                            <p className="text-[8.5px] font-black uppercase tracking-wider text-text-muted leading-tight">{label}</p>
+                            <p className={`text-[13px] font-black tabular-nums truncate ${cls}`}>{value}</p>
+                          </div>
+                        );
+                        const op = (t: string) => <span className="shrink-0 text-text-muted/70 font-black text-xs">{t}</span>;
                         return (
-                          <div className="rounded-xl bg-surface-container/50 p-2.5 space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-[11px] font-bold text-text-muted">{settleScopeOn ? <>Covered <b className="text-primary">{f(Math.max(0, covered))}</b> of your <b className="text-primary">{f(memberExpenseTotal)}</b> share</> : <>Paid <b className="text-primary">{f(memberPaidTotal)}</b> at bills · share <b className="text-primary">{f(memberExpenseTotal)}</b></>}</p>
-                              {status && <span className={`shrink-0 text-[11px] font-black rounded-full px-2.5 py-1 ${status.cls}`}>{status.text}</span>}
-                            </div>
-                            {settleScopeOn && <div className="h-1.5 rounded-full bg-white overflow-hidden"><div className="h-full rounded-full bg-success transition-all" style={{ width: `${pct}%` }} /></div>}
-                            <div className="flex flex-wrap gap-1.5">
-                              {chips.map((chip) => (
-                                <span key={chip.label} className="rounded-lg bg-white px-2 py-1 text-[10.5px] font-bold text-text-muted">
-                                  {chip.label} <b className={`font-black ${chip.cls || 'text-primary'}`}>{chip.value}</b>
-                                </span>
-                              ))}
-                            </div>
+                          <div className="flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-2">
+                            {cell('Paid at bills', f(memberPaidTotal))}
+                            {settleScopeOn && <>{op('+')}{cell('Paid to members', f(settledPaid), settledPaid >= 0.5 ? 'text-success' : 'text-text-muted')}</>}
+                            {settleScopeOn && settledGot >= 0.5 && <>{op('−')}{cell('Received', f(settledGot))}</>}
+                            {settleScopeOn ? <>{op('=')}{cell('Covered', f(Math.max(0, covered)))}</> : <>{op('vs')}{cell('Your share', f(memberExpenseTotal))}</>}
+                            {status && <span className={`shrink-0 text-[10.5px] font-black rounded-full px-2 py-1 whitespace-nowrap ${status.cls}`}>{status.text}</span>}
                           </div>
                         );
                       })()}
 
-                      {/* categories, biggest first, with the real amounts: opens and closes */}
-                      {sortedCats.length > 0 && (
-                        <div>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); setOpenCatsFor((o) => ({ ...o, [member.userId]: !o[member.userId] })); }}
-                            className="w-full flex items-center justify-between text-[11px] font-black text-primary py-1"
-                          >
-                            <span>Spend by category · {sortedCats.length}</span>
-                            <span className="material-symbols-outlined text-[18px] transition-transform" style={{ transform: openCatsFor[member.userId] ? 'rotate(180deg)' : 'none' }}>expand_more</span>
-                          </button>
-                          {openCatsFor[member.userId] && (
-                            <div className="mt-1 space-y-1.5" onClick={(e) => e.stopPropagation()}>
-                              {sortedCats.map(([cat, amount]) => (
-                                <div key={cat} className="flex items-center gap-2 text-[11px]">
-                                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: CATEGORY_COLORS[cat] || '#71787d' }} />
-                                  <span className="flex-1 min-w-0 truncate font-bold text-primary">{categoryLabel(cat)}</span>
-                                  <span className="text-text-muted tabular-nums">{contribution > 0 ? `${Math.round((amount / contribution) * 100)}%` : ''}</span>
-                                  <b className="w-20 text-right font-black text-primary tabular-nums">{currencySymbol}{formatAmountCompact(amount, undefined, profile?.numberSystem)}</b>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
