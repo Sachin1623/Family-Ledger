@@ -212,7 +212,6 @@ export default function GroupAnalysisSummary() {
   const [ovMonthKey, setOvMonthKey] = useState(() => currentLocalMonthKey());
   // The filter card is collapsed behind one button by default — it used to take half of the first screen.
   const [showFilters, setShowFilters] = useState(false);
-  const [openInfoFor, setOpenInfoFor] = useState<Record<string, boolean>>({});
   const [openCatsFor, setOpenCatsFor] = useState<Record<string, boolean>>({});
   const [showAllMembers, setShowAllMembers] = useState(false);
 
@@ -1862,7 +1861,7 @@ export default function GroupAnalysisSummary() {
                         numberSystem={profile?.numberSystem}
                         t={t}
                       />
-                      {/* the money story in one glance: share, paid at the bills, settled between members, and where that leaves this person */}
+                      {/* the money story in plain words: how much of the share is covered, what was paid and where, and what is left */}
                       {(() => {
                         const st = memberSettled[member.userId];
                         const settledPaid = st?.paid || 0;
@@ -1871,51 +1870,28 @@ export default function GroupAnalysisSummary() {
                         const differs = Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5;
                         if (memberExpenseTotal <= 0 || (!differs && settledPaid < 0.5 && settledGot < 0.5)) return null;
                         const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
-                        const hasSettle = settleScopeOn && (settledPaid >= 0.5 || settledGot >= 0.5);
-                        const net = memberPaidTotal - memberExpenseTotal + (settleScopeOn ? settledPaid - settledGot : 0);
-                        const status = !settleScopeOn ? null : Math.abs(net) < 0.5 ? { text: 'All settled', tone: 'ok' } : net > 0 ? { text: `To receive ${f(net)}`, tone: 'get' } : { text: `To pay ${f(-net)}`, tone: 'owe' };
-                        const open = !!openInfoFor[member.userId];
+                        // what this person has put in so far toward their share: the bills they paid plus what they paid to members, less what members paid them
+                        const covered = memberPaidTotal + (settleScopeOn ? settledPaid - settledGot : 0);
+                        const left = memberExpenseTotal - covered; // > 0: still to pay, < 0: still to receive
+                        const pct = Math.max(0, Math.min(100, (covered / memberExpenseTotal) * 100));
+                        const status = !settleScopeOn ? null : Math.abs(left) < 0.5 ? { text: '✓ All settled', cls: 'bg-success/15 text-success' } : left > 0 ? { text: `To pay ${f(left)}`, cls: 'bg-error/10 text-error' } : { text: `To receive ${f(-left)}`, cls: 'bg-success/15 text-success' };
+                        const chips: { label: string; value: string; cls?: string }[] = [{ label: 'Paid at bills', value: f(memberPaidTotal) }];
+                        if (settleScopeOn && settledPaid >= 0.5) chips.push({ label: 'Paid to members', value: f(settledPaid), cls: 'text-success' });
+                        if (settleScopeOn && settledGot >= 0.5) chips.push({ label: 'Received from members', value: f(settledGot) });
                         return (
-                          <div className="rounded-xl bg-surface-container/50 p-2 space-y-2">
-                            <div className={`grid gap-1.5 ${hasSettle ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                              <div className="rounded-lg bg-white px-2 py-1.5 text-center">
-                                <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Your share</p>
-                                <p className="text-sm font-black text-primary tabular-nums">{f(memberExpenseTotal)}</p>
-                              </div>
-                              <div className="rounded-lg bg-white px-2 py-1.5 text-center">
-                                <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Paid at bills</p>
-                                <p className="text-sm font-black text-primary tabular-nums">{f(memberPaidTotal)}</p>
-                              </div>
-                              {hasSettle && (
-                                <div className="rounded-lg bg-white px-2 py-1.5 text-center">
-                                  <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Settled</p>
-                                  <p className="text-sm font-black tabular-nums">
-                                    {settledPaid >= 0.5 && <span className="text-success">↑{f(settledPaid)}</span>}
-                                    {settledPaid >= 0.5 && settledGot >= 0.5 && <span className="text-text-muted"> </span>}
-                                    {settledGot >= 0.5 && <span className="text-primary">↓{f(settledGot)}</span>}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
+                          <div className="rounded-xl bg-surface-container/50 p-2.5 space-y-2">
                             <div className="flex items-center justify-between gap-2">
-                              {status ? (
-                                <span className={`text-[11px] font-black rounded-full px-2.5 py-1 ${status.tone === 'ok' ? 'bg-success/15 text-success' : status.tone === 'get' ? 'bg-success/15 text-success' : 'bg-error/10 text-error'}`}>
-                                  {status.tone === 'ok' ? '✓ ' : ''}{status.text}
-                                </span>
-                              ) : <span />}
-                              <button type="button" onClick={(e) => { e.stopPropagation(); setOpenInfoFor((o) => ({ ...o, [member.userId]: !o[member.userId] })); }} className="text-[10px] font-black text-text-muted flex items-center gap-0.5">
-                                What do these mean?
-                                <span className="material-symbols-outlined text-[14px]">{open ? 'expand_less' : 'info'}</span>
-                              </button>
+                              <p className="text-[11px] font-bold text-text-muted">{settleScopeOn ? <>Covered <b className="text-primary">{f(Math.max(0, covered))}</b> of your <b className="text-primary">{f(memberExpenseTotal)}</b> share</> : <>Paid <b className="text-primary">{f(memberPaidTotal)}</b> at bills · share <b className="text-primary">{f(memberExpenseTotal)}</b></>}</p>
+                              {status && <span className={`shrink-0 text-[11px] font-black rounded-full px-2.5 py-1 ${status.cls}`}>{status.text}</span>}
                             </div>
-                            {open && (
-                              <ul className="text-[10.5px] text-text-muted leading-snug space-y-0.5 list-disc pl-4" onClick={(e) => e.stopPropagation()}>
-                                <li><b className="text-primary">Your share</b>: your part of the costs, what you are supposed to pay.</li>
-                                <li><b className="text-primary">Paid at bills</b>: money you put in when the bills were added.</li>
-                                {hasSettle && <li><b className="text-primary">Settled</b>: <span className="text-success font-bold">↑ paid to</span> other members, <span className="text-primary font-bold">↓ received from</span> them, through Settle.</li>}
-                                {status && <li><b className="text-primary">{status.tone === 'ok' ? 'All settled' : status.tone === 'get' ? 'To receive' : 'To pay'}</b>: paid at bills − your share + settled up. Nothing left to settle when it is zero.</li>}
-                              </ul>
-                            )}
+                            {settleScopeOn && <div className="h-1.5 rounded-full bg-white overflow-hidden"><div className="h-full rounded-full bg-success transition-all" style={{ width: `${pct}%` }} /></div>}
+                            <div className="flex flex-wrap gap-1.5">
+                              {chips.map((chip) => (
+                                <span key={chip.label} className="rounded-lg bg-white px-2 py-1 text-[10.5px] font-bold text-text-muted">
+                                  {chip.label} <b className={`font-black ${chip.cls || 'text-primary'}`}>{chip.value}</b>
+                                </span>
+                              ))}
+                            </div>
                           </div>
                         );
                       })()}
