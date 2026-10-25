@@ -642,6 +642,20 @@ export default function GroupAnalysisSummary() {
     return { byCat, total };
   }, [insightExpenses, selectedGroupId, ovMonthKey]);
 
+  // Each person's share of the spending in the current view (same share-based figure as the tiles), for the donut at the top of the People tab.
+  const PEOPLE_COLORS = ['#2563EB', '#F59E0B', '#10B981', '#EC4899', '#8B5CF6', '#14B8A6', '#F97316', '#64748B'];
+  const peopleShares = useMemo(() => {
+    const totals: Record<string, number> = {};
+    categoryMemberContributionExpenses.forEach((exp: any) => {
+      if (exp.type === 'income') return;
+      memberShareList(exp).forEach(({ userId, amount }) => { totals[userId] = (totals[userId] || 0) + amount; });
+    });
+    return Object.entries(totals)
+      .filter(([, v]) => v > 0.005)
+      .sort((x, y) => y[1] - x[1])
+      .map(([userId, amount], i) => ({ id: userId, label: (groupMembers.find((m: any) => m.userId === userId) as any)?.displayName || 'Member', amount, color: PEOPLE_COLORS[i % PEOPLE_COLORS.length] }));
+  }, [categoryMemberContributionExpenses, groupMembers]);
+
   // What each member paid out to, and received from, other members in settlements, within the same scope the member card is showing (groups, months and
   // years). A settlement belongs to no category, so with a category or essential/optional filter on, it is left out rather than guessed at.
   const memberSettled = useMemo(() => {
@@ -1983,6 +1997,15 @@ export default function GroupAnalysisSummary() {
                   </button>
                 </div>
               </div>
+              {peopleShares.length > 0 && (
+                <div className="mb-5 rounded-2xl bg-surface-container/40 p-3.5">
+                  <div className="flex items-center justify-between text-[11px] font-black text-primary mb-2">
+                    <span>Who carries the spending</span>
+                    <span className="text-text-muted font-bold">{peopleShares.length} {peopleShares.length === 1 ? 'person' : 'people'} · share of the total</span>
+                  </div>
+                  <DonutList items={peopleShares} currencySymbol={currencySymbol} numberSystem={profile?.numberSystem} centerNote={`${peopleShares.length} ${peopleShares.length === 1 ? 'person' : 'people'}`} />
+                </div>
+              )}
               <div className="space-y-6">
                 {[...groupMembers]
                   .filter((m: any) => showAllMembers || categoryMemberContributionExpenses.some((exp: any) => memberShare(exp, m.userId) > 0 || memberContribution(exp, m.userId) > 0))
@@ -2082,21 +2105,6 @@ export default function GroupAnalysisSummary() {
                         );
                       })()}
 
-                      {/* where this person's share went */}
-                      {sortedCats.length > 0 && memberExpenseTotal > 0 && (
-                        <div>
-                          <div className="flex items-center justify-between text-[11px] font-black text-primary mb-1.5">
-                            <span>Spend by category</span>
-                            <span className="text-text-muted font-bold">{sortedCats.length} · biggest first</span>
-                          </div>
-                          <DonutList
-                            items={sortedCats.map(([cat, amount]) => ({ id: cat, label: categoryLabel(cat), amount, color: CATEGORY_COLORS[cat] || '#71787d' }))}
-                            currencySymbol={currencySymbol}
-                            numberSystem={profile?.numberSystem}
-                            centerNote={`${sortedCats.length} ${sortedCats.length === 1 ? 'category' : 'categories'}`}
-                          />
-                        </div>
-                      )}
                     </div>
                   );
                 })}
