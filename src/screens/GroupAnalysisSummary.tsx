@@ -1867,17 +1867,18 @@ export default function GroupAnalysisSummary() {
                         const settledPaid = st?.paid || 0;
                         const settledGot = st?.received || 0;
                         const settleScopeOn = !((selectedCategory && selectedCategory !== 'all') || selectedClassification !== 'all' || entryTypeFilter === 'income');
-                        const differs = Math.abs(memberPaidTotal - memberExpenseTotal) > 0.5;
-                        if (memberExpenseTotal <= 0 || (!differs && settledPaid < 0.5 && settledGot < 0.5)) return null;
+                        if (memberExpenseTotal <= 0 && memberPaidTotal <= 0 && settledPaid < 0.5 && settledGot < 0.5) return null;
                         const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
                         // what this person has put in so far toward their share: the bills they paid plus what they paid to members, less what members paid them
                         const covered = memberPaidTotal + (settleScopeOn ? settledPaid - settledGot : 0);
                         const left = memberExpenseTotal - covered; // > 0: still to pay, < 0: still to receive
-                        const pct = Math.max(0, Math.min(100, (covered / memberExpenseTotal) * 100));
+                        const pct = memberExpenseTotal > 0 ? Math.max(0, Math.min(100, (covered / memberExpenseTotal) * 100)) : 100;
                         const status = !settleScopeOn ? null : Math.abs(left) < 0.5 ? { text: '✓ All settled', cls: 'bg-success/15 text-success' } : left > 0 ? { text: `To pay ${f(left)}`, cls: 'bg-error/10 text-error' } : { text: `To receive ${f(-left)}`, cls: 'bg-success/15 text-success' };
                         const chips: { label: string; value: string; cls?: string }[] = [{ label: 'Paid at bills', value: f(memberPaidTotal) }];
-                        if (settleScopeOn && settledPaid >= 0.5) chips.push({ label: 'Paid to members', value: f(settledPaid), cls: 'text-success' });
-                        if (settleScopeOn && settledGot >= 0.5) chips.push({ label: 'Received from members', value: f(settledGot) });
+                        if (settleScopeOn) {
+                          chips.push({ label: 'Paid to members', value: f(settledPaid), cls: settledPaid >= 0.5 ? 'text-success' : 'text-text-muted' });
+                          chips.push({ label: 'Received from members', value: f(settledGot), cls: settledGot >= 0.5 ? 'text-primary' : 'text-text-muted' });
+                        }
                         return (
                           <div className="rounded-xl bg-surface-container/50 p-2.5 space-y-2">
                             <div className="flex items-center justify-between gap-2">
