@@ -3,10 +3,19 @@
 // person signs out) they are cleared. Without this, the next account saw the previous account's last group in the Talk sheet.
 const PER_ACCOUNT_KEYS = ['fl_voice_groups', 'fl_last_expense_group', 'fl_streak_milestone_seen'];
 const OWNER_KEY = 'fl_device_cache_owner';
+const PROFILE_PREFIX = 'fl_profile_'; // saved copies of profiles, so they open at once (see profileApi.ts)
+
+function clearSavedProfiles(): void {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(PROFILE_PREFIX)) localStorage.removeItem(k);
+  }
+}
 
 export function clearPerAccountDeviceCaches(): void {
   try {
     PER_ACCOUNT_KEYS.forEach((k) => localStorage.removeItem(k));
+    clearSavedProfiles();
     localStorage.removeItem(OWNER_KEY);
   } catch {
     /* storage unavailable: nothing was remembered anyway */
@@ -17,7 +26,10 @@ export function clearPerAccountDeviceCaches(): void {
 export function resetCachesIfAccountChanged(uid: string): void {
   try {
     const owner = localStorage.getItem(OWNER_KEY);
-    if (owner && owner !== uid) PER_ACCOUNT_KEYS.forEach((k) => localStorage.removeItem(k));
+    if (owner && owner !== uid) {
+      PER_ACCOUNT_KEYS.forEach((k) => localStorage.removeItem(k));
+      clearSavedProfiles();
+    }
     localStorage.setItem(OWNER_KEY, uid);
   } catch {
     /* ignore */

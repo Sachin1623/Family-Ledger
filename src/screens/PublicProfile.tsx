@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import StreakFlame from '../components/StreakFlame';
 import ProfileTabs from '../components/ProfileTabs';
 import BadgeMedal from '../components/BadgeMedal';
-import { fetchProfile, VISIBILITY_LABEL, type ProfileData } from '../lib/profileApi';
+import { fetchProfile, readCachedProfile, VISIBILITY_LABEL, type ProfileData } from '../lib/profileApi';
 import { inviteToStreak } from '../lib/streakApi';
 import { EXPENSE_CATEGORIES } from '../lib/constants';
 
@@ -41,16 +41,22 @@ function Card({ title, tag, children, dark }: { title: string; tag?: string; chi
 export default function PublicProfile() {
   const { uid } = useParams();
   const navigate = useNavigate();
-  const [p, setP] = useState<ProfileData | null>(null);
+  const [p, setP] = useState<ProfileData | null>(() => (uid ? readCachedProfile(uid) : null));
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!uid) return;
-    setP(null);
+    // open from the saved copy at once (if there is one), then refresh it from the server
+    const saved = readCachedProfile(uid);
+    setP(saved);
     setError(null);
-    fetchProfile(uid).then(setP).catch((e) => setError(e?.message || 'Could not load this profile.'));
+    let live = true;
+    fetchProfile(uid)
+      .then((fresh) => live && setP(fresh))
+      .catch((e) => live && !saved && setError(e?.message || 'Could not load this profile.'));
+    return () => { live = false; };
   }, [uid]);
 
   if (error) return <div className="p-8 text-center text-sm text-text-muted">{error}</div>;

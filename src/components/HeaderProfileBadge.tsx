@@ -6,6 +6,7 @@ import { motion } from 'motion/react';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { setPointsHudTarget } from '../lib/pointsToastRef';
+import { prefetchProfile } from '../lib/profileApi';
 
 // Deliberately not Intl.NumberFormat's 'compact' notation — that follows the device's locale,
 // which (depending on the browser) can silently swing between "1.6K"/"1.6M" and Indian-style
@@ -68,6 +69,13 @@ export default function HeaderProfileBadge() {
   // clipped the chip, sometimes the whole avatar. The chip is now positioned at top-0/left-0 —
   // fully INSIDE this button's own box, so no ancestor's overflow behavior (this one or any future
   // one) can ever clip it again, regardless of how tight the row gets.
+  // load my own profile quietly a moment after the app opens, so tapping the icon shows it instantly
+  useEffect(() => {
+    if (!user) return;
+    const t = setTimeout(() => prefetchProfile(user.uid), 1500);
+    return () => clearTimeout(t);
+  }, [user?.uid]);
+
   return (
     <motion.button
       ref={ref}
