@@ -46,6 +46,8 @@ const HIDDEN_FAB_EXACT_PATHS = new Set([
   '/progress',
   // flame styles and badges: a page of its own to browse and tap, so no floating buttons over it
   '/my-style',
+  // the to-do page has its own add bar above the bottom bar
+  '/todo',
   '/profile/visibility',
   '/health/glucose',
   '/create-group',
@@ -79,6 +81,7 @@ const ACTION_FAB_PATHS = new Set([
   '/reminders',
   '/shopping-lists',
   '/baby-vaccinations',
+  '/recurring-expenses',
 ]);
 
 const SHOP_LINKS = [

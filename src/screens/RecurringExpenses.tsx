@@ -8,7 +8,8 @@ import { clsx } from 'clsx';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol } from '../lib/constants';
 import FrequencyPicker from '../components/FrequencyPicker';
 import MonthCalendar from '../components/MonthCalendar';
-import { FrequencyConfig, firstOccurrenceOnOrAfter, describeFrequency, sanitizeFrequencyConfig, frequencyConfigForUpdate } from '../lib/frequency';
+import { FrequencyConfig, firstOccurrenceOnOrAfter, nextOccurrenceAfter, describeFrequency, sanitizeFrequencyConfig, frequencyConfigForUpdate } from '../lib/frequency';
+import { usePageFabAction } from '../context/FabActionContext';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { groupIconEmoji } from '../lib/groupIcons';
 import ImageAttachments from '../components/ImageAttachments';
@@ -64,6 +65,8 @@ export default function RecurringExpenses() {
   // "Add automatically": each occurrence is added by itself, with no confirmation (see processRecurringExpenses on the server)
   const [autoAdd, setAutoAdd] = useState(false);
   const [autoFilter, setAutoFilter] = useState<'all' | 'auto' | 'ask'>('all');
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [viewingRule, setViewingRule] = useState<any | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
@@ -154,6 +157,10 @@ export default function RecurringExpenses() {
   const rules = rulesValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [];
   if (rulesError) console.error('recurringExpenses query error:', rulesError.code, rulesError.message);
 
+  // occurrences still waiting for this person's accept / change / decline
+  const [pendingValue] = useCollection(user ? query(collection(db, 'pendingRecurringExpenses'), where('userId', '==', user.uid)) : null);
+  const pendingCount = (pendingValue?.docs || []).filter((d) => d.data().status === 'pending').length;
+
   const [allMembersValue] = useCollection(
     groupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', groupIds)) : null,
   );
@@ -240,6 +247,9 @@ export default function RecurringExpenses() {
     setImages([]);
     setAutoAdd(false);
   };
+
+  // the floating button (Navigation.tsx) is "New rule" on this page instead of the default "Add expense"
+  usePageFabAction('🔁', t('recurring.newRule'), () => { resetFormFields(); setShowForm(true); });
 
   // ?edit=<ruleId> opens that rule's editor straight away (the recurring panel in Manage Group links here for the fuller options: split, photos)
   const editParam = searchParams.get('edit');
@@ -447,9 +457,62 @@ export default function RecurringExpenses() {
     }
   };
 
+  // ---------- the timeline: what is coming up, in date order ----------
+  const dayStart = (d: Date) => new Date(`${toDateOnly(d)}T00:00:00`);
+  const todayStart = dayStart(new Date());
+  const daysAway = (iso: string) => Math.round((dayStart(new Date(iso)).getTime() - todayStart.getTime()) / 86_400_000);
+  const symbolOf = (rule: any) => getCurrencySymbol(groups.find((g: any) => g.id === rule.groupId)?.currency);
+  // how many times a rule falls due between two dates (from its next date onward)
+  const occurrencesWithin = (rule: any, from: Date, to: Date) => {
+    let n = 0;
+    let d = new Date(rule.nextRunDate);
+    for (let guard = 0; d <= to && guard < 60; guard++) {
+      if (d >= from) n += 1;
+      const nxt = nextOccurrenceAfter(rule as FrequencyConfig, d);
+      if (nxt.getTime() <= d.getTime()) break;
+      d = nxt;
+    }
+    return n;
+  };
+  // an amount per currency, joined into one readable string ("₹15,000" or "₹3,000 + $20")
+  const money = (list: { rule: any; times: number }[]) => {
+    const totals = new Map<string, number>();
+    list.forEach(({ rule, times }) => { if (rule.type !== 'income') totals.set(symbolOf(rule), (totals.get(symbolOf(rule)) || 0) + rule.amount * times); });
+    return totals.size === 0 ? '–' : Array.from(totals.entries()).map(([sym, v]) => `${sym}${Math.round(v).toLocaleString()}`).join(' + ');
+  };
+  const runningRules = rules.filter((r: any) => r.active !== false);
+  const weekEnd = new Date(todayStart.getTime() + 7 * 86_400_000 + 86_399_000);
+  const monthEnd = new Date(todayStart.getFullYear(), todayStart.getMonth() + 1, 0, 23, 59, 59);
+  const dueNext7 = money(runningRules.map((rule: any) => ({ rule, times: occurrencesWithin(rule, todayStart, weekEnd) })));
+  const leftThisMonth = money(runningRules.map((rule: any) => ({ rule, times: occurrencesWithin(rule, todayStart, monthEnd) })));
+  const timelineActive = displayedRules.filter((r: any) => r.active !== false).sort((a: any, b: any) => new Date(a.nextRunDate).getTime() - new Date(b.nextRunDate).getTime());
+  const timelinePaused = displayedRules.filter((r: any) => r.active === false);
+  const sections: { key: string; title: string; rules: any[] }[] = [
+    { key: 'today', title: 'Today', rules: timelineActive.filter((r: any) => daysAway(r.nextRunDate) <= 0) },
+    { key: 'tomorrow', title: 'Tomorrow', rules: timelineActive.filter((r: any) => daysAway(r.nextRunDate) === 1) },
+    { key: 'week', title: 'This week', rules: timelineActive.filter((r: any) => daysAway(r.nextRunDate) >= 2 && daysAway(r.nextRunDate) <= 7) },
+    { key: 'later', title: 'Later', rules: timelineActive.filter((r: any) => daysAway(r.nextRunDate) > 7) },
+    { key: 'paused', title: 'Paused', rules: timelinePaused },
+  ].filter((sec) => sec.rules.length > 0);
+  const viewFilter: 'all' | 'auto' | 'ask' | 'paused' = statusFilter === 'paused' ? 'paused' : autoFilter;
+  const setViewFilter = (v: 'all' | 'auto' | 'ask' | 'paused') => {
+    setStatusFilter(v === 'paused' ? 'paused' : 'all');
+    setAutoFilter(v === 'auto' || v === 'ask' ? v : 'all');
+  };
+  // only the person who set a rule up can change whether it is added automatically (the security rules enforce this too)
+  const toggleAuto = async (rule: any) => {
+    if (rule.userId !== user?.uid) return;
+    try {
+      await updateDoc(doc(db, 'recurringExpenses', rule.id), { autoAdd: rule.autoAdd !== true });
+    } catch (err) {
+      console.error('Failed to change automatic adding:', err);
+    }
+  };
+  const asPopup = showForm && (!!editingRuleId || !guide); // adding a rule opens as a popup too, except during the guided tour, which stays inline
+
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5" style={{ paddingBottom: 'calc(10rem + env(safe-area-inset-bottom))' }}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-black text-primary">{t('search.recurringExpenses')}</h1>
@@ -469,37 +532,91 @@ export default function RecurringExpenses() {
           )}
         </div>
 
-        <div className="relative">
-          <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-muted text-lg">search</span>
-          <input
-            type="text"
-            placeholder={t('recurring.searchPlaceholder')}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-white border border-border-subtle rounded-xl py-3 pl-11 pr-4 outline-none focus:ring-2 focus:ring-primary/20 transition-all font-medium text-sm text-primary shadow-sm"
-          />
-        </div>
-
+        {/* occurrences waiting for an answer, one tap away */}
         <button
+          type="button"
           onClick={() => navigate('/recurring-approvals')}
           data-tour="recurring-pending"
-          className="w-full py-2.5 bg-surface border border-border-subtle text-primary font-bold rounded-xl text-xs flex items-center justify-center gap-2"
+          className={clsx('w-full flex items-center gap-3 rounded-2xl px-4 py-3 text-left active:scale-[0.99] transition-transform', pendingCount > 0 ? 'bg-amber-50 border border-amber-300' : 'bg-white border border-border-subtle')}
         >
-          <span className="material-symbols-outlined text-[16px]">pending_actions</span>
-          {t('recurring.viewPendingConfirmations')}
+          <span className={clsx('material-symbols-outlined', pendingCount > 0 ? 'text-amber-600' : 'text-text-muted')}>pending_actions</span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-black text-primary">{pendingCount > 0 ? `${pendingCount} waiting for you` : 'Nothing waiting for you'}</span>
+            <span className="block text-[11px] text-text-muted">{pendingCount > 0 ? 'Accept, change or decline them' : t('recurring.viewPendingConfirmations')}</span>
+          </span>
+          <span className="material-symbols-outlined text-text-muted">chevron_right</span>
         </button>
+
+        {/* the month at a glance */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-2xl bg-white border border-border-subtle px-3 py-2.5">
+            <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Due in 7 days</p>
+            <p className="text-base font-black text-primary tabular-nums truncate">{dueNext7}</p>
+          </div>
+          <div className="rounded-2xl bg-white border border-border-subtle px-3 py-2.5">
+            <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Left this month</p>
+            <p className="text-base font-black text-primary tabular-nums truncate">{leftThisMonth}</p>
+          </div>
+          <div className="rounded-2xl bg-white border border-border-subtle px-3 py-2.5">
+            <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Running</p>
+            <p className="text-base font-black text-primary tabular-nums">{runningRules.length}<span className="text-[11px] font-bold text-text-muted"> of {rules.length}</span></p>
+          </div>
+        </div>
+
+        {/* one row of filters, plus the group, the type, search and the calendar */}
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {([['all', 'All'], ['auto', 'Auto'], ['ask', 'Asks first'], ['paused', 'Paused']] as const).map(([opt, label]) => (
+              <button key={opt} type="button" onClick={() => setViewFilter(opt)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', viewFilter === opt ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}>
+                {label}
+              </button>
+            ))}
+            <span className="flex-1" />
+            <button type="button" onClick={() => setShowSearch((v) => !v)} className={clsx('shrink-0 w-8 h-8 rounded-full border flex items-center justify-center', showSearch || searchTerm ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-border-subtle text-text-muted')} title="Search">
+              <span className="material-symbols-outlined text-[18px]">search</span>
+            </button>
+            <button type="button" onClick={() => setShowCalendar((v) => !v)} className={clsx('shrink-0 w-8 h-8 rounded-full border flex items-center justify-center', showCalendar || selectedDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-border-subtle text-text-muted')} title="Calendar">
+              <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+            </button>
+          </div>
+          {showSearch && (
+            <input
+              type="text"
+              autoFocus
+              placeholder={t('recurring.searchPlaceholder')}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-white border border-border-subtle rounded-xl py-2.5 px-4 outline-none focus:ring-2 focus:ring-primary/20 font-medium text-sm text-primary"
+            />
+          )}
+          {(groupsWithRules.length > 1 || rules.some((r: any) => r.type === 'income')) && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {groupsWithRules.length > 1 && (
+                <select value={listFilter} onChange={(e) => setListFilter(e.target.value)} className="bg-white px-2.5 py-1.5 rounded-full border border-border-subtle text-xs font-bold text-primary outline-none">
+                  <option value="all">All groups</option>
+                  {groupsWithRules.map((g: any) => <option key={g.id} value={g.id}>{groupIconEmoji(g.icon)} {g.name}</option>)}
+                </select>
+              )}
+              {rules.some((r: any) => r.type === 'income') && (['all', 'expense', 'income'] as const).map((opt) => (
+                <button key={opt} type="button" onClick={() => setTypeFilter(opt)} className={clsx('rounded-full px-3 py-1.5 text-xs font-bold border', typeFilter === opt ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-text-muted border-border-subtle')}>
+                  {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Editing opens as a popup (closes itself on Cancel/Save, same handleSubmit/
             resetFormFields as before) instead of the inline form scrolling into view at the top
             of the page — adding a new rule (and the guided tour, which never runs while editing)
             keeps the original inline placement untouched. */}
         <div
-          className={showForm && editingRuleId ? 'fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 pt-10 overflow-y-auto' : undefined}
-          onClick={() => { if (showForm && editingRuleId) { resetFormFields(); setShowForm(false); } }}
+          className={asPopup ? 'fixed inset-0 bg-black/40 z-[120] flex items-start justify-center p-4 pt-10 overflow-y-auto' : undefined}
+          onClick={() => { if (asPopup) { resetFormFields(); setShowForm(false); } }}
         >
         <div
-          className={showForm && editingRuleId ? 'w-full max-w-lg' : undefined}
-          onClick={(e) => { if (showForm && editingRuleId) e.stopPropagation(); }}
+          className={asPopup ? 'w-full max-w-lg' : undefined}
+          onClick={(e) => { if (asPopup) e.stopPropagation(); }}
         >
         {showForm && (
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-border-subtle p-6 space-y-4">
@@ -837,76 +954,7 @@ export default function RecurringExpenses() {
         </div>
         </div>
 
-        <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-          {(['all', 'expense', 'income'] as const).map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => setTypeFilter(opt)}
-              className={clsx(
-                'px-3 py-1.5 rounded-md text-xs font-bold transition-all',
-                typeFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-              )}
-            >
-              {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
-          {([['all', 'All'], ['auto', 'Auto-added'], ['ask', 'Asks first']] as const).map(([opt, label]) => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => setAutoFilter(opt)}
-              className={clsx('px-3 py-1.5 rounded-md text-xs font-bold transition-all', autoFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-4 flex-wrap bg-white rounded-xl border border-border-subtle px-3 py-2.5">
-          {groupsWithRules.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('todo.show')}</label>
-              <select
-                value={listFilter}
-                onChange={(e) => setListFilter(e.target.value)}
-                className="bg-surface px-2 py-1.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20"
-              >
-                <option value="all">{t('groupExpenses.all')}</option>
-                {groupsWithRules.map((g: any) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('todo.status')}</span>
-            <div className="flex items-center gap-2.5">
-              {(['all', 'active', 'paused'] as const).map((opt) => (
-                <label
-                  key={opt}
-                  className={clsx(
-                    'flex items-center gap-1 text-[10px] font-bold capitalize cursor-pointer',
-                    statusFilter === opt ? 'text-primary' : 'text-text-muted',
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="recurringStatusFilter"
-                    checked={statusFilter === opt}
-                    onChange={() => setStatusFilter(opt)}
-                    className="w-3 h-3 accent-primary"
-                  />
-                  {opt === 'all' ? t('groupExpenses.all') : opt === 'active' ? t('reminders.active') : t('reminders.paused')}
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-
+        {(showCalendar || selectedDate) && (
         <MonthCalendar
           cursor={calendarCursor}
           onCursorChange={setCalendarCursor}
@@ -938,6 +986,7 @@ export default function RecurringExpenses() {
             );
           }}
         />
+        )}
         {selectedDate && (
           <div className="flex items-center justify-between px-1">
             <p className="text-[11px] font-bold text-text-muted">
@@ -949,7 +998,7 @@ export default function RecurringExpenses() {
           </div>
         )}
 
-        <section className="space-y-3">
+        <section className="space-y-4">
           {rulesLoading && <p className="text-sm text-text-muted px-1">{t('common.loading')}</p>}
           {rulesError && (
             <p className="text-sm text-error px-1">
@@ -961,70 +1010,54 @@ export default function RecurringExpenses() {
               {searchTerm.trim() ? t('todo.noSearchResults') : selectedDate ? t('recurring.noRulesDueDay') : t('recurring.noRulesYet')}
             </p>
           )}
-          {rulesByGroup.map(({ group, groupId: gId, rules: groupRules }) => (
-            <div key={gId} className="space-y-2">
-              <h2 className="px-1 text-[11px] font-bold text-primary uppercase tracking-widest">
-                {group?.name || t('search.unknownGroup')}
-              </h2>
-              <div className="space-y-2">
-                {groupRules.map((rule: any) => {
+          {sections.map((sec) => (
+            <div key={sec.key} className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <h2 className="text-[11px] font-black text-text-muted uppercase tracking-[0.12em]">{sec.title}</h2>
+                <span className="text-[11px] font-black text-text-muted tabular-nums">{sec.key === 'paused' ? `${sec.rules.length}` : money(sec.rules.map((rule: any) => ({ rule, times: 1 })))}</span>
+              </div>
+              <div className="bg-white rounded-2xl border border-border-subtle overflow-hidden divide-y divide-border-subtle/70">
+                {sec.rules.map((rule: any) => {
+                  const group = groups.find((g: any) => g.id === rule.groupId);
                   const catInfo = categoryInfoFor(rule);
-                  const creator = allMembers.find((m: any) => m.userId === rule.userId);
+                  const isIncome = rule.type === 'income';
+                  const isAuto = rule.autoAdd === true;
+                  const mine = rule.userId === user?.uid;
+                  const due = daysAway(rule.nextRunDate);
+                  const dueText = due <= 0 ? 'Today' : due === 1 ? 'Tomorrow' : new Date(rule.nextRunDate).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+                  const name = rule.description || (catInfo ? t(`${isIncome ? 'income' : 'category'}.${catInfo.id}`) : '');
                   return (
-                    <div
-                      key={rule.id}
-                      onClick={() => setViewingRule(rule)}
-                      className={clsx(
-                        "bg-white rounded-2xl border p-4 flex items-center justify-between gap-3 cursor-pointer",
-                        rule.active ? "border-border-subtle" : "border-border-subtle opacity-60"
-                      )}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className={clsx('w-10 h-10 rounded-full flex items-center justify-center shrink-0', rule.type === 'income' ? 'bg-success/10 text-success' : 'bg-primary/5 text-primary')}>
-                          <span className="text-lg">{catInfo?.icon || '🔁'}</span>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-primary text-sm truncate flex items-center gap-1.5">
-                            <span className={clsx(
-                              'text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
-                              rule.type === 'income' ? 'bg-success/10 text-success' : 'bg-primary/10 text-primary',
-                            )}>
-                              {rule.type === 'income' ? t('addExpense.income') : t('addExpense.expense')}
-                            </span>
-                            <span className="truncate">{rule.description || (catInfo ? t(`${rule.type === 'income' ? 'income' : 'category'}.${catInfo.id}`) : '')} — {rule.type === 'income' ? '+' : ''}{getCurrencySymbol(group?.currency)}{rule.amount.toFixed(2)}</span>
-                            {rule.images?.length > 0 && (
-                              <span className="material-symbols-outlined text-[13px] text-text-muted/70 shrink-0" title={t('reminders.hasPhoto')}>photo_camera</span>
-                            )}
-                          </p>
-                          <p className="text-[11px] text-text-muted truncate">
-                            {rule.autoAdd === true && <span className="mr-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-primary">Auto</span>}
-                            {describeFrequency(rule)}
-                            {rule.splitMembers?.length > 0 && ` · ${t('manageGroup.splitNWays', { count: rule.splitMembers.length })}`}
-                          </p>
-                          <p className="text-[10px] text-text-muted">
-                            {t('recurring.nextAddedBy', { date: new Date(rule.nextRunDate).toLocaleDateString(), name: rule.userId === user?.uid ? t('shoppingLists.you') : creator?.displayName || t('todo.aMember') })}
-                          </p>
-                        </div>
+                    <div key={rule.id} onClick={() => setViewingRule(rule)} className={clsx('flex items-center gap-3 px-3.5 py-3 cursor-pointer active:bg-surface-container/50 transition-colors', rule.active === false && 'opacity-60')}>
+                      <div className="relative shrink-0">
+                        <span className="w-10 h-10 rounded-xl bg-surface flex items-center justify-center text-xl" title={group?.name}>{groupIconEmoji(group?.icon)}</span>
+                        <span className={clsx('absolute -right-1 -bottom-1 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[11px]', isIncome ? 'bg-success/15' : 'bg-primary/10')}>{catInfo?.icon || '🔁'}</span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleEditStart(rule); }}
-                          title={t('common.edit')}
-                          className="p-2 text-text-muted hover:text-primary"
-                        >
-                          <span className="material-symbols-outlined text-lg">edit</span>
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleToggleActive(rule); }}
-                          title={t(rule.active ? 'reminders.pause' : 'reminders.resume')}
-                          className="p-2 text-text-muted hover:text-primary"
-                        >
-                          <span className="material-symbols-outlined text-lg">{rule.active ? 'pause_circle' : 'play_circle'}</span>
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); handleDelete(rule); }} className="text-error p-2">
-                          <span className="material-symbols-outlined text-lg">delete</span>
-                        </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-black text-primary truncate flex items-center gap-1.5">
+                          <span className="truncate">{name}</span>
+                          {rule.images?.length > 0 && <span className="material-symbols-outlined text-[13px] text-text-muted/70 shrink-0" title={t('reminders.hasPhoto')}>photo_camera</span>}
+                        </p>
+                        <p className="text-[11px] text-text-muted truncate">
+                          {group?.name || t('search.unknownGroup')} · {describeFrequency(rule)}{rule.splitMembers?.length > 0 && ` · ${t('manageGroup.splitNWays', { count: rule.splitMembers.length })}`}
+                        </p>
                       </div>
+                      <div className="text-right shrink-0">
+                        <p className={clsx('text-sm font-black tabular-nums', isIncome ? 'text-success' : 'text-primary')}>{isIncome ? '+' : ''}{symbolOf(rule)}{Math.round(rule.amount * 100) / 100 === Math.round(rule.amount) ? Math.round(rule.amount).toLocaleString() : rule.amount.toFixed(2)}</p>
+                        <p className={clsx('text-[10px] font-bold', rule.active === false ? 'text-text-muted' : due <= 0 ? 'text-amber-700' : 'text-text-muted')}>{rule.active === false ? 'Paused' : dueText}</p>
+                      </div>
+                      {/* automatic adding: on = added by itself, off = asks first. Only the person who set the rule up can change it. */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleAuto(rule); }}
+                        disabled={!mine}
+                        title={mine ? (isAuto ? 'Added automatically. Tap to ask first instead.' : 'Asks first. Tap to add automatically.') : 'Only the person who set this up can change it'}
+                        className="shrink-0 flex flex-col items-center gap-0.5 disabled:opacity-60"
+                      >
+                        <span className={clsx('w-9 h-5 rounded-full relative transition-all', isAuto ? 'bg-primary' : 'bg-gray-200')}>
+                          <span className={clsx('w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow-md', isAuto ? 'right-0.5' : 'left-0.5')} />
+                        </span>
+                        <span className="text-[8.5px] font-black uppercase tracking-wider text-text-muted">{isAuto ? 'Auto' : 'Asks'}</span>
+                      </button>
                     </div>
                   );
                 })}
@@ -1058,7 +1091,13 @@ export default function RecurringExpenses() {
             <DetailField label={t('common.group')}>{group?.name || t('search.unknownGroup')}</DetailField>
             <DetailField label={t('reminders.frequency')}>{describeFrequency(viewingRule)}</DetailField>
             <DetailField label={t('recurring.nextRun')}>{new Date(viewingRule.nextRunDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</DetailField>
-            <DetailField label={t('todo.status')}>{viewingRule.active ? t('reminders.active') : t('reminders.paused')}</DetailField>
+            <DetailField label={t('todo.status')}>
+              <span className="flex items-center gap-3">
+                {viewingRule.active !== false ? t('reminders.active') : t('reminders.paused')}
+                <button type="button" onClick={() => { const r = viewingRule; setViewingRule(null); handleToggleActive(r); }} className="text-xs font-black text-primary underline decoration-dotted">{viewingRule.active !== false ? t('reminders.pause') : t('reminders.resume')}</button>
+              </span>
+            </DetailField>
+            <DetailField label="Adding">{viewingRule.autoAdd === true ? 'Added automatically, no confirmation' : 'Asks you first each time'}</DetailField>
             <DetailField label={t('recurring.addedByLabel')}>{viewingRule.userId === user?.uid ? t('recurring.you') : creator?.displayName || t('recurring.aMember')}</DetailField>
             {viewingRule.splitMembers?.length > 0 && (
               <DetailField label={t('recurring.splitAmongLabel', { type: viewingRule.splitType === 'equally' ? t('recurring.equallyLower') : viewingRule.splitType === 'percentage' ? t('recurring.percentageLower') : t('recurring.amountLower') })}>

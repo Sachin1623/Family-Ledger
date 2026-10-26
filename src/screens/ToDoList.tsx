@@ -27,7 +27,7 @@ import {
   frequencyConfigForUpdate,
 } from '../lib/frequency';
 import { useLanguage } from '../context/LanguageContext';
-import { usePageFabAction } from '../context/FabActionContext';
+import { isDueOnDate } from '../lib/frequency';
 
 // Local YYYY-MM-DD (not UTC) — matches what a `date` input produces/expects, and what we key the
 // calendar's per-day due-count map by, so "today" lines up with the user's own calendar day.
@@ -88,6 +88,10 @@ export default function ToDoList() {
   const [listFilter, setListFilter] = useState<'all' | 'personal' | string>('all');
   const [doneFilter, setDoneFilter] = useState<'all' | 'done' | 'pending'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const [quickText, setQuickText] = useState('');
 
   const [membershipsValue] = useCollection(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
@@ -97,6 +101,8 @@ export default function ToDoList() {
     groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null,
   );
   const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [];
+
+  const [habitStreaksValue] = useCollection(user ? collection(db, 'userPoints', user.uid, 'habitStreaks') : null);
 
   const [allMembersValue] = useCollection(
     groupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', groupIds)) : null,
@@ -220,10 +226,6 @@ export default function ToDoList() {
   };
 
   const openAdd = () => { resetForm(); setShowForm(true); };
-  // Global floating "+" button (Navigation.tsx) becomes "New To-Do" here instead of the default
-  // "Add Expense" — see FabActionContext.tsx.
-  usePageFabAction('✅', t('todo.newToDo'), openAdd);
-
   const handleEditStart = (todo: any) => {
     setEditingId(todo.id);
     setText(todo.text);
@@ -457,40 +459,180 @@ export default function ToDoList() {
     }
   };
 
-  return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-primary">{t('todo.title')}</h1>
-            <p className="text-sm text-text-muted mt-1">
-              {t('todo.subtitle')}
+  // ---------- "today focus": what needs doing now, then the rest ----------
+  const todayStr = toDateOnly(new Date());
+  const dayNumber = (dateStr: string) => Math.round(new Date(`${dateStr}T00:00:00`).getTime() / 86_400_000);
+  const streakOf = (todoId: string): number => {
+    const d: any = habitStreaksValue?.docs.find((x) => x.id === todoId)?.data();
+    if (!d || !d.lastDateStr) return 0;
+    const gap = dayNumber(todayStr) - dayNumber(d.lastDateStr);
+    return gap <= 1 ? Number(d.current) || 0 : 0;
+  };
+  // habits due today (a habit is a recurring to-do that resets itself on its schedule)
+  const habitsToday = todos.filter((td: any) => td.recurring && td.recurringActive !== false && isDueOnDate(frequencyConfigFromFields(td), todayStr, String(td.createdAt || '').slice(0, 10)));
+  const plain = displayedTodos.filter((td: any) => !td.recurring);
+  const overdue = plain.filter((td: any) => !td.done && td.dueDate && td.dueDate < todayStr).sort((x: any, y: any) => String(x.dueDate).localeCompare(String(y.dueDate)));
+  const dueToday = plain.filter((td: any) => td.dueDate === todayStr).sort((x: any, y: any) => Number(!!x.done) - Number(!!y.done) || String(x.reminderAt || '9').localeCompare(String(y.reminderAt || '9')));
+  const later = plain.filter((td: any) => !td.done && td.dueDate && td.dueDate > todayStr).sort((x: any, y: any) => String(x.dueDate).localeCompare(String(y.dueDate)));
+  const anytime = plain.filter((td: any) => !td.done && !td.dueDate);
+  const finished = plain.filter((td: any) => td.done && td.dueDate !== todayStr);
+  const todayDone = plain.filter((td: any) => td.dueDate === todayStr && td.done).length + habitsToday.filter((td: any) => td.done).length;
+  const todayTotal = plain.filter((td: any) => td.dueDate === todayStr).length + habitsToday.length;
+  const todayPct = todayTotal > 0 ? Math.round((todayDone / todayTotal) * 100) : overdue.length > 0 ? 0 : 100;
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = (profile?.displayName || user?.displayName || '').split(' ')[0];
+
+  // a task typed into the bar at the bottom: a plain personal to-do due today (the full form is for reminders, sharing and habits)
+  const handleQuickAdd = () => {
+    const txt = quickText.trim();
+    if (!user || !txt) return;
+    fireWrite(setDoc(doc(collection(db, 'todos')), {
+      userId: user.uid, text: txt, done: false, status: 'pending', reminderAt: null, dueDate: todayStr, reminderSent: false,
+      groupId: null, createdAt: new Date().toISOString(), recurring: false, reminderOffsetMinutes: null,
+    }), 'add to-do');
+    setQuickText('');
+  };
+
+  const dueChip = (td: any) => {
+    if (!td.dueDate) return null;
+    const diff = dayNumber(td.dueDate) - dayNumber(todayStr);
+    if (diff < 0 && !td.done) return { text: diff === -1 ? 'Yesterday' : `${-diff} days ago`, cls: 'bg-red-50 text-red-700' };
+    if (diff === 0) {
+      const time = td.reminderAt && String(td.reminderAt).slice(0, 10) !== '' ? new Date(td.reminderAt) : null;
+      return { text: time && toDateOnly(time) === todayStr ? time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Today', cls: 'bg-amber-50 text-amber-700' };
+    }
+    return { text: new Date(`${td.dueDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }), cls: 'bg-surface text-text-muted' };
+  };
+
+  const renderTask = (todo: any) => {
+    const group = groups.find((g: any) => g.id === todo.groupId);
+    const creator = allMembers.find((m: any) => m.userId === todo.userId);
+    const chip = dueChip(todo);
+    const reminderPast = todo.reminderAt && !todo.done && new Date(todo.reminderAt) < new Date();
+    return (
+      <div key={todo.id} onClick={() => { setViewingTodo(todo); setNotesDraft(todo.notes || ''); }} className={clsx('flex items-center gap-3 px-3.5 py-3 cursor-pointer active:bg-surface-container/50 transition-colors', todo.done && 'opacity-60')}>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleToggleDone(todo); }}
+          className={clsx('w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all', todo.done ? 'bg-success border-success text-white' : 'border-slate-300 text-transparent')}
+          aria-label={todo.done ? 'Mark as not done' : 'Mark as done'}
+        >
+          <span className="material-symbols-outlined text-[16px]">check</span>
+        </button>
+        {todo.images?.[0] && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); setLightboxSrc(todo.images[0]); }} className="shrink-0">
+            <img src={todo.images[0]} alt="" className="w-9 h-9 rounded-lg object-cover border border-border-subtle" />
+          </button>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className={clsx('text-sm font-bold truncate', todo.done ? 'line-through text-text-muted' : 'text-primary')}>{todo.text}</p>
+          <p className="text-[11px] text-text-muted truncate flex items-center gap-1.5">
+            {group ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 text-sky-800 px-1.5 py-px text-[10px] font-bold shrink-0"><span>{groupIconEmoji(group.icon)}</span>{group.name}</span>
+            ) : <span>Personal</span>}
+            {group && todo.userId !== user?.uid && <span className="truncate">· {creator?.displayName || t('todo.aMember')}</span>}
+            {todo.reminderAt && !reminderPast && <span className="shrink-0">· 🔔</span>}
+          </p>
+          {todo.linkedTransfer && (
+            <p className={clsx('text-[10px] font-bold truncate', todo.linkedTransferExecuted ? 'text-text-muted' : 'text-primary')}>
+              {t('todo.linkedTransferSummary', { account: todo.linkedTransfer.toAccountName, amount: `${getCurrencySymbol(todo.linkedTransfer.currency)}${fromMinorUnits(todo.linkedTransfer.amountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}` })}
             </p>
-          </div>
-          {!showForm && (
-            <button
-              onClick={openAdd}
-              title={t('todo.newToDo')}
-              data-tour="todo-add"
-              className="shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center shadow-md hover:opacity-90 active:scale-95 transition-all"
-            >
-              <span className="material-symbols-outlined text-[20px]">add_task</span>
-            </button>
           )}
         </div>
+        {reminderPast && <span className="material-symbols-outlined text-[16px] text-error shrink-0" title={t('todo.reminderPassed')}>notifications_active</span>}
+        {chip && <span className={clsx('shrink-0 rounded-lg px-2 py-0.5 text-[10.5px] font-black whitespace-nowrap', chip.cls)}>{chip.text}</span>}
+      </div>
+    );
+  };
 
-        <div className="relative">
-          <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-muted text-lg">search</span>
+  const section = (key: string, title: string, list: any[], tone?: 'red') => list.length === 0 ? null : (
+    <div key={key} className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <h2 className={clsx('text-[11px] font-black uppercase tracking-[0.12em]', tone === 'red' ? 'text-red-600' : 'text-text-muted')}>{title}</h2>
+        <span className="text-[11px] font-black text-text-muted">{list.length}</span>
+      </div>
+      <div className="bg-white rounded-2xl border border-border-subtle overflow-hidden divide-y divide-border-subtle/70">{list.map(renderTask)}</div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col min-h-screen bg-surface">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5" style={{ paddingBottom: 'calc(10rem + env(safe-area-inset-bottom))' }}>
+        {/* the day at a glance */}
+        <div className="rounded-3xl p-4 text-white flex items-center gap-4 shadow-sm" style={{ background: 'linear-gradient(135deg,#0f2b3d,#1d4e6f 60%,#2b8f9c)' }}>
+          <div className="shrink-0 rounded-full flex items-center justify-center" style={{ width: 66, height: 66, background: `conic-gradient(#fbbf24 0 ${todayPct}%, rgba(255,255,255,.22) 0)` }}>
+            <div className="rounded-full flex items-center justify-center text-sm font-black" style={{ width: 52, height: 52, background: '#164057' }}>{todayTotal > 0 ? `${todayDone}/${todayTotal}` : '✓'}</div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-lg font-black leading-tight">{greeting}{firstName ? `, ${firstName}` : ''}</p>
+            <p className="text-[12px] text-white/85 mt-0.5">
+              {todayTotal > 0 ? `${todayDone} of ${todayTotal} done today` : 'Nothing due today'}{overdue.length > 0 ? ` · ${overdue.length} overdue` : ''}
+            </p>
+          </div>
+          <button type="button" onClick={() => setShowSearch((v) => !v)} className="shrink-0 w-9 h-9 rounded-full bg-white/15 flex items-center justify-center active:scale-95" title="Search">
+            <span className="material-symbols-outlined text-[20px]">search</span>
+          </button>
+          <button type="button" data-tour="todo-calendar" onClick={() => setShowCalendar((v) => !v)} className={clsx('shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95', showCalendar || selectedDate ? 'bg-white text-primary' : 'bg-white/15')} title="Calendar">
+            <span className="material-symbols-outlined text-[20px]">calendar_month</span>
+          </button>
+        </div>
+
+        {showSearch && (
           <input
             type="text"
+            autoFocus
             placeholder={t('todo.searchPlaceholder')}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-white border border-border-subtle rounded-xl py-3 pl-11 pr-4 outline-none focus:ring-2 focus:ring-primary/20 transition-all font-medium text-sm text-primary shadow-sm"
+            className="w-full bg-white border border-border-subtle rounded-xl py-2.5 px-4 outline-none focus:ring-2 focus:ring-primary/20 font-medium text-sm text-primary"
           />
-        </div>
+        )}
+
+        {/* habits due today: tap to tick, with the streak */}
+        {viewMode === 'list' && habitsToday.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-[11px] font-black uppercase tracking-[0.12em] text-text-muted">Habits today</h2>
+              <button type="button" onClick={() => setViewMode('habits')} className="text-[11px] font-black text-primary">All habits ›</button>
+            </div>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+              {habitsToday.map((hb: any) => {
+                const streak = streakOf(hb.id);
+                return (
+                  <button
+                    key={hb.id}
+                    type="button"
+                    onClick={() => handleToggleHabitDay(hb, todayStr, !hb.done)}
+                    className={clsx('shrink-0 w-[92px] rounded-2xl border px-2 py-2.5 text-center active:scale-95 transition-all', hb.done ? 'bg-green-50 border-green-300' : 'bg-white border-border-subtle')}
+                  >
+                    <span className={clsx('mx-auto mb-1 w-7 h-7 rounded-full border-2 flex items-center justify-center', hb.done ? 'bg-success border-success text-white' : 'border-slate-300 text-transparent')}>
+                      <span className="material-symbols-outlined text-[16px]">check</span>
+                    </span>
+                    <span className="block text-[11px] font-black text-primary truncate">{hb.text}</span>
+                    <span className={clsx('block text-[10px] font-black', streak > 0 ? 'text-orange-600' : 'text-text-muted')}>{streak > 0 ? `🔥 ${streak}` : 'No streak yet'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {viewMode === 'habits' && (
+          <>
+            <button type="button" onClick={() => setViewMode('list')} className="text-xs font-black text-primary flex items-center gap-1"><span className="material-symbols-outlined text-[16px]">arrow_back</span>Back to tasks</button>
+            <HabitTracker
+              todos={habitTodos}
+              onToggleDay={handleToggleHabitDay}
+              onSelectHabit={(todo) => { setViewingTodo(todo); setNotesDraft(todo.notes || ''); }}
+              onTogglePause={handleToggleHabitPause}
+              searchActive={!!searchTerm.trim()}
+            />
+          </>
+        )}
 
         {showForm && (
+          <div className="fixed inset-0 bg-black/40 z-[120] flex items-start justify-center p-4 pt-10 overflow-y-auto" onClick={resetForm}>
+          <div className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-border-subtle p-6 space-y-4">
             <h2 className="text-sm font-bold text-primary">{editingId ? t('todo.editToDo') : t('todo.newToDo')}</h2>
 
@@ -626,85 +768,32 @@ export default function ToDoList() {
               </button>
             </div>
           </form>
-        )}
-
-        <div className="flex items-center gap-1 bg-surface-container rounded-xl p-1 w-fit">
-          {(['list', 'habits'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setViewMode(m)}
-              className={clsx(
-                'px-4 py-1.5 rounded-lg text-xs font-bold transition-all',
-                viewMode === m ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-              )}
-            >
-              {m === 'list' ? t('todo.listView') : t('todo.habitsView')}
-            </button>
-          ))}
-        </div>
-
-        {viewMode === 'habits' && (
-          <HabitTracker
-            todos={habitTodos}
-            onToggleDay={handleToggleHabitDay}
-            onSelectHabit={(todo) => { setViewingTodo(todo); setNotesDraft(todo.notes || ''); }}
-            onTogglePause={handleToggleHabitPause}
-            searchActive={!!searchTerm.trim()}
-          />
+          </div>
+          </div>
         )}
 
         {viewMode === 'list' && (
         <>
-        <div className="flex items-center gap-4 flex-wrap bg-white rounded-xl border border-border-subtle px-3 py-2.5">
-          {groupsWithTodos.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('todo.show')}</label>
-              <select
-                value={listFilter}
-                onChange={(e) => setListFilter(e.target.value)}
-                className="bg-surface px-2 py-1.5 rounded-lg border border-border-subtle text-xs outline-none focus:ring-2 focus:ring-primary/20"
-              >
-                <option value="all">{t('groupExpenses.all')}</option>
-                <option value="personal">{t('todo.justMe')}</option>
-                {groupsWithTodos.map((g: any) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('todo.status')}</span>
-            <div className="flex items-center gap-2.5">
-              {(['all', 'pending', 'done'] as const).map((opt) => (
-                <label
-                  key={opt}
-                  className={clsx(
-                    'flex items-center gap-1 text-[10px] font-bold capitalize cursor-pointer',
-                    doneFilter === opt ? 'text-primary' : 'text-text-muted',
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="todoStatusFilter"
-                    checked={doneFilter === opt}
-                    onChange={() => setDoneFilter(opt)}
-                    className="w-3 h-3 accent-primary"
-                  />
-                  {opt === 'all' ? t('groupExpenses.all') : opt === 'pending' ? t('todo.statusPending') : t('todo.statusDone')}
-                </label>
-              ))}
-            </div>
+        {/* whose tasks: everyone's, just mine, or one group */}
+        {groupsWithTodos.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {([{ id: 'all', label: t('groupExpenses.all') }, { id: 'personal', label: t('todo.justMe') }, ...groupsWithTodos.map((g: any) => ({ id: g.id, label: `${groupIconEmoji(g.icon)} ${g.name}` }))] as { id: string; label: string }[]).map((chip) => (
+              <button key={chip.id} type="button" onClick={() => setListFilter(chip.id)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', listFilter === chip.id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}>
+                {chip.label}
+              </button>
+            ))}
           </div>
-        </div>
+        )}
 
-        <div data-tour="todo-calendar">
+        {(showCalendar || selectedDate) && (
+        <div data-tour="todo-calendar-grid">
           <MonthCalendar
             cursor={calendarCursor}
             onCursorChange={setCalendarCursor}
             selectedDate={selectedDate}
             onSelectDate={setSelectedDate}
             storageKey="todo-calendar-expanded"
+            defaultExpanded
             dayHasActivity={(dateStr) => {
               const entry = dueByDate.get(dateStr);
               return !!entry && (entry.personalTotal > 0 || entry.groups.size > 0);
@@ -721,21 +810,12 @@ export default function ToDoList() {
               return (
                 <span className="flex items-center gap-0.5">
                   {entry!.personalTotal > 0 && (
-                    <span
-                      className={clsx(
-                        'w-1.5 h-1.5 rounded-full shrink-0',
-                        entry!.personalDone === entry!.personalTotal ? 'bg-on-surface/30' : 'bg-on-surface',
-                      )}
-                    />
+                    <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', entry!.personalDone === entry!.personalTotal ? 'bg-on-surface/30' : 'bg-on-surface')} />
                   )}
                   {groupDots.slice(0, 3).map(([gid, g]) => {
                     const group = groups.find((x: any) => x.id === gid);
                     const done = g.done === g.total;
-                    return (
-                      <span key={gid} className={clsx('text-[10px] leading-none shrink-0', done && 'opacity-40')}>
-                        {groupIconEmoji(group?.icon)}
-                      </span>
-                    );
+                    return <span key={gid} className={clsx('text-[10px] leading-none shrink-0', done && 'opacity-40')}>{groupIconEmoji(group?.icon)}</span>;
                   })}
                   {groupDots.length > 3 && <span className="text-[8px] leading-none font-bold shrink-0">+</span>}
                 </span>
@@ -743,10 +823,11 @@ export default function ToDoList() {
             }}
           />
         </div>
+        )}
         {selectedDate && (
           <div className="flex items-center justify-between px-1">
             <p className="text-[11px] font-bold text-text-muted">
-              {new Date(`${selectedDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+              {new Date(`${selectedDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
             </p>
             <button type="button" onClick={() => setSelectedDate(null)} className="text-[11px] font-bold text-primary">
               {t('common.viewFullList')}
@@ -754,81 +835,50 @@ export default function ToDoList() {
           </div>
         )}
 
-        <section className="space-y-2">
+        <div className="space-y-4">
           {myLoading && <p className="text-sm text-text-muted px-1">{t('common.loading')}</p>}
-          {myError && (
-            <p className="text-sm text-error px-1">{t('todo.couldntLoad', { error: myError.code || myError.message })}</p>
-          )}
-          {!myLoading && !myError && displayedTodos.length === 0 && (
+          {myError && <p className="text-sm text-error px-1">{t('todo.couldntLoad', { error: myError.code || myError.message })}</p>}
+          {!myLoading && !myError && plain.length === 0 && habitsToday.length === 0 && (
             <p className="text-sm text-text-muted italic px-1">
               {searchTerm.trim() ? t('todo.noSearchResults') : selectedDate ? t('todo.noToDosDueDay') : t('todo.noToDosYet')}
             </p>
           )}
-          {displayedTodos.map((todo: any) => {
-            const group = groups.find((g: any) => g.id === todo.groupId);
-            const creator = allMembers.find((m: any) => m.userId === todo.userId);
-            const reminderPast = todo.reminderAt && !todo.done && new Date(todo.reminderAt) < new Date();
-            return (
-              <div
-                key={todo.id}
-                onClick={() => { setViewingTodo(todo); setNotesDraft(todo.notes || ''); }}
-                className={clsx(
-                  'bg-white rounded-2xl border p-3 flex items-center gap-3 cursor-pointer',
-                  todo.done ? 'border-border-subtle opacity-60' : 'border-border-subtle'
-                )}
-              >
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleToggleDone(todo); }}
-                  className={clsx(
-                    'w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0',
-                    todo.done ? 'bg-success border-success text-white' : 'border-border-subtle text-transparent'
-                  )}
-                >
-                  <span className="material-symbols-outlined text-[16px]">check</span>
-                </button>
-                {todo.images?.[0] && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); setLightboxSrc(todo.images[0]); }} className="shrink-0">
-                    <img src={todo.images[0]} alt="" className="w-10 h-10 rounded-lg object-cover border border-border-subtle" />
-                  </button>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className={clsx('text-sm font-bold truncate flex items-center gap-1', todo.done ? 'line-through text-text-muted' : 'text-on-surface')}>
-                    {todo.recurring && (
-                      <span className="material-symbols-outlined text-[14px] text-primary shrink-0 no-underline" title={t('todo.repeatToggle')}>autorenew</span>
-                    )}
-                    {todo.text}
-                  </p>
-                  <p className="text-[10px] text-text-muted truncate">
-                    {group && t('todo.shared', { name: group.name })}
-                    {group && todo.userId !== user?.uid && ` · ${t('todo.addedBy', { name: creator?.displayName || t('todo.aMember') })}`}
-                    {todo.dueDate && (group ? ' · ' : '') + t('todo.due', { date: new Date(`${todo.dueDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) })}
-                    {todo.reminderAt && (group || todo.dueDate ? ' · ' : '') + t('todo.reminder', { time: new Date(todo.reminderAt).toLocaleString() })}
-                  </p>
-                  {todo.linkedTransfer && (
-                    <p className={clsx('text-[10px] font-bold truncate', todo.linkedTransferExecuted ? 'text-text-muted' : 'text-primary')}>
-                      {t('todo.linkedTransferSummary', {
-                        account: todo.linkedTransfer.toAccountName,
-                        amount: `${getCurrencySymbol(todo.linkedTransfer.currency)}${fromMinorUnits(todo.linkedTransfer.amountMinor).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
-                      })}
-                    </p>
-                  )}
-                </div>
-                {reminderPast && (
-                  <span className="material-symbols-outlined text-[16px] text-error shrink-0" title={t('todo.reminderPassed')}>notifications_active</span>
-                )}
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={(e) => { e.stopPropagation(); handleEditStart(todo); }} title={t('common.edit')} className="p-1.5 text-text-muted hover:text-primary">
-                    <span className="material-symbols-outlined text-[18px]">edit</span>
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); handleDelete(todo); }} className="p-1.5 text-error">
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </section>
+          {section('overdue', 'Overdue', overdue, 'red')}
+          {section('today', 'Today', dueToday)}
+          {section('later', 'Later', later)}
+          {section('anytime', 'Anytime', anytime)}
+          {finished.length > 0 && (
+            <div className="space-y-2">
+              <button type="button" onClick={() => setShowDone((v) => !v)} className="w-full flex items-center justify-between px-1">
+                <span className="text-[11px] font-black uppercase tracking-[0.12em] text-text-muted">Done · {finished.length}</span>
+                <span className="material-symbols-outlined text-[18px] text-text-muted" style={{ transform: showDone ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+              </button>
+              {showDone && <div className="bg-white rounded-2xl border border-border-subtle overflow-hidden divide-y divide-border-subtle/70">{finished.map(renderTask)}</div>}
+            </div>
+          )}
+        </div>
         </>
+        )}
+
+        {/* quick add: sits above the bottom bar. Enter adds a task due today; the + opens the full form for reminders, sharing and habits */}
+        {viewMode === 'list' && !showForm && (
+          <div className="fixed left-3 right-3 z-30 mx-auto max-w-xl flex items-center gap-2 bg-white border border-border-subtle rounded-full shadow-lg pl-4 pr-1.5 py-1.5" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 10px)' }}>
+            <input
+              value={quickText}
+              onChange={(e) => setQuickText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleQuickAdd(); }}
+              maxLength={120}
+              placeholder="Add a task for today…"
+              className="flex-1 min-w-0 bg-transparent text-sm outline-none text-primary placeholder:text-text-muted"
+            />
+            {quickText.trim() ? (
+              <button type="button" onClick={handleQuickAdd} className="shrink-0 h-9 px-4 rounded-full bg-orange-500 text-white text-xs font-black active:scale-95">Add</button>
+            ) : (
+              <button type="button" data-tour="todo-add" onClick={openAdd} title={t('todo.newToDo')} className="shrink-0 w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center active:scale-95">
+                <span className="material-symbols-outlined text-[20px]">add</span>
+              </button>
+            )}
+          </div>
         )}
       </main>
       {viewingTodo && (() => {
