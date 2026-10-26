@@ -4681,16 +4681,11 @@ async function startServer() {
     const db = adminDb;
 
     try {
-      // "Today" here means the current UTC calendar day (matches AdminUsers.tsx's `Joined`/`Last
-      // Active` columns, which just show `new Date(...).toLocaleDateString()` — a plain date, not
-      // a rolling window) — NOT "the last 24 hours". Those are genuinely different measures that
-      // can diverge a lot depending on what time of day you check (e.g. at 3 AM, "last 24 hours"
-      // still counts most of yesterday evening's activity, which no user would call "today"). This
-      // was the actual cause of the two screens showing different active-user counts — not a data
-      // bug, but a definition mismatch between this endpoint and how the numbers were displayed
-      // elsewhere. `weekAgo` is left as a genuine rolling 7-day window since there's no calendar
-      // "week" grid anywhere else in the admin UI to stay consistent with.
-      const todayStartUtc = new Date().toISOString().split('T')[0] + 'T00:00:00.000Z';
+      // "Today" is the current Indian (IST) calendar day, so it rolls over at midnight IST, not 5:30 am. `todayStart` is that midnight as a UTC instant, for
+      // comparing against the ISO timestamps stored on users, groups and expenses. `weekAgo` is a genuine rolling 7-day window.
+      const IST_MS = 5.5 * 60 * 60 * 1000;
+      const istDay = new Date(Date.now() + IST_MS).toISOString().split('T')[0];
+      const todayStart = new Date(new Date(`${istDay}T00:00:00.000Z`).getTime() - IST_MS).toISOString();
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
       const [usersSnap, groupsSnap, expensesSnap] = await Promise.all([
@@ -4705,7 +4700,7 @@ async function startServer() {
       const bump = (bucket: { today: number; week: number }, at: unknown, amount = 1) => {
         if (typeof at !== 'string') return;
         if (at >= weekAgo) bucket.week += amount;
-        if (at >= todayStartUtc) bucket.today += amount;
+        if (at >= todayStart) bucket.today += amount;
       };
 
       const uidToCountry = new Map<string, string>();
@@ -4729,13 +4724,13 @@ async function startServer() {
         const bucket = getBucket(country);
         bucket.users += 1;
 
-        const isActiveToday = data.lastActiveAt && data.lastActiveAt >= todayStartUtc;
+        const isActiveToday = data.lastActiveAt && data.lastActiveAt >= todayStart;
         if (isActiveToday) {
           activeUsersToday += 1;
           bucket.activeToday += 1;
         }
         if (data.lastActiveAt && data.lastActiveAt >= weekAgo) activeUsersThisWeek += 1;
-        if (data.joinedAt && data.joinedAt >= todayStartUtc) newUsersToday += 1;
+        if (data.joinedAt && data.joinedAt >= todayStart) newUsersToday += 1;
       });
       // New users come from when each sign-in account was created, not from a user record's joinedAt: about half of the recent accounts have no joinedAt, so
       // counting that field under-reports new users.
@@ -4770,7 +4765,7 @@ async function startServer() {
       // "Active" cannot be worked out for the past (a person's last-active time is overwritten), so a small snapshot is saved each day this page is opened:
       // today's peak active count and the current weekly count. The change is then today against yesterday's snapshot, and this week against the one from
       // 7 days ago. It shows nothing until a snapshot to compare with exists.
-      const dayKey = (offset: number) => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+      const dayKey = (offset: number) => new Date(Date.now() + IST_MS - offset * 86_400_000).toISOString().slice(0, 10); // the IST date
       const snapRef = (offset: number) => db.collection('adminSnapshots').doc(dayKey(offset));
       const [yesterdaySnap, lastWeekSnap, todaySnap] = await Promise.all([snapRef(1).get(), snapRef(7).get(), snapRef(0).get()]);
       await snapRef(0).set({ date: dayKey(0), activeToday: Math.max(todaySnap.data()?.activeToday || 0, activeUsersToday), activeWeek: activeUsersThisWeek, updatedAt: new Date().toISOString() }, { merge: true });
