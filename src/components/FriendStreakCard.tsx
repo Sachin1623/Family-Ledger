@@ -347,7 +347,7 @@ export default function FriendStreakCard() {
                 {people && people.length === 0 && <p className="text-center text-sm text-text-muted py-8">Add a friend or join a group with family to start a streak together.</p>}
                 {people?.map((p) => (
                   <div key={p.uid} className="flex items-center gap-3 rounded-2xl border border-slate-200 p-2.5">
-                    {p.photoURL ? <img src={p.photoURL} alt="" className="w-10 h-10 rounded-full object-cover" /> : <span className="w-10 h-10 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center">{p.name.slice(0, 1).toUpperCase()}</span>}
+                    <Avatar p={p} size={40} />
                     <p className="flex-1 min-w-0 text-sm font-bold text-primary truncate">{p.name}</p>
                     <button
                       type="button"
