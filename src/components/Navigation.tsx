@@ -1,4 +1,5 @@
 import React from 'react';
+import TodoFab from './TodoFab';
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import VoiceQuickAdd from './VoiceQuickAdd';
 import QuestFab from './QuestFab';
@@ -146,6 +147,7 @@ export default function Navigation() {
   return (
     <>
       <QuestFab />
+      <TodoFab />
       {showVoice && (
         <VoiceQuickAdd
           onDone={() => setShowVoice(false)}
