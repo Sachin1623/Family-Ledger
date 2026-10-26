@@ -57,6 +57,29 @@ const REMINDER_OFFSET_KEYS: Record<number, string> = {
 const reminderOffsetLabel = (minutes: number, t: (key: string) => string) =>
   t(REMINDER_OFFSET_KEYS[minutes] || 'todo.remind1hr');
 
+// Solid colour for each habit tile, cycling in order
+const HABIT_TONES = [
+  'linear-gradient(160deg,#16a34a,#4ade80)',
+  'linear-gradient(160deg,#f97316,#fbbf24)',
+  'linear-gradient(160deg,#0ea5e9,#38bdf8)',
+  'linear-gradient(160deg,#7c3aed,#a78bfa)',
+  'linear-gradient(160deg,#e11d48,#fb7185)',
+];
+
+// A friendly icon for a task, guessed from its words (a shared task shows its group's icon instead)
+const TASK_ICONS: [RegExp, string][] = [
+  [/\b(pay|bill|fee|fees|rent|emi|loan|tax|recharge)\b/i, '💳'],
+  [/\b(call|phone|ring)\b/i, '📞'],
+  [/\b(buy|shop|shopping|order|grocer\w*|gift)\b/i, '🛒'],
+  [/\b(doctor|medicine|dentist|hospital|checkup|vaccin\w*)\b/i, '🩺'],
+  [/\b(meeting|meet|appointment|interview)\b/i, '📅'],
+  [/\b(school|class|exam|homework|study|teacher)\b/i, '🎓'],
+  [/\b(car|bike|insurance|service|repair|plumber|electrician)\b/i, '🔧'],
+  [/\b(book|ticket|flight|train|travel|trip)\b/i, '🎫'],
+  [/\b(clean|laundry|wash|cook|dinner|lunch)\b/i, '🏠'],
+];
+const taskIcon = (text: string) => TASK_ICONS.find(([re]) => re.test(text || ''))?.[1] || '📝';
+
 export default function ToDoList() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -497,12 +520,12 @@ export default function ToDoList() {
   const dueChip = (td: any) => {
     if (!td.dueDate) return null;
     const diff = dayNumber(td.dueDate) - dayNumber(todayStr);
-    if (diff < 0 && !td.done) return { text: diff === -1 ? 'Yesterday' : `${-diff} days ago`, cls: 'bg-red-50 text-red-700' };
+    if (diff < 0 && !td.done) return { text: diff === -1 ? 'Yesterday' : `${-diff} days ago`, cls: 'bg-rose-100 text-rose-700' };
     if (diff === 0) {
       const time = td.reminderAt && String(td.reminderAt).slice(0, 10) !== '' ? new Date(td.reminderAt) : null;
-      return { text: time && toDateOnly(time) === todayStr ? time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Today', cls: 'bg-amber-50 text-amber-700' };
+      return { text: time && toDateOnly(time) === todayStr ? time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Today', cls: 'bg-amber-100 text-amber-800' };
     }
-    return { text: new Date(`${td.dueDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }), cls: 'bg-surface text-text-muted' };
+    return { text: new Date(`${td.dueDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }), cls: 'bg-sky-100 text-sky-800' };
   };
 
   const renderTask = (todo: any) => {
@@ -510,14 +533,19 @@ export default function ToDoList() {
     const creator = allMembers.find((m: any) => m.userId === todo.userId);
     const chip = dueChip(todo);
     const reminderPast = todo.reminderAt && !todo.done && new Date(todo.reminderAt) < new Date();
+    // the tile colour says how urgent it is; tapping the tile ticks the task off
+    const lateNow = !todo.done && todo.dueDate && todo.dueDate < todayStr;
+    const tileBg = todo.done ? '#16a34a' : lateNow ? '#ffe4e6' : todo.dueDate === todayStr ? '#fef3c7' : todo.dueDate ? '#e0f2fe' : '#eef2f7';
     return (
-      <div key={todo.id} onClick={() => { setViewingTodo(todo); setNotesDraft(todo.notes || ''); }} className={clsx('flex items-center gap-3 px-3.5 py-3 cursor-pointer active:bg-surface-container/50 transition-colors', todo.done && 'opacity-60')}>
+      <div key={todo.id} onClick={() => { setViewingTodo(todo); setNotesDraft(todo.notes || ''); }} className={clsx('flex items-center gap-3 px-3 py-2.5 cursor-pointer bg-white rounded-2xl shadow-[0_2px_8px_rgba(30,58,95,0.09)] active:scale-[0.99] transition-all', todo.done && 'opacity-60')}>
         <button
           onClick={(e) => { e.stopPropagation(); handleToggleDone(todo); }}
-          className={clsx('w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all', todo.done ? 'bg-success border-success text-white' : 'border-slate-300 text-transparent')}
+          className="relative w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-[19px] active:scale-90 transition-transform"
+          style={{ background: tileBg }}
           aria-label={todo.done ? 'Mark as not done' : 'Mark as done'}
         >
-          <span className="material-symbols-outlined text-[16px]">check</span>
+          {todo.done ? <span className="material-symbols-outlined text-[22px] text-white" style={{ fontVariationSettings: "'wght' 700" }}>check</span> : group?.photoURL ? <img src={group.photoURL} alt="" className="w-full h-full rounded-xl object-cover" referrerPolicy="no-referrer" /> : <span>{group ? groupIconEmoji(group.icon) : taskIcon(todo.text)}</span>}
+          {!todo.done && <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border-2 border-slate-300" />}
         </button>
         {todo.images?.[0] && (
           <button type="button" onClick={(e) => { e.stopPropagation(); setLightboxSrc(todo.images[0]); }} className="shrink-0">
@@ -528,7 +556,7 @@ export default function ToDoList() {
           <p className={clsx('text-sm font-bold truncate', todo.done ? 'line-through text-text-muted' : 'text-primary')}>{todo.text}</p>
           <p className="text-[11px] text-text-muted truncate flex items-center gap-1.5">
             {group ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 text-sky-800 px-1.5 py-px text-[10px] font-bold shrink-0"><span>{groupIconEmoji(group.icon)}</span>{group.name}</span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 text-sky-800 px-1.5 py-px text-[10px] font-bold shrink-0">{group.photoURL ? <img src={group.photoURL} alt="" className="w-3.5 h-3.5 rounded-sm object-cover" referrerPolicy="no-referrer" /> : <span>{groupIconEmoji(group.icon)}</span>}{group.name}</span>
             ) : <span>Personal</span>}
             {group && todo.userId !== user?.uid && <span className="truncate">· {creator?.displayName || t('todo.aMember')}</span>}
             {todo.reminderAt && !reminderPast && <span className="shrink-0">· 🔔</span>}
@@ -548,20 +576,20 @@ export default function ToDoList() {
   const section = (key: string, title: string, list: any[], tone?: 'red') => list.length === 0 ? null : (
     <div key={key} className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <h2 className={clsx('text-[11px] font-black uppercase tracking-[0.12em]', tone === 'red' ? 'text-red-600' : 'text-text-muted')}>{title}</h2>
-        <span className="text-[11px] font-black text-text-muted">{list.length}</span>
+        <h2 className={clsx('text-[11px] font-black uppercase tracking-[0.12em]', tone === 'red' ? 'text-rose-600' : 'text-slate-500')}>{title}</h2>
+        <span className={clsx('text-[11px] font-black rounded-full px-2 py-px', tone === 'red' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200/70 text-slate-600')}>{list.length}</span>
       </div>
-      <div className="bg-white rounded-2xl border border-border-subtle overflow-hidden divide-y divide-border-subtle/70">{list.map(renderTask)}</div>
+      <div className="space-y-2">{list.map(renderTask)}</div>
     </div>
   );
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
+    <div className="flex flex-col min-h-screen bg-[#f2f6fa]">
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5" style={{ paddingBottom: 'calc(10rem + env(safe-area-inset-bottom))' }}>
         {/* the day at a glance */}
-        <div className="rounded-3xl p-4 text-white flex items-center gap-4 shadow-sm" style={{ background: 'linear-gradient(135deg,#0f2b3d,#1d4e6f 60%,#2b8f9c)' }}>
-          <div className="shrink-0 rounded-full flex items-center justify-center" style={{ width: 66, height: 66, background: `conic-gradient(#fbbf24 0 ${todayPct}%, rgba(255,255,255,.22) 0)` }}>
-            <div className="rounded-full flex items-center justify-center text-sm font-black" style={{ width: 52, height: 52, background: '#164057' }}>{todayTotal > 0 ? `${todayDone}/${todayTotal}` : '✓'}</div>
+        <div className="rounded-3xl p-4 text-white flex items-center gap-4 shadow-lg" style={{ background: 'linear-gradient(140deg,#0b3b57,#0f7a8f 55%,#22c1a5)', paddingBottom: viewMode === 'list' && habitsToday.length > 0 ? 62 : 16 }}>
+          <div className="shrink-0 rounded-full flex items-center justify-center" style={{ width: 70, height: 70, background: `conic-gradient(#ffd166 0 ${todayPct}%, rgba(255,255,255,.25) 0)` }}>
+            <div className="rounded-full flex items-center justify-center text-sm font-black" style={{ width: 56, height: 56, background: '#0d5167' }}>{todayTotal > 0 ? `${todayDone}/${todayTotal}` : '✓'}</div>
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-lg font-black leading-tight">{greeting}{firstName ? `, ${firstName}` : ''}</p>
@@ -577,6 +605,33 @@ export default function ToDoList() {
           </button>
         </div>
 
+        {/* habits due today: solid colour tiles that overlap the hero; tap to tick, with the streak */}
+        {viewMode === 'list' && habitsToday.length > 0 && (
+          <div className="space-y-2 relative" style={{ marginTop: -50 }}>
+            <div className="flex gap-2.5 overflow-x-auto no-scrollbar px-1 pt-1 pb-3">
+              {habitsToday.map((hb: any, i: number) => {
+                const streak = streakOf(hb.id);
+                return (
+                  <button
+                    key={hb.id}
+                    type="button"
+                    onClick={() => handleToggleHabitDay(hb, todayStr, !hb.done)}
+                    className="shrink-0 w-[96px] rounded-2xl px-2 py-3 text-center text-white shadow-lg active:scale-95 transition-all"
+                    style={{ background: HABIT_TONES[i % HABIT_TONES.length], opacity: hb.done ? 0.92 : 1 }}
+                  >
+                    <span className={clsx('mx-auto mb-1.5 w-7 h-7 rounded-full border-2 flex items-center justify-center', hb.done ? 'bg-white border-white text-emerald-600' : 'border-white/70 text-transparent')}>
+                      <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'wght' 700" }}>check</span>
+                    </span>
+                    <span className="block text-[11.5px] font-black truncate">{hb.text}</span>
+                    <span className="block text-[10px] font-black text-white/90">{streak > 0 ? `🔥 ${streak}` : 'Start today'}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button type="button" onClick={() => setViewMode('habits')} className="block ml-auto -mt-1 px-1 text-[11px] font-black text-primary">All habits ›</button>
+          </div>
+        )}
+
         {showSearch && (
           <input
             type="text"
@@ -586,35 +641,6 @@ export default function ToDoList() {
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full bg-white border border-border-subtle rounded-xl py-2.5 px-4 outline-none focus:ring-2 focus:ring-primary/20 font-medium text-sm text-primary"
           />
-        )}
-
-        {/* habits due today: tap to tick, with the streak */}
-        {viewMode === 'list' && habitsToday.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between px-1">
-              <h2 className="text-[11px] font-black uppercase tracking-[0.12em] text-text-muted">Habits today</h2>
-              <button type="button" onClick={() => setViewMode('habits')} className="text-[11px] font-black text-primary">All habits ›</button>
-            </div>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
-              {habitsToday.map((hb: any) => {
-                const streak = streakOf(hb.id);
-                return (
-                  <button
-                    key={hb.id}
-                    type="button"
-                    onClick={() => handleToggleHabitDay(hb, todayStr, !hb.done)}
-                    className={clsx('shrink-0 w-[92px] rounded-2xl border px-2 py-2.5 text-center active:scale-95 transition-all', hb.done ? 'bg-green-50 border-green-300' : 'bg-white border-border-subtle')}
-                  >
-                    <span className={clsx('mx-auto mb-1 w-7 h-7 rounded-full border-2 flex items-center justify-center', hb.done ? 'bg-success border-success text-white' : 'border-slate-300 text-transparent')}>
-                      <span className="material-symbols-outlined text-[16px]">check</span>
-                    </span>
-                    <span className="block text-[11px] font-black text-primary truncate">{hb.text}</span>
-                    <span className={clsx('block text-[10px] font-black', streak > 0 ? 'text-orange-600' : 'text-text-muted')}>{streak > 0 ? `🔥 ${streak}` : 'No streak yet'}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         )}
 
         {viewMode === 'habits' && (
@@ -778,7 +804,7 @@ export default function ToDoList() {
         {groupsWithTodos.length > 0 && (
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             {([{ id: 'all', label: t('groupExpenses.all') }, { id: 'personal', label: t('todo.justMe') }, ...groupsWithTodos.map((g: any) => ({ id: g.id, label: `${groupIconEmoji(g.icon)} ${g.name}` }))] as { id: string; label: string }[]).map((chip) => (
-              <button key={chip.id} type="button" onClick={() => setListFilter(chip.id)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', listFilter === chip.id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}>
+              <button key={chip.id} type="button" onClick={() => setListFilter(chip.id)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', listFilter === chip.id ? 'text-white border-transparent shadow-md bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]' : 'bg-white text-text-muted border-border-subtle')}>
                 {chip.label}
               </button>
             ))}
@@ -853,7 +879,7 @@ export default function ToDoList() {
                 <span className="text-[11px] font-black uppercase tracking-[0.12em] text-text-muted">Done · {finished.length}</span>
                 <span className="material-symbols-outlined text-[18px] text-text-muted" style={{ transform: showDone ? 'rotate(180deg)' : 'none' }}>expand_more</span>
               </button>
-              {showDone && <div className="bg-white rounded-2xl border border-border-subtle overflow-hidden divide-y divide-border-subtle/70">{finished.map(renderTask)}</div>}
+              {showDone && <div className="space-y-2">{finished.map(renderTask)}</div>}
             </div>
           )}
         </div>
@@ -872,9 +898,9 @@ export default function ToDoList() {
               className="flex-1 min-w-0 bg-transparent text-sm outline-none text-primary placeholder:text-text-muted"
             />
             {quickText.trim() ? (
-              <button type="button" onClick={handleQuickAdd} className="shrink-0 h-9 px-4 rounded-full bg-orange-500 text-white text-xs font-black active:scale-95">Add</button>
+              <button type="button" onClick={handleQuickAdd} className="shrink-0 h-9 px-4 rounded-full bg-gradient-to-br from-orange-500 to-rose-500 text-white text-xs font-black active:scale-95">Add</button>
             ) : (
-              <button type="button" data-tour="todo-add" onClick={openAdd} title={t('todo.newToDo')} className="shrink-0 w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center active:scale-95">
+              <button type="button" data-tour="todo-add" onClick={openAdd} title={t('todo.newToDo')} className="shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-orange-500 to-rose-500 text-white flex items-center justify-center active:scale-95">
                 <span className="material-symbols-outlined text-[20px]">add</span>
               </button>
             )}

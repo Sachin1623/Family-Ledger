@@ -31,6 +31,10 @@ const toDateOnly = (d: Date) => {
 const categoryInfoFor = (rule: any) =>
   (rule.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).find((c) => c.id === rule.category);
 
+// Soft tints behind each rule's group icon, picked from its category so the same kind of bill always looks the same
+const RULE_TINTS = ['#fee2e2', '#e0e7ff', '#dcfce7', '#fae8ff', '#fef3c7', '#e0f2fe', '#ffedd5'];
+const ruleTint = (category?: string) => RULE_TINTS[Array.from(category || '').reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % RULE_TINTS.length];
+
 // First-time guided flow through the "new rule" form — same engine as CreateGroup.tsx /
 // GoalWizard.tsx / AccountsHub.tsx's Add Account modal / AddExpense.tsx (progressive reveal, a
 // glow highlight directly on the real field via the shared `.fl-tour-glow` CSS class, no floating
@@ -508,28 +512,52 @@ export default function RecurringExpenses() {
       console.error('Failed to change automatic adding:', err);
     }
   };
+  const autoCount = runningRules.filter((r: any) => r.autoAdd === true).length;
+  const askCount = runningRules.length - autoCount;
+  const pausedCount = rules.length - runningRules.length;
+  // the next 7 days for the week strip; a dot where a running rule has its next date
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(todayStart.getFullYear(), todayStart.getMonth(), todayStart.getDate() + i);
+    const dateStr = toDateOnly(d);
+    const dayMap = dueByDate.get(dateStr);
+    return { dateStr, label: d.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3), day: d.getDate(), hasDue: !!dayMap && Array.from(dayMap.values()).some((g) => g.activeCount > 0) };
+  });
   const asPopup = showForm && (!!editingRuleId || !guide); // adding a rule opens as a popup too, except during the guided tour, which stays inline
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
+    <div className="flex flex-col min-h-screen bg-[#f2f6fa]">
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5" style={{ paddingBottom: 'calc(10rem + env(safe-area-inset-bottom))' }}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-primary">{t('search.recurringExpenses')}</h1>
-            <p className="text-sm text-text-muted mt-1">
-              {t('recurring.subtitle')}
-            </p>
+        {/* the month at a glance: what is still to pay, with the status tiles overlapping it */}
+        <div className="rounded-3xl p-4 text-white shadow-lg" style={{ background: 'linear-gradient(140deg,#0b3b57,#0f7a8f 55%,#22c1a5)', paddingBottom: 62 }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[12px] font-bold text-white/85">{t('search.recurringExpenses')} · left this month</p>
+              <p className="text-3xl font-black tabular-nums leading-tight truncate">{leftThisMonth}</p>
+              <p className="text-[12px] text-white/85 mt-0.5">{dueNext7 === '–' ? 'Nothing due in the next 7 days' : `${dueNext7} due in the next 7 days`} · {runningRules.length} of {rules.length} running</p>
+            </div>
+            {!showForm && (
+              <button
+                onClick={() => { resetFormFields(); setShowForm(true); }}
+                title={t('recurring.newRule')}
+                data-tour="recurring-add"
+                className="shrink-0 w-10 h-10 rounded-full bg-white text-[#0f7a8f] flex items-center justify-center shadow-md active:scale-95 transition-all"
+              >
+                <span className="material-symbols-outlined text-[20px]">event_repeat</span>
+              </button>
+            )}
           </div>
-          {!showForm && (
-            <button
-              onClick={() => { resetFormFields(); setShowForm(true); }}
-              title={t('recurring.newRule')}
-              data-tour="recurring-add"
-              className="shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center shadow-md hover:opacity-90 active:scale-95 transition-all"
-            >
-              <span className="material-symbols-outlined text-[20px]">event_repeat</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2.5 relative" style={{ marginTop: -50 }}>
+          {([
+            ['auto', 'Auto-added', autoCount, 'linear-gradient(160deg,#16a34a,#4ade80)'],
+            ['ask', 'Asks you', askCount, 'linear-gradient(160deg,#f97316,#fbbf24)'],
+            ['paused', 'Paused', pausedCount, 'linear-gradient(160deg,#64748b,#94a3b8)'],
+          ] as const).map(([opt, label, count, bg]) => (
+            <button key={opt} type="button" onClick={() => setViewFilter(viewFilter === opt ? 'all' : opt)} className={clsx('rounded-2xl px-3 py-2.5 text-left text-white shadow-lg active:scale-95 transition-all', viewFilter === opt && 'ring-2 ring-white ring-offset-2 ring-offset-[#0f7a8f]')} style={{ background: bg }}>
+              <span className="block text-[11px] font-bold text-white/90">{label}</span>
+              <span className="block text-xl font-black leading-tight">{count}</span>
             </button>
-          )}
+          ))}
         </div>
 
         {/* occurrences waiting for an answer, one tap away */}
@@ -547,27 +575,22 @@ export default function RecurringExpenses() {
           <span className="material-symbols-outlined text-text-muted">chevron_right</span>
         </button>
 
-        {/* the month at a glance */}
-        <div className="grid grid-cols-3 gap-2">
-          <div className="rounded-2xl bg-white border border-border-subtle px-3 py-2.5">
-            <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Due in 7 days</p>
-            <p className="text-base font-black text-primary tabular-nums truncate">{dueNext7}</p>
-          </div>
-          <div className="rounded-2xl bg-white border border-border-subtle px-3 py-2.5">
-            <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Left this month</p>
-            <p className="text-base font-black text-primary tabular-nums truncate">{leftThisMonth}</p>
-          </div>
-          <div className="rounded-2xl bg-white border border-border-subtle px-3 py-2.5">
-            <p className="text-[9px] font-black uppercase tracking-wider text-text-muted">Running</p>
-            <p className="text-base font-black text-primary tabular-nums">{runningRules.length}<span className="text-[11px] font-bold text-text-muted"> of {rules.length}</span></p>
-          </div>
+        {/* the next 7 days: a dot marks a day something falls due; tap a day to see just that day */}
+        <div className="flex gap-1.5">
+          {weekDays.map((wd) => (
+            <button key={wd.dateStr} type="button" onClick={() => setSelectedDate(selectedDate === wd.dateStr ? null : wd.dateStr)} className={clsx('flex-1 rounded-2xl py-2 text-center border transition-all active:scale-95', selectedDate === wd.dateStr ? 'text-white border-transparent shadow-md bg-gradient-to-br from-[#0f7a8f] to-[#22c1a5]' : 'bg-white border-border-subtle text-slate-500')}>
+              <span className="block text-[10px] font-black uppercase">{wd.label}</span>
+              <span className={clsx('block text-[15px] font-black', selectedDate === wd.dateStr ? 'text-white' : 'text-primary')}>{wd.day}</span>
+              <span className={clsx('block mx-auto mt-0.5 w-1.5 h-1.5 rounded-full', wd.hasDue ? (selectedDate === wd.dateStr ? 'bg-white' : 'bg-orange-500') : 'bg-transparent')} />
+            </button>
+          ))}
         </div>
 
         {/* one row of filters, plus the group, the type, search and the calendar */}
         <div className="space-y-2.5">
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             {([['all', 'All'], ['auto', 'Auto'], ['ask', 'Asks first'], ['paused', 'Paused']] as const).map(([opt, label]) => (
-              <button key={opt} type="button" onClick={() => setViewFilter(opt)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', viewFilter === opt ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}>
+              <button key={opt} type="button" onClick={() => setViewFilter(opt)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', viewFilter === opt ? 'text-white border-transparent shadow-md bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]' : 'bg-white text-text-muted border-border-subtle')}>
                 {label}
               </button>
             ))}
@@ -1013,10 +1036,10 @@ export default function RecurringExpenses() {
           {sections.map((sec) => (
             <div key={sec.key} className="space-y-2">
               <div className="flex items-center justify-between px-1">
-                <h2 className="text-[11px] font-black text-text-muted uppercase tracking-[0.12em]">{sec.title}</h2>
-                <span className="text-[11px] font-black text-text-muted tabular-nums">{sec.key === 'paused' ? `${sec.rules.length}` : money(sec.rules.map((rule: any) => ({ rule, times: 1 })))}</span>
+                <h2 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.12em]">{sec.title}</h2>
+                <span className="text-[11px] font-black text-slate-600 tabular-nums rounded-full bg-slate-200/70 px-2 py-px">{sec.key === 'paused' ? `${sec.rules.length}` : money(sec.rules.map((rule: any) => ({ rule, times: 1 })))}</span>
               </div>
-              <div className="bg-white rounded-2xl border border-border-subtle overflow-hidden divide-y divide-border-subtle/70">
+              <div className="space-y-2">
                 {sec.rules.map((rule: any) => {
                   const group = groups.find((g: any) => g.id === rule.groupId);
                   const catInfo = categoryInfoFor(rule);
@@ -1027,9 +1050,11 @@ export default function RecurringExpenses() {
                   const dueText = due <= 0 ? 'Today' : due === 1 ? 'Tomorrow' : new Date(rule.nextRunDate).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
                   const name = rule.description || (catInfo ? t(`${isIncome ? 'income' : 'category'}.${catInfo.id}`) : '');
                   return (
-                    <div key={rule.id} onClick={() => setViewingRule(rule)} className={clsx('flex items-center gap-3 px-3.5 py-3 cursor-pointer active:bg-surface-container/50 transition-colors', rule.active === false && 'opacity-60')}>
+                    <div key={rule.id} onClick={() => setViewingRule(rule)} className={clsx('flex items-center gap-3 px-3 py-2.5 cursor-pointer bg-white rounded-2xl shadow-[0_2px_8px_rgba(30,58,95,0.09)] active:scale-[0.99] transition-all', rule.active === false && 'opacity-60')}>
                       <div className="relative shrink-0">
-                        <span className="w-10 h-10 rounded-xl bg-surface flex items-center justify-center text-xl" title={group?.name}>{groupIconEmoji(group?.icon)}</span>
+                        <span className="w-11 h-11 rounded-xl flex items-center justify-center text-xl overflow-hidden" style={{ background: isIncome ? '#dcfce7' : ruleTint(rule.category) }} title={group?.name}>
+                          {group?.photoURL ? <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : groupIconEmoji(group?.icon)}
+                        </span>
                         <span className={clsx('absolute -right-1 -bottom-1 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[11px]', isIncome ? 'bg-success/15' : 'bg-primary/10')}>{catInfo?.icon || '🔁'}</span>
                       </div>
                       <div className="min-w-0 flex-1">
