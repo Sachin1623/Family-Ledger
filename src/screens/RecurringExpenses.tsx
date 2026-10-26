@@ -31,6 +31,20 @@ const toDateOnly = (d: Date) => {
 const categoryInfoFor = (rule: any) =>
   (rule.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).find((c) => c.id === rule.category);
 
+// How often a rule repeats, bucketed for the "see only daily / weekly / monthly…" filter
+type RepeatGroup = 'daily' | 'weekly' | 'monthly' | 'longer';
+const REPEAT_OPTIONS: { id: RepeatGroup; label: string }[] = [
+  { id: 'daily', label: 'Daily' },
+  { id: 'weekly', label: 'Weekly' },
+  { id: 'monthly', label: 'Monthly' },
+  { id: 'longer', label: 'Quarterly & yearly' },
+];
+const repeatGroupOf = (frequency: string): RepeatGroup =>
+  frequency === 'daily' || frequency === 'alternate_day' ? 'daily'
+    : frequency === 'weekly' ? 'weekly'
+    : frequency === 'monthly' || frequency === 'alternate_month' ? 'monthly'
+    : 'longer';
+
 // Soft tints behind each rule's group icon, picked from its category so the same kind of bill always looks the same
 const RULE_TINTS = ['#fee2e2', '#e0e7ff', '#dcfce7', '#fae8ff', '#fef3c7', '#e0f2fe', '#ffedd5'];
 const ruleTint = (category?: string) => RULE_TINTS[Array.from(category || '').reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % RULE_TINTS.length];
@@ -69,6 +83,7 @@ export default function RecurringExpenses() {
   // "Add automatically": each occurrence is added by itself, with no confirmation (see processRecurringExpenses on the server)
   const [autoAdd, setAutoAdd] = useState(false);
   const [autoFilter, setAutoFilter] = useState<'all' | 'auto' | 'ask'>('all');
+  const [repeatFilter, setRepeatFilter] = useState<'all' | RepeatGroup>('all');
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [viewingRule, setViewingRule] = useState<any | null>(null);
@@ -186,6 +201,7 @@ export default function RecurringExpenses() {
     if (typeFilter !== 'all' && (typeFilter === 'income' ? rule.type !== 'income' : rule.type === 'income')) return false;
     if (autoFilter === 'auto' && rule.autoAdd !== true) return false;
     if (autoFilter === 'ask' && rule.autoAdd === true) return false;
+    if (repeatFilter !== 'all' && repeatGroupOf(rule.frequency) !== repeatFilter) return false;
     if (searchTerm.trim()) {
       const q = searchTerm.trim().toLowerCase();
       const catInfo = categoryInfoFor(rule);
@@ -512,6 +528,7 @@ export default function RecurringExpenses() {
       console.error('Failed to change automatic adding:', err);
     }
   };
+  const repeatOptionsPresent = REPEAT_OPTIONS.filter((o) => rules.some((r: any) => repeatGroupOf(r.frequency) === o.id));
   const autoCount = runningRules.filter((r: any) => r.autoAdd === true).length;
   const askCount = runningRules.length - autoCount;
   const pausedCount = rules.length - runningRules.length;
@@ -602,6 +619,17 @@ export default function RecurringExpenses() {
               <span className="material-symbols-outlined text-[18px]">calendar_month</span>
             </button>
           </div>
+          {/* see only the rules that repeat daily, weekly, monthly…; only the kinds you actually have are offered */}
+          {repeatOptionsPresent.length > 1 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-slate-500 pr-0.5">Repeats</span>
+              {[{ id: 'all' as const, label: 'Any' }, ...repeatOptionsPresent].map((o) => (
+                <button key={o.id} type="button" onClick={() => setRepeatFilter(o.id)} className={clsx('shrink-0 rounded-full px-3 py-1 text-[11.5px] font-black border transition-all', repeatFilter === o.id ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-text-muted border-border-subtle')}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
           {showSearch && (
             <input
               type="text"
