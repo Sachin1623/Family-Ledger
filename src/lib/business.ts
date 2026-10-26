@@ -338,6 +338,9 @@ export interface BusinessGame {
   houseRules: HouseRules;
   pendingCard: PendingCard | null;
   auction: Auction | null;
+  // The square a bot already put up for auction this turn. A bot never bids, so the auction closes with the
+  // square still unowned; without this the bot would auction the same square again, forever.
+  botAuctionDone?: number | null;
   pendingTrade: TradeOffer | null;
   lastAction?: { text: string; at: string } | null;
   lastReaction?: { emoji: string; uid: string; displayName: string; at: string } | null;

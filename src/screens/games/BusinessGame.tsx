@@ -683,7 +683,8 @@ export default function BusinessGame() {
 
       // turnPhase === 'action'
       const square = squareAt(currentSeat.position);
-      if (isOwnable(square) && !g.properties[square.index].ownerUid) {
+      // (a square the bot already put up for auction this turn is not offered again: nobody bid, so it is still unowned)
+      if (isOwnable(square) && !g.properties[square.index].ownerUid && g.botAuctionDone !== square.index) {
         // Keep a cash buffer (1.2x price) so buying never strands the bot unable to cover a nearby
         // rent — a simple, always-safe heuristic rather than real property-value evaluation.
         if (currentSeat.cash >= square.price * 1.2) {
@@ -693,6 +694,7 @@ export default function BusinessGame() {
         } else {
           await updateDoc(gRefDoc, {
             auction: { propertyIndex: square.index, currentBid: 0, currentBidderUid: null, passedUids: [] },
+            botAuctionDone: square.index,
             lastAction: { text: `${currentSeat.displayName} put ${square.name} up for auction.`, at: new Date().toISOString() },
           });
         }
@@ -701,7 +703,7 @@ export default function BusinessGame() {
 
       // Nothing left to do — end the turn (re-roll on doubles, same as a human).
       if (g.houseRules.doublesExtraTurn && currentSeat.doublesStreak > 0 && !currentSeat.inJail) {
-        await updateDoc(gRefDoc, { turnPhase: 'roll' });
+        await updateDoc(gRefDoc, { turnPhase: 'roll', botAuctionDone: null });
         return;
       }
       let nextSeat = (seatIndex + 1) % g.players.length;
@@ -716,7 +718,7 @@ export default function BusinessGame() {
         return;
       }
       const resetPlayers = g.players.map((p) => (p.uid === currentSeat.uid ? { ...p, doublesStreak: 0 } : p));
-      await updateDoc(gRefDoc, { currentTurnSeatIndex: nextSeat, turnPhase: 'roll', players: resetPlayers });
+      await updateDoc(gRefDoc, { currentTurnSeatIndex: nextSeat, turnPhase: 'roll', players: resetPlayers, botAuctionDone: null });
       const nextPlayer: BusinessPlayer | undefined = g.players[nextSeat];
       if (nextPlayer && user) {
         notifyGameTurnClient(user, {
