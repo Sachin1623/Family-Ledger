@@ -61,6 +61,9 @@ export default function RecurringExpenses() {
   const [splitType, setSplitType] = useState<'equally' | 'percentage' | 'amount'>('equally');
   const [memberSplits, setMemberSplits] = useState<Record<string, number>>({});
   const [images, setImages] = useState<string[]>([]);
+  // "Add automatically": each occurrence is added by itself, with no confirmation (see processRecurringExpenses on the server)
+  const [autoAdd, setAutoAdd] = useState(false);
+  const [autoFilter, setAutoFilter] = useState<'all' | 'auto' | 'ask'>('all');
   const [viewingRule, setViewingRule] = useState<any | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
@@ -170,6 +173,8 @@ export default function RecurringExpenses() {
     if (statusFilter === 'active' && !rule.active) return false;
     if (statusFilter === 'paused' && rule.active) return false;
     if (typeFilter !== 'all' && (typeFilter === 'income' ? rule.type !== 'income' : rule.type === 'income')) return false;
+    if (autoFilter === 'auto' && rule.autoAdd !== true) return false;
+    if (autoFilter === 'ask' && rule.autoAdd === true) return false;
     if (searchTerm.trim()) {
       const q = searchTerm.trim().toLowerCase();
       const catInfo = categoryInfoFor(rule);
@@ -233,7 +238,20 @@ export default function RecurringExpenses() {
     setSplitMembers([]);
     setMemberSplits({});
     setImages([]);
+    setAutoAdd(false);
   };
+
+  // ?edit=<ruleId> opens that rule's editor straight away (the recurring panel in Manage Group links here for the fuller options: split, photos)
+  const editParam = searchParams.get('edit');
+  const openedEditRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!editParam || openedEditRef.current === editParam) return;
+    const rule = rules.find((r: any) => r.id === editParam);
+    if (!rule) return;
+    openedEditRef.current = editParam;
+    handleEditStart(rule);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editParam, rulesValue]);
 
   const handleEditStart = (rule: any) => {
     setEditingRuleId(rule.id);
@@ -258,6 +276,7 @@ export default function RecurringExpenses() {
     setSplitMembers(rule.splitMembers || []);
     setMemberSplits(rule.memberSplits || {});
     setImages(rule.images || []);
+    setAutoAdd(rule.autoAdd === true);
     setShowForm(true);
   };
 
@@ -297,6 +316,8 @@ export default function RecurringExpenses() {
     if (guide && currentGuideStep === 'split' && !splitApplies) goToNextGuideStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guide, currentGuideStep, selectedGroup?.incomeEnabled, splitApplies]);
+
+  const isRuleCreator = (id: string | null) => !id || rules.find((r: any) => r.id === id)?.userId === user?.uid;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -345,6 +366,8 @@ export default function RecurringExpenses() {
             ? { splitType, splitMembers, memberSplits }
             : { splitType: deleteField(), splitMembers: deleteField(), memberSplits: deleteField() }),
           images,
+          // only the person who set the rule up may change this (the security rules enforce it); anyone else's edit leaves it as it was
+          ...(isRuleCreator(editingRuleId) ? { autoAdd } : {}),
         });
         notifyGroupActivity({
           groupId,
@@ -368,6 +391,7 @@ export default function RecurringExpenses() {
           // timezone — see nowInTimeZone() in server.ts.
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           active: true,
+          autoAdd,
           createdAt: new Date().toISOString(),
           ...(entryType !== 'income' && selectedGroup?.splitEnabled ? { splitType, splitMembers, memberSplits } : {}),
           ...(images.length > 0 ? { images } : {}),
@@ -600,6 +624,22 @@ export default function RecurringExpenses() {
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.photoOptional')}</label>
                 <ImageAttachments images={images} onChange={setImages} />
               </div>
+              {/* add automatically: no confirmation each time. Only the person who set the rule up can change this. */}
+              {(!editingRuleId || isRuleCreator(editingRuleId)) && (
+                <button
+                  type="button"
+                  onClick={() => setAutoAdd((v) => !v)}
+                  className={clsx('w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-all', autoAdd ? 'border-primary bg-primary/5' : 'border-border-subtle bg-white')}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-bold text-primary">Add automatically</span>
+                    <span className="block text-[11px] text-text-muted leading-snug">{autoAdd ? 'Each time it is due it is added by itself, in your name. You are told, and can edit or delete it later.' : 'Off: each time it is due you are asked to accept, change or decline it.'}</span>
+                  </span>
+                  <span className={clsx('w-10 h-5 rounded-full relative shrink-0 transition-all', autoAdd ? 'bg-primary' : 'bg-gray-200')}>
+                    <span className={clsx('w-4 h-4 bg-white rounded-full absolute top-0.5 transition-all shadow-md', autoAdd ? 'right-0.5' : 'left-0.5')} />
+                  </span>
+                </button>
+              )}
               {guideActive('details') && (
                 <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline px-1">{description.trim() || images.length ? 'Next →' : 'Skip, Next →'}</button>
               )}
@@ -813,6 +853,19 @@ export default function RecurringExpenses() {
           ))}
         </div>
 
+        <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
+          {([['all', 'All'], ['auto', 'Auto-added'], ['ask', 'Asks first']] as const).map(([opt, label]) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setAutoFilter(opt)}
+              className={clsx('px-3 py-1.5 rounded-md text-xs font-bold transition-all', autoFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="flex items-center gap-4 flex-wrap bg-white rounded-xl border border-border-subtle px-3 py-2.5">
           {groupsWithRules.length > 0 && (
             <div className="flex items-center gap-2">
@@ -944,6 +997,7 @@ export default function RecurringExpenses() {
                             )}
                           </p>
                           <p className="text-[11px] text-text-muted truncate">
+                            {rule.autoAdd === true && <span className="mr-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-primary">Auto</span>}
                             {describeFrequency(rule)}
                             {rule.splitMembers?.length > 0 && ` · ${t('manageGroup.splitNWays', { count: rule.splitMembers.length })}`}
                           </p>

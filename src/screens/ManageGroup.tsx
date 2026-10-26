@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import RecurringQuickEdit from '../components/RecurringQuickEdit';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -127,6 +128,8 @@ export default function ManageGroup() {
   const [groupIcon, setGroupIcon] = useState('🏠');
   const [showIconGrid, setShowIconGrid] = useState(false);
   const [recurringTypeFilter, setRecurringTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
+  const [recurringAutoFilter, setRecurringAutoFilter] = useState<'all' | 'auto' | 'ask'>('all'); // all, only the ones added automatically, or only the ones that ask first
+  const [editingRecurringId, setEditingRecurringId] = useState<string | null>(null); // the rule being edited inside the panel
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Tabbed layout — was one long flat page (icon/name/type/toggles/categories/budget/recurring/
@@ -2300,10 +2303,28 @@ export default function ManageGroup() {
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-primary">{t('search.recurringExpenses')}</h3>
-                <button type="button" onClick={() => setShowRecurringPanel(false)} className="text-text-muted">
+                <button type="button" onClick={() => { setShowRecurringPanel(false); setEditingRecurringId(null); }} className="text-text-muted">
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
               </div>
+              {editingRecurringId && (() => {
+                const rule: any = recurringRules.find((r: any) => r.id === editingRecurringId);
+                if (!rule) return null;
+                return (
+                  <div key={rule.id}>
+                  <RecurringQuickEdit
+                    rule={rule}
+                    groupId={groupId!}
+                    currencySymbol={getCurrencySymbol(group.currency)}
+                    canSetAutoAdd={rule.userId === user?.uid}
+                    actorName={user?.displayName || 'Someone'}
+                    onClose={() => setEditingRecurringId(null)}
+                    onMoreOptions={() => { setShowRecurringPanel(false); setEditingRecurringId(null); navigate(`/recurring-expenses?groupId=${groupId}&edit=${rule.id}`); }}
+                  />
+                  </div>
+                );
+              })()}
+              {!editingRecurringId && (<>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
                   {(['all', 'expense', 'income'] as const).map((opt) => (
@@ -2327,9 +2348,22 @@ export default function ManageGroup() {
                   {t('manageGroup.manage')}
                 </button>
               </div>
+              <div className="flex items-center gap-1 bg-surface-container rounded-lg p-1 w-fit">
+                {([['all', 'All'], ['auto', 'Auto-added'], ['ask', 'Asks first']] as const).map(([opt, label]) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setRecurringAutoFilter(opt)}
+                    className={clsx('px-3 py-1.5 rounded-md text-xs font-bold transition-all', recurringAutoFilter === opt ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="space-y-2">
                 {recurringRules
                   .filter((rule: any) => recurringTypeFilter === 'all' || (recurringTypeFilter === 'income' ? rule.type === 'income' : rule.type !== 'income'))
+                  .filter((rule: any) => recurringAutoFilter === 'all' || (recurringAutoFilter === 'auto' ? rule.autoAdd === true : rule.autoAdd !== true))
                   .map((rule: any) => {
                   const creator = members.find((m: any) => m.userId === rule.userId);
                   const isIncome = rule.type === 'income';
@@ -2337,8 +2371,12 @@ export default function ManageGroup() {
                   return (
                     <div
                       key={rule.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setEditingRecurringId(rule.id)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') setEditingRecurringId(rule.id); }}
                       className={clsx(
-                        "flex items-center gap-3 p-2 rounded-xl border border-border-subtle",
+                        "flex items-center gap-3 p-2 rounded-xl border border-border-subtle cursor-pointer active:bg-surface-container/50 transition-colors",
                         !rule.active && "opacity-50"
                       )}
                     >
@@ -2358,6 +2396,7 @@ export default function ManageGroup() {
                           </span>
                         </p>
                         <p className="text-[10px] text-text-muted truncate">
+                          {rule.autoAdd === true && <span className="mr-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-primary">Auto</span>}
                           {describeFrequency(rule)}{!rule.active && ` · ${t('manageGroup.paused')}`}
                           {rule.splitMembers?.length > 0 && ` · ${t('manageGroup.splitNWays', { count: rule.splitMembers.length })}`}
                         </p>
@@ -2378,6 +2417,7 @@ export default function ManageGroup() {
                   );
                 })}
               </div>
+              </>)}
             </motion.div>
           </div>
         )}

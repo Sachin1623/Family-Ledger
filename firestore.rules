@@ -638,9 +638,13 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid ||
         canModifyGroup(resource.data.groupId)
       );
+      // `autoAdd: true` makes each occurrence be added by itself, as an expense in the CREATOR's name (the person in `userId`), with no confirmation. Any
+      // group member can edit a rule, but only its creator may turn that on or change it: otherwise a member could make expenses appear under someone
+      // else's name without that person ever agreeing.
       allow create: if isSignedIn() && isValidRecurringExpense(incoming()) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && canModifyGroup(existing().groupId) && isValidRecurringExpense(incoming()) &&
-        incoming().userId == existing().userId && incoming().groupId == existing().groupId;
+        incoming().userId == existing().userId && incoming().groupId == existing().groupId &&
+        (incoming().get('autoAdd', false) == existing().get('autoAdd', false) || existing().userId == request.auth.uid);
       allow delete: if isSignedIn() && canModifyGroup(existing().groupId);
     }
 

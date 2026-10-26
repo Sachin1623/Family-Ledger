@@ -2441,9 +2441,11 @@ async function queryDue(
 // (see /api/recurring-confirm/:id/{accept,decline} and RecurringApprovals.tsx). The schedule
 // still advances immediately regardless of how/whether the user responds, so a slow response
 // doesn't push every future occurrence back.
-async function processRecurringExpenses(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
+async function processRecurringExpenses(db: Firestore, ctx: CronCtx = makeCronCtx(db), onlyRuleId?: string): Promise<number> {
   const now = new Date();
-  const dueDocs = await queryDue(db, 'recurringExpenses', { field: 'active', value: true }, 'nextRunDate', now.toISOString());
+  let dueDocs = await queryDue(db, 'recurringExpenses', { field: 'active', value: true }, 'nextRunDate', now.toISOString());
+  // `onlyRuleId` lets one rule be processed on its own (for testing a single rule without touching anything else that is due)
+  if (onlyRuleId) dueDocs = dueDocs.filter((d) => d.id === onlyRuleId);
   let processed = 0;
   await ctx.prefetch(dueDocs.map((d) => d.data().userId), 'private');
   await ctx.prefetch(dueDocs.filter((d) => !d.data().timezone).map((d) => d.data().userId), 'tz');
@@ -2467,6 +2469,70 @@ async function processRecurringExpenses(db: Firestore, ctx: CronCtx = makeCronCt
 
       const isIncome = rule.type === 'income';
       const createdAt = new Date().toISOString();
+
+      // "Add automatically": no confirmation. The expense is added now, in the name of the person who set the rule up, and they (and the group) are told it
+      // happened. It does not count toward their logging streak or quests, since they did not log it.
+      if (rule.autoAdd === true) {
+        const expenseDoc: any = {
+          groupId: rule.groupId,
+          type: isIncome ? 'income' : 'expense',
+          amount,
+          description,
+          category: rule.category,
+          date: todayIso,
+          paidBy: rule.userId,
+          paymentMethod: 'cash',
+          addedBy: rule.userId,
+          createdAt,
+          recurringExpenseId: ruleDoc.id,
+          autoAdded: true,
+          ...(rule.images?.length ? { images: rule.images } : {}),
+        };
+        let memberUids: string[] = [];
+        const membersSnap = await db.collection('members').where('groupId', '==', rule.groupId).get();
+        memberUids = membersSnap.docs.map((d) => d.data().userId);
+        if (!isIncome && groupData.splitEnabled) {
+          const splitInfo = computeRecurringSplitInfo(rule, amount, memberUids);
+          if (splitInfo) expenseDoc.splitInfo = splitInfo;
+        }
+        // One fixed id per rule and day, so a cron that runs twice, or retries after a failure, can never add the same occurrence twice.
+        let created = true;
+        try {
+          await db.collection('expenses').doc(`auto_${ruleDoc.id}_${todayIso}`).create(expenseDoc);
+        } catch (err: any) {
+          if (err?.code !== 6 && !/already exists/i.test(String(err?.message))) throw err;
+          created = false;
+        }
+        if (created) {
+          await groupRef.update(isIncome ? { totalIncome: admin.firestore.FieldValue.increment(amount) } : { totalSpending: admin.firestore.FieldValue.increment(amount) });
+          if (!isIncome) {
+            await db.collection('stats').doc('global').set({ totalExpenses: admin.firestore.FieldValue.increment(1), totalAmount: admin.firestore.FieldValue.increment(amount) }, { merge: true });
+          }
+          await db.collection('activities').add({
+            groupId: rule.groupId,
+            userId: rule.userId,
+            userName: isIncome ? 'Recurring income' : 'Recurring expense',
+            userPhoto: '',
+            type: isIncome ? 'add_income' : 'add_expense',
+            description: `${isIncome ? 'Recurring income' : 'Recurring expense'} added automatically: ${description}`,
+            data: { amount, description, groupName: groupData.name, currencyCode: groupData.currency, autoAdded: true },
+            createdAt,
+          });
+          // the creator hears about it quietly, and the rest of the group gets the usual "recurring expense added"
+          const creatorTokens = await ctx.tokens([rule.userId], 'notificationsEnabled');
+          await sendPush(creatorTokens, isIncome ? 'Recurring income added' : 'Recurring expense added', `"${description}" — ${amount} was added to "${groupData.name}" automatically.`, { type: 'group_activity', groupId: rule.groupId });
+          const others = memberUids.filter((u) => u !== rule.userId);
+          if (others.length > 0) {
+            const tokens = await collectPushTokens(db, others, 'notificationsEnabled');
+            await sendPush(tokens, isIncome ? `${groupData.name}: Recurring income added` : `${groupData.name}: Recurring expense added`, `"${description}" — ${amount} was added.`, { type: 'group_activity', groupId: rule.groupId });
+          }
+        }
+        const nextAuto = fakeLocalToRealIso(nextOccurrenceAfter(rule as FrequencyConfig, nowInTimeZone(ruleTimeZone)), ruleTimeZone);
+        await ruleDoc.ref.update({ nextRunDate: nextAuto, lastAutoAddedAt: createdAt });
+        processed++;
+        return;
+      }
+
       const pendingRef = await db.collection('pendingRecurringExpenses').add({
         userId: rule.userId,
         recurringExpenseId: ruleDoc.id,
@@ -16061,6 +16127,17 @@ async function startServer() {
     }
     if (!adminDb) return res.status(500).json({ error: 'Firestore not available.' });
     const db = adminDb;
+
+    // With this header only that one recurring rule is processed, and nothing else runs (secret-protected, used to test a single rule safely).
+    const onlyRule = req.headers['x-only-recurring-rule'];
+    if (typeof onlyRule === 'string' && onlyRule) {
+      try {
+        return res.json({ recurringProcessed: await processRecurringExpenses(db, makeCronCtx(db), onlyRule) });
+      } catch (error) {
+        console.error('single recurring rule error:', error);
+        return res.status(500).json({ error: 'Failed.' });
+      }
+    }
 
     try {
       const ctx = makeCronCtx(db);
