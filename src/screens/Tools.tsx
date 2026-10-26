@@ -45,6 +45,7 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
     tools: [
       { to: '/todo', favKey: 'todo', icon: '✅', titleKey: 'tools.todo', descKey: 'tools.todoDesc' },
       { to: '/reminders', favKey: 'shared-reminders', icon: '⏰', titleKey: 'tools.sharedReminders', descKey: 'tools.sharedRemindersDesc' },
+      { to: '/recurring-expenses', favKey: 'recurring-expenses', icon: '🔁', titleKey: 'search.recurringExpenses', descKey: 'search.recurringExpensesDesc' },
       { to: '/shopping-lists', favKey: 'shopping-lists', icon: '🛒', titleKey: 'tools.shoppingLists', descKey: 'tools.shoppingListsDesc' },
     ],
   },
@@ -113,7 +114,7 @@ const CATEGORY_STYLE: Record<string, { from: string; to: string; emoji: string; 
   health: { from: '#0f766e', to: '#0e4f5c', emoji: '💚', blurb: 'Medicines, glucose, BP, baby vaccines' },
   games: { from: '#5a2b7a', to: '#2a1240', emoji: '🎲', blurb: 'Play with family, solo or online' },
   finance: { from: '#1d5a8a', to: '#0f2f4a', emoji: '🏦', blurb: 'Loans, policies, calculators' },
-  productivity: { from: '#c2410c', to: '#7c2d12', emoji: '✅', blurb: 'To-dos, reminders, shopping' },
+  productivity: { from: '#c2410c', to: '#7c2d12', emoji: '✅', blurb: 'To-dos, reminders, recurring, shopping' },
   social: { from: '#be185d', to: '#6b0f3a', emoji: '🧑‍🤝‍🧑', blurb: 'Friends & progress' },
 };
 const HOME_ORDER = ['health', 'games', 'finance', 'productivity', 'social'];
