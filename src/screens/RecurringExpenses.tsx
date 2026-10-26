@@ -83,6 +83,7 @@ export default function RecurringExpenses() {
   // "Add automatically": each occurrence is added by itself, with no confirmation (see processRecurringExpenses on the server)
   const [autoAdd, setAutoAdd] = useState(false);
   const [autoFilter, setAutoFilter] = useState<'all' | 'auto' | 'ask'>('all');
+  const [showFilters, setShowFilters] = useState(false);
   const [repeatFilter, setRepeatFilter] = useState<'all' | RepeatGroup>('all');
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -603,33 +604,36 @@ export default function RecurringExpenses() {
           ))}
         </div>
 
-        {/* one row of filters, plus the group, the type, search and the calendar */}
+        {/* one compact row: the Filters button (its options open in a sheet), whatever is switched on as small removable chips, then search and the calendar */}
         <div className="space-y-2.5">
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            {([['all', 'All'], ['auto', 'Auto'], ['ask', 'Asks first'], ['paused', 'Paused']] as const).map(([opt, label]) => (
-              <button key={opt} type="button" onClick={() => setViewFilter(opt)} className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', viewFilter === opt ? 'text-white border-transparent shadow-md bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]' : 'bg-white text-text-muted border-border-subtle')}>
-                {label}
-              </button>
-            ))}
-            <span className="flex-1" />
-            <button type="button" onClick={() => setShowSearch((v) => !v)} className={clsx('shrink-0 w-8 h-8 rounded-full border flex items-center justify-center', showSearch || searchTerm ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-border-subtle text-text-muted')} title="Search">
-              <span className="material-symbols-outlined text-[18px]">search</span>
-            </button>
-            <button type="button" onClick={() => setShowCalendar((v) => !v)} className={clsx('shrink-0 w-8 h-8 rounded-full border flex items-center justify-center', showCalendar || selectedDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-border-subtle text-text-muted')} title="Calendar">
-              <span className="material-symbols-outlined text-[18px]">calendar_month</span>
-            </button>
-          </div>
-          {/* see only the rules that repeat daily, weekly, monthly…; only the kinds you actually have are offered */}
-          {repeatOptionsPresent.length > 1 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-              <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-slate-500 pr-0.5">Repeats</span>
-              {[{ id: 'all' as const, label: 'Any' }, ...repeatOptionsPresent].map((o) => (
-                <button key={o.id} type="button" onClick={() => setRepeatFilter(o.id)} className={clsx('shrink-0 rounded-full px-3 py-1 text-[11.5px] font-black border transition-all', repeatFilter === o.id ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-text-muted border-border-subtle')}>
-                  {o.label}
+          {(() => {
+            const active: { key: string; label: string; clear: () => void }[] = [];
+            if (viewFilter !== 'all') active.push({ key: 'view', label: viewFilter === 'auto' ? 'Auto-added' : viewFilter === 'ask' ? 'Asks first' : 'Paused', clear: () => setViewFilter('all') });
+            if (repeatFilter !== 'all') active.push({ key: 'repeat', label: REPEAT_OPTIONS.find((o) => o.id === repeatFilter)?.label || '', clear: () => setRepeatFilter('all') });
+            if (typeFilter !== 'all') active.push({ key: 'type', label: typeFilter === 'income' ? t('common.income') : t('common.expense'), clear: () => setTypeFilter('all') });
+            if (listFilter !== 'all') active.push({ key: 'group', label: groups.find((g: any) => g.id === listFilter)?.name || 'Group', clear: () => setListFilter('all') });
+            return (
+              <div className="flex items-center gap-1.5">
+                <button type="button" onClick={() => setShowFilters(true)} className={clsx('shrink-0 flex items-center gap-1 rounded-full pl-2.5 pr-3 py-1.5 text-xs font-black border transition-all', active.length > 0 ? 'text-white border-transparent shadow-md bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]' : 'bg-white text-slate-600 border-border-subtle')}>
+                  <span className="material-symbols-outlined text-[16px]">tune</span>
+                  Filters{active.length > 0 && <span className="ml-0.5 min-w-[18px] h-[18px] rounded-full bg-white text-[#0f7a8f] text-[10px] flex items-center justify-center px-1">{active.length}</span>}
                 </button>
-              ))}
-            </div>
-          )}
+                <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {active.map((a) => (
+                    <button key={a.key} type="button" onClick={a.clear} className="shrink-0 flex items-center gap-0.5 rounded-full bg-[#0f7a8f]/10 text-[#0b5f70] pl-2.5 pr-1.5 py-1 text-[11px] font-black max-w-[130px]">
+                      <span className="truncate">{a.label}</span><span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  ))}
+                </div>
+                <button type="button" onClick={() => setShowSearch((v) => !v)} className={clsx('shrink-0 w-8 h-8 rounded-full border flex items-center justify-center', showSearch || searchTerm ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-border-subtle text-text-muted')} title="Search">
+                  <span className="material-symbols-outlined text-[18px]">search</span>
+                </button>
+                <button type="button" onClick={() => setShowCalendar((v) => !v)} className={clsx('shrink-0 w-8 h-8 rounded-full border flex items-center justify-center', showCalendar || selectedDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-border-subtle text-text-muted')} title="Calendar">
+                  <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+                </button>
+              </div>
+            );
+          })()}
           {showSearch && (
             <input
               type="text"
@@ -640,22 +644,43 @@ export default function RecurringExpenses() {
               className="w-full bg-white border border-border-subtle rounded-xl py-2.5 px-4 outline-none focus:ring-2 focus:ring-primary/20 font-medium text-sm text-primary"
             />
           )}
-          {(groupsWithRules.length > 1 || rules.some((r: any) => r.type === 'income')) && (
-            <div className="flex items-center gap-2 flex-wrap">
-              {groupsWithRules.length > 1 && (
-                <select value={listFilter} onChange={(e) => setListFilter(e.target.value)} className="bg-white px-2.5 py-1.5 rounded-full border border-border-subtle text-xs font-bold text-primary outline-none">
-                  <option value="all">All groups</option>
-                  {groupsWithRules.map((g: any) => <option key={g.id} value={g.id}>{groupIconEmoji(g.icon)} {g.name}</option>)}
-                </select>
-              )}
-              {rules.some((r: any) => r.type === 'income') && (['all', 'expense', 'income'] as const).map((opt) => (
-                <button key={opt} type="button" onClick={() => setTypeFilter(opt)} className={clsx('rounded-full px-3 py-1.5 text-xs font-bold border', typeFilter === opt ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-text-muted border-border-subtle')}>
-                  {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
+
+        {showFilters && (
+          <div className="fixed inset-0 z-[120] bg-black/40 flex items-end justify-center" onClick={() => setShowFilters(false)}>
+            <div className="w-full max-w-xl bg-white rounded-t-3xl p-5 space-y-4 max-h-[80vh] overflow-y-auto" style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-black text-primary">Filters</h3>
+                <button type="button" onClick={() => { setViewFilter('all'); setRepeatFilter('all'); setTypeFilter('all'); setListFilter('all'); }} className="text-xs font-black text-[#0f7a8f]">Clear all</button>
+              </div>
+              {(() => {
+                const chipCls = (on: boolean) => clsx('rounded-full px-3.5 py-1.5 text-xs font-black border transition-all', on ? 'text-white border-transparent shadow-sm bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]' : 'bg-white text-text-muted border-border-subtle');
+                const group = (title: string, body: React.ReactNode) => (
+                  <div className="space-y-1.5"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{title}</p><div className="flex flex-wrap gap-1.5">{body}</div></div>
+                );
+                return (
+                  <>
+                    {group('Status', ([['all', 'All'], ['auto', 'Auto-added'], ['ask', 'Asks first'], ['paused', 'Paused']] as const).map(([opt, label]) => (
+                      <button key={opt} type="button" onClick={() => setViewFilter(opt)} className={chipCls(viewFilter === opt)}>{label}</button>
+                    )))}
+                    {repeatOptionsPresent.length > 1 && group('Repeats', [{ id: 'all' as const, label: 'Any' }, ...repeatOptionsPresent].map((o) => (
+                      <button key={o.id} type="button" onClick={() => setRepeatFilter(o.id)} className={chipCls(repeatFilter === o.id)}>{o.label}</button>
+                    )))}
+                    {rules.some((r: any) => r.type === 'income') && group('Type', (['all', 'expense', 'income'] as const).map((opt) => (
+                      <button key={opt} type="button" onClick={() => setTypeFilter(opt)} className={chipCls(typeFilter === opt)}>
+                        {opt === 'all' ? t('groupExpenses.all') : opt === 'income' ? t('common.income') : t('common.expense')}
+                      </button>
+                    )))}
+                    {groupsWithRules.length > 1 && group('Group', [{ id: 'all', name: 'All groups', icon: '' }, ...groupsWithRules].map((g: any) => (
+                      <button key={g.id} type="button" onClick={() => setListFilter(g.id)} className={chipCls(listFilter === g.id)}>{g.id === 'all' ? g.name : `${groupIconEmoji(g.icon)} ${g.name}`}</button>
+                    )))}
+                  </>
+                );
+              })()}
+              <button type="button" onClick={() => setShowFilters(false)} className="w-full py-3 rounded-xl bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5] text-white text-sm font-black">Show {displayedRules.length} {displayedRules.length === 1 ? 'rule' : 'rules'}</button>
+            </div>
+          </div>
+        )}
 
         {/* Editing opens as a popup (closes itself on Cancel/Save, same handleSubmit/
             resetFormFields as before) instead of the inline form scrolling into view at the top
