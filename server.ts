@@ -4660,6 +4660,21 @@ async function startServer() {
     }
   });
 
+  // When every sign-in account was created (ISO strings), kept for five minutes so opening the dashboard repeatedly does not re-read the whole list.
+  let creationCache: { at: number; times: string[] } | null = null;
+  async function accountCreationTimes(): Promise<string[]> {
+    if (creationCache && Date.now() - creationCache.at < 5 * 60_000) return creationCache.times;
+    const times: string[] = [];
+    let page = await admin.auth().listUsers(1000);
+    for (;;) {
+      page.users.forEach((u) => times.push(new Date(u.metadata.creationTime).toISOString()));
+      if (!page.pageToken) break;
+      page = await admin.auth().listUsers(1000, page.pageToken);
+    }
+    creationCache = { at: Date.now(), times };
+    return times;
+  }
+
   app.get('/api/admin/overview', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
@@ -4680,9 +4695,18 @@ async function startServer() {
 
       const [usersSnap, groupsSnap, expensesSnap] = await Promise.all([
         db.collection('users').select('approxCountry', 'lastActiveAt', 'joinedAt').get(),
-        db.collection('groups').select('createdBy').get(),
-        db.collection('expenses').select('addedBy', 'amount').get(),
+        db.collection('groups').select('createdBy', 'createdAt').get(),
+        db.collection('expenses').select('addedBy', 'amount', 'createdAt').get(),
       ]);
+
+      // How much each total grew today (since UTC midnight, like "Active Today") and over the last 7 days, worked out from when each user, group and
+      // expense was created, so it is exact for the past too.
+      const grew = { users: { today: 0, week: 0 }, groups: { today: 0, week: 0 }, expenses: { today: 0, week: 0 }, spend: { today: 0, week: 0 } };
+      const bump = (bucket: { today: number; week: number }, at: unknown, amount = 1) => {
+        if (typeof at !== 'string') return;
+        if (at >= weekAgo) bucket.week += amount;
+        if (at >= todayStartUtc) bucket.today += amount;
+      };
 
       const uidToCountry = new Map<string, string>();
       let activeUsersToday = 0;
@@ -4713,10 +4737,19 @@ async function startServer() {
         if (data.lastActiveAt && data.lastActiveAt >= weekAgo) activeUsersThisWeek += 1;
         if (data.joinedAt && data.joinedAt >= todayStartUtc) newUsersToday += 1;
       });
+      // New users come from when each sign-in account was created, not from a user record's joinedAt: about half of the recent accounts have no joinedAt, so
+      // counting that field under-reports new users.
+      try {
+        const created = await accountCreationTimes();
+        created.forEach((iso) => bump(grew.users, iso));
+      } catch (err) {
+        console.error('overview: could not read account creation times:', err);
+      }
 
       groupsSnap.docs.forEach((d) => {
         const country = uidToCountry.get(d.data().createdBy) || 'Unknown';
         getBucket(country).groups += 1;
+        bump(grew.groups, d.data().createdAt);
       });
 
       let totalSpend = 0;
@@ -4728,11 +4761,26 @@ async function startServer() {
         const bucket = getBucket(country);
         bucket.expenses += 1;
         bucket.totalSpend += amount;
+        bump(grew.expenses, data.createdAt);
+        bump(grew.spend, data.createdAt, amount);
       });
 
       const countryBreakdown = Array.from(countryStats.values()).sort((a, b) => b.users - a.users);
 
+      // "Active" cannot be worked out for the past (a person's last-active time is overwritten), so a small snapshot is saved each day this page is opened:
+      // today's peak active count and the current weekly count. The change is then today against yesterday's snapshot, and this week against the one from
+      // 7 days ago. It shows nothing until a snapshot to compare with exists.
+      const dayKey = (offset: number) => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+      const snapRef = (offset: number) => db.collection('adminSnapshots').doc(dayKey(offset));
+      const [yesterdaySnap, lastWeekSnap, todaySnap] = await Promise.all([snapRef(1).get(), snapRef(7).get(), snapRef(0).get()]);
+      await snapRef(0).set({ date: dayKey(0), activeToday: Math.max(todaySnap.data()?.activeToday || 0, activeUsersToday), activeWeek: activeUsersThisWeek, updatedAt: new Date().toISOString() }, { merge: true });
+      const activeChange = {
+        today: yesterdaySnap.exists ? activeUsersToday - (yesterdaySnap.data()?.activeToday || 0) : null,
+        week: lastWeekSnap.exists ? activeUsersThisWeek - (lastWeekSnap.data()?.activeWeek || 0) : null,
+      };
+
       return res.json({
+        changes: { ...grew, active: activeChange },
         totalUsers: usersSnap.size,
         totalGroups: groupsSnap.size,
         totalExpenses: expensesSnap.size,

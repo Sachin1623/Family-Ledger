@@ -22,6 +22,13 @@ interface Overview {
   activeUsersThisWeek: number;
   newUsersToday: number;
   countryBreakdown: CountryStats[];
+  changes?: {
+    users: { today: number; week: number };
+    groups: { today: number; week: number };
+    expenses: { today: number; week: number };
+    spend: { today: number; week: number };
+    active: { today: number | null; week: number | null };
+  };
 }
 
 interface CloudCost {
@@ -41,11 +48,28 @@ interface Tile {
   description: string;
 }
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
+// One small "+14" pill with what it is measured against. Green when up, red when down, grey when unchanged, a dash when there is nothing to compare with yet.
+function Delta({ value, label, format }: { value: number | null | undefined; label: string; format?: (n: number) => string }) {
+  const text = value == null ? '–' : `${value > 0 ? '+' : value < 0 ? '−' : ''}${(format || ((n: number) => n.toLocaleString()))(Math.abs(value))}`;
+  const tone = value == null || value === 0 ? 'bg-surface text-text-muted' : value > 0 ? 'bg-success/15 text-success' : 'bg-error/10 text-error';
+  return (
+    <span className={clsx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-black whitespace-nowrap', tone)}>
+      {text} <span className="font-bold opacity-80">{label}</span>
+    </span>
+  );
+}
+
+function StatCard({ label, value, today, week, todayLabel = 'today', weekLabel = 'this week', format }: { label: string; value: string | number; today?: number | null; week?: number | null; todayLabel?: string; weekLabel?: string; format?: (n: number) => string }) {
   return (
     <div className="bg-white rounded-2xl border border-border-subtle p-5 shadow-sm">
       <p className="text-xs font-bold text-text-muted uppercase tracking-wider">{label}</p>
       <p className="text-3xl font-black text-primary mt-1">{value}</p>
+      {(today !== undefined || week !== undefined) && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {today !== undefined && <Delta value={today} label={todayLabel} format={format} />}
+          {week !== undefined && <Delta value={week} label={weekLabel} format={format} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -215,13 +239,12 @@ export default function AdminDashboard() {
 
           {overview && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatCard label="Total Users" value={overview.totalUsers} />
-              <StatCard label="Total Groups" value={overview.totalGroups} />
-              <StatCard label="Total Expenses" value={overview.totalExpenses} />
-              <StatCard label="Lifetime Spend Logged" value={overview.totalSpendAllTime.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
-              <StatCard label="Active Today" value={overview.activeUsersToday} />
-              <StatCard label="Active This Week" value={overview.activeUsersThisWeek} />
-              <StatCard label="New Users Today" value={overview.newUsersToday} />
+              <StatCard label="Total Users" value={overview.totalUsers} today={overview.changes?.users.today} week={overview.changes?.users.week} />
+              <StatCard label="Total Groups" value={overview.totalGroups} today={overview.changes?.groups.today} week={overview.changes?.groups.week} />
+              <StatCard label="Total Expenses" value={overview.totalExpenses} today={overview.changes?.expenses.today} week={overview.changes?.expenses.week} />
+              <StatCard label="Lifetime Spend Logged" value={overview.totalSpendAllTime.toLocaleString(undefined, { maximumFractionDigits: 0 })} today={overview.changes?.spend.today} week={overview.changes?.spend.week} format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+              <StatCard label="Active Today" value={overview.activeUsersToday} today={overview.changes?.active.today} todayLabel="vs yesterday" />
+              <StatCard label="Active This Week" value={overview.activeUsersThisWeek} week={overview.changes?.active.week} weekLabel="vs last week" />
             </div>
           )}
 
