@@ -44,7 +44,6 @@ const TOOL_CATEGORIES: { key: string; label: string; tools: ToolEntry[] }[] = [
     label: 'Productivity',
     tools: [
       { to: '/todo', favKey: 'todo', icon: '✅', titleKey: 'tools.todo', descKey: 'tools.todoDesc' },
-      { to: '/reminders', favKey: 'shared-reminders', icon: '⏰', titleKey: 'tools.sharedReminders', descKey: 'tools.sharedRemindersDesc' },
       { to: '/recurring-expenses', favKey: 'recurring-expenses', icon: '🔁', titleKey: 'search.recurringExpenses', descKey: 'search.recurringExpensesDesc' },
       { to: '/shopping-lists', favKey: 'shopping-lists', icon: '🛒', titleKey: 'tools.shoppingLists', descKey: 'tools.shoppingListsDesc' },
     ],

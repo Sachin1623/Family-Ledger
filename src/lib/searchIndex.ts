@@ -53,7 +53,6 @@ export const SEARCHABLE_FEATURES: SearchableFeature[] = [
   { id: 'health-glucose', label: 'Glucose Tracker', description: 'Log & chart blood glucose readings', labelKey: 'health.glucoseTracker', descriptionKey: 'health.glucoseTrackerDesc', icon: 'water_drop', route: '/health/glucose', keywords: ['sugar', 'diabetes'] },
   { id: 'health-blood-pressure', label: 'Blood Pressure Tracker', description: 'Log & chart blood pressure readings', labelKey: 'bp.tracker', descriptionKey: 'bp.trackerDesc', icon: 'favorite', route: '/health/blood-pressure', keywords: ['bp', 'hypertension'] },
   { id: 'health-medicines', label: 'Medicine Tracker', description: 'Doses, schedules & reminders', labelKey: 'medicine.tracker', descriptionKey: 'medicine.trackerDesc', icon: 'medication', route: '/health/medicines', keywords: ['pills', 'dose', 'alarm', 'reminder'] },
-  { id: 'reminders', label: 'Shared Reminders', description: 'Reminders shared with your group members', icon: 'alarm', route: '/reminders' },
   { id: 'goals', label: 'Goals', description: 'Savings goals, linked accounts & allocation', labelKey: 'nav.goals', icon: 'savings', route: '/goals', keywords: ['savings', 'target', 'accounts'] },
   // Child screens of Goals — Accounts and Allocation are also tabs on /goals itself now, but keep
   // their own direct routes here too since both are still independently reachable.

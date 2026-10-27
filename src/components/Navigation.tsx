@@ -79,7 +79,6 @@ const ACTION_FAB_PATHS = new Set([
   '/expense-reminders',
   '/personal-loans',
   '/todo',
-  '/reminders',
   '/shopping-lists',
   '/baby-vaccinations',
   '/recurring-expenses',

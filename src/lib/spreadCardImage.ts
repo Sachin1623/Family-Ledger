@@ -89,7 +89,7 @@ export const SPREAD_VARIANTS: SpreadVariant[] = [
       { emoji: '💬', title: 'Group chat', sub: 'No separate thread for money talk' },
       { emoji: '🛒', title: 'Shopping lists', sub: 'Shared, tick off as you go' },
       { emoji: '✅', title: 'To-dos & habits', sub: 'Plan, repeat and track together' },
-      { emoji: '⏰', title: 'Shared reminders', sub: 'Everyone gets the nudge' },
+      { emoji: '🔁', title: 'Recurring bills', sub: 'Added automatically, on time' },
       { emoji: '👥', title: 'Family groups', sub: 'One ledger everyone can see' },
       { emoji: '📰', title: 'Activity feed', sub: "See what everyone's up to" },
     ],

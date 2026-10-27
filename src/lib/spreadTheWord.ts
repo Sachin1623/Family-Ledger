@@ -71,11 +71,11 @@ const THEME_COPY: Record<SpreadTheme, ThemeCopy> = {
       '💬 *Group chat* — no separate thread for money talk',
       '🛒 *Shopping lists* — shared, tick off as you go',
       '✅ *To-dos & habits* — plan, repeat and track together',
-      '⏰ *Shared reminders* — everyone gets the nudge',
+      '🔁 *Recurring bills* — added automatically, on time',
       '👥 *Family groups* — one ledger everyone can see',
       "📰 *Activity feed* — see what everyone's up to",
     ],
-    short: '🏠 Run the home together — group chat, shared shopping lists, to-dos, reminders and a family ledger in one app. Free on Android 👇',
+    short: '🏠 Run the home together — group chat, shared shopping lists, to-dos, recurring bills and a family ledger in one app. Free on Android 👇',
   },
   games: {
     title: '🎮 FamilyLedger',

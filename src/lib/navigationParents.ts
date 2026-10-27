@@ -31,7 +31,6 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/tools': '/',
   '/shopping-lists': '/tools?category=productivity',
   '/expense-reminders': '/tools?category=finance',
-  '/reminders': '/tools?category=productivity',
   '/goals': '/',
   '/goals/allocate': '/goals',
   '/goals/reports': '/goals',

@@ -748,8 +748,6 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
               goTo('/friends');
             } else if (type === 'invite_received' && data.groupId) {
               goTo(`/join/${data.groupId}`);
-            } else if (type === 'reminder_set' || type === 'reminder_activity') {
-              goTo(data.reminderId ? `/reminders?open=${data.reminderId}` : '/reminders');
             } else if (type === 'recurring_confirm_pending') {
               goTo('/recurring-approvals');
             } else if ((type === 'recurring_created' || type === 'recurring_changed' || type === 'recurring_deleted') && activity.groupId) {

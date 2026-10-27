@@ -17,8 +17,6 @@ import { scheduleBpReminders } from '../lib/bpReminders';
 import { DEFAULT_GLUCOSE_REMINDERS, GlucoseReminderSettings } from '../lib/health';
 import { scheduleGlucoseReminders } from '../lib/healthReminders';
 import { DEFAULT_REMINDER_PREFS } from '../lib/vaccinations';
-import { SharedReminder, describeCadence, nextOccurrence } from '../lib/sharedReminders';
-import { scheduleSharedReminders } from '../lib/sharedReminderNotifications';
 import { cancelLocalTodoReminder } from '../lib/localReminders';
 
 // One place to see everything on THIS device that's set up to ring/notify at a scheduled time —
@@ -45,7 +43,7 @@ import { cancelLocalTodoReminder } from '../lib/localReminders';
 // explicitly cancelled the next time Baby Vaccinations itself is opened, same best-effort,
 // clearly-flagged tradeoff this codebase already accepts elsewhere for on-device-only reminders.
 
-type Category = 'medicine' | 'bp' | 'glucose' | 'vaccination' | 'shared' | 'todo';
+type Category = 'medicine' | 'bp' | 'glucose' | 'vaccination' | 'todo';
 
 function fmtTime(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
@@ -423,62 +421,6 @@ export default function AlarmsHub() {
   const vaxVisitsForProfile = vaxBabyGroups.find((b) => b.profileId === vaxProfileId)?.visits || [];
   const vaccineItemCount = vaxVisits.reduce((sum, v) => sum + v.entries.length, 0);
 
-  // --- Shared reminders (own + group + friend-targeted) ---
-  const [ownRemindersValue] = useCollection(user ? query(collection(db, 'sharedReminders'), where('createdBy', '==', user.uid)) : null);
-  const [groupRemindersValue] = useCollection(groupIds.length > 0 ? query(collection(db, 'sharedReminders'), where('groupId', 'in', groupIds)) : null);
-  const [friendRemindersValue] = useCollection(user ? query(collection(db, 'sharedReminders'), where('friendUids', 'array-contains', user.uid)) : null);
-  const sharedReminders: SharedReminder[] = useMemo(() => {
-    const map = new Map<string, SharedReminder>();
-    [ownRemindersValue, groupRemindersValue, friendRemindersValue].forEach((snap) => {
-      snap?.docs.forEach((d) => map.set(d.id, { id: d.id, ...(d.data() as any) }));
-    });
-    return Array.from(map.values()).filter((r) => r.active);
-  }, [ownRemindersValue, groupRemindersValue, friendRemindersValue]);
-  const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  // nextOccurrence only resolves to a DATE — if today's occurrence's time has already passed, roll
-  // forward one day and re-resolve, so the shown fire time is always genuinely in the future.
-  const sharedReminderNextFire = (r: SharedReminder): Date | null => {
-    const todayStr = toLocalDateString(new Date());
-    let occDate = nextOccurrence(r, todayStr);
-    if (!occDate) return null;
-    let at = combineLocalDateAndTime(occDate, r.time);
-    if (at <= new Date()) {
-      const tomorrowStr = toLocalDateString(new Date(Date.now() + 86400000));
-      occDate = nextOccurrence(r, tomorrowStr);
-      if (!occDate) return null;
-      at = combineLocalDateAndTime(occDate, r.time);
-    }
-    return at;
-  };
-  const sharedItems: AlarmItem[] = sharedReminders.map((r) => {
-    const next = sharedReminderNextFire(r);
-    return {
-    key: r.id,
-    title: r.title,
-    subtitle: `${describeCadence(r, t, weekdayLabels)} — ${next ? fmtNext(next) : 'no more occurrences'}`,
-    actions: [
-      {
-        label: 'Pause',
-        danger: false,
-        warning: `You won't be notified for "${r.title}" until you turn it back on from Reminders.`,
-        onConfirm: async () => {
-          await updateDoc(doc(db, 'sharedReminders', r.id), { active: false });
-          await scheduleSharedReminders(sharedReminders.filter((s) => s.id !== r.id));
-        },
-      },
-      {
-        label: 'Delete',
-        danger: true,
-        warning: `This permanently deletes "${r.title}" for everyone it's shared with — not just you.`,
-        onConfirm: async () => {
-          await deleteDoc(doc(db, 'sharedReminders', r.id));
-          await scheduleSharedReminders(sharedReminders.filter((s) => s.id !== r.id));
-        },
-      },
-    ],
-  };
-  });
-
   // --- To-do reminders (personal, non-group todos with a reminder set) ---
   const [todosValue] = useCollection(user ? query(collection(db, 'todos'), where('userId', '==', user.uid)) : null);
   const todoReminders = useMemo(
@@ -503,7 +445,6 @@ export default function AlarmsHub() {
   const FLAT_CATEGORY_META: Partial<Record<Category, { label: string; icon: string; items: AlarmItem[]; manageRoute: string; manageLabel: string }>> = {
     bp: { label: 'Blood Pressure Reminders', icon: 'monitor_heart', items: bpItems, manageRoute: '/health/blood-pressure', manageLabel: 'Manage in Blood Pressure' },
     glucose: { label: 'Glucose Reminders', icon: 'water_drop', items: glucoseItems, manageRoute: '/health/glucose', manageLabel: 'Manage in Glucose' },
-    shared: { label: 'Shared Reminders', icon: 'notifications_active', items: sharedItems, manageRoute: '/reminders', manageLabel: 'Manage in Reminders' },
     todo: { label: 'To-Do Reminders', icon: 'checklist', items: todoItems, manageRoute: '/todo', manageLabel: 'Manage in To-Do' },
   };
 
@@ -684,7 +625,6 @@ export default function AlarmsHub() {
         <Tile icon="monitor_heart" label="Blood Pressure Reminders" count={bpItems.length} onClick={() => navigate('/alarms?cat=bp')} />
         <Tile icon="water_drop" label="Glucose Reminders" count={glucoseItems.length} onClick={() => navigate('/alarms?cat=glucose')} />
         <Tile icon="vaccines" label="Vaccination Reminders" count={vaccineItemCount} onClick={() => navigate('/alarms?cat=vaccination')} />
-        <Tile icon="notifications_active" label="Shared Reminders" count={sharedItems.length} onClick={() => navigate('/alarms?cat=shared')} />
         <Tile icon="checklist" label="To-Do Reminders" count={todoItems.length} onClick={() => navigate('/alarms?cat=todo')} />
       </div>
     </div>

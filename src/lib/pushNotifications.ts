@@ -118,13 +118,6 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo('/goals');
   } else if (data.type === 'reports_shared') {
     navigateTo('/goals?tab=reports');
-  } else if (data.type === 'shared_reminder') {
-    // The scheduled-trigger local notification always carries a reminderId (opens that specific
-    // reminder's card directly); the "someone shared a reminder with you" group-activity push
-    // fired at creation time doesn't thread one through /api/notify-group-activity, so it just
-    // opens the hub list instead — a reasonable fallback rather than adding a param for a single
-    // notification type.
-    navigateTo(data.reminderId ? `/reminders?open=${data.reminderId}` : '/reminders');
   } else if (data.type === 'invite_family_reminder' && data.groupId) {
     // The every-10-days "still solo?" nudge — see server.ts's cron/send-daily-reminders.
     navigateTo(`/groups/${data.groupId}/manage?inviteReminder=1`);

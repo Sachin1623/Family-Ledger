@@ -88,7 +88,6 @@ import ProfileVisibility from './screens/ProfileVisibility';
 import ShoppingLists from './screens/ShoppingLists';
 import ShoppingListDetail from './screens/ShoppingListDetail';
 import ExpenseReminders from './screens/ExpenseReminders';
-import RemindersHub from './screens/RemindersHub';
 import GoalsHub from './screens/GoalsHub';
 import GoalDetail from './screens/GoalDetail';
 import GoalWizard from './screens/GoalWizard';
@@ -447,7 +446,7 @@ export default function App() {
               <Route path="/shopping-lists" element={<AuthenticatedLayout><ShoppingLists /></AuthenticatedLayout>} />
               <Route path="/shopping-lists/:listId" element={<AuthenticatedLayout><ShoppingListDetail /></AuthenticatedLayout>} />
               <Route path="/expense-reminders" element={<AuthenticatedLayout><ExpenseReminders /></AuthenticatedLayout>} />
-              <Route path="/reminders" element={<AuthenticatedLayout><RemindersHub /></AuthenticatedLayout>} />
+              <Route path="/reminders" element={<Navigate to="/tools?category=productivity" replace />} />
               <Route path="/goals" element={<AuthenticatedLayout><GoalsHub /></AuthenticatedLayout>} />
               <Route path="/goals/new" element={<AuthenticatedLayout><GoalWizard /></AuthenticatedLayout>} />
               <Route path="/goals/allocate" element={<AuthenticatedLayout><GoalAllocationManager /></AuthenticatedLayout>} />
