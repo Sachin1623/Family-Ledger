@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, addDoc, writeBatch, doc } from 'firebase/firestore';
@@ -35,7 +35,18 @@ export default function ShoppingLists() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t } = useLanguage();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showForm, setShowForm] = useState(false);
+  // ?new=1 (from the home-page icon when there is no list yet) opens the new-list sheet right away. It reacts to the param itself, not only on mount,
+  // because this screen can already be showing when the link is followed.
+  useEffect(() => {
+    if (searchParams.get('new')) {
+      setShowForm(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('new');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   // Global floating "+" button (Navigation.tsx) becomes "New List" here instead of the default
   // "Add Expense" — see FabActionContext.tsx.
   usePageFabAction('🛒', t('shoppingLists.newList'), () => setShowForm(true));
@@ -300,9 +311,9 @@ export default function ShoppingLists() {
       </main>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" onClick={resetForm}>
+        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' }} onClick={resetForm}>
           <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
-            <form onSubmit={handleCreate} className="bg-white rounded-t-3xl px-4 pt-3 overflow-y-auto" style={{ maxHeight: '92vh', paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}>
+            <form onSubmit={handleCreate} className="bg-white rounded-t-3xl px-4 pt-3 overflow-y-auto" style={{ maxHeight: 'calc(92vh - 4rem - env(safe-area-inset-bottom))', paddingBottom: '1.25rem' }}>
               <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3" />
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-base font-black text-primary">{t('shoppingLists.newList')}</h2>

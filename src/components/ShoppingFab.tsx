@@ -65,7 +65,7 @@ export default function ShoppingFab() {
   return (
     <button
       type="button"
-      onClick={() => navigate('/shopping-lists')}
+      onClick={() => navigate(state === 'none' ? '/shopping-lists?new=1' : '/shopping-lists')}
       aria-label={look.label}
       title={look.label}
       className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center active:scale-95 transition-transform"

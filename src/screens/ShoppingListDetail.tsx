@@ -468,9 +468,9 @@ export default function ShoppingListDetail() {
       )}
 
       {showEdit && (
-        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" onClick={() => setShowEdit(false)}>
+        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' }} onClick={() => setShowEdit(false)}>
           <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
-            <form onSubmit={handleSaveEdit} className="bg-white rounded-t-3xl px-4 pt-3 space-y-3" style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}>
+            <form onSubmit={handleSaveEdit} className="bg-white rounded-t-3xl px-4 pt-3 space-y-3" style={{ paddingBottom: '1.25rem' }}>
               <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-1" />
               <h2 className="text-base font-black text-primary">{t('shoppingLists.editList')}</h2>
               <div className="space-y-1">
@@ -492,9 +492,9 @@ export default function ShoppingListDetail() {
 
       {/* finish shopping: a shared list adds one expense to the group; a personal list is just marked done */}
       {showFinish && (
-        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" onClick={() => setShowFinish(false)}>
+        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' }} onClick={() => setShowFinish(false)}>
           <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
-            <form onSubmit={list.groupId ? handleCompleteWithExpense : (e) => { e.preventDefault(); handleCompletePersonal(); }} className="bg-white rounded-t-3xl px-4 pt-3" style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}>
+            <form onSubmit={list.groupId ? handleCompleteWithExpense : (e) => { e.preventDefault(); handleCompletePersonal(); }} className="bg-white rounded-t-3xl px-4 pt-3" style={{ paddingBottom: '1.25rem' }}>
               <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3" />
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-base font-black text-primary">{t('shoppingLists.markCompleted')}</h2>
@@ -548,6 +548,7 @@ export default function ShoppingListDetail() {
         const status = getItemStatus(viewingItem);
         return (
           <DetailSheet
+            aboveNav
             title={t('shoppingLists.itemDetailTitle')}
             onClose={() => setViewingItem(null)}
             onDelete={() => { const it = viewingItem; setViewingItem(null); handleDeleteItem(it); }}

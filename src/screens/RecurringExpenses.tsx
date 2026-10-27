@@ -647,8 +647,8 @@ export default function RecurringExpenses() {
         </div>
 
         {showFilters && (
-          <div className="fixed inset-0 z-[120] bg-black/40 flex items-end justify-center" onClick={() => setShowFilters(false)}>
-            <div className="w-full max-w-xl bg-white rounded-t-3xl p-5 space-y-4 max-h-[80vh] overflow-y-auto" style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }} onClick={(e) => e.stopPropagation()}>
+          <div className="fixed inset-0 z-[120] bg-black/40 flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' }} onClick={() => setShowFilters(false)}>
+            <div className="w-full max-w-xl bg-white rounded-t-3xl p-5 space-y-4 max-h-[70vh] overflow-y-auto" style={{ paddingBottom: '1.25rem' }} onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-black text-primary">Filters</h3>
                 <button type="button" onClick={() => { setViewFilter('all'); setRepeatFilter('all'); setTypeFilter('all'); setListFilter('all'); }} className="text-xs font-black text-[#0f7a8f]">Clear all</button>
@@ -1150,6 +1150,7 @@ export default function RecurringExpenses() {
         const catInfo = categoryInfoFor(viewingRule);
         return (
           <DetailSheet
+            aboveNav
             title={t('recurring.detailTitle')}
             onClose={() => setViewingRule(null)}
             onEdit={() => { const r = viewingRule; setViewingRule(null); handleEditStart(r); }}

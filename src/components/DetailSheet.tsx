@@ -12,20 +12,22 @@ export default function DetailSheet({
   onClose,
   onEdit,
   onDelete,
+  aboveNav,
   children,
 }: {
   title: string;
   onClose: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  aboveNav?: boolean; // stop above the bottom bar instead of running down over it
   children: React.ReactNode;
 }) {
   const { t } = useLanguage();
   return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center" style={aboveNav ? { paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' } : undefined} onClick={onClose}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
-        className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
+        className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" style={aboveNav ? { maxHeight: 'calc(85vh - 4rem - env(safe-area-inset-bottom))' } : undefined}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-5 border-b border-border-subtle flex items-center justify-between shrink-0">
@@ -38,7 +40,7 @@ export default function DetailSheet({
         {(onEdit || onDelete) && (
           <div
             className="p-4 border-t border-border-subtle shrink-0 flex gap-2"
-            style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
+            style={{ paddingBottom: aboveNav ? '1rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}
           >
 
             {onEdit && (

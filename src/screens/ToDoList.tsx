@@ -722,9 +722,9 @@ export default function ToDoList() {
             </button>
           );
           return (
-            <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" onClick={resetForm}>
+            <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' }} onClick={resetForm}>
               <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
-                <form onSubmit={handleSubmit} className="bg-white rounded-t-3xl px-4 pt-3 overflow-y-auto" style={{ maxHeight: '92vh', paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}>
+                <form onSubmit={handleSubmit} className="bg-white rounded-t-3xl px-4 pt-3 overflow-y-auto" style={{ maxHeight: 'calc(92vh - 4rem - env(safe-area-inset-bottom))', paddingBottom: '1.25rem' }}>
                   <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3" />
                   <div className="flex items-center justify-between mb-3">
                     <h2 className="text-base font-black text-primary">{editingId ? t('todo.editToDo') : t('todo.newToDo')}</h2>
@@ -982,6 +982,7 @@ export default function ToDoList() {
         const creator = allMembers.find((m: any) => m.userId === viewingTodo.userId);
         return (
           <DetailSheet
+            aboveNav
             title={t('todo.detailTitle')}
             onClose={() => setViewingTodo(null)}
             onEdit={() => { const td = viewingTodo; setViewingTodo(null); handleEditStart(td); }}
