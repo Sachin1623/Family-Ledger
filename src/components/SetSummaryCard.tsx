@@ -69,7 +69,15 @@ export default function SetSummaryCard({
   const positiveTotal = positive.reduce((s, r) => s + r.cur, 0);
   const currencies = Array.from(new Set(groups.map((g) => g.currency || 'INR')));
   const symbol = getCurrencySymbol(groups[0]?.currency);
-  const change = prevTotal > 0 ? Math.round(((total - prevTotal) / prevTotal) * 100) : null;
+  const money = (n: number) => `${symbol}${Math.round(Math.abs(n)).toLocaleString()}`;
+  // the comparison is always shown, even when last month had nothing: then it says how much more (or less) than zero
+  const comparison = (() => {
+    const diff = total - prevTotal;
+    if (diff === 0) return `Same as ${prevMonthName} (${money(prevTotal)})`;
+    const arrow = diff > 0 ? '▲' : '▼';
+    if (prevTotal > 0) return `${arrow} ${Math.abs(Math.round((diff / prevTotal) * 100))}% vs ${prevMonthName} (${money(prevTotal)})`;
+    return `${arrow} ${money(diff)} ${diff > 0 ? 'more' : 'less'} than ${prevMonthName} (${money(prevTotal)})`;
+  })();
 
   return (
     <div className="rounded-3xl p-4 text-white shadow-lg" style={{ background: 'linear-gradient(140deg,#0b3b57,#0f7a8f 55%,#22c1a5)' }}>
@@ -79,7 +87,7 @@ export default function SetSummaryCard({
           <p className="text-[11px] font-black uppercase tracking-wider text-white/85 truncate">{set.icon} {set.name} · {monthName}</p>
           <p className="text-[28px] font-black leading-tight tabular-nums">{symbol}{Math.round(total).toLocaleString()}</p>
           <p className="text-[12px] text-white/90">
-            {change === null ? `Nothing spent in ${prevMonthName}` : change === 0 ? `Same as ${prevMonthName}` : `${change > 0 ? '▲' : '▼'} ${Math.abs(change)}% vs ${prevMonthName}`} · {groups.length} group{groups.length === 1 ? '' : 's'}
+            {comparison} · {groups.length} group{groups.length === 1 ? '' : 's'}
           </p>
         </div>
         <button type="button" onClick={onEdit} className="shrink-0 rounded-lg bg-white/15 px-2.5 py-1 text-[11px] font-black active:scale-95">Edit set</button>
