@@ -138,7 +138,10 @@ function ActiveStreakCard({ s, me, onChanged }: React.Attributes & { s: ActiveFr
   );
 }
 
-export default function FriendStreakCard() {
+// what the slim closed line on the home page needs from this card
+export type FriendSummary = { running: number; best: number; waiting: number };
+
+export default function FriendStreakCard({ onSummary }: { onSummary?: (s: FriendSummary) => void } = {}) {
   const { user, profile } = useAuth();
   const [data, setData] = useState<FriendStreaks | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -192,6 +195,14 @@ export default function FriendStreakCard() {
       setBusy(null);
     }
   };
+
+  const sumRunning = data?.streaks.length ?? 0;
+  const sumBest = data ? Math.max(0, ...data.streaks.map((x) => x.current)) : 0;
+  const sumWaiting = data?.incoming.length ?? 0;
+  useEffect(() => {
+    if (data) onSummary?.({ running: sumRunning, best: sumBest, waiting: sumWaiting });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!data, sumRunning, sumBest, sumWaiting]);
 
   const openPicker = async () => {
     setPicking(true);

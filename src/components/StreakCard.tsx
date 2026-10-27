@@ -6,7 +6,7 @@ import { useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { claimPoints } from '../lib/pointsApi';
-import Fireworks from './Fireworks';
+import StreakDayPopup from './StreakDayPopup';
 import StreakFlame, { Snowfield, useFreezeBurst } from './StreakFlame';
 import { restoreStreak, COST_PER_MISSED_DAY } from '../lib/streakApi';
 
@@ -19,13 +19,17 @@ import { restoreStreak, COST_PER_MISSED_DAY } from '../lib/streakApi';
 // Days follow the person's own time zone, the same way the server counts them.
 
 const MILESTONES = [3, 7, 14, 30, 60, 100, 365];
-const SEEN_KEY = 'fl_streak_milestone_seen';
+// the daily "streak continued" popup is shown once per local day
+const POPUP_KEY = 'fl_streak_popup_day';
 
 function localDay(d = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
-export default function StreakCard() {
+// what the slim closed line on the home page needs from this card
+export type StreakSummary = { shown: number; state: 'lit' | 'risk' | 'frozen' | 'out' | 'none'; freezes: number; flame: string; daysToSave: number; lost: boolean };
+
+export default function StreakCard({ onSummary }: { onSummary?: (s: StreakSummary) => void } = {}) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [snap] = useDocument(user ? doc(db, 'userPoints', user.uid, 'meta', 'expenseStreak') : null);
@@ -36,7 +40,7 @@ export default function StreakCard() {
   const [restoring, setRestoring] = useState<'coins' | 'freeze' | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [flare, setFlare] = useState(0);
-  const [milestone, setMilestone] = useState<number | null>(null);
+  const [pop, setPop] = useState<{ from: number; to: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const previous = useRef<number | null>(null);
 
@@ -66,22 +70,33 @@ export default function StreakCard() {
   const prevMilestone = [...MILESTONES].reverse().find((m) => m <= shown) ?? 0;
   const milestonePct = nextMilestone ? Math.max(4, Math.round(((shown - prevMilestone) / (nextMilestone - prevMilestone)) * 100)) : 0;
 
-  // Flare when the number goes up while this card is on screen; celebrate a new milestone once.
+  // Flare when the number goes up while this card is on screen.
   useEffect(() => {
     if (!snap) return;
-    if (previous.current !== null && current > previous.current && state === 'lit') {
-      setFlare((n) => n + 1);
-      if (MILESTONES.includes(current)) {
-        let seen: number[] = [];
-        try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'); } catch { /* ignore */ }
-        if (!seen.includes(current)) {
-          setMilestone(current);
-          try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seen, current])); } catch { /* ignore */ }
-        }
-      }
-    }
+    if (previous.current !== null && current > previous.current && state === 'lit') setFlare((n) => n + 1);
     previous.current = current;
   }, [snap, current, state]);
+
+  // Once a day, the first time the streak shows as continued for today: the popup rolls the count from X to X+1.
+  // Add ?streakpopup=1 to the home address to preview it at any time.
+  useEffect(() => {
+    if (!snap || !user) return;
+    const preview = new URLSearchParams(window.location.search).has('streakpopup');
+    if (preview) { setPop({ from: Math.max(0, (current || 15) - 1), to: current || 15 }); return; }
+    if (state !== 'lit' || current < 1) return;
+    let seen: string | null = null;
+    try { seen = localStorage.getItem(`${POPUP_KEY}_${user.uid}`); } catch { /* ignore */ }
+    if (seen === today) return;
+    try { localStorage.setItem(`${POPUP_KEY}_${user.uid}`, today); } catch { /* ignore */ }
+    setPop({ from: current - 1, to: current });
+  }, [snap, user, state, current, today]);
+
+  const summaryFreezes = data?.freezes ?? 0;
+  const summaryLost = !!lost;
+  useEffect(() => {
+    if (snap) onSummary?.({ shown, state, freezes: summaryFreezes, flame: myFlame, daysToSave, lost: summaryLost });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap, shown, state, summaryFreezes, myFlame, daysToSave, summaryLost]);
 
   const message = useMemo(() => {
     if (state === 'lit') return shown >= 7 ? `${shown} days in a row. You are building real family-finance habits.` : 'Flame lit for today. See you tomorrow!';
@@ -199,22 +214,7 @@ export default function StreakCard() {
         {logButtons && <div className="relative flex gap-2 mt-2 sm:hidden">{logButtons}</div>}
       </div>
 
-      {milestone !== null &&
-        createPortal(
-          <div className="fixed inset-0 z-[320] bg-black/70 flex items-center justify-center p-6" onClick={() => setMilestone(null)}>
-            <div className="relative w-full max-w-xs rounded-3xl p-6 text-center text-white overflow-hidden" style={{ background: 'linear-gradient(160deg,#17405A,#0E2A3B)' }} onClick={(e) => e.stopPropagation()}>
-              <Fireworks />
-              <div className="mx-auto w-24"><StreakFlame state="lit" size={96} ignite={1} /></div>
-              <p className="text-5xl font-black mt-1">{milestone}</p>
-              <p className="text-lg font-black text-amber-300 uppercase tracking-wide">days in a row</p>
-              <p className="text-sm text-white/85 mt-2 leading-snug">
-                {milestone >= 30 ? 'A whole month of looking after your family\'s money. That is real responsibility.' : milestone >= 7 ? 'A full week! You earned bonus XP and a streak freeze.' : 'A great start. Keep your flame going.'}
-              </p>
-              <button type="button" onClick={() => setMilestone(null)} className="mt-5 w-full py-3 rounded-2xl bg-[#FF7A1A] text-white font-black">Keep going</button>
-            </div>
-          </div>,
-          document.body,
-        )}
+      {pop && <StreakDayPopup from={pop.from} to={pop.to} flame={myFlame} onClose={() => setPop(null)} />}
     </>
   );
 }

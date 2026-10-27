@@ -53,6 +53,7 @@ export default function SetSummaryCard({
   onAnalyse: () => void;
   onAdd: () => void;
 }) {
+  const [open, setOpen] = useState(false); // closed by default: one slim line, the full card on a tap
   const [stats, setStats] = useState<Record<string, { cur: number; prev: number }>>({});
   const report = useCallback((id: string, cur: number, prev: number) => {
     setStats((s) => (s[id] && s[id].cur === cur && s[id].prev === prev ? s : { ...s, [id]: { cur, prev } }));
@@ -70,18 +71,42 @@ export default function SetSummaryCard({
   const currencies = Array.from(new Set(groups.map((g) => g.currency || 'INR')));
   const symbol = getCurrencySymbol(groups[0]?.currency);
   const money = (n: number) => `${symbol}${Math.round(Math.abs(n)).toLocaleString()}`;
+  // a month where income beat spending nets below zero, so the earlier month's figure keeps its minus sign
+  const signed = (n: number) => `${n < 0 ? '−' : ''}${money(n)}`;
   // the comparison is always shown, even when last month had nothing: then it says how much more (or less) than zero
   const comparison = (() => {
     const diff = total - prevTotal;
-    if (diff === 0) return `Same as ${prevMonthName} (${money(prevTotal)})`;
+    if (diff === 0) return `Same as ${prevMonthName} (${signed(prevTotal)})`;
     const arrow = diff > 0 ? '▲' : '▼';
-    if (prevTotal > 0) return `${arrow} ${Math.abs(Math.round((diff / prevTotal) * 100))}% vs ${prevMonthName} (${money(prevTotal)})`;
-    return `${arrow} ${money(diff)} ${diff > 0 ? 'more' : 'less'} than ${prevMonthName} (${money(prevTotal)})`;
+    if (prevTotal > 0) return `${arrow} ${Math.abs(Math.round((diff / prevTotal) * 100))}% vs ${prevMonthName} (${signed(prevTotal)})`;
+    return `${arrow} ${money(diff)} ${diff > 0 ? 'more' : 'less'} than ${prevMonthName} (${signed(prevTotal)})`;
   })();
 
+  const shortDiff = total - prevTotal;
+  const shortCmp = shortDiff === 0 ? '＝' : `${shortDiff > 0 ? '▲' : '▼'} ${prevTotal > 0 ? `${Math.abs(Math.round((shortDiff / prevTotal) * 100))}%` : money(shortDiff)}`;
+  const gradient = 'linear-gradient(140deg,#0b3b57,#0f7a8f 55%,#22c1a5)';
+  const probes = groups.map((g) => <Fragment key={g.id}><GroupMonthProbe groupId={g.id} onStats={report} /></Fragment>);
+
+  // closed: one line with the set, this month's total and how it compares; the probes stay mounted so the numbers are always current
+  if (!open) {
+    return (
+      <>
+        {probes}
+        <button type="button" onClick={() => setOpen(true)} aria-expanded={false} aria-label={`Open ${set.name} summary`} className="w-full flex items-center gap-2 rounded-2xl px-3 py-2 text-left text-white shadow-sm active:scale-[0.99] transition-transform" style={{ background: gradient }}>
+          <span className="text-base leading-none">{set.icon}</span>
+          <span className="min-w-0 truncate text-[11px] font-black uppercase tracking-wider text-white/85">{set.name} · {monthName}</span>
+          <span className="flex-1" />
+          <span className="text-lg font-black leading-none tabular-nums whitespace-nowrap">{symbol}{Math.round(total).toLocaleString()}</span>
+          <span className="text-[11px] font-black rounded-full bg-white/15 px-2 py-1 leading-none whitespace-nowrap">{shortCmp}<span className="hidden sm:inline font-bold"> vs {prevMonthName}</span></span>
+          <span className="material-symbols-outlined text-[20px] shrink-0 text-white/70">expand_more</span>
+        </button>
+      </>
+    );
+  }
+
   return (
-    <div className="rounded-3xl p-4 text-white shadow-lg" style={{ background: 'linear-gradient(140deg,#0b3b57,#0f7a8f 55%,#22c1a5)' }}>
-      {groups.map((g) => <Fragment key={g.id}><GroupMonthProbe groupId={g.id} onStats={report} /></Fragment>)}
+    <div className="rounded-3xl p-4 text-white shadow-lg" style={{ background: gradient }}>
+      {probes}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-black uppercase tracking-wider text-white/85 truncate">{set.icon} {set.name} · {monthName}</p>
@@ -90,7 +115,10 @@ export default function SetSummaryCard({
             {comparison} · {groups.length} group{groups.length === 1 ? '' : 's'}
           </p>
         </div>
-        <button type="button" onClick={onEdit} className="shrink-0 rounded-lg bg-white/15 px-2.5 py-1 text-[11px] font-black active:scale-95">Edit set</button>
+        <div className="shrink-0 flex items-center gap-1.5">
+          <button type="button" onClick={onEdit} className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] font-black active:scale-95">Edit set</button>
+          <button type="button" onClick={() => setOpen(false)} aria-expanded aria-label="Show less" className="rounded-lg bg-white/15 w-7 h-7 flex items-center justify-center active:scale-95"><span className="material-symbols-outlined text-[20px]">expand_less</span></button>
+        </div>
       </div>
 
       {groups.length === 0 ? (

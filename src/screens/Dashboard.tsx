@@ -21,8 +21,7 @@ import ImageLightbox from '../components/ImageLightbox';
 import { peekRecentlyAdded, clearRecentlyAdded } from '../lib/recentlyAddedExpenses';
 import { setExpandGroupTileFn } from '../lib/dashboardTileRef';
 import AccountsExplainerModal from '../components/AccountsExplainerModal';
-import StreakCard from '../components/StreakCard';
-import FriendStreakCard from '../components/FriendStreakCard';
+import StreaksPanel from '../components/StreaksPanel';
 import VoiceQuickAdd from '../components/VoiceQuickAdd';
 import { QUICK_ADDED_EVENT } from '../lib/voiceQuickAdd';
 import { speechAvailableHere } from '../lib/speech';
@@ -243,7 +242,6 @@ export default function Dashboard() {
     const g: any = d.data();
     return { id: d.id, name: g.name || '', icon: g.icon, photoURL: g.photoURL || null, archived: !!g.archived, currency: g.currency };
   });
-  const [favoritesCollapsed, setFavoritesCollapsed] = useState(true);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [showReorderModal, setShowReorderModal] = useState(false);
   const [dragOrder, setDragOrder] = useState<string[]>([]);
@@ -360,10 +358,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-24">
-      <div className="space-y-2">
-        <StreakCard />
-        <FriendStreakCard />
-      </div>
+      <StreaksPanel />
       {showAccountsGoalsBanner && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
           <span className="text-2xl shrink-0">💰</span>
@@ -398,35 +393,21 @@ export default function Dashboard() {
       )}
       {favoriteItems.length > 0 && (
         <section>
-          <button
-            type="button"
-            onClick={() => setFavoritesCollapsed((c) => !c)}
-            className="w-full flex items-center justify-between mb-3"
-          >
-            <h3 className="text-sm font-black text-primary uppercase tracking-wider">{t('dashboard.favorites')}</h3>
-            <span className={clsx('material-symbols-outlined text-text-muted transition-transform', favoritesCollapsed && '-rotate-90')}>expand_more</span>
-          </button>
-          <motion.div
-            initial={false}
-            animate={{ height: favoritesCollapsed ? 0 : 'auto', opacity: favoritesCollapsed ? 0 : 1 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="overflow-hidden"
-          >
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {favoriteItems.map((item) => (
-                <div
-                  key={item.key}
-                  onClick={() => navigate(item.to)}
-                  className="shrink-0 w-16 flex flex-col items-center gap-1 bg-white rounded-xl border border-border-subtle p-2 cursor-pointer hover:shadow-sm active:scale-95 transition-all"
-                >
-                  <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center">
-                    <span className="text-xl">{item.icon}</span>
-                  </div>
-                  <p className="text-[9px] font-bold text-on-surface text-center leading-tight line-clamp-2">{item.label}</p>
-                </div>
-              ))}
-            </div>
-          </motion.div>
+          {/* always visible: one scrolling line of shortcuts, no open/close */}
+          <h3 className="text-[11px] font-black text-primary uppercase tracking-wider mb-1.5">{t('dashboard.favorites')}</h3>
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {favoriteItems.map((item) => (
+              <button
+                type="button"
+                key={item.key}
+                onClick={() => navigate(item.to)}
+                className="shrink-0 flex items-center gap-2 bg-white rounded-xl border border-border-subtle pl-1.5 pr-3 py-1.5 hover:shadow-sm active:scale-95 transition-all"
+              >
+                <span className="w-8 h-8 rounded-lg bg-primary/5 flex items-center justify-center text-lg">{item.icon}</span>
+                <span className="text-xs font-bold text-on-surface whitespace-nowrap">{item.label}</span>
+              </button>
+            ))}
+          </div>
         </section>
       )}
 
