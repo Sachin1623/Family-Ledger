@@ -455,7 +455,9 @@ export default function Dashboard() {
         </div>
 
         {(activeMemberships.length > 1 || sets.length > 0) && (
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mb-4 -mx-1 px-1">
+          <div className="mb-4">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
+            <span className="shrink-0 pr-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-slate-500" title="A set is a saved list of your groups">Sets</span>
             {[{ id: 'all', label: t('groupExpenses.all'), icon: '' }, ...sets.map((x) => ({ id: x.id, label: x.name, icon: x.icon }))].map((c) => (
               <button
                 key={c.id}
@@ -466,7 +468,10 @@ export default function Dashboard() {
                 {c.icon ? `${c.icon} ` : ''}{c.label}
               </button>
             ))}
-            <button type="button" onClick={() => setEditingSet('new')} title="New set" className="shrink-0 rounded-full px-3 py-1.5 text-xs font-black border border-dashed border-slate-300 text-[#0f7a8f] active:scale-95">＋</button>
+            <button type="button" onClick={() => setEditingSet('new')} title="Make a new set of groups" className="shrink-0 rounded-full px-3 py-1.5 text-xs font-black border border-dashed border-slate-300 text-[#0f7a8f] active:scale-95">{sets.length < 2 ? '＋ New set' : '＋'}</button>
+          </div>
+          {/* until there is a set, say what it is for */}
+          {sets.length === 0 && <p className="mt-1.5 px-0.5 text-[11px] leading-snug text-text-muted">A set groups some of your groups, like Everyday or Festivals, so you can see their spending together here and in Analysis.</p>}
           </div>
         )}
         {activeHomeSet && (

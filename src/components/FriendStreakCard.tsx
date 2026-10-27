@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import { doc } from 'firebase/firestore';
@@ -223,9 +223,9 @@ export default function FriendStreakCard() {
   const hiddenInvites = Math.max(0, items.length - data.max);
 
   const first = (n: string) => n.split(' ')[0];
-  const tile = 'relative rounded-2xl px-1 py-1.5 flex flex-col items-center justify-center gap-0.5 min-w-0 h-[74px] flex-1 basis-0 active:scale-95 transition-transform';
+  const tile = 'relative rounded-2xl px-1 py-1.5 flex flex-col items-center justify-center gap-0.5 min-w-0 h-[62px] flex-1 basis-0 active:scale-95 transition-transform';
   // a running streak is the tile with most to show, so it gets a wider slot than a waiting invite or an empty one
-  const wide = 'flex-[1.5]';
+  const wide = 'flex-[2]';
 
   const selected = sheet ? slots.find((x) => (x.kind === 'active' && x.s.pairId === sheet) || (x.kind === 'incoming' && x.inv.pairId === sheet) || (x.kind === 'outgoing' && x.o.pairId === sheet)) : null;
   const filled = items.length;
@@ -244,17 +244,23 @@ export default function FriendStreakCard() {
               const frozen = s.state === 'frozen';
               return (
                 <button key={s.pairId} type="button" onClick={() => setSheet(s.pairId)} className={clsx(tile, wide, 'text-white shadow-sm')} style={{ background: frozen ? 'linear-gradient(160deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(160deg,#3a1208 0%,#9a3412 60%,#ea580c 100%)' }} aria-label={`Streak with ${s.partner.name}: ${s.current} days`}>
-                  {/* you on the left, your friend on the right: each photo has its own flame right under it (in the style that person picked) and a green tick once they have logged today */}
-                  <span className="flex items-end justify-center gap-1 leading-none">
-                    {[{ p: me, done: s.myDone, flame: data.me?.flame }, { p: s.partner, done: s.partnerDone, flame: s.partner.flame }].map((x, i) => (
-                      <span key={i} className="flex flex-col items-center">
-                        <span className="relative">
-                          <Avatar p={x.p} size={24} ring />
+                  {/* one row: your photo at the left edge, then your flame, a divider down the middle, their flame, and their photo at the right edge. Each flame is in the style that person picked, and a green tick shows once they have logged today */}
+                  <span className="flex items-center justify-between w-full leading-none px-0.5">
+                    {[{ p: me, done: s.myDone, flame: data.me?.flame }, { p: s.partner, done: s.partnerDone, flame: s.partner.flame }].map((x, i) => {
+                      const avatar = (
+                        <span className="relative shrink-0">
+                          <Avatar p={x.p} size={20} ring />
                           {x.done && <span className="absolute -right-1 -bottom-0.5 w-3 h-3 rounded-full bg-emerald-400 text-emerald-950 flex items-center justify-center text-[8px] font-black ring-1 ring-black/30">✓</span>}
                         </span>
-                        <span className="w-[16px] h-[19px] overflow-visible mt-0.5"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={16} flame={x.flame} /></span>
-                      </span>
-                    ))}
+                      );
+                      const flame = <span className="w-[14px] h-[18px] overflow-visible shrink-0"><StreakFlame state={frozen ? 'frozen' : s.current > 0 ? 'lit' : 'out'} size={14} flame={x.flame} /></span>;
+                      return (
+                        <Fragment key={i}>
+                          {i === 1 && <span className="self-stretch w-px my-0.5 bg-white/35 shrink-0" />}
+                          <span className="flex items-center gap-0.5 min-w-0">{i === 0 ? <>{avatar}{flame}</> : <>{flame}{avatar}</>}</span>
+                        </Fragment>
+                      );
+                    })}
                   </span>
                   <span className="flex items-baseline justify-center gap-1 leading-none w-full min-w-0">
                     <span className="text-sm font-black tabular-nums">{s.current}</span>
