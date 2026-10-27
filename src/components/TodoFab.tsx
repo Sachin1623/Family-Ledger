@@ -47,7 +47,7 @@ export default function TodoFab() {
     return () => clearInterval(t);
   }, []);
 
-  const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname);
+  const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname) || location.pathname.startsWith('/shopping-lists/'); // a shopping list has its own add-item bar
   if (!user || hidden || tasks === null) return null;
 
   const open = tasks.filter((t) => !t.done);

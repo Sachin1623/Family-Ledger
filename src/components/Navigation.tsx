@@ -1,4 +1,5 @@
 import React from 'react';
+import ShoppingFab from './ShoppingFab';
 import TodoFab from './TodoFab';
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import VoiceQuickAdd from './VoiceQuickAdd';
@@ -60,6 +61,8 @@ function isHiddenFabPath(pathname: string): boolean {
   if (pathname.startsWith('/games')) return true;
   // a person's profile page (their own or someone else's): no floating buttons over it
   if (pathname.startsWith('/u/')) return true;
+  // a shopping list has its own add-item bar above the bottom bar
+  if (pathname.startsWith('/shopping-lists/')) return true;
   if (/^\/groups\/[^/]+\/manage$/.test(pathname)) return true;
   // Every baby-vaccinations screen except the dashboard itself already has its own primary
   // action (Save Visit, Send Invite, ...) in a bottom bar — a second "Add Expense"-flavored FAB
@@ -147,6 +150,7 @@ export default function Navigation() {
     <>
       <QuestFab />
       <TodoFab />
+      <ShoppingFab />
       {showVoice && (
         <VoiceQuickAdd
           onDone={() => setShowVoice(false)}

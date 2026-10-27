@@ -136,7 +136,7 @@ export default function QuestFab() {
   const tabChosen = useRef(false);
 
   const enabled = !!user && profile?.questsEnabled !== false;
-  const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname);
+  const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname) || location.pathname.startsWith('/shopping-lists/'); // a shopping list has its own add-item bar
 
   const refresh = useCallback(async () => {
     try {
