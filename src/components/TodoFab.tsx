@@ -7,7 +7,7 @@ import { db } from '../lib/firebase';
 // A floating icon, always there above the quest trophy, that opens the To-Do list and looks different for each situation:
 //   overdue            red ring, red count of what is due today or late
 //   due today          amber ring, amber count
-//   open but not today blue ring, small count of what is still open
+//   open but not today blue ring, no number (nothing is due today)
 //   all done           green ring with a tick
 //   nothing yet        quiet dashed ring with a plus, tap to add the first one
 // It listens to my own to-dos only (habits that repeat are left out, they have their own tiles on the list).
@@ -65,7 +65,7 @@ export default function TodoFab() {
   const look = {
     overdue: { border: '#f43f5e', icon: 'checklist', color: '#e11d48', count: dueNow, badge: 'bg-rose-500', label: `${dueNow} to-do${dueNow === 1 ? '' : 's'} due or overdue` },
     today: { border: '#f59e0b', icon: 'checklist', color: '#d97706', count: dueNow, badge: 'bg-amber-500', label: `${dueNow} to-do${dueNow === 1 ? '' : 's'} due today` },
-    open: { border: '#38bdf8', icon: 'checklist', color: '#0284c7', count: open.length, badge: 'bg-sky-500', label: `${open.length} open to-do${open.length === 1 ? '' : 's'}, none due today` },
+    open: { border: '#38bdf8', icon: 'checklist', color: '#0284c7', count: 0, badge: 'bg-sky-500', label: `${open.length} open to-do${open.length === 1 ? '' : 's'}, none due today` },
     done: { border: '#22c55e', icon: 'task_alt', color: '#16a34a', count: 0, badge: 'bg-green-500', label: 'All to-dos done' },
     empty: { border: '#cbd5e1', icon: 'add_task', color: '#64748b', count: 0, badge: '', label: 'Add a to-do' },
   }[state];

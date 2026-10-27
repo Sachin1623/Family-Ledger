@@ -68,15 +68,20 @@ const HABIT_TONES = [
 
 // A friendly icon for a task, guessed from its words (a shared task shows its group's icon instead)
 const TASK_ICONS: [RegExp, string][] = [
-  [/\b(pay|bill|fee|fees|rent|emi|loan|tax|recharge)\b/i, '💳'],
-  [/\b(call|phone|ring)\b/i, '📞'],
-  [/\b(buy|shop|shopping|order|grocer\w*|gift)\b/i, '🛒'],
-  [/\b(doctor|medicine|dentist|hospital|checkup|vaccin\w*)\b/i, '🩺'],
-  [/\b(meeting|meet|appointment|interview)\b/i, '📅'],
-  [/\b(school|class|exam|homework|study|teacher)\b/i, '🎓'],
-  [/\b(car|bike|insurance|service|repair|plumber|electrician)\b/i, '🔧'],
-  [/\b(book|ticket|flight|train|travel|trip)\b/i, '🎫'],
-  [/\b(clean|laundry|wash|cook|dinner|lunch)\b/i, '🏠'],
+  [/\b(bank|hdfc|sbi|icici|axis|kotak|balance|account|deposit|fd|savings?|cry\w*|bitcoin|invest\w*|mutual|sip|stocks?|shares?)\b/i, '🏦'],
+  [/\b(pay|bill|fee|fees|rent|emi|loan|tax|recharge|premium|subscription|electricity)\b/i, '💳'],
+  [/\b(call|phone|ring|whatsapp|text|message|email|mail)\b/i, '📞'],
+  [/\b(buy|shop|shopping|order|grocer\w*|gift|purchase|market)\b/i, '🛒'],
+  [/\b(doctor|medicine|medicines|tablet|dentist|hospital|checkup|check-up|vaccin\w*|lab|blood|health)\b/i, '🩺'],
+  [/\b(meeting|meet|appointment|interview|presentation|conference)\b/i, '📅'],
+  [/\b(school|class|exam|homework|study|teacher|tuition|college|admission|course)\b/i, '🎓'],
+  [/\b(car|bike|scooter|insurance|service|repair|plumber|electrician|mechanic|fix|puncture)\b/i, '🔧'],
+  [/\b(book|ticket|flight|train|travel|trip|hotel|visa|passport|booking)\b/i, '✈️'],
+  [/\b(clean|laundry|wash|cook|dinner|lunch|breakfast|kitchen|iron|sweep|dust)\b/i, '🧹'],
+  [/\b(birthday|anniversary|party|wedding|function|festival|diwali|holi|celebrat\w*)\b/i, '🎉'],
+  [/\b(gym|workout|run|walk|yoga|exercise|swim\w*|cycle)\b/i, '🏃'],
+  [/\b(renew|submit|file|form|document|documents|aadhaar|pan|apply|application|licen[cs]e|registration)\b/i, '📄'],
+  [/\b(maintain|check|review|remember|remind\w*|follow\s?up)\b/i, '🔔'],
 ];
 const taskIcon = (text: string) => TASK_ICONS.find(([re]) => re.test(text || ''))?.[1] || '📝';
 
@@ -544,7 +549,7 @@ export default function ToDoList() {
           style={{ background: tileBg }}
           aria-label={todo.done ? 'Mark as not done' : 'Mark as done'}
         >
-          {todo.done ? <span className="material-symbols-outlined text-[22px] text-white" style={{ fontVariationSettings: "'wght' 700" }}>check</span> : group?.photoURL ? <img src={group.photoURL} alt="" className="w-full h-full rounded-xl object-cover" referrerPolicy="no-referrer" /> : <span>{group ? groupIconEmoji(group.icon) : taskIcon(todo.text)}</span>}
+          {todo.done ? <span className="material-symbols-outlined text-[22px] text-white" style={{ fontVariationSettings: "'wght' 700" }}>check</span> : <span>{taskIcon(todo.text)}</span>}
           {!todo.done && <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border-2 border-slate-300" />}
         </button>
         {todo.images?.[0] && (
