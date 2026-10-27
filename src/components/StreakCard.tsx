@@ -113,6 +113,17 @@ export default function StreakCard() {
   if (!user) return null;
   const freezes = data?.freezes ?? 0;
   const risky = state === 'risk';
+  // the two daily actions; beside the message on wider screens, in their own slim row on a phone, so they never need a full row of their own on a tablet or desktop
+  const logButtons = (risky || state === 'out' || state === 'none') ? (
+    <>
+      <button type="button" onClick={() => navigate('/add-expense')} className="flex-1 sm:flex-none sm:px-5 py-2 sm:py-1.5 rounded-xl bg-[#FF7A1A] text-white text-sm sm:text-xs font-black active:scale-95">
+        {risky ? 'Log now' : 'Log an expense'}
+      </button>
+      <button type="button" onClick={noSpend} disabled={busy} className="flex-1 sm:flex-none sm:px-5 py-2 sm:py-1.5 rounded-xl bg-white/15 text-white text-sm sm:text-xs font-black active:scale-95 disabled:opacity-60">
+        {busy ? '…' : 'No spend today'}
+      </button>
+    </>
+  ) : null;
 
   return (
     <>
@@ -124,22 +135,23 @@ export default function StreakCard() {
         .sc-ice{text-shadow:0 0 14px rgba(125,211,252,.9)}
         @media (prefers-reduced-motion: reduce){.sc-roll,.sc-hot{animation:none!important}}
       `}</style>
-      <div className={`relative overflow-hidden rounded-2xl px-4 py-3 text-white shadow-sm ${risky ? 'ring-2 ring-orange-400' : ''}`} style={{ background: state === 'lit' || state === 'risk' ? 'linear-gradient(135deg,#3a1208 0%,#7c2d12 55%,#9a3412 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
+      <div className={`relative overflow-hidden rounded-2xl px-3.5 py-2.5 text-white shadow-sm ${risky ? 'ring-2 ring-orange-400' : ''}`} style={{ background: state === 'lit' || state === 'risk' ? 'linear-gradient(135deg,#3a1208 0%,#7c2d12 55%,#9a3412 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}>
         {/* the ice fades in over the card when the streak freezes and melts away when it thaws */}
         <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000" style={{ opacity: state === 'frozen' ? 1 : 0, background: 'linear-gradient(135deg,#0c4a6e 0%,#0369a1 60%,#38bdf8 140%)' }} />
         <Snowfield show={state === 'frozen'} />
         <div className="relative flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2 sm:gap-x-5">
-          <div className="shrink-0" style={{ width: 60 }}>
-            <StreakFlame state={state} size={58} burst={burst} ignite={flare} flame={myFlame} />
+          <div className="shrink-0" style={{ width: 46 }}>
+            <StreakFlame state={state} size={46} burst={burst} ignite={flare} flame={myFlame} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
-              <span key={shown} className={`sc-roll text-4xl sm:text-5xl font-black leading-none tabular-nums ${state === 'lit' || state === 'risk' ? 'sc-hot' : state === 'frozen' ? 'sc-ice' : ''}`}>{shown}</span>
+              <span key={shown} className={`sc-roll text-3xl sm:text-4xl font-black leading-none tabular-nums ${state === 'lit' || state === 'risk' ? 'sc-hot' : state === 'frozen' ? 'sc-ice' : ''}`}>{shown}</span>
               <span className="text-sm font-black text-amber-300 uppercase tracking-wide">day streak</span>
               {freezes > 0 && <span className="text-xs font-bold bg-sky-400/20 text-sky-200 rounded-full px-2 py-0.5" title="Streak freezes you have earned">❄ {freezes}</span>}
               <button type="button" onClick={() => navigate('/my-style')} className="text-[11px] font-bold bg-white/15 text-white/90 rounded-full px-2 py-0.5 active:scale-95" title="Flame styles and badges">🎨 Style</button>
             </div>
             <p className="text-[12px] text-white/80 leading-snug mt-0.5">{message}</p>
+            {logButtons && <div className="hidden sm:flex gap-2 mt-2">{logButtons}</div>}
           </div>
           {/* the last 7 days, and how close the next milestone is: fills the width instead of leaving it empty */}
           <div className="w-full sm:w-[290px] shrink-0">
@@ -147,12 +159,12 @@ export default function StreakCard() {
               {week.map((d, i) => (
                 <div key={i} className="w-7 text-center text-[10px] font-bold text-white/65 leading-none">
                   {d.label}
-                  <span className={`mt-1 mx-auto flex h-6 w-6 items-center justify-center rounded-full text-[12px] ${d.on ? 'bg-amber-400 text-orange-950' : 'bg-white/15'} ${d.today ? (d.on ? 'ring-2 ring-white' : 'ring-2 ring-amber-300/80') : ''}`}>{d.on ? '✓' : ''}</span>
+                  <span className={`mt-0.5 mx-auto flex h-[22px] w-[22px] items-center justify-center rounded-full text-[12px] ${d.on ? 'bg-amber-400 text-orange-950' : 'bg-white/15'} ${d.today ? (d.on ? 'ring-2 ring-white' : 'ring-2 ring-amber-300/80') : ''}`}>{d.on ? '✓' : ''}</span>
                 </div>
               ))}
             </div>
             {nextMilestone && (
-              <div className="mt-2">
+              <div className="mt-1.5">
                 <p className="text-[11px] text-white/75 leading-none">Next milestone: {nextMilestone} days · {nextMilestone - shown} to go</p>
                 <div className="mt-1 h-1.5 rounded-full bg-white/20 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-200 transition-all duration-700" style={{ width: `${milestonePct}%` }} /></div>
               </div>
@@ -184,16 +196,7 @@ export default function StreakCard() {
           </div>
         )}
         {lost && state !== 'frozen' && restoreError && <p className="mt-1 text-[11px] font-bold text-amber-200">{restoreError}</p>}
-        {(risky || state === 'out' || state === 'none') && (
-          <div className="relative flex gap-2 mt-3">
-            <button type="button" onClick={() => navigate('/add-expense')} className="flex-1 py-2.5 rounded-xl bg-[#FF7A1A] text-white text-sm font-black active:scale-95">
-              {risky ? 'Log now' : 'Log an expense'}
-            </button>
-            <button type="button" onClick={noSpend} disabled={busy} className="flex-1 py-2.5 rounded-xl bg-white/15 text-white text-sm font-black active:scale-95 disabled:opacity-60">
-              {busy ? '…' : 'No spend today'}
-            </button>
-          </div>
-        )}
+        {logButtons && <div className="relative flex gap-2 mt-2 sm:hidden">{logButtons}</div>}
       </div>
 
       {milestone !== null &&

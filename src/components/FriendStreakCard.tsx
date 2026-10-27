@@ -223,7 +223,7 @@ export default function FriendStreakCard() {
   const hiddenInvites = Math.max(0, items.length - data.max);
 
   const first = (n: string) => n.split(' ')[0];
-  const tile = 'relative rounded-2xl px-1 py-1.5 flex flex-col items-center justify-center gap-0.5 min-w-0 h-[84px] flex-1 basis-0 active:scale-95 transition-transform';
+  const tile = 'relative rounded-2xl px-1 py-1.5 flex flex-col items-center justify-center gap-0.5 min-w-0 h-[74px] flex-1 basis-0 active:scale-95 transition-transform';
   // a running streak is the tile with most to show, so it gets a wider slot than a waiting invite or an empty one
   const wide = 'flex-[1.5]';
 
@@ -232,8 +232,8 @@ export default function FriendStreakCard() {
 
   return (
     <>
-      <div className="rounded-2xl bg-white border border-slate-200 px-3 py-2.5 shadow-sm">
-        <div className="flex items-center justify-between px-0.5 mb-1.5">
+      <div className="rounded-2xl bg-white border border-slate-200 px-3 py-2 shadow-sm">
+        <div className="flex items-center justify-between px-0.5 mb-1">
           <p className="text-[11px] font-black uppercase tracking-[0.14em] text-orange-700">Friend streaks</p>
           <p className="text-[11px] font-black text-text-muted tabular-nums">{Math.min(filled, data.max)}/{data.max}</p>
         </div>
