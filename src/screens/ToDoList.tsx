@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, setDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
-import { scheduleLocalTodoReminder, cancelLocalTodoReminder } from '../lib/localReminders';
+import { scheduleLocalTodoReminder, cancelLocalTodoReminder, syncTodoAlarms, canRingTodoAlarm } from '../lib/localReminders';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { fireWrite } from '../lib/offlineWrite';
 import { executeCashToAccountTransfer, notifyGoalsMet } from '../lib/accountAllocations';
@@ -35,6 +35,16 @@ const toDateOnly = (d: Date) => {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
+
+// Quick due-date choices in the new-to-do sheet
+const addDays = (dateStr: string, n: number) => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return toDateOnly(d);
+};
+// the coming Saturday (today, if it is one) and the coming Monday (never today)
+const comingSaturday = (todayStr: string) => addDays(todayStr, (6 - new Date(`${todayStr}T00:00:00`).getDay() + 7) % 7);
+const comingMonday = (todayStr: string) => addDays(todayStr, ((1 - new Date(`${todayStr}T00:00:00`).getDay() + 7) % 7) || 7);
 
 // Reminder date/time are two separate native inputs (matching the Due Date field and
 // FrequencyPicker's time input elsewhere in the app) rather than one combined `datetime-local`
@@ -120,6 +130,11 @@ export default function ToDoList() {
   const [showSearch, setShowSearch] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const [quickText, setQuickText] = useState('');
+  // new-to-do sheet: how the reminder arrives, which extra panel is open, and whether the date / time pickers are showing
+  const [reminderStyle, setReminderStyle] = useState<'notification' | 'alarm'>('notification');
+  const [moreOpen, setMoreOpen] = useState<'note' | 'photo' | 'repeat' | null>(null);
+  const [showPickDate, setShowPickDate] = useState(false);
+  const [showCustomRemind, setShowCustomRemind] = useState(false);
 
   const [membershipsValue] = useCollection(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
@@ -227,15 +242,21 @@ export default function ToDoList() {
   // deleted todo no longer appears in the snapshot for this effect to cancel.
   useEffect(() => {
     if (!myTodosValue) return;
+    // a to-do that asked for an alarm rings as one on Android (and then needs no plain notification); everywhere else it is a notification
+    const alarms: { id: string; text: string; reminderAt: string }[] = [];
     myTodosValue.docs.forEach((d) => {
       const todo = { id: d.id, ...d.data() } as any;
       const eligible = !todo.done && !todo.groupId && todo.reminderAt;
-      if (eligible) {
+      if (eligible && todo.reminderStyle === 'alarm' && canRingTodoAlarm()) {
+        alarms.push({ id: todo.id, text: todo.text, reminderAt: todo.reminderAt });
+        cancelLocalTodoReminder(todo.id);
+      } else if (eligible) {
         scheduleLocalTodoReminder({ id: todo.id, text: todo.text, reminderAt: todo.reminderAt });
       } else {
         cancelLocalTodoReminder(todo.id);
       }
     });
+    syncTodoAlarms(alarms);
   }, [myTodosValue]);
 
   const resetForm = () => {
@@ -250,6 +271,10 @@ export default function ToDoList() {
     setRecurring(false);
     setFreqConfig({ frequency: 'daily' });
     setReminderOffsetMinutes(null);
+    setReminderStyle('notification');
+    setMoreOpen(null);
+    setShowPickDate(false);
+    setShowCustomRemind(false);
     setShowForm(false);
   };
 
@@ -272,6 +297,10 @@ export default function ToDoList() {
     setRecurring(!!todo.recurring);
     setFreqConfig(frequencyConfigFromFields(todo));
     setReminderOffsetMinutes(todo.reminderOffsetMinutes ?? null);
+    setReminderStyle(todo.reminderStyle === 'alarm' ? 'alarm' : 'notification');
+    setMoreOpen(todo.recurring ? 'repeat' : todo.notes ? 'note' : (todo.images?.length || 0) > 0 ? 'photo' : null);
+    setShowPickDate(false);
+    setShowCustomRemind(false);
     setShowForm(true);
   };
 
@@ -311,6 +340,7 @@ export default function ToDoList() {
           dueDate,
           reminderSent: false,
           groupId: groupId || null,
+          reminderStyle: reminderAt && !groupId ? reminderStyle : null,
           images,
           notes: trimmedNotes || null,
           ...recurringFields,
@@ -326,6 +356,7 @@ export default function ToDoList() {
           dueDate,
           reminderSent: false,
           groupId: groupId || null,
+          ...(reminderAt && !groupId ? { reminderStyle } : {}),
           createdAt: new Date().toISOString(),
           ...(images.length > 0 ? { images } : {}),
           ...(trimmedNotes ? { notes: trimmedNotes } : {}),
@@ -661,147 +692,181 @@ export default function ToDoList() {
           </>
         )}
 
-        {showForm && (
-          <div className="fixed inset-0 bg-black/40 z-[120] flex items-start justify-center p-4 pt-10 overflow-y-auto" onClick={resetForm}>
-          <div className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-          <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-border-subtle p-6 space-y-4">
-            <h2 className="text-sm font-bold text-primary">{editingId ? t('todo.editToDo') : t('todo.newToDo')}</h2>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.whatNeedsDoing')}</label>
-              <input
-                type="text"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder={t('todo.whatNeedsDoingPlaceholder')}
-                maxLength={300}
-                required
-                autoFocus
-                className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.notesOptional')}</label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder={t('todo.notesPlaceholder')}
-                maxLength={500}
-                rows={2}
-                className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
-              />
-            </div>
-
-            <div className="space-y-2 bg-surface p-3 rounded-xl border border-border-subtle">
-              <label className="flex items-center gap-2 text-xs font-bold text-on-surface cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={recurring}
-                  onChange={(e) => setRecurring(e.target.checked)}
-                  className="w-4 h-4 accent-primary"
-                />
-                <span className="material-symbols-outlined text-[16px] text-primary">autorenew</span>
-                {t('todo.repeatToggle')}
-              </label>
-              {recurring && (
-                <>
-                  <p className="text-[10px] text-text-muted px-1">{t('todo.repeatHelp')}</p>
-                  <FrequencyPicker config={freqConfig} onChange={setFreqConfig} />
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.remindBeforeDue')}</label>
-                    <select
-                      value={reminderOffsetMinutes ?? ''}
-                      onChange={(e) => setReminderOffsetMinutes(e.target.value ? Number(e.target.value) : null)}
-                      className="w-full bg-white p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                    >
-                      <option value="">{t('todo.noReminder')}</option>
-                      <option value="15">{t('todo.remind15min')}</option>
-                      <option value="30">{t('todo.remind30min')}</option>
-                      <option value="60">{t('todo.remind1hr')}</option>
-                      <option value="240">{t('todo.remind4hr')}</option>
-                      <option value="1440">{t('todo.remind1day')}</option>
-                    </select>
+        {showForm && (() => {
+          // ---- the new-to-do sheet: type it, tap a day, choose how to be reminded ----
+          const base = dueDateInput || todayStr;
+          const dueKind = !dueDateInput ? 'none' : dueDateInput === todayStr ? 'today' : dueDateInput === addDays(todayStr, 1) ? 'tomorrow' : dueDateInput === comingSaturday(todayStr) ? 'weekend' : dueDateInput === comingMonday(todayStr) ? 'week' : 'pick';
+          const remindKind = !reminderDateInput ? 'none' : reminderDateInput === base && reminderTimeInput === '09:00' ? 'morning' : reminderDateInput === base && reminderTimeInput === '18:00' ? 'evening' : 'custom';
+          const setDue = (d: string) => {
+            setDueDateInput(d);
+            if (remindKind === 'morning' || remindKind === 'evening') setReminderDateInput(d || todayStr); // a reminder that was "that morning" follows the day
+            if (d) setShowPickDate(false);
+          };
+          const setRemind = (kind: 'none' | 'morning' | 'evening' | 'custom') => {
+            if (kind === 'none') { setReminderDateInput(''); setReminderTimeInput(''); setShowCustomRemind(false); return; }
+            if (kind === 'custom') { setShowCustomRemind(true); if (!reminderDateInput) { setReminderDateInput(base); setReminderTimeInput('09:00'); } return; }
+            setShowCustomRemind(false);
+            setReminderDateInput(base);
+            setReminderTimeInput(kind === 'morning' ? '09:00' : '18:00');
+          };
+          const remindPassed = !!reminderDateInput && new Date(`${reminderDateInput}T${reminderTimeInput || '09:00'}`).getTime() < Date.now();
+          const chip = (on: boolean, tone: 'teal' | 'orange' = 'teal') => clsx(
+            'rounded-full px-3.5 py-1.5 text-xs font-black border transition-all active:scale-95',
+            on ? (tone === 'orange' ? 'text-white border-transparent shadow-sm bg-gradient-to-r from-orange-500 to-rose-500' : 'text-white border-transparent shadow-sm bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]') : 'bg-white text-slate-600 border-slate-200',
+          );
+          const cap = (label: string) => <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500 mt-4 mb-1.5 px-0.5">{label}</p>;
+          const moreBtn = (id: 'note' | 'photo' | 'repeat', icon: string, label: string, filled: boolean) => (
+            <button key={id} type="button" onClick={() => setMoreOpen(moreOpen === id ? null : id)} className={clsx('flex-1 relative rounded-2xl py-2.5 text-center text-[11px] font-black border transition-all active:scale-95', moreOpen === id ? 'bg-[#0f7a8f]/10 border-[#0f7a8f]/40 text-[#0b5f70]' : 'bg-slate-50 border-transparent text-slate-600')}>
+              <span className="block text-[17px] leading-none mb-0.5">{icon}</span>{label}
+              {filled && <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-orange-500" />}
+            </button>
+          );
+          return (
+            <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" onClick={resetForm}>
+              <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
+                <form onSubmit={handleSubmit} className="bg-white rounded-t-3xl px-4 pt-3 overflow-y-auto" style={{ maxHeight: '92vh', paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}>
+                  <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3" />
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-base font-black text-primary">{editingId ? t('todo.editToDo') : t('todo.newToDo')}</h2>
+                    <button type="button" onClick={resetForm} className="text-xs font-black text-[#0f7a8f]">{t('common.cancel')}</button>
                   </div>
-                </>
-              )}
-            </div>
 
-            {!recurring && (
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.dueDateOptional')}</label>
-              <input
-                type="date"
-                value={dueDateInput}
-                onChange={(e) => setDueDateInput(e.target.value)}
-                className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-            )}
+                  {/* what: the icon beside the box is the one the task will get on the list */}
+                  <div className="flex items-center gap-3 rounded-2xl bg-slate-50 border-2 border-[#22c1a5] p-2.5">
+                    <span className="w-11 h-11 rounded-xl bg-amber-100 flex items-center justify-center text-[22px] shrink-0">{taskIcon(text)}</span>
+                    <input
+                      type="text"
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      placeholder={t('todo.whatNeedsDoingPlaceholder')}
+                      maxLength={300}
+                      required
+                      autoFocus
+                      className="flex-1 min-w-0 bg-transparent text-[15px] font-bold text-primary outline-none placeholder:text-slate-400 placeholder:font-medium"
+                    />
+                  </div>
 
-            {!recurring && (
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.remindMeOptional')}</label>
-              <div className="flex gap-2">
-                <input
-                  type="date"
-                  value={reminderDateInput}
-                  onChange={(e) => setReminderDateInput(e.target.value)}
-                  className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <input
-                  type="time"
-                  value={reminderTimeInput}
-                  onChange={(e) => setReminderTimeInput(e.target.value)}
-                  disabled={!reminderDateInput}
-                  placeholder="09:00"
-                  className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-40"
-                />
+                  {!recurring && (
+                    <>
+                      {cap('When')}
+                      <div className="flex flex-wrap gap-1.5">
+                        <button type="button" className={chip(dueKind === 'today')} onClick={() => setDue(todayStr)}>Today</button>
+                        <button type="button" className={chip(dueKind === 'tomorrow')} onClick={() => setDue(addDays(todayStr, 1))}>Tomorrow</button>
+                        <button type="button" className={chip(dueKind === 'weekend')} onClick={() => setDue(comingSaturday(todayStr))}>This weekend</button>
+                        <button type="button" className={chip(dueKind === 'week')} onClick={() => setDue(comingMonday(todayStr))}>Next week</button>
+                        <button type="button" className={chip(dueKind === 'pick' || showPickDate)} onClick={() => setShowPickDate((v) => !v)}>
+                          📅 {dueKind === 'pick' ? new Date(`${dueDateInput}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : 'Pick'}
+                        </button>
+                        <button type="button" className={chip(dueKind === 'none')} onClick={() => setDue('')}>No date</button>
+                      </div>
+                      {showPickDate && (
+                        <input type="date" value={dueDateInput} onChange={(e) => setDue(e.target.value)} className="mt-2 w-full bg-slate-50 p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                      )}
+
+                      {cap('Remind me')}
+                      <div className="flex flex-wrap gap-1.5">
+                        <button type="button" className={chip(remindKind === 'none')} onClick={() => setRemind('none')}>No reminder</button>
+                        <button type="button" className={chip(remindKind === 'morning')} onClick={() => setRemind('morning')}>🔔 9:00 am</button>
+                        <button type="button" className={chip(remindKind === 'evening')} onClick={() => setRemind('evening')}>🔔 6:00 pm</button>
+                        <button type="button" className={chip(remindKind === 'custom')} onClick={() => setRemind('custom')}>⏰ Pick time</button>
+                      </div>
+                      {(showCustomRemind || remindKind === 'custom') && (
+                        <div className="flex gap-2 mt-2">
+                          <input type="date" value={reminderDateInput} onChange={(e) => setReminderDateInput(e.target.value)} className="flex-1 min-w-0 bg-slate-50 p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                          <input type="time" value={reminderTimeInput} onChange={(e) => setReminderTimeInput(e.target.value)} disabled={!reminderDateInput} className="flex-1 min-w-0 bg-slate-50 p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-40" />
+                        </div>
+                      )}
+                      {remindPassed && <p className="text-[11px] font-bold text-rose-600 mt-1.5 px-0.5">That time has already passed, so no reminder will come. Pick a later one.</p>}
+
+                      {/* how the reminder arrives */}
+                      {remindKind !== 'none' && (
+                        <div className="mt-3 rounded-2xl bg-slate-50 p-2.5">
+                          <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500 mb-1.5 px-0.5">How should it remind you?</p>
+                          {groupId ? (
+                            <p className="text-[11.5px] text-slate-600 px-0.5">A shared to-do reminds everyone with a notification. Alarms are for tasks that are just yours.</p>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button type="button" onClick={() => setReminderStyle('notification')} className={clsx('rounded-xl border-2 px-3 py-2 text-left transition-all active:scale-95', reminderStyle === 'notification' ? 'border-[#22c1a5] bg-white' : 'border-transparent bg-white/60')}>
+                                  <span className="block text-sm font-black text-primary">🔔 Notification</span>
+                                  <span className="block text-[10.5px] text-slate-500 leading-snug">A quiet nudge on your phone</span>
+                                </button>
+                                <button type="button" onClick={() => setReminderStyle('alarm')} className={clsx('rounded-xl border-2 px-3 py-2 text-left transition-all active:scale-95', reminderStyle === 'alarm' ? 'border-orange-400 bg-orange-50' : 'border-transparent bg-white/60')}>
+                                  <span className="block text-sm font-black text-primary">⏰ Alarm</span>
+                                  <span className="block text-[10.5px] text-slate-500 leading-snug">Rings until you stop or snooze it</span>
+                                </button>
+                              </div>
+                              {reminderStyle === 'alarm' && (
+                                <p className="text-[11px] text-slate-600 mt-1.5 px-0.5">{canRingTodoAlarm() ? 'Rings like an alarm clock with Snooze and Dismiss, even when the phone is on silent.' : 'Alarms ring on Android phones. Here you will get a notification instead.'}</p>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {groups.length > 0 && (
+                    <>
+                      {cap('Who sees it')}
+                      <div className="flex flex-wrap gap-1.5">
+                        <button type="button" className={chip(!groupId)} onClick={() => setGroupId('')}>🔒 {t('todo.justMe')}</button>
+                        {groups.map((g: any) => (
+                          <button key={g.id} type="button" className={clsx(chip(groupId === g.id), 'inline-flex items-center gap-1')} onClick={() => setGroupId(g.id)}>
+                            {g.photoURL ? <img src={g.photoURL} alt="" className="w-4 h-4 rounded object-cover" referrerPolicy="no-referrer" /> : <span>{groupIconEmoji(g.icon)}</span>}{g.name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* the rest, one tap away: a note, photos, repeating */}
+                  <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+                    {moreBtn('note', '📝', 'Note', !!notes.trim())}
+                    {moreBtn('photo', '📷', 'Photo', images.length > 0)}
+                    {moreBtn('repeat', '🔁', 'Repeats', recurring)}
+                  </div>
+                  {moreOpen === 'note' && (
+                    <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('todo.notesPlaceholder')} maxLength={500} rows={3} className="mt-2.5 w-full bg-slate-50 p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none" />
+                  )}
+                  {moreOpen === 'photo' && (
+                    <div className="mt-2.5"><ImageAttachments images={images} onChange={setImages} /></div>
+                  )}
+                  {moreOpen === 'repeat' && (
+                    <div className="mt-2.5 space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <label className="flex items-center gap-2 text-xs font-bold text-on-surface cursor-pointer">
+                        <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="w-4 h-4 accent-primary" />
+                        <span className="material-symbols-outlined text-[16px] text-primary">autorenew</span>
+                        {t('todo.repeatToggle')}
+                      </label>
+                      {recurring && (
+                        <>
+                          <p className="text-[10px] text-text-muted px-1">{t('todo.repeatHelp')}</p>
+                          <FrequencyPicker config={freqConfig} onChange={setFreqConfig} />
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.remindBeforeDue')}</label>
+                            <select value={reminderOffsetMinutes ?? ''} onChange={(e) => setReminderOffsetMinutes(e.target.value ? Number(e.target.value) : null)} className="w-full bg-white p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-primary/20">
+                              <option value="">{t('todo.noReminder')}</option>
+                              <option value="15">{t('todo.remind15min')}</option>
+                              <option value="30">{t('todo.remind30min')}</option>
+                              <option value="60">{t('todo.remind1hr')}</option>
+                              <option value="240">{t('todo.remind4hr')}</option>
+                              <option value="1440">{t('todo.remind1day')}</option>
+                            </select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={saving || !text.trim()} className="w-full mt-4 py-3.5 rounded-2xl text-white text-sm font-black bg-gradient-to-r from-orange-500 to-rose-500 shadow-lg shadow-rose-500/30 disabled:opacity-50 active:scale-[0.99]">
+                    {saving ? t('common.saving') : editingId ? t('groupExpenses.saveChanges') : 'Add to-do'}
+                  </button>
+                </form>
               </div>
             </div>
-            )}
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.photoOptional')}</label>
-              <ImageAttachments images={images} onChange={setImages} />
-            </div>
-
-            {groups.length > 0 && (
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('todo.shareWithGroupOptional')}</label>
-                <select
-                  value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
-                  className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                >
-                  <option value="">{t('todo.justMe')}</option>
-                  {groups.map((g: any) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={resetForm}
-                className="flex-1 py-3 rounded-xl font-bold text-text-muted border border-border-subtle"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={saving || !text.trim()}
-                className="flex-1 py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
-              >
-                {saving ? t('common.saving') : editingId ? t('groupExpenses.saveChanges') : t('todo.add')}
-              </button>
-            </div>
-          </form>
-          </div>
-          </div>
-        )}
+          );
+        })()}
 
         {viewMode === 'list' && (
         <>
