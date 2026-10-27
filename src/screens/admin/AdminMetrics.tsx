@@ -34,6 +34,7 @@ interface Metrics {
   retention: Record<'d1' | 'd7' | 'd30', { cohort: number; returned: number }>;
   activation: { cohort: number; firstExpense: number; threeExpenses: number };
   funnel: {
+    days?: { date: string; all: Record<string, number>; new: Record<string, number>; ret: Record<string, number> }[];
     signinDays?: { date: string; taps: number; errors: number; cancels: number; codes: Record<string, number> }[];
     current: Record<string, number>;
     previous: Record<string, number>;
@@ -136,6 +137,87 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Where people drop off, one row per day (or per week): the bar is everyone who saw the login screen, split into those who signed in (green),
+// those who tapped a sign-in button but did not get in (amber) and those who never tapped (red). Newest first.
+function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> }) {
+  const [mode, setMode] = useState<'days' | 'weeks'>('days');
+  const [seg, setSeg] = useState<'all' | 'new' | 'ret'>('all');
+  type Row = { key: string; label: string; view: number; tap: number; signed: number; fresh: number };
+  const tally = (ev: Record<string, number>) => ({
+    view: ev.login_screen_view || 0,
+    tap: (ev.google_tap || 0) + (ev.email_tap || 0) + (ev.apple_tap || 0),
+    signed: (ev.google_success_new || 0) + (ev.google_success_existing || 0) + (ev.email_signup_ok || 0) + (ev.email_login_ok || 0) + (ev.apple_success || 0),
+    fresh: (ev.google_success_new || 0) + (ev.email_signup_ok || 0),
+  });
+  const rows: Row[] = useMemo(() => {
+    const per = days.map((d) => ({ date: d.date, ...tally(d[seg]) }));
+    if (mode === 'days') return per.slice(-14).reverse().map((r) => ({ key: r.date, label: shortDate(r.date), view: r.view, tap: r.tap, signed: r.signed, fresh: r.fresh }));
+    const weeks = new Map<string, Row>();
+    per.forEach((r) => {
+      const dt = new Date(`${r.date}T00:00:00Z`);
+      dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+      const k = dt.toISOString().slice(0, 10);
+      const w = weeks.get(k) || { key: k, label: `Week of ${shortDate(k)}`, view: 0, tap: 0, signed: 0, fresh: 0 };
+      w.view += r.view; w.tap += r.tap; w.signed += r.signed; w.fresh += r.fresh;
+      weeks.set(k, w);
+    });
+    return Array.from(weeks.values()).sort((a, b) => (a.key < b.key ? 1 : -1)).slice(0, 8);
+  }, [days, mode, seg]);
+  const top = Math.max(1, ...rows.map((r) => Math.max(r.view, r.tap)));
+  const chip = (on: boolean) => `px-3 py-1 rounded-full text-xs font-black border ${on ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`;
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle p-4 space-y-3">
+      <div>
+        <p className="text-sm font-black text-primary">Drop-off trend · {mode === 'days' ? 'day by day' : 'week by week'}</p>
+        <p className="text-[11px] text-text-muted">Each bar is everyone who saw the login screen that {mode === 'days' ? 'day' : 'week'}, split by how far they got.</p>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => setMode('days')} className={chip(mode === 'days')}>Daily</button>
+        <button type="button" onClick={() => setMode('weeks')} className={chip(mode === 'weeks')}>Weekly</button>
+        <span className="w-2" />
+        {([['all', 'Everyone'], ['new', 'New devices'], ['ret', 'Returning']] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setSeg(k)} className={chip(seg === k)}>{l}</button>)}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] font-bold text-text-muted">
+        <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-green-500" />Signed in</span>
+        <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-amber-400" />Tapped, did not get in</span>
+        <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-red-400" />Left without tapping</span>
+      </div>
+      <div className="divide-y divide-border-subtle border-t border-border-subtle">
+        {rows.map((r) => {
+          const tapped = Math.min(r.tap, r.view || r.tap);
+          const noTap = Math.max(0, r.view - r.tap);
+          const failTap = Math.max(0, tapped - r.signed);
+          const okPct = pct(r.signed, r.view);
+          return (
+            <div key={r.key} className="py-2.5 space-y-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-xs font-black text-primary">{r.label}</p>
+                <p className="text-[11px] font-bold text-text-muted tabular-nums">{r.view} saw → {r.tap} tapped → <span className="text-green-700">{r.signed} in</span>{r.fresh > 0 ? ` (${r.fresh} new)` : ''}</p>
+              </div>
+              {r.view === 0 && r.tap === 0 ? (
+                <p className="text-[11px] text-text-muted">No visits.</p>
+              ) : (
+                <>
+                  <div className="flex h-3.5 rounded-md overflow-hidden bg-surface" style={{ width: `${Math.max(6, (Math.max(r.view, r.tap) / top) * 100)}%` }}>
+                    <i className="block h-full bg-green-500" style={{ flex: r.signed }} />
+                    <i className="block h-full bg-amber-400" style={{ flex: failTap }} />
+                    <i className="block h-full bg-red-400" style={{ flex: noTap }} />
+                  </div>
+                  <p className="text-[11px] font-bold text-text-muted">
+                    <span className="text-red-600">{noTap} left without tapping{r.view > 0 ? ` (${Math.round((noTap / r.view) * 100)}%)` : ''}</span>
+                    {' · '}<span className="text-amber-700">{failTap} tapped but did not get in{tapped > 0 ? ` (${Math.round((failTap / tapped) * 100)}% of taps)` : ''}</span>
+                    {' · '}<span className="text-green-700">{fmtPct(okPct)} got in</span>
+                  </p>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -459,6 +541,7 @@ export default function AdminMetrics() {
                       { label: 'Signed in', v: signedInOf(segRet) },
                     ]}
                   />
+                  {m.funnel.days && m.funnel.days.length > 0 && <FunnelTrend days={m.funnel.days} />}
                   <p className="text-[11px] text-text-muted px-1">Store visits and installs are in Google Play Console; the funnels start when someone sees the login screen. A device is counted every time it opens the screen. Reinstalling the app makes a device "new" again.</p>
                 </div>
               );

@@ -4693,8 +4693,20 @@ async function startServer() {
           return { date: d.id, taps: Number(ev.google_tap || 0), errors: Number(ev.google_error || 0), cancels: Number(ev.google_cancel || 0), codes };
         })
         .sort((a, b) => (a.date < b.date ? -1 : 1));
+      // The whole funnel for each day (everyone, new devices, returning devices), for the daily and weekly drop-off trend.
+      const funnelDays = funnelAll.docs
+        .map((d) => {
+          const x = d.data();
+          const ev: Record<string, number> = { ...(x.events || {}) };
+          Object.keys(x).forEach((k) => { if (k.startsWith('events.')) ev[k.slice(7)] = (ev[k.slice(7)] || 0) + Number(x[k] || 0); });
+          const segs = x.segs || {};
+          return { date: d.id, all: ev, new: (segs.new || {}) as Record<string, number>, ret: (segs.ret || {}) as Record<string, number> };
+        })
+        .sort((a, b) => (a.date < b.date ? -1 : 1))
+        .slice(-70);
       const funnel = {
         signinDays,
+        days: funnelDays,
         current: sumDays(cur7),
         previous: sumDays(prev7),
         segments: { new: { current: sumSeg(cur7, 'new'), previous: sumSeg(prev7, 'new') }, ret: { current: sumSeg(cur7, 'ret'), previous: sumSeg(prev7, 'ret') } },
