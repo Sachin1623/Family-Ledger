@@ -1,6 +1,8 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { getBudgetStatus } from '../lib/budget';
 import CategoryBadge from '../components/CategoryBadge';
+import { GroupSetPicker } from '../components/GroupSets';
+import { useGroupSets } from '../lib/groupSets';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -179,7 +181,14 @@ export default function GroupAnalysisSummary() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
-  const [selectedGroupId, setSelectedGroupId] = useState<string | 'all' | null>(routeGroupId || 'all');
+  const { sets, loaded: setsLoaded, saveSets } = useGroupSets();
+  // `scopeId` is what the person chose: 'all', one group's id, or 'set:<id>'. A set behaves like "all my groups" limited to that set's groups, so
+  // everything below reads `selectedGroupId` ('all' for a set) and the already-narrowed `groupIds` / `allGroups` and needs no other change.
+  const [scopeId, setScopeId] = useState<string | 'all' | null>(routeGroupId || 'all');
+  const activeSet = scopeId?.startsWith('set:') ? sets.find((x) => `set:${x.id}` === scopeId) || null : null;
+  const selectedGroupId: string | 'all' | null = scopeId?.startsWith('set:') ? 'all' : scopeId;
+  const setSelectedGroupId = setScopeId;
+  const [showScopePicker, setShowScopePicker] = useState(false);
   // A tapped "new chat message" push/in-app banner (see /api/chat/send's bannerTo +
   // InviteBanner.tsx) deep-links here as `/groups/:groupId?chat=1` — auto-opens the chat panel
   // instead of just landing on the group page, same `?param` pattern as Dashboard.tsx's `?dm=` for
@@ -198,6 +207,27 @@ export default function GroupAnalysisSummary() {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);
+  useEffect(() => {
+    const sid = searchParams.get('set');
+    if (sid) {
+      setScopeId(`set:${sid}`);
+      const next = new URLSearchParams(searchParams);
+      next.delete('set');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+  const defaultSetApplied = useRef(false);
+  useEffect(() => {
+    if (!setsLoaded || defaultSetApplied.current) return;
+    defaultSetApplied.current = true;
+    if (routeGroupId || searchParams.get('set')) return;
+    const preferred = sets.find((x) => x.openByDefault);
+    if (preferred) setScopeId(`set:${preferred.id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setsLoaded]);
+  useEffect(() => {
+    if (setsLoaded && scopeId?.startsWith('set:') && !activeSet) setScopeId('all');
+  }, [setsLoaded, scopeId, activeSet]);
   const chatGroupId = selectedGroupId && selectedGroupId !== 'all' ? selectedGroupId : undefined;
   const { messages: chatMessages, loading: chatLoading, hasUnseen: chatUnseen, markSeen: markChatSeen } = useGameChat('groups', chatGroupId);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
@@ -315,7 +345,7 @@ export default function GroupAnalysisSummary() {
     const bookmark: AnalysisBookmark = {
       id: `${Date.now()}`,
       name,
-      filters: { selectedGroupId, entryTypeFilter, selectedCategory, selectedMemberId, selectedMonths, selectedYears, viewType, timeStep, selectedClassification },
+      filters: { selectedGroupId: scopeId, entryTypeFilter, selectedCategory, selectedMemberId, selectedMonths, selectedYears, viewType, timeStep, selectedClassification },
     };
     persistBookmarks([...bookmarks, bookmark]);
     setNewBookmarkName('');
@@ -346,19 +376,21 @@ export default function GroupAnalysisSummary() {
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null
   );
   const memberships = membershipsValue?.docs.map(doc => doc.data()) || [];
-  const groupIds = memberships.map((m: any) => m.groupId);
+  const memberGroupIds = memberships.map((m: any) => m.groupId);
+  // the groups in view: all of them, or just those in the chosen set
+  const groupIds = activeSet ? memberGroupIds.filter((id: string) => activeSet.groupIds.includes(id)) : memberGroupIds;
 
   useEffect(() => {
     if (routeGroupId) {
       setSelectedGroupId(routeGroupId);
       
       // If we have loaded memberships and this specific group ID is NOT in them, redirect to join
-      if (routeGroupId !== 'all' && membershipsValue && !loadingMemberships && !groupIds.includes(routeGroupId)) {
+      if (routeGroupId !== 'all' && membershipsValue && !loadingMemberships && !memberGroupIds.includes(routeGroupId)) {
         // Redirect to join page if not a member
         navigate(`/join/${routeGroupId}`);
       }
     }
-  }, [routeGroupId, groupIds, membershipsValue, loadingMemberships, navigate]);
+  }, [routeGroupId, memberGroupIds.join(','), membershipsValue, loadingMemberships, navigate]);
 
   const [groupValue] = useDocument(
     selectedGroupId && selectedGroupId !== 'all' ? doc(db, 'groups', selectedGroupId) : null
@@ -392,9 +424,10 @@ export default function GroupAnalysisSummary() {
   }, [groupBudgetsValue]);
 
   const [allGroupsValue] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null
+    memberGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', memberGroupIds)) : null
   );
-  const allGroups = allGroupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  const allGroupsAll = allGroupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  const allGroups = activeSet ? allGroupsAll.filter((g: any) => activeSet.groupIds.includes(g.id)) : allGroupsAll;
 
   // Group-aware: hides whatever the relevant group(s) hid and includes their custom categories —
   // in "all my groups" mode there's no single group to scope to, so it's the union across every
@@ -1112,8 +1145,18 @@ export default function GroupAnalysisSummary() {
 
       </div>
 
+      {showScopePicker && (
+        <GroupSetPicker
+          groups={allGroupsAll.map((g: any) => ({ id: g.id, name: g.name, icon: g.icon, photoURL: g.photoURL, archived: !!g.archived }))}
+          sets={sets}
+          selected={scopeId || 'all'}
+          onSelect={(scope) => setScopeId(scope)}
+          onSaveSets={saveSets}
+          onClose={() => setShowScopePicker(false)}
+        />
+      )}
       <main className="flex-1 p-4 md:p-8 pb-32 max-w-4xl mx-auto w-full space-y-6">
-        {allGroups.length === 0 ? (
+        {allGroupsAll.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-text-muted gap-4">
             <span className="material-symbols-outlined text-5xl">group_off</span>
             <p className="font-bold">{t('analysis.notPartOfAnyGroups')}</p>
@@ -1127,19 +1170,17 @@ export default function GroupAnalysisSummary() {
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
               {!routeGroupId && (
                 <div className="relative shrink-0" data-tour="analysis-group-filter">
-                  <select
-                    className="max-w-[170px] bg-primary text-white rounded-full text-xs font-bold pl-3.5 pr-8 py-2 appearance-none outline-none cursor-pointer shadow-sm truncate"
-                    onChange={(e) => setSelectedGroupId(e.target.value)}
-                    value={selectedGroupId || ''}
-                    aria-label="Group"
+                  <button
+                    type="button"
+                    onClick={() => setShowScopePicker(true)}
+                    aria-label="Choose groups to analyse"
+                    title={activeSet ? allGroups.map((g: any) => g.name).join(' · ') : undefined}
+                    className="max-w-[190px] flex items-center gap-1.5 bg-primary text-white rounded-full text-xs font-bold pl-3.5 pr-2.5 py-2 shadow-sm"
                   >
-                    <option value="all">{t('analysis.allMyGroups')}</option>
-                    {/* Archived groups stay selectable (their history is still real data) — pushed to the bottom and marked. */}
-                    {[...allGroups].sort((a: any, b: any) => (a.archived ? 1 : 0) - (b.archived ? 1 : 0)).map((g: any) => (
-                      <option key={g.id} value={g.id}>{g.name}{g.archived ? ` (${t('analysis.archivedTag')})` : ''}</option>
-                    ))}
-                  </select>
-                  <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-white pointer-events-none text-[18px]">expand_more</span>
+                    {activeSet && <span>{activeSet.icon}</span>}
+                    <span className="truncate">{activeSet ? activeSet.name : selectedGroupId === 'all' || !selectedGroupId ? t('analysis.allMyGroups') : (allGroupsAll.find((g: any) => g.id === selectedGroupId)?.name || '')}</span>
+                    <span className="material-symbols-outlined text-[18px] shrink-0">expand_more</span>
+                  </button>
                 </div>
               )}
               <div className="relative shrink-0">

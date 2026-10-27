@@ -27,6 +27,9 @@ import VoiceQuickAdd from '../components/VoiceQuickAdd';
 import { QUICK_ADDED_EVENT } from '../lib/voiceQuickAdd';
 import { speechAvailableHere } from '../lib/speech';
 import { netBalances, simplifyDebts } from '../lib/settleMath';
+import { useGroupSets, GroupSet } from '../lib/groupSets';
+import { GroupSetEditor } from '../components/GroupSets';
+import SetSummaryCard, { SummaryGroup } from '../components/SetSummaryCard';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -214,6 +217,32 @@ export default function Dashboard() {
     [orderedMemberships, archivedGroupIds],
   );
 
+  // Sets: a saved list of groups. Choosing one narrows this page to those groups, with a summary on top. The choice is remembered on this device.
+  const { sets, loaded: setsLoaded, saveSets } = useGroupSets();
+  const homeScopeKey = user ? `familyledger_home_set_${user.uid}` : '';
+  const [homeScope, setHomeScope] = useState<string>('all');
+  useEffect(() => {
+    if (!homeScopeKey) return;
+    try { const saved = localStorage.getItem(homeScopeKey); if (saved) setHomeScope(saved); } catch { /* not remembered this time */ }
+  }, [homeScopeKey]);
+  const chooseHomeScope = (id: string) => {
+    setHomeScope(id);
+    try { if (homeScopeKey) localStorage.setItem(homeScopeKey, id); } catch { /* not remembered this time */ }
+  };
+  const activeHomeSet = homeScope !== 'all' ? sets.find((x) => x.id === homeScope) || null : null;
+  // a remembered set that has since been deleted goes back to All
+  useEffect(() => {
+    if (setsLoaded && homeScope !== 'all' && !activeHomeSet) chooseHomeScope('all');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setsLoaded, homeScope, activeHomeSet]);
+  const [editingSet, setEditingSet] = useState<GroupSet | 'new' | null>(null);
+  const inHomeSet = (m: any) => !activeHomeSet || activeHomeSet.groupIds.includes(m.groupId);
+  const shownActiveMemberships = activeMemberships.filter(inHomeSet);
+  const shownArchivedMemberships = archivedMemberships.filter(inHomeSet);
+  const metaGroups: SummaryGroup[] = (groupsMetaValue?.docs || []).map((d) => {
+    const g: any = d.data();
+    return { id: d.id, name: g.name || '', icon: g.icon, photoURL: g.photoURL || null, archived: !!g.archived, currency: g.currency };
+  });
   const [favoritesCollapsed, setFavoritesCollapsed] = useState(true);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [showReorderModal, setShowReorderModal] = useState(false);
@@ -425,6 +454,49 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {(activeMemberships.length > 1 || sets.length > 0) && (
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mb-4 -mx-1 px-1">
+            {[{ id: 'all', label: t('groupExpenses.all'), icon: '' }, ...sets.map((x) => ({ id: x.id, label: x.name, icon: x.icon }))].map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => chooseHomeScope(c.id)}
+                className={clsx('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-black border transition-all active:scale-95', (c.id === 'all' ? !activeHomeSet : activeHomeSet?.id === c.id) ? 'text-white border-transparent shadow-md bg-gradient-to-r from-[#0f7a8f] to-[#22c1a5]' : 'bg-white text-slate-600 border-slate-200')}
+              >
+                {c.icon ? `${c.icon} ` : ''}{c.label}
+              </button>
+            ))}
+            <button type="button" onClick={() => setEditingSet('new')} title="New set" className="shrink-0 rounded-full px-3 py-1.5 text-xs font-black border border-dashed border-slate-300 text-[#0f7a8f] active:scale-95">＋</button>
+          </div>
+        )}
+        {activeHomeSet && (
+          <div className="mb-4">
+            <SetSummaryCard
+              set={activeHomeSet}
+              groups={metaGroups.filter((g) => !g.archived && activeHomeSet.groupIds.includes(g.id))}
+              onEdit={() => setEditingSet(activeHomeSet)}
+              onAnalyse={() => navigate(`/analysis?set=${activeHomeSet.id}`)}
+              onAdd={() => navigate('/add-expense')}
+            />
+          </div>
+        )}
+        {editingSet && (
+          <GroupSetEditor
+            groups={metaGroups}
+            sets={sets}
+            initial={editingSet === 'new' ? null : editingSet}
+            onSave={async (next) => {
+              await saveSets(next);
+              // a set just made is opened right away
+              if (editingSet === 'new') {
+                const made = next.find((x) => !sets.some((o) => o.id === x.id));
+                if (made) chooseHomeScope(made.id);
+              }
+            }}
+            onClose={() => setEditingSet(null)}
+          />
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {membershipsLoading || !groupsMetaReady ? (
           <div className="col-span-full py-20 text-center text-text-muted">{t('dashboard.loading')}</div>
@@ -451,7 +523,7 @@ export default function Dashboard() {
           </div>
         ) : (
           <AnimatePresence mode="popLayout">
-            {activeMemberships.map((membership, index) => (
+            {shownActiveMemberships.map((membership, index) => (
               <GroupCard
                 key={membership.id}
                 groupId={membership.groupId}
@@ -467,7 +539,7 @@ export default function Dashboard() {
       </div>
       </section>
 
-      {archivedMemberships.length > 0 && (
+      {shownArchivedMemberships.length > 0 && (
         <section>
           <button
             type="button"
@@ -476,7 +548,7 @@ export default function Dashboard() {
           >
             <h3 className="text-sm font-black text-text-muted uppercase tracking-wider flex items-center gap-1.5">
               <span className="material-symbols-outlined text-[16px]">archive</span>
-              {t('dashboard.archivedGroups')} ({archivedMemberships.length})
+              {t('dashboard.archivedGroups')} ({shownArchivedMemberships.length})
             </h3>
             <span className={clsx('material-symbols-outlined text-text-muted transition-transform', archivedCollapsed && '-rotate-90')}>expand_more</span>
           </button>
@@ -487,7 +559,7 @@ export default function Dashboard() {
             className="overflow-hidden"
           >
             <div className="space-y-2">
-              {archivedMemberships.map((membership: any) => (
+              {shownArchivedMemberships.map((membership: any) => (
                 <ArchivedGroupRow key={membership.id} groupId={membership.groupId} />
               ))}
             </div>
