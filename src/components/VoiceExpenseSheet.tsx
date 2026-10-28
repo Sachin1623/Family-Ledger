@@ -6,7 +6,7 @@ import { SpeechRecognition, speechLanguageFor, useSpeechDialog, useServerVoice, 
 import { startVoiceRecording, type VoiceRecording } from '../lib/voiceRecorder';
 import type { SpokenStructured } from '../lib/voiceExpense';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/constants';
-import { todayLocalDateString } from '../lib/dateUtils';
+import { nowLocalTimeString, todayLocalDateString } from '../lib/dateUtils';
 
 // Bottom sheet for "talk to add an expense": asks for the microphone, shows what is being heard as it is heard, and hands the finished
 // sentence back. The sentence is turned into fields by lib/voiceExpense.ts (and saved by VoiceQuickAdd / AddExpense).
@@ -33,12 +33,15 @@ export default function VoiceExpenseSheet({
   onHeard,
   target,
   getContext,
+  allowIntents,
 }: {
   onClose: () => void;
   onHeard: (sentence: string, alternatives: string[], structured?: SpokenStructured) => void;
   target?: VoiceTarget;
   /** The categories of the group being added to, so the speech service can pick the right one. Built-in categories when omitted. */
   getContext?: () => VoiceContext;
+  /** The global mic: the same clip may also be an alarm or a to-do. A group's own mic only logs an expense. */
+  allowIntents?: boolean;
 }) {
   const [pickingGroup, setPickingGroup] = useState(false);
   const { user } = useAuth();
@@ -123,6 +126,7 @@ export default function VoiceExpenseSheet({
           incomeCategories: ctx.incomeCategories.map((c) => ({ id: c.id, name: c.name })),
           today: todayLocalDateString(),
           currency: ctx.currency || 'INR',
+          ...(allowIntents ? { intents: true, nowTime: nowLocalTimeString() } : {}),
         }),
       });
       if (finished.current) return;
@@ -140,6 +144,7 @@ export default function VoiceExpenseSheet({
         categoryId: data.categoryId || null,
         isIncome: !!data.isIncome,
         date: data.date || null,
+        ...(allowIntents ? { intent: data.intent === 'todo' || data.intent === 'alarm' ? data.intent : 'expense', task: String(data.task || ''), time: data.time || null } : {}),
       };
       heardRef.current = transcript || `${data.amount ?? ''} ${data.description ?? ''}`.trim();
       altsRef.current = [];
@@ -326,7 +331,7 @@ export default function VoiceExpenseSheet({
             </span>
             <div className="min-w-0">
               <p className="text-white text-lg font-black leading-tight tracking-tight">Family<span className="text-[#4ADE80]">Ledger</span></p>
-              <p className="text-white/70 text-[11px] font-bold uppercase tracking-[0.14em]">{t('voiceExpense.brandSub')}</p>
+              <p className="text-white/70 text-[11px] font-bold uppercase tracking-[0.14em]">{t(allowIntents ? 'voiceExpense.brandSubAll' : 'voiceExpense.brandSub')}</p>
             </div>
           </div>
           <span aria-hidden="true" className="pointer-events-none absolute -right-6 -top-6 w-28 h-28 rounded-full" style={{ background: 'radial-gradient(circle,rgba(74,222,128,0.35),transparent 70%)' }} />
@@ -400,7 +405,7 @@ export default function VoiceExpenseSheet({
             <p className="min-h-[44px] text-base font-semibold text-text-main px-2">
               {heard || (
                 <span className="flex flex-wrap justify-center gap-1.5">
-                  {[t('voiceExpense.ex1'), t('voiceExpense.ex2'), t('voiceExpense.ex3')].map((x) => (
+                  {(allowIntents ? [t('voiceExpense.ex1'), t('voiceExpense.exAlarm'), t('voiceExpense.exTodo')] : [t('voiceExpense.ex1'), t('voiceExpense.ex2'), t('voiceExpense.ex3')]).map((x) => (
                     <span key={x} className="px-2.5 py-1 rounded-full bg-[#4ADE80]/10 text-[#0d3b4e] text-[11px] font-bold border border-[#4ADE80]/30">&ldquo;{x}&rdquo;</span>
                   ))}
                 </span>

@@ -17,6 +17,10 @@ export interface SpokenStructured {
   categoryId: string | null;
   isIncome: boolean;
   date: string | null;
+  /** Only from the global mic: what the person was doing, and for an alarm or to-do the task and the 24-hour time (HH:MM). */
+  intent?: 'expense' | 'todo' | 'alarm';
+  task?: string;
+  time?: string | null;
 }
 
 interface CategoryRef {

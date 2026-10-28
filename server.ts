@@ -5625,10 +5625,24 @@ async function startServer() {
       .map((c: any) => ({ id: c.id.slice(0, 60), name: c.name.slice(0, 60) }));
     const today = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.today || '')) ? String(req.body.today) : new Date().toISOString().slice(0, 10);
     const currency = String(req.body?.currency || 'INR').slice(0, 5);
+    // From the global mic the same clip may also be an alarm or a to-do. A group's own mic only ever logs an expense.
+    const intents = req.body?.intents === true;
+    const nowTime = /^\d{2}:\d{2}$/.test(String(req.body?.nowTime || '')) ? String(req.body.nowTime) : '';
 
     try {
       const prompt = [
-        'You listen to a short voice note in which someone logs a personal or family expense or income, usually in English, Hindi or a mix of both (Hinglish).',
+        ...(intents ? [
+          'You listen to a short voice note, usually in English, Hindi or a mix of both (Hinglish). The person is doing exactly ONE of three things. Decide which and return JSON only.',
+          '- intent "expense": logging money they spent or received.',
+          '- intent "alarm": asking for an alarm or wake-up call ("set an alarm for 6:30", "wake me up at 5", "alarm kal subah 7 baje").',
+          '- intent "todo": asking to be reminded about, or to add, a task ("remind me to call the plumber at 5", "add to-do buy milk", "kal doctor ko call karna hai").',
+          'A sentence that mentions an amount but asks to be reminded about it ("remind me to pay 5000 rent tomorrow") is a todo, not an expense.',
+          `The current local time is ${nowTime || 'unknown'}.`,
+          '- task: for a todo, the task in 2 to 8 words, Sentence case, without "remind me to" or "add to-do". For an alarm, a short label if one was said (e.g. "Wake up"), otherwise an empty string. Empty string for an expense.',
+          '- time: for an alarm or todo, the time of day as 24-hour HH:MM ("6 pm" = "18:00", "subah 7 baje" = "07:00", "shaam 6" = "18:00"), or null if no time was said.',
+          'For an alarm or todo, date is the day it is for if one was said (tomorrow, kal, on Friday), resolved against the date given above; otherwise null.',
+          'The remaining rules apply when the intent is expense.',
+        ] : ['You listen to a short voice note in which someone logs a personal or family expense or income, usually in English, Hindi or a mix of both (Hinglish).']),
         'Work out what they said and return JSON only.',
         `Today's date is ${today}. The currency is ${currency}.`,
         'Fields:',
@@ -5658,8 +5672,13 @@ async function startServer() {
               incomeCategoryId: { type: GenAiType.STRING, nullable: true },
               type: { type: GenAiType.STRING, enum: ['expense', 'income'] },
               date: { type: GenAiType.STRING, nullable: true },
+              ...(intents ? {
+                intent: { type: GenAiType.STRING, enum: ['expense', 'todo', 'alarm'] },
+                task: { type: GenAiType.STRING },
+                time: { type: GenAiType.STRING, nullable: true },
+              } : {}),
             },
-            required: ['transcript', 'amount', 'description', 'type'],
+            required: ['transcript', 'amount', 'description', 'type', ...(intents ? ['intent'] : [])],
           },
         },
       });
@@ -5686,7 +5705,10 @@ async function startServer() {
       let parsed: any = {};
       try { parsed = JSON.parse(response.text || '{}'); } catch { parsed = {}; }
       opsBuf.voiceCalls += 1;
-      if (typeof parsed.amount === 'number' && parsed.amount > 0) {
+      const intent: 'expense' | 'todo' | 'alarm' = intents && (parsed.intent === 'todo' || parsed.intent === 'alarm') ? parsed.intent : 'expense';
+      const taskTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(parsed.time || '')) ? String(parsed.time) : null;
+      const taskText = String(parsed.task || '').slice(0, 120);
+      if ((intent === 'expense' && typeof parsed.amount === 'number' && parsed.amount > 0) || (intent !== 'expense' && (taskText || taskTime))) {
         opsBuf.voiceUnderstood += 1;
         // counts toward the "Try Talk to add" quest; never allowed to slow or break the answer
         if (adminDb) {
@@ -5705,6 +5727,9 @@ async function startServer() {
         categoryId: pool.some((c) => c.id === wantedId) ? wantedId : null,
         isIncome,
         date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || '')) ? parsed.date : null,
+        intent,
+        task: taskText,
+        time: taskTime,
       });
     } catch (error: any) {
       opsBuf.voiceCalls += 1;

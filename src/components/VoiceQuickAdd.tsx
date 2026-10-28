@@ -9,6 +9,7 @@ import { db } from '../lib/firebase';
 import { getCategoryNameOverride, getGroupCategories } from '../lib/constants';
 import type { SpokenStructured } from '../lib/voiceExpense';
 import { lastUsedGroupId, loadMyGroups, quickAddFromSpeech, type MyGroup, type QuickAddResult } from '../lib/voiceQuickAdd';
+import { detectIntentFromText, quickTaskFromSpeech, type QuickTaskResult } from '../lib/voiceTodo';
 
 const UNDO_SECONDS = 7;
 const GROUPS_CACHE_KEY = 'fl_voice_groups';
@@ -16,7 +17,8 @@ const GROUPS_CACHE_KEY = 'fl_voice_groups';
 // One-tap "say it and it is added": the listening sheet, then the expense is saved straight away, and a small bar appears with
 // what was added and an Undo. The rest of the family is only told after the Undo time runs out.
 // `groupId` is set when started from one group's tile (that group, fixed). From the global mic it is left out: the group last added to
-// is used, shown on the listening sheet, and can be changed there.
+// is used, shown on the listening sheet, and can be changed there. The global mic also understands "set an alarm ..." and "remind me to ...":
+// those become a personal to-do (an alarm rings like an alarm on Android) with the same few seconds to undo.
 export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?: string; onDone: () => void; afterAdd?: () => void }) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -24,6 +26,8 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
   const [listening, setListening] = useState(true);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<QuickAddResult | null>(null);
+  const [taskResult, setTaskResult] = useState<QuickTaskResult | null>(null);
+  const [taskLeft, setTaskLeft] = useState(UNDO_SECONDS);
   const [left, setLeft] = useState(UNDO_SECONDS);
   const okRef = useRef<Extract<QuickAddResult, { ok: true }> | null>(null);
   const heardOnce = useRef(false);
@@ -81,6 +85,15 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
       if (!user) return;
       heardOnce.current = true;
       setBusy(true);
+      // The global mic: an alarm or a to-do instead of an expense (the voice service says which; the words alone are checked when it did not listen).
+      const intent = groupId ? 'expense' : structured?.intent || detectIntentFromText(sentence);
+      if (intent === 'alarm' || intent === 'todo') {
+        const t = await quickTaskFromSpeech({ kind: intent, sentence, structured, user });
+        setBusy(false);
+        if (t.ok) setTaskLeft(UNDO_SECONDS);
+        setTaskResult(t);
+        return;
+      }
       const r = await quickAddFromSpeech({ sentence, alternatives, structured, allowBlank, user, profile, groupId: targetRef.current || groupId });
       setBusy(false);
       // Several groups and none used yet: ask in the usual form, with the words already filled in.
@@ -111,6 +124,14 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
     const id = window.setTimeout(() => setLeft((n) => n - 1), 1000);
     return () => window.clearTimeout(id);
   }, [result, left, onDone]);
+
+  // The same countdown for an alarm or to-do just added; nothing has to be finalised, the bar just goes away.
+  useEffect(() => {
+    if (!taskResult?.ok) return;
+    if (taskLeft <= 0) { onDone(); return; }
+    const id = window.setTimeout(() => setTaskLeft((n) => n - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [taskResult, taskLeft, onDone]);
 
   // Leaving while the bar is still up counts as keeping it.
   useEffect(() => () => { okRef.current?.finalize(); }, []);
@@ -147,6 +168,7 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
     <>
       {listening && (
         <VoiceExpenseSheet
+          allowIntents={!groupId}
           onClose={() => { setListening(false); if (!heardOnce.current) onDone(); }}
           onHeard={(s, alts, structured) => { lastStructured.current = structured; return onHeard(s, alts, structured); }}
           getContext={() => ctxRef.current || { categories: [], incomeCategories: [] }}
@@ -158,11 +180,36 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
           }}
         />
       )}
-      {(busy || result) &&
+      {(busy || result || taskResult) &&
         createPortal(
           <div className="fixed left-3 right-3 z-[310]" style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom))' }}>
             <div className="mx-auto max-w-md rounded-2xl bg-primary text-white shadow-2xl px-4 py-3 text-sm">
-              {busy && !result && <p className="font-bold">{t('voiceExpense.adding')}</p>}
+              {busy && !result && !taskResult && <p className="font-bold">{t('voiceExpense.adding')}</p>}
+              {taskResult?.ok && (
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl shrink-0">{taskResult.kind === 'alarm' ? '⏰' : '✅'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black truncate">{taskResult.kind === 'alarm' ? (taskResult.rings ? 'Alarm set' : 'Reminder set') : 'To-do added'} · {taskResult.text}</p>
+                    <p className="text-[11px] opacity-80 truncate">{taskResult.whenLabel}</p>
+                  </div>
+                  <div className="shrink-0 flex gap-1">
+                    <button type="button" onClick={() => { navigate('/todo'); onDone(); }} className="px-3 py-1.5 rounded-lg bg-white text-primary font-black text-xs">View</button>
+                    <button type="button" onClick={async () => { await taskResult.undo().catch((err) => console.error('undo failed:', err)); onDone(); }} className="px-3 py-1.5 rounded-lg bg-white/20 font-black text-xs">{t('voiceExpense.undo')} ({taskLeft})</button>
+                  </div>
+                </div>
+              )}
+              {taskResult && !taskResult.ok && (
+                <div className="space-y-2">
+                  <p className="font-bold">
+                    {taskResult.reason === 'no-time' ? 'I heard an alarm but no time. Try "Alarm at 6:30 tomorrow".' : taskResult.reason === 'no-task' ? 'I did not catch what to remind you about.' : t('voiceExpense.failed')}
+                    {taskResult.reason !== 'failed' && <span className="block font-medium opacity-80 mt-0.5">&ldquo;{taskResult.sentence}&rdquo;</span>}
+                  </p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { heardOnce.current = false; setTaskResult(null); setListening(true); }} className="flex-1 py-2 rounded-lg bg-white/20 font-black text-xs">{t('voiceExpense.tryAgain')}</button>
+                    <button type="button" onClick={onDone} className="px-3 py-2 rounded-lg bg-white/10 font-black text-xs">{t('voiceExpense.close')}</button>
+                  </div>
+                </div>
+              )}
               {result?.ok && (
                 <div className="flex items-center gap-3">
                   <span className="text-2xl shrink-0">{result.categoryIcon}</span>
