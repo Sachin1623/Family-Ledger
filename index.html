@@ -36,6 +36,25 @@
       @keyframes flsplash { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
     </style>
     <script>
+      // Counts "the app was opened" the moment the page starts, before the app code has downloaded, so people who give up during the
+      // load show up in the admin funnel. Same anonymous counter and same consent rules as src/lib/funnel.ts: no id is sent, never on iPhone,
+      // on by default only in the Android app outside Europe, otherwise only after a yes.
+      (function () {
+        try {
+          var cap = window.Capacitor, plat = cap && cap.getPlatform ? cap.getPlatform() : 'web';
+          if (plat === 'ios') return;
+          var stored = localStorage.getItem('familyledger_analytics_consent'), ok = stored === 'granted';
+          if (!stored && plat === 'android') {
+            var tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+            ok = !(tz.indexOf('Europe/') === 0 || tz === 'Atlantic/Reykjavik' || tz === 'Atlantic/Azores' || tz === 'Atlantic/Madeira' || tz === 'Atlantic/Canary');
+          }
+          if (!ok) return;
+          var seg = localStorage.getItem('fl_first_signin_at') ? 'ret' : 'new';
+          fetch('/api/funnel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'app_open', seg: seg }), keepalive: true }).catch(function () {});
+        } catch (e) {}
+      })();
+    </script>
+    <script>
       (function () {
         var root = document.documentElement;
         function ready() { root.classList.add('fl-icons-ready'); }

@@ -4,6 +4,7 @@ import { getAnalyticsConsent } from './firebase';
 // banner. Only an event NAME (and a short error code) is sent: no user id, no device id, no cookie, nothing that identifies a
 // person. The server just adds one to that day's counter. It answers "where do installs drop off before they have an account?".
 export type FunnelEvent =
+  | 'app_open' // sent by the small script in index.html the moment the page starts, before the app itself has downloaded
   | 'login_screen_view'
   | 'google_tap'
   | 'google_success_new'
