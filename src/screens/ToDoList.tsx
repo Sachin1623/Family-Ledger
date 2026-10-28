@@ -1031,6 +1031,20 @@ export default function ToDoList() {
                   rows={2}
                   className="w-full bg-surface p-2.5 rounded-lg border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
                 />
+                {/* links written in the note become buttons (window.open from a button, as an anchor is swallowed in the Android WebView) */}
+                {(notesDraft.match(/https?:\/\/[^\s)]+/g) || []).slice(0, 4).map((url) => {
+                  let label = url;
+                  try {
+                    const u = new URL(url);
+                    const sub = u.pathname.match(/^\/r\/([^/]+)(\/(?:about\/rules|submit))?/);
+                    label = sub ? `r/${sub[1]}${sub[2] ? (sub[2].includes('rules') ? ' rules' : ' new post') : ''}` : u.hostname.replace(/^www\./, '');
+                  } catch { /* keep the raw text */ }
+                  return (
+                    <button key={url} type="button" onClick={() => window.open(url, '_blank')} className="mr-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-teal-50 text-teal-800 text-xs font-black border border-teal-200 active:scale-95">
+                      <span className="material-symbols-outlined text-[16px]">open_in_new</span>Open {label}
+                    </button>
+                  );
+                })}
                 {notesDraft !== (viewingTodo.notes || '') && (
                   <button
                     type="button"

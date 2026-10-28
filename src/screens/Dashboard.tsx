@@ -5,7 +5,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence, Reorder } from 'motion/react';
+import { motion, AnimatePresence, Reorder, useDragControls } from 'motion/react';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact, getCategoryClassification } from '../lib/constants';
 import ExpenseQuickView from '../components/ExpenseQuickView';
 import { buildRoster } from '../lib/groupParticipants';
@@ -259,7 +259,9 @@ export default function Dashboard() {
   // explicitly taps Resume. No auto-expand, no auto-scroll, no animation tied to the transition.
 
   const openReorderModal = () => {
-    setDragOrder(activeMemberships.map((m: any) => m.groupId));
+    // a membership whose group was deleted has nothing to show or to order, so it is left out of the list
+    const existing = new Set(metaGroups.map((g) => g.id));
+    setDragOrder(activeMemberships.map((m: any) => m.groupId).filter((id: string) => !groupsMetaReady || existing.has(id)));
     setShowReorderModal(true);
   };
 
@@ -567,7 +569,7 @@ export default function Dashboard() {
               </button>
             </div>
             <p className="text-xs text-text-muted shrink-0">Drag to set the order your groups show on the dashboard.</p>
-            <Reorder.Group axis="y" values={dragOrder} onReorder={setDragOrder} className="space-y-2 overflow-y-auto flex-1">
+            <Reorder.Group axis="y" values={dragOrder} onReorder={setDragOrder} className="space-y-2 overflow-y-auto flex-1 min-h-0 overscroll-contain">
               {dragOrder.map((groupId) => (
                 <ReorderRow key={groupId} groupId={groupId} />
               ))}
@@ -607,12 +609,16 @@ export default function Dashboard() {
 const ReorderRow: React.FC<{ groupId: string }> = ({ groupId }) => {
   const [groupValue] = useDocument(doc(db, 'groups', groupId));
   const group = groupValue?.data();
+  // Only the grip starts a drag. If the whole row did, a finger swipe on the list would drag a row instead of scrolling, and the last groups could not be reached.
+  const controls = useDragControls();
   return (
     <Reorder.Item
       value={groupId}
-      className="bg-white rounded-xl border border-border-subtle p-3 flex items-center gap-3 cursor-grab active:cursor-grabbing shadow-sm"
+      dragListener={false}
+      dragControls={controls}
+      className="bg-white rounded-xl border border-border-subtle p-3 flex items-center gap-3 shadow-sm"
     >
-      <span className="material-symbols-outlined text-text-muted shrink-0">drag_indicator</span>
+      <span onPointerDown={(e) => controls.start(e)} className="material-symbols-outlined text-text-muted shrink-0 cursor-grab active:cursor-grabbing p-1 -m-1" style={{ touchAction: 'none' }} aria-label="Drag to reorder">drag_indicator</span>
       <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden">
         {group?.photoURL ? (
           <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
