@@ -13,122 +13,124 @@ import { ShopModeProvider } from './context/ShopModeContext';
 import { FabActionProvider } from './context/FabActionContext';
 import { LanguageProvider } from './context/LanguageContext';
 import Login from './screens/Login';
-import Dashboard from './screens/Dashboard';
-import CreateGroup from './screens/CreateGroup';
-import ManageGroup from './screens/ManageGroup';
-import AddExpense from './screens/AddExpense';
-import GroupAnalysisSummary from './screens/GroupAnalysisSummary';
-import GroupExpenses from './screens/GroupExpenses';
-import Profile from './screens/Profile';
-import ActivityFeed from './screens/ActivityFeed';
-import Settlements from './screens/Settlements';
-import JoinGroup from './screens/JoinGroup';
-import AddFriendInvite from './screens/AddFriendInvite';
-import About from './screens/About';
-import PrivacyPolicy from './screens/PrivacyPolicy';
-import DataUsage from './screens/DataUsage';
-import DataDeletion from './screens/DataDeletion';
-import Terms from './screens/Terms';
-import Contact from './screens/Contact';
-import Feedback from './screens/Feedback';
-import PendingActions from './screens/PendingActions';
-import AlarmsHub from './screens/AlarmsHub';
-import BabyVaccinations from './screens/BabyVaccinations';
-import AddBabyProfile from './screens/AddBabyProfile';
-import LogVaccineVisit from './screens/LogVaccineVisit';
-import VaccineVisitDetail from './screens/VaccineVisitDetail';
-import VaccineCaregivers from './screens/VaccineCaregivers';
-import VaccineReminders from './screens/VaccineReminders';
-import VaccineProfileView from './screens/VaccineProfileView';
-import VaccineDeletedBabies from './screens/VaccineDeletedBabies';
-import WeeklySummary from './screens/WeeklySummary';
-import RecurringExpenses from './screens/RecurringExpenses';
-import RecurringApprovals from './screens/RecurringApprovals';
-import ToDoList from './screens/ToDoList';
-import Calculator from './screens/Calculator';
-import FinancialCalculators from './screens/FinancialCalculators';
-import GamesHub from './screens/games/GamesHub';
-import SudokuHome from './screens/games/SudokuHome';
-import SudokuGame from './screens/games/SudokuGame';
-import SudokuLeaderboard from './screens/games/SudokuLeaderboard';
-import ScrambleHome from './screens/games/ScrambleHome';
-import ScrambleGame from './screens/games/ScrambleGame';
-import ScrambleLeaderboard from './screens/games/ScrambleLeaderboard';
-import ScrambleLobby from './screens/games/ScrambleLobby';
-import ScrambleMultiplayerGame from './screens/games/ScrambleMultiplayerGame';
-import LudoLobby from './screens/games/LudoLobby';
-import LudoGame from './screens/games/LudoGame';
-import RummyLobby from './screens/games/RummyLobby';
-import RummyGame from './screens/games/RummyGame';
-import Rummy13Lobby from './screens/games/Rummy13Lobby';
-import Rummy13Game from './screens/games/Rummy13Game';
-import SpadePledgeLobby from './screens/games/SpadePledgeLobby';
-import SpadePledgeGame from './screens/games/SpadePledgeGame';
-import GameRanks from './screens/games/GameRanks';
-import BusinessLobby from './screens/games/BusinessLobby';
-import BusinessGame from './screens/games/BusinessGame';
-import SweepLobby from './screens/games/SweepLobby';
-import SweepGame from './screens/games/SweepGame';
-import ChessLobby from './screens/games/ChessLobby';
-import ChessGame from './screens/games/ChessGame';
-import SequenceLobby from './screens/games/SequenceLobby';
-import SequenceGame from './screens/games/SequenceGame';
-import Tools from './screens/Tools';
-import MembersChat from './screens/MembersChat';
-import Friends from './screens/Friends';
-import MyProgress from './screens/MyProgress';
-import MyStyle from './screens/MyStyle';
-import Health from './screens/Health';
-import CareCircle from './screens/CareCircle';
-import HealthGlucose from './screens/HealthGlucose';
-import HealthBloodPressure from './screens/HealthBloodPressure';
-import HealthMedicines from './screens/HealthMedicines';
-import PublicProfile from './screens/PublicProfile';
-import ProfileVisibility from './screens/ProfileVisibility';
-import ShoppingLists from './screens/ShoppingLists';
-import ShoppingListDetail from './screens/ShoppingListDetail';
-import ExpenseReminders from './screens/ExpenseReminders';
-import GoalsHub from './screens/GoalsHub';
-import GoalDetail from './screens/GoalDetail';
-import GoalWizard from './screens/GoalWizard';
-import GoalAllocationManager from './screens/GoalAllocationManager';
-import GoalFundingSetup from './screens/GoalFundingSetup';
-import GoalReports from './screens/GoalReports';
-import AccountsHub from './screens/AccountsHub';
-import AccountDetail from './screens/AccountDetail';
-import PersonalLoans from './screens/PersonalLoans';
-import LoanContactDetail from './screens/LoanContactDetail';
-import PolicyVault from './screens/PolicyVault';
-import PolicyWizard from './screens/PolicyWizard';
-import PolicyDetail from './screens/PolicyDetail';
-import ShopProfile from './screens/shop/ShopProfile';
-import ShopCustomers from './screens/shop/ShopCustomers';
-import ShopCustomerDetail from './screens/shop/ShopCustomerDetail';
-import ShopSales from './screens/shop/ShopSales';
-import ShopReports from './screens/shop/ShopReports';
-import ShopActivity from './screens/shop/ShopActivity';
-import AdminShopkeeperRequests from './screens/admin/AdminShopkeeperRequests';
+import { lazyScreen } from './lib/lazyScreen';
+import { hasAuthHint } from './lib/authHint';
+const Dashboard = lazyScreen(() => import('./screens/Dashboard'));
+const CreateGroup = lazyScreen(() => import('./screens/CreateGroup'));
+const ManageGroup = lazyScreen(() => import('./screens/ManageGroup'));
+const AddExpense = lazyScreen(() => import('./screens/AddExpense'));
+const GroupAnalysisSummary = lazyScreen(() => import('./screens/GroupAnalysisSummary'));
+const GroupExpenses = lazyScreen(() => import('./screens/GroupExpenses'));
+const Profile = lazyScreen(() => import('./screens/Profile'));
+const ActivityFeed = lazyScreen(() => import('./screens/ActivityFeed'));
+const Settlements = lazyScreen(() => import('./screens/Settlements'));
+const JoinGroup = lazyScreen(() => import('./screens/JoinGroup'));
+const AddFriendInvite = lazyScreen(() => import('./screens/AddFriendInvite'));
+const About = lazyScreen(() => import('./screens/About'));
+const PrivacyPolicy = lazyScreen(() => import('./screens/PrivacyPolicy'));
+const DataUsage = lazyScreen(() => import('./screens/DataUsage'));
+const DataDeletion = lazyScreen(() => import('./screens/DataDeletion'));
+const Terms = lazyScreen(() => import('./screens/Terms'));
+const Contact = lazyScreen(() => import('./screens/Contact'));
+const Feedback = lazyScreen(() => import('./screens/Feedback'));
+const PendingActions = lazyScreen(() => import('./screens/PendingActions'));
+const AlarmsHub = lazyScreen(() => import('./screens/AlarmsHub'));
+const BabyVaccinations = lazyScreen(() => import('./screens/BabyVaccinations'));
+const AddBabyProfile = lazyScreen(() => import('./screens/AddBabyProfile'));
+const LogVaccineVisit = lazyScreen(() => import('./screens/LogVaccineVisit'));
+const VaccineVisitDetail = lazyScreen(() => import('./screens/VaccineVisitDetail'));
+const VaccineCaregivers = lazyScreen(() => import('./screens/VaccineCaregivers'));
+const VaccineReminders = lazyScreen(() => import('./screens/VaccineReminders'));
+const VaccineProfileView = lazyScreen(() => import('./screens/VaccineProfileView'));
+const VaccineDeletedBabies = lazyScreen(() => import('./screens/VaccineDeletedBabies'));
+const WeeklySummary = lazyScreen(() => import('./screens/WeeklySummary'));
+const RecurringExpenses = lazyScreen(() => import('./screens/RecurringExpenses'));
+const RecurringApprovals = lazyScreen(() => import('./screens/RecurringApprovals'));
+const ToDoList = lazyScreen(() => import('./screens/ToDoList'));
+const Calculator = lazyScreen(() => import('./screens/Calculator'));
+const FinancialCalculators = lazyScreen(() => import('./screens/FinancialCalculators'));
+const GamesHub = lazyScreen(() => import('./screens/games/GamesHub'));
+const SudokuHome = lazyScreen(() => import('./screens/games/SudokuHome'));
+const SudokuGame = lazyScreen(() => import('./screens/games/SudokuGame'));
+const SudokuLeaderboard = lazyScreen(() => import('./screens/games/SudokuLeaderboard'));
+const ScrambleHome = lazyScreen(() => import('./screens/games/ScrambleHome'));
+const ScrambleGame = lazyScreen(() => import('./screens/games/ScrambleGame'));
+const ScrambleLeaderboard = lazyScreen(() => import('./screens/games/ScrambleLeaderboard'));
+const ScrambleLobby = lazyScreen(() => import('./screens/games/ScrambleLobby'));
+const ScrambleMultiplayerGame = lazyScreen(() => import('./screens/games/ScrambleMultiplayerGame'));
+const LudoLobby = lazyScreen(() => import('./screens/games/LudoLobby'));
+const LudoGame = lazyScreen(() => import('./screens/games/LudoGame'));
+const RummyLobby = lazyScreen(() => import('./screens/games/RummyLobby'));
+const RummyGame = lazyScreen(() => import('./screens/games/RummyGame'));
+const Rummy13Lobby = lazyScreen(() => import('./screens/games/Rummy13Lobby'));
+const Rummy13Game = lazyScreen(() => import('./screens/games/Rummy13Game'));
+const SpadePledgeLobby = lazyScreen(() => import('./screens/games/SpadePledgeLobby'));
+const SpadePledgeGame = lazyScreen(() => import('./screens/games/SpadePledgeGame'));
+const GameRanks = lazyScreen(() => import('./screens/games/GameRanks'));
+const BusinessLobby = lazyScreen(() => import('./screens/games/BusinessLobby'));
+const BusinessGame = lazyScreen(() => import('./screens/games/BusinessGame'));
+const SweepLobby = lazyScreen(() => import('./screens/games/SweepLobby'));
+const SweepGame = lazyScreen(() => import('./screens/games/SweepGame'));
+const ChessLobby = lazyScreen(() => import('./screens/games/ChessLobby'));
+const ChessGame = lazyScreen(() => import('./screens/games/ChessGame'));
+const SequenceLobby = lazyScreen(() => import('./screens/games/SequenceLobby'));
+const SequenceGame = lazyScreen(() => import('./screens/games/SequenceGame'));
+const Tools = lazyScreen(() => import('./screens/Tools'));
+const MembersChat = lazyScreen(() => import('./screens/MembersChat'));
+const Friends = lazyScreen(() => import('./screens/Friends'));
+const MyProgress = lazyScreen(() => import('./screens/MyProgress'));
+const MyStyle = lazyScreen(() => import('./screens/MyStyle'));
+const Health = lazyScreen(() => import('./screens/Health'));
+const CareCircle = lazyScreen(() => import('./screens/CareCircle'));
+const HealthGlucose = lazyScreen(() => import('./screens/HealthGlucose'));
+const HealthBloodPressure = lazyScreen(() => import('./screens/HealthBloodPressure'));
+const HealthMedicines = lazyScreen(() => import('./screens/HealthMedicines'));
+const PublicProfile = lazyScreen(() => import('./screens/PublicProfile'));
+const ProfileVisibility = lazyScreen(() => import('./screens/ProfileVisibility'));
+const ShoppingLists = lazyScreen(() => import('./screens/ShoppingLists'));
+const ShoppingListDetail = lazyScreen(() => import('./screens/ShoppingListDetail'));
+const ExpenseReminders = lazyScreen(() => import('./screens/ExpenseReminders'));
+const GoalsHub = lazyScreen(() => import('./screens/GoalsHub'));
+const GoalDetail = lazyScreen(() => import('./screens/GoalDetail'));
+const GoalWizard = lazyScreen(() => import('./screens/GoalWizard'));
+const GoalAllocationManager = lazyScreen(() => import('./screens/GoalAllocationManager'));
+const GoalFundingSetup = lazyScreen(() => import('./screens/GoalFundingSetup'));
+const GoalReports = lazyScreen(() => import('./screens/GoalReports'));
+const AccountsHub = lazyScreen(() => import('./screens/AccountsHub'));
+const AccountDetail = lazyScreen(() => import('./screens/AccountDetail'));
+const PersonalLoans = lazyScreen(() => import('./screens/PersonalLoans'));
+const LoanContactDetail = lazyScreen(() => import('./screens/LoanContactDetail'));
+const PolicyVault = lazyScreen(() => import('./screens/PolicyVault'));
+const PolicyWizard = lazyScreen(() => import('./screens/PolicyWizard'));
+const PolicyDetail = lazyScreen(() => import('./screens/PolicyDetail'));
+const ShopProfile = lazyScreen(() => import('./screens/shop/ShopProfile'));
+const ShopCustomers = lazyScreen(() => import('./screens/shop/ShopCustomers'));
+const ShopCustomerDetail = lazyScreen(() => import('./screens/shop/ShopCustomerDetail'));
+const ShopSales = lazyScreen(() => import('./screens/shop/ShopSales'));
+const ShopReports = lazyScreen(() => import('./screens/shop/ShopReports'));
+const ShopActivity = lazyScreen(() => import('./screens/shop/ShopActivity'));
+const AdminShopkeeperRequests = lazyScreen(() => import('./screens/admin/AdminShopkeeperRequests'));
 import Navigation from './components/Navigation';
 import Header from './components/Header';
 import FloatingCalculator from './components/FloatingCalculator';
-import AdminDashboard from './screens/admin/AdminDashboard';
-import AdminUsers from './screens/admin/AdminUsers';
-import AdminUserDetail from './screens/admin/AdminUserDetail';
-import AdminAnalytics from './screens/admin/AdminAnalytics';
-import AdminGrowth from './screens/admin/AdminGrowth';
-import AdminMetrics from './screens/admin/AdminMetrics';
-import AdminManageAdmins from './screens/admin/AdminManageAdmins';
-import AdminFeedback from './screens/admin/AdminFeedback';
-import AdminAppVersion from './screens/admin/AdminAppVersion';
-import AdminBuilds from './screens/admin/AdminBuilds';
-import AdminBroadcast from './screens/admin/AdminBroadcast';
-import AdminChatReports from './screens/admin/AdminChatReports';
+const AdminDashboard = lazyScreen(() => import('./screens/admin/AdminDashboard'));
+const AdminUsers = lazyScreen(() => import('./screens/admin/AdminUsers'));
+const AdminUserDetail = lazyScreen(() => import('./screens/admin/AdminUserDetail'));
+const AdminAnalytics = lazyScreen(() => import('./screens/admin/AdminAnalytics'));
+const AdminGrowth = lazyScreen(() => import('./screens/admin/AdminGrowth'));
+const AdminMetrics = lazyScreen(() => import('./screens/admin/AdminMetrics'));
+const AdminManageAdmins = lazyScreen(() => import('./screens/admin/AdminManageAdmins'));
+const AdminFeedback = lazyScreen(() => import('./screens/admin/AdminFeedback'));
+const AdminAppVersion = lazyScreen(() => import('./screens/admin/AdminAppVersion'));
+const AdminBuilds = lazyScreen(() => import('./screens/admin/AdminBuilds'));
+const AdminBroadcast = lazyScreen(() => import('./screens/admin/AdminBroadcast'));
+const AdminChatReports = lazyScreen(() => import('./screens/admin/AdminChatReports'));
 import UpdatePrompt from './components/UpdatePrompt';
 import UpdateBanner from './components/UpdateBanner';
 import ConsentBanner from './components/ConsentBanner';
 import GlobalChatPopup from './components/GlobalChatPopup';
 import ReceiptShareBridge from './components/ReceiptShareBridge';
-import ReceiptShare from './screens/ReceiptShare';
+const ReceiptShare = lazyScreen(() => import('./screens/ReceiptShare'));
 import PointsToastBridge from './components/PointsToastBridge';
 import PointsFlyAnimation from './components/PointsFlyAnimation';
 import BroadcastBanner from './components/BroadcastBanner';
@@ -257,7 +259,7 @@ const NavigationBridge = () => {
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
   const location = window.location.pathname;
-  if (loading) return <LoadingScreen />;
+  if (loading && hasAuthHint()) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
   return <>{children}</>;
 };
@@ -265,7 +267,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading, admin } = useAuth();
   const location = window.location.pathname;
-  if (loading) return <LoadingScreen />;
+  if (loading && hasAuthHint()) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
   if (!admin.isAdmin) return <Navigate to="/" replace />;
   return (
@@ -300,7 +302,7 @@ const GameRouteKey = ({ children }: { children: React.ReactNode }) => {
 const AuthenticatedLayout = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
 
-  if (loading) return <LoadingScreen />;
+  if (loading && hasAuthHint()) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" state={{ from: window.location.pathname }} />;
 
   return (
@@ -341,8 +343,8 @@ export default function App() {
           <AlarmPermissionsPrompt />
           <InviteBanner />
           <ProfileSetupWizard />
-          <OnboardingTour />
-          <AccountGoalNudgePrompt />
+          {/* first-login tour and account/goal nudge removed: no guides for new users */}
+          
           {/* h-dvh + overflow-hidden (not the old min-h-screen, which had no ceiling) makes this
               the one true viewport-bounded box in the whole tree. Header stays in normal flow (it's
               sticky, not fixed, so it still needs real space reserved above the scroll area) and
@@ -360,6 +362,7 @@ export default function App() {
             <Header />
             <FloatingCalculator />
             <div id="route-scroll" className="flex-1 min-h-0 overflow-y-auto">
+            <React.Suspense fallback={<LoadingScreen fullScreen={false} />}>
             <Routes>
               {/* Public & Utility Routes */}
               <Route path="/login" element={<Login />} />
@@ -489,6 +492,7 @@ export default function App() {
               {/* Global Catch-all */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </React.Suspense>
             </div>
           </div>
         </Router>

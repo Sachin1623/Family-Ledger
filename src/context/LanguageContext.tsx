@@ -4,16 +4,6 @@ import { db } from '../lib/firebase';
 import { useAuth } from './AuthContext';
 import { LANGUAGES, ENABLED_LANGUAGES, LanguageCode } from '../lib/i18n/languages';
 import en from '../lib/i18n/en';
-import hi from '../lib/i18n/hi';
-import ar from '../lib/i18n/ar';
-import de from '../lib/i18n/de';
-import fr from '../lib/i18n/fr';
-import ro from '../lib/i18n/ro';
-import es from '../lib/i18n/es';
-import it from '../lib/i18n/it';
-import ru from '../lib/i18n/ru';
-import zh from '../lib/i18n/zh';
-import ja from '../lib/i18n/ja';
 import gameRanks from '../lib/i18n/games/gameRanks';
 
 export type { LanguageCode };
@@ -26,18 +16,29 @@ export { LANGUAGES, ENABLED_LANGUAGES };
 // or editing a game's translations never touches — or conflicts with — any other game's or the
 // core app's dictionary file.
 const GAME_PARTIALS: Partial<Record<LanguageCode, Record<string, string>>>[] = [gameRanks];
-const BASE_DICTIONARIES: Record<LanguageCode, Record<string, string>> = { en, hi, ar, de, fr, ro, es, it, ru, zh, ja };
-const DICTIONARIES: Record<LanguageCode, Record<string, string>> = Object.fromEntries(
-  (Object.keys(BASE_DICTIONARIES) as LanguageCode[]).map((code) => [
-    code,
-    Object.assign({}, BASE_DICTIONARIES[code], ...GAME_PARTIALS.map((p) => p[code] || {})),
-  ]),
-) as Record<LanguageCode, Record<string, string>>;
+// English ships in the first download; every other language is fetched only when someone actually uses it, so a first-time
+// visitor's download isn't weighed down by ten dictionaries they will never read.
+const LOADERS: Record<Exclude<LanguageCode, 'en'>, () => Promise<{ default: Record<string, string> }>> = {
+  hi: () => import('../lib/i18n/hi'),
+  ar: () => import('../lib/i18n/ar'),
+  de: () => import('../lib/i18n/de'),
+  fr: () => import('../lib/i18n/fr'),
+  ro: () => import('../lib/i18n/ro'),
+  es: () => import('../lib/i18n/es'),
+  it: () => import('../lib/i18n/it'),
+  ru: () => import('../lib/i18n/ru'),
+  zh: () => import('../lib/i18n/zh'),
+  ja: () => import('../lib/i18n/ja'),
+};
+const merged = (code: LanguageCode, base: Record<string, string>) =>
+  Object.assign({}, base, ...GAME_PARTIALS.map((p) => p[code] || {}));
+const DICTIONARIES: Partial<Record<LanguageCode, Record<string, string>>> = { en: merged('en', en) };
+const EN: Record<string, string> = DICTIONARIES.en!;
 
 const STORAGE_KEY = 'familyledger_language';
 
 function isLanguageCode(v: unknown): v is LanguageCode {
-  return typeof v === 'string' && v in DICTIONARIES;
+  return typeof v === 'string' && (v === 'en' || v in LOADERS);
 }
 
 function detectInitialLanguage(): LanguageCode {
@@ -67,6 +68,17 @@ const LanguageContext = createContext<LanguageContextValue>({
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const { user, profile } = useAuth();
   const [language, setLanguageState] = useState<LanguageCode>(detectInitialLanguage);
+  // bumps when a language's dictionary finishes downloading, so the screen re-renders in it (English shows meanwhile)
+  const [, setLoadedTick] = useState(0);
+  useEffect(() => {
+    if (language === 'en' || DICTIONARIES[language]) return;
+    let cancelled = false;
+    LOADERS[language]().then((m) => {
+      DICTIONARIES[language] = merged(language, m.default);
+      if (!cancelled) setLoadedTick((n) => n + 1);
+    }).catch((err) => console.error('Failed to load language:', language, err));
+    return () => { cancelled = true; };
+  }, [language]);
   const isRTL = LANGUAGES.find((l) => l.code === language)?.rtl ?? false;
 
   // Whole-document lang/dir attributes — this is what actually flips the UI to RTL (Tailwind's
@@ -125,8 +137,8 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   const t = React.useCallback(
     (key: string, vars?: Record<string, string | number>) => {
-      const dict = DICTIONARIES[language] || DICTIONARIES.en;
-      let str = dict[key] ?? DICTIONARIES.en[key] ?? key;
+      const dict = DICTIONARIES[language] || EN;
+      let str = dict[key] ?? EN[key] ?? key;
       if (vars) {
         for (const [k, v] of Object.entries(vars)) {
           str = str.replace(new RegExp(`{{${k}}}`, 'g'), String(v));
@@ -134,7 +146,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       }
       return str;
     },
-    [language],
+    [language, DICTIONARIES[language]],
   );
 
   return <LanguageContext.Provider value={{ language, setLanguage, t, isRTL }}>{children}</LanguageContext.Provider>;

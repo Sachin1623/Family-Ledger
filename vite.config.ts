@@ -24,7 +24,10 @@ export default defineConfig(({mode}) => {
         injectRegister: 'auto',
         workbox: {
           navigateFallback: '/index.html',
-          globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+          // Only the app shell is precached. Screens are separate files now, and fetching all ~9 MB of them in the background right
+          // after a first visit would compete with the page the person is actually waiting for (and burn their mobile data); each
+          // screen is cached the first time it is opened instead (the /assets/ rule below), so it still works offline afterwards.
+          globPatterns: ['**/*.{css,html,svg,png,ico}', 'assets/index-*.js', 'registerSW.js'],
           // Default is 2MiB; the main JS chunk (which bundles the Sudoku puzzle bank for
           // guaranteed offline availability — see today's earlier note) has kept growing as
           // features were added and crossed the previous 6MiB ceiling (hit 6.29MB, hard-failing
@@ -37,6 +40,11 @@ export default defineConfig(({mode}) => {
             {
               urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
               handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: ({ url }) => url.pathname.startsWith('/assets/') && url.pathname.endsWith('.js'),
+              handler: 'CacheFirst',
+              options: { cacheName: 'screen-chunks', expiration: { maxEntries: 150 } },
             },
             {
               urlPattern: ({ request }) => request.mode === 'navigate',

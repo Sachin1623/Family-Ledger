@@ -23,6 +23,7 @@ import {
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useNavigate, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { hasAuthHint } from "../lib/authHint";
 import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from "../context/LanguageContext";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx } from "clsx";
@@ -230,7 +231,7 @@ export default function Login() {
     trackFunnel('login_screen_view');
   }, []);
 
-  if (loading) return null;
+  if (loading && hasAuthHint()) return null;
   if (user) return <Navigate to={from} replace />;
 
   const createOrUpdateUserRecords = async (loggedInUser: any) => {

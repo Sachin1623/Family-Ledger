@@ -86,7 +86,7 @@ export default function AddFamilyMemberPrompt({
     // `guide=1` shows ManageGroup's own lightweight step-by-step invite guide the first time
     // someone lands on the Invite tab this way (see ManageGroup.tsx) — same idea as CreateGroup's
     // guided flow, just for picking an invite method instead of filling in group fields.
-    navigate(`/groups/${groupId}/manage?tab=invite&guide=1`);
+    navigate(`/groups/${groupId}/manage?tab=invite`);
   };
 
   return (

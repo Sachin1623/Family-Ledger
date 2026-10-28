@@ -19,7 +19,32 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <title>FamilyLedger</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts load without blocking the first paint (media=print swaps to all once downloaded). Icons are names written as text until the icon
+         font arrives, so they stay invisible until then (or 3 s at most) rather than flashing as words. -->
+    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700;800;900&amp;display=swap" />
+    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&amp;display=swap" />
+    <style>
+      html:not(.fl-icons-ready) .material-symbols-outlined { visibility: hidden; }
+      body { margin: 0; background: #F6F8FA; }
+      #fl-splash { height: 100vh; height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      #fl-splash .fl-name { font-size: 26px; font-weight: 900; letter-spacing: -0.5px; color: #0F172A; }
+      #fl-splash .fl-name b { color: #0284C7; font-weight: 900; }
+      #fl-splash .fl-bar { position: relative; width: 150px; height: 5px; border-radius: 9px; background: #e2e8f0; overflow: hidden; }
+      #fl-splash .fl-bar i { position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 9px; background: linear-gradient(90deg, #4ADE80, #3B82F6); animation: flsplash 1.3s ease-in-out infinite; }
+      @keyframes flsplash { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+    </style>
+    <script>
+      (function () {
+        var root = document.documentElement;
+        function ready() { root.classList.add('fl-icons-ready'); }
+        setTimeout(ready, 3000);
+        if (document.fonts && document.fonts.load) {
+          document.fonts.load('24px "Material Symbols Outlined"', 'home').then(ready, ready);
+        }
+      })();
+    </script>
     <script>
       // Suppress benign background Vite HMR or WebSocket connection failures in AI Studio environment
       (function() {
@@ -101,7 +126,7 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="fl-splash"><svg width="84" height="84" viewBox="0 0 100 120" fill="none" aria-hidden="true"><defs><linearGradient id="g" x1="10" y1="10" x2="90" y2="110" gradientUnits="userSpaceOnUse"><stop stop-color="#4ADE80"/><stop offset="1" stop-color="#3B82F6"/></linearGradient></defs><rect x="10" y="10" width="80" height="100" rx="14" fill="url(#g)"/><path d="M70 40C70 36.7 72.7 34 76 34H90V86H76C72.7 86 70 83.3 70 80V40Z" fill="#1E3A8A"/><circle cx="35" cy="40" r="8" fill="#fff" fill-opacity=".9"/><path d="M25 50a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v25H25z" fill="#fff" fill-opacity=".9"/><circle cx="55" cy="45" r="7" fill="#fff" fill-opacity=".8"/><path d="M48 52a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v23H48z" fill="#fff" fill-opacity=".8"/><circle cx="45" cy="70" r="5" fill="#fff"/><circle cx="65" cy="72" r="5" fill="#fff"/></svg><div class="fl-name">Family<b>Ledger</b></div><div class="fl-bar"><i></i></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

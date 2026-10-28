@@ -156,7 +156,8 @@ export default function ProfileSetupWizard() {
   };
 
   const handleSaveDob = async () => {
-    if (!user || !dobInput || saving) return;
+    if (!user || saving) return;
+    if (!dobInput) { setStep(5); return; }
     if (dobInput > MAX_DOB) {
       setError('Enter a valid date of birth — not in the future, and at least 3 years ago.');
       return;
@@ -319,7 +320,7 @@ export default function ProfileSetupWizard() {
           <div className="space-y-4">
             <div>
               <span className="text-3xl block mb-2">🎂</span>
-              <h2 className="text-lg font-black text-primary">When's your birthday?</h2>
+              <h2 className="text-lg font-black text-primary">When's your birthday? (optional)</h2>
               <p className="text-sm text-text-muted mt-1">Just for your profile — you can change this anytime.</p>
             </div>
             <input
@@ -333,10 +334,10 @@ export default function ProfileSetupWizard() {
             <button
               type="button"
               onClick={handleSaveDob}
-              disabled={!dobInput || saving}
+              disabled={saving}
               className="w-full py-3 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Next'}
+              {saving ? 'Saving…' : dobInput ? 'Next' : 'Skip'}
             </button>
           </div>
         )}
@@ -350,7 +351,7 @@ export default function ProfileSetupWizard() {
             </div>
             <button
               type="button"
-              onClick={() => { finishSetup(); navigate('/create-group?guide=1'); }}
+              onClick={() => { finishSetup(); navigate('/create-group'); }}
               className="w-full py-3 bg-primary text-white font-bold rounded-xl flex items-center justify-center gap-2"
             >
               <span className="material-symbols-outlined text-[18px]">group_add</span>

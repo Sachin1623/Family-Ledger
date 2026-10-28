@@ -1,3 +1,4 @@
+import { setAuthHint } from '../lib/authHint';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { resetCachesIfAccountChanged } from '../lib/deviceUserCache';
 import { User, onAuthStateChanged } from 'firebase/auth';
@@ -65,6 +66,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (authUser) => {
       // A different account on this phone must not inherit the last one's remembered choices (the group the Talk sheet adds to, and so on).
+      setAuthHint(!!authUser);
       if (authUser) resetCachesIfAccountChanged(authUser.uid);
       // Clean up previous profile listener if it exists immediately
       if (unsubscribeProfile) {

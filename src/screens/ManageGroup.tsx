@@ -184,7 +184,7 @@ export default function ManageGroup() {
   // uses to end the new-group onboarding chain's invite step, when it got this far via that chain.
   const closeInviteMethodPanel = () => {
     setInviteMethodPanel(null);
-    if (newGroupOnboardingActive) { setShowGroupTourOffer(true); setNewGroupOnboardingActive(false); }
+    if (newGroupOnboardingActive) { setShowGroupTourOffer(false); setNewGroupOnboardingActive(false); }
   };
   const [friendInviteSearch, setFriendInviteSearch] = useState('');
 
