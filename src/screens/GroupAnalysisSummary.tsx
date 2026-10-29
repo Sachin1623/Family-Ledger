@@ -153,7 +153,7 @@ function DonutList({ items, currencySymbol, numberSystem, centerNote }: { items:
     acc += (i.amount / total) * 100;
     return `${i.color} ${from}% ${acc}%`;
   }).join(',');
-  const money = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, numberSystem as any)}`;
+  const money = (n: number) => `${currencySymbol}${formatAmountCompact(Math.round(n), undefined, numberSystem as any)}`; // whole amounts, no decimals
   return (
     <div className="flex items-center gap-3.5">
       <div className="shrink-0 rounded-full flex items-center justify-center" style={{ width: 108, height: 108, background: `conic-gradient(${stops})` }}>
@@ -276,6 +276,7 @@ export default function GroupAnalysisSummary() {
   // slicing spend by category), Groups only ever has anything to show in the "All Groups" view
   // (same pre-existing condition as before, just no longer sharing a 2-column grid with Categories).
   const [analysisTab, setAnalysisTab] = useState<'overview' | 'trend' | 'categories' | 'groups' | 'members'>('overview');
+  const [pulseOpen, setPulseOpen] = useState(false); // the one-line Need/Want + budget strip: tap for the amounts
   // The Overview and the insight cards have their own month stepper (independent of the month chips in the
   // filters, which keep narrowing the Trend / Categories / Groups / People lists exactly as before).
   const [ovMonthKey, setOvMonthKey] = useState(() => currentLocalMonthKey());
@@ -1638,37 +1639,69 @@ export default function GroupAnalysisSummary() {
             </motion.section>
             )}
 
-            {analysisTab === 'categories' && essentialOptionalData.length > 0 && (
-              <section className="bg-white p-6 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-                <h3 className="font-bold text-primary">Essential vs Optional</h3>
-                {/* A single stacked bar instead of a donut — same two-color-segments idiom already
-                    used for this exact split elsewhere (GroupExpenses.tsx's summary bar), and a lot
-                    shorter than a ~176px chart box for a metric that's really just one ratio. */}
-                <div className="h-3 w-full bg-surface-container rounded-full overflow-hidden flex shadow-inner">
-                  {essentialOptionalData.map((entry) => (
-                    <div
-                      key={entry.name}
-                      style={{ width: `${(entry.value / essentialOptionalTotal) * 100}%`, backgroundColor: entry.color }}
-                      className="h-full"
-                    />
-                  ))}
-                </div>
-                <div className="flex flex-wrap justify-center gap-x-5 gap-y-1.5">
-                  {essentialOptionalData.map((entry) => (
-                    <div key={entry.name} className="flex items-center gap-1.5 min-w-0">
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
-                      <span className="text-xs font-bold text-on-surface truncate">{entry.name}</span>
-                      <span className="text-[10px] font-bold text-text-muted shrink-0">
-                        {Math.round((entry.value / essentialOptionalTotal) * 100)}%
-                      </span>
-                      <span className="text-xs font-black text-primary shrink-0">
-                        {currencySymbol}{formatAmountCompact(entry.value, undefined, profile?.numberSystem)}
-                      </span>
+            {analysisTab === 'categories' && (essentialOptionalData.length > 0 || (selectedGroupId && selectedGroupId !== 'all')) && (() => {
+              // One slim line for the two headline checks: how much of the spending was a need vs a want, and how the month's budget is holding up.
+              // Tap it for the amounts. (It replaces the separate Essential vs Optional card and the budget summary block.)
+              const fm = (n: number) => `${currencySymbol}${formatAmountCompact(Math.round(n), undefined, profile?.numberSystem)}`;
+              const need = essentialOptionalData.find((e) => /need|essential/i.test(e.name)) || essentialOptionalData[0];
+              const eoTotal = essentialOptionalTotal || 1;
+              const b = selectedGroupId && selectedGroupId !== 'all' ? budgetDocsByMonth[ovMonthKey] : undefined;
+              const hasBudget = !!b && b.amount > 0;
+              const status = hasBudget ? getBudgetStatus(budgetMonthSpend.total, b!.amount) : null;
+              const left = hasBudget ? b!.amount - budgetMonthSpend.total : 0;
+              const pctOf = (v: number) => Math.round((v / eoTotal) * 100);
+              const R = 13;
+              const C = 2 * Math.PI * R;
+              return (
+                <button type="button" onClick={() => setPulseOpen((o) => !o)} aria-expanded={pulseOpen} className="w-full text-left bg-white rounded-2xl border border-border-subtle shadow-sm px-3 py-2.5 active:scale-[0.99] transition-transform">
+                  <div className="flex items-center gap-3">
+                    {essentialOptionalData.length > 0 && (
+                      <div className="flex-1 min-w-0">
+                        <div className="flex h-6 w-full rounded-full overflow-hidden shadow-inner bg-surface-container">
+                          {essentialOptionalData.map((entry) => {
+                            const pct = pctOf(entry.value);
+                            const isNeed = entry === need;
+                            return (
+                              <div key={entry.name} style={{ width: `${(entry.value / eoTotal) * 100}%`, backgroundColor: entry.color }} className="h-full flex items-center justify-center text-[10px] font-black text-white whitespace-nowrap overflow-hidden">
+                                {pct >= 30 ? `${isNeed ? 'Need' : entry.name} ${pct}%` : pct >= 12 ? `${pct}%` : ''}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {status && (
+                      <>
+                        <span className="w-px self-stretch bg-border-subtle" />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <svg width="34" height="34" viewBox="0 0 34 34" className="shrink-0" aria-hidden>
+                            <circle cx="17" cy="17" r={R} fill="none" strokeWidth="4" className="stroke-surface-container" />
+                            <circle cx="17" cy="17" r={R} fill="none" strokeWidth="4" strokeLinecap="round" transform="rotate(-90 17 17)" strokeDasharray={C} strokeDashoffset={C * (1 - Math.min(1, status.percent / 100))} className={clsx(status.textClass, 'stroke-current')} />
+                          </svg>
+                          <div className="leading-tight">
+                            <p className={clsx('text-sm font-black tabular-nums', status.textClass)}>{Math.round(status.percent)}%</p>
+                            <p className="text-[10px] font-bold text-text-muted whitespace-nowrap">{left >= 0 ? `${fm(left)} left` : `${fm(-left)} over`}</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    <span className={clsx('material-symbols-outlined text-[18px] text-text-muted shrink-0 transition-transform', pulseOpen && 'rotate-180')}>expand_more</span>
+                  </div>
+                  {pulseOpen && (
+                    <div className="mt-2 pt-2 border-t border-border-subtle/70 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                      {essentialOptionalData.map((entry) => (
+                        <span key={entry.name} className="inline-flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                          <b className="text-primary">{entry.name}</b> {pctOf(entry.value)}% · <b className="text-primary">{fm(entry.value)}</b>
+                        </span>
+                      ))}
+                      {hasBudget && <span className="text-text-muted">Budget: <b className="text-primary">{fm(budgetMonthSpend.total)}</b> spent of <b className="text-primary">{fm(b!.amount)}</b></span>}
+                      {selectedGroupId && selectedGroupId !== 'all' && !hasBudget && <span className="text-text-muted">No budget set for this month.</span>}
                     </div>
-                  ))}
-                </div>
-              </section>
-            )}
+                  )}
+                </button>
+              );
+            })()}
 
             {analysisTab === 'groups' && (
               <section>
@@ -1845,22 +1878,12 @@ export default function GroupAnalysisSummary() {
                     })
                     .sort((x, y) => y.status.percent - x.status.percent);
                   return (
+                    // the overall budget status now lives in the one-line strip at the top; only the per-category split is shown here
+                    rows.length === 0 ? null : (
                     <div className="mb-5 rounded-2xl bg-surface-container/40 p-3.5 space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-black text-primary">Budget vs spend · {monthName}</p>
-                          <p className="text-[11px] text-text-muted mt-0.5"><b className="text-primary">{fm(total)}</b> spent of <b className="text-primary">{fm(b.amount)}</b></p>
-                        </div>
-                        <span className={clsx('shrink-0 text-[11px] font-black rounded-full px-2.5 py-1', status.bgClass, status.textClass)}>
-                          {left >= 0 ? `${fm(left)} left` : `${fm(-left)} over`}
-                        </span>
-                      </div>
-                      <div className="h-2.5 rounded-full bg-white overflow-hidden">
-                        <div className={clsx('h-full rounded-full transition-all', status.barClass)} style={{ width: `${Math.min(100, status.percent)}%` }} />
-                      </div>
-                      <p className={clsx('text-[10px] font-black text-right -mt-1.5', status.textClass)}>{Math.round(status.percent)}% used</p>
+                      <p className="text-xs font-black text-primary">Budget by category · {monthName}</p>
                       {rows.length > 0 && (
-                        <div className="space-y-2.5 pt-1 border-t border-border-subtle/70">
+                        <div className="space-y-2.5">
                           {rows.map((r) => (
                             <div key={r.id} className="space-y-1">
                               <div className="flex items-center justify-between gap-2 text-[11px]">
@@ -1875,8 +1898,8 @@ export default function GroupAnalysisSummary() {
                           {unbudgeted > 0.5 && <p className="text-[10.5px] text-text-muted">Spent outside the budgeted categories: <b className="text-primary">{fm(unbudgeted)}</b></p>}
                         </div>
                       )}
-                      {rows.length === 0 && <p className="text-[10.5px] text-text-muted">This budget is not split by category. Split it in Manage group to see each category against its share.</p>}
                     </div>
+                    )
                   );
                 })()}
 
@@ -1918,7 +1941,7 @@ export default function GroupAnalysisSummary() {
                                   {CATEGORIES_LIST.find(c => c.id === entry.name) ? categoryLabel(entry.name) : entry.name}
                                 </span>
                                 <span className={clsx('font-bold text-xs ml-2', isIncome ? 'text-[#0F7A38]' : 'text-success')}>
-                                  {isIncome && '+'}{currencySymbol}{formatAmountCompact(entry.value, undefined, profile?.numberSystem)}
+                                  {isIncome && '+'}{currencySymbol}{formatAmountCompact(Math.round(entry.value), undefined, profile?.numberSystem)}
                                 </span>
                               </div>
                               <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
