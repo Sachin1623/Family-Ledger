@@ -1810,7 +1810,8 @@ export default function GroupAnalysisSummary() {
               ) : (
                 <div className="h-64 flex flex-col items-center justify-center text-text-muted gap-3">
                   <span className="material-symbols-outlined text-4xl">group_work</span>
-                  <p className="text-sm font-bold text-center max-w-xs">Switch to "All my groups" above to compare spending across your groups.</p>
+                  <p className="text-sm font-bold text-center max-w-xs">Comparing groups needs all your groups together. This view is showing one group.</p>
+                  <button type="button" onClick={() => setScopeId('all')} className="rounded-full bg-primary text-white px-4 py-2 text-xs font-black active:scale-95">Show all my groups</button>
                 </div>
               )}
               </section>
