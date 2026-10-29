@@ -1936,21 +1936,18 @@ export default function GroupAnalysisSummary() {
                           <div className="flex items-center gap-3">
                             <CategoryBadge id={entry.name} icon={CATEGORIES_LIST.find(c => c.id === entry.name)?.icon || '🧾'} size={32} />
                             <div className="flex-1 min-w-0">
-                              <div className="flex justify-between items-center mb-1">
-                                <span className={clsx('font-bold truncate text-xs', isIncome ? 'text-[#0F7A38]' : 'text-primary')}>
-                                  {CATEGORIES_LIST.find(c => c.id === entry.name) ? categoryLabel(entry.name) : entry.name}
+                              <div className="flex justify-between items-center">
+                                <span className="flex items-center gap-1.5 min-w-0">
+                                  <span className={clsx('font-bold truncate text-xs', isIncome ? 'text-[#0F7A38]' : 'text-primary')}>
+                                    {CATEGORIES_LIST.find(c => c.id === entry.name) ? categoryLabel(entry.name) : entry.name}
+                                  </span>
+                                  <span className={clsx('shrink-0 rounded-full px-1.5 py-0.5 text-[8.5px] font-black uppercase tracking-wider', isIncome ? 'bg-[#0F7A38]/10 text-[#0F7A38]' : 'bg-error/10 text-error')}>
+                                    {isIncome ? 'Income' : 'Expense'}
+                                  </span>
                                 </span>
                                 <span className={clsx('font-bold text-xs ml-2', isIncome ? 'text-[#0F7A38]' : 'text-success')}>
                                   {isIncome && '+'}{currencySymbol}{formatAmountCompact(Math.round(entry.value), undefined, profile?.numberSystem)}
                                 </span>
-                              </div>
-                              <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
-                                <motion.div
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${pct}%` }}
-                                  className="h-full rounded-full shadow-sm"
-                                  style={{ backgroundColor: isIncome ? '#0F7A38' : (CATEGORY_COLORS[entry.name.toLowerCase()] || COLORS[index % COLORS.length]) }}
-                                />
                               </div>
                             </div>
                           </div>
