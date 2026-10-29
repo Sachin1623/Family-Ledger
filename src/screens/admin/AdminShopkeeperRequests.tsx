@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost } from '../../lib/adminApi';
+import { fmtDateTime } from '../../lib/adminTime';
 
 interface ShopRequest {
   uid: string;
@@ -65,7 +66,7 @@ export default function AdminShopkeeperRequests() {
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-primary truncate">{r.userName}</p>
                   <p className="text-xs text-text-muted truncate">{r.userEmail}</p>
-                  <p className="text-[10px] text-text-muted mt-0.5">{new Date(r.createdAt).toLocaleString()}</p>
+                  <p className="text-[10px] text-text-muted mt-0.5">{fmtDateTime(r.createdAt)}</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
                   <button

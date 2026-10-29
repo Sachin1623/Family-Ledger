@@ -4513,10 +4513,10 @@ async function startServer() {
       const query = `
         SELECT
           currency,
-          SUM(CASE WHEN DATE(usage_start_time) >= DATE_TRUNC(CURRENT_DATE(), MONTH) THEN net_cost ELSE 0 END) AS this_month,
-          SUM(CASE WHEN DATE(usage_start_time) >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH)
-                     AND DATE(usage_start_time) < DATE_TRUNC(CURRENT_DATE(), MONTH) THEN net_cost ELSE 0 END) AS last_month,
-          SUM(CASE WHEN DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN net_cost ELSE 0 END) AS last_7_days,
+          SUM(CASE WHEN DATE(usage_start_time, 'Asia/Kolkata') >= DATE_TRUNC(CURRENT_DATE('Asia/Kolkata'), MONTH) THEN net_cost ELSE 0 END) AS this_month,
+          SUM(CASE WHEN DATE(usage_start_time, 'Asia/Kolkata') >= DATE_TRUNC(DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 MONTH), MONTH)
+                     AND DATE(usage_start_time, 'Asia/Kolkata') < DATE_TRUNC(CURRENT_DATE('Asia/Kolkata'), MONTH) THEN net_cost ELSE 0 END) AS last_month,
+          SUM(CASE WHEN DATE(usage_start_time, 'Asia/Kolkata') >= DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 7 DAY) THEN net_cost ELSE 0 END) AS last_7_days,
           MIN(usage_start_time) AS earliest
         FROM (
           SELECT
@@ -4524,7 +4524,7 @@ async function startServer() {
             currency,
             usage_start_time
           FROM \`familyledgerta.billing_export.${tableName}\`
-          WHERE DATE(usage_start_time) >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH)
+          WHERE DATE(usage_start_time, 'Asia/Kolkata') >= DATE_TRUNC(DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 1 MONTH), MONTH)
         )
         GROUP BY currency
         ORDER BY this_month DESC
@@ -4561,11 +4561,11 @@ async function startServer() {
       const table = `\`familyledgerta.billing_export.${tableName}\``;
       const [byService] = await bigquery.query({
         query: `SELECT service.description AS service, currency, SUM(${net}) AS net FROM ${table}
-                WHERE DATE(usage_start_time) >= DATE_TRUNC(CURRENT_DATE(), MONTH) GROUP BY service, currency ORDER BY net DESC LIMIT 12`,
+                WHERE DATE(usage_start_time, 'Asia/Kolkata') >= DATE_TRUNC(CURRENT_DATE('Asia/Kolkata'), MONTH) GROUP BY service, currency ORDER BY net DESC LIMIT 12`,
       });
       const [daily] = await bigquery.query({
-        query: `SELECT CAST(DATE(usage_start_time) AS STRING) AS day, SUM(${net}) AS net FROM ${table}
-                WHERE DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) GROUP BY day ORDER BY day`,
+        query: `SELECT CAST(DATE(usage_start_time, 'Asia/Kolkata') AS STRING) AS day, SUM(${net}) AS net FROM ${table}
+                WHERE DATE(usage_start_time, 'Asia/Kolkata') >= DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 30 DAY) GROUP BY day ORDER BY day`,
       });
       return res.json({
         tableReady: true,
@@ -4596,7 +4596,7 @@ async function startServer() {
       // ── users ──
       const usersSnap = await db.collection('users').select('joinedAt', 'lastActiveAt').get();
       const users = usersSnap.docs.map((d) => ({ joined: Date.parse(String(d.data().joinedAt || '')) || 0, active: Date.parse(String(d.data().lastActiveAt || '')) || 0 }));
-      const startOfTodayUtc = Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+      const startOfTodayUtc = Date.parse(todayKey + 'T00:00:00.000Z') - 5.5 * 60 * 60 * 1000; // midnight IST, as a UTC instant
       const count = (fn: (u: { joined: number; active: number }) => boolean) => users.filter(fn).length;
       const newByDay: Record<string, number> = {};
       for (let i = 0; i < 60; i++) newByDay[istKey(now - i * DAY)] = 0; // 60 days: the last 30 for the chart, the 30 before for the comparison
@@ -5856,7 +5856,7 @@ async function startServer() {
   // ---- Product analytics: goals, accounts, every health tool, and splits — totals, today / this
   // week vs the one before, a 30-day daily series and a 12-week weekly series for each. One call
   // gathers everything (the Analytics tabs all read from it) and is cached for 5 minutes, since it
-  // reads whole collections. Days are UTC calendar days; "week" = a rolling 7 days, not Mon-Sun.
+  // reads whole collections. Days are Indian (IST) calendar days; "week" = a rolling 7 days, not Mon-Sun.
   let productStatsCache: { at: number; data: any } | null = null;
 
   app.get('/api/admin/analytics/product', async (req, res) => {
@@ -5870,7 +5870,7 @@ async function startServer() {
 
       const DAY = 24 * 60 * 60 * 1000;
       const now = Date.now();
-      const ymd = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      const ymd = (ms: number) => new Date(ms + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10); // the IST day
       const DAILY_DAYS = 30;
       const WEEKS = 12;
       const allDays = Array.from({ length: WEEKS * 7 }, (_, i) => ymd(now - (WEEKS * 7 - 1 - i) * DAY)); // oldest -> today
@@ -5878,7 +5878,12 @@ async function startServer() {
       const since30 = ymd(now - 29 * DAY);
 
       type Ev = { date: string; value?: number };
-      const dateOf = (v: unknown): string | null => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+      // Full timestamps (createdAt...) are stored in UTC, so they are moved to the IST day; a plain date (yyyy-mm-dd) is already a calendar day and stays as is.
+      const dateOf = (v: unknown): string | null => {
+        if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(v)) return null;
+        if (v.length > 10) { const t = Date.parse(v); if (!isNaN(t)) return new Date(t + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10); }
+        return v.slice(0, 10);
+      };
       const eventsOf = (docs: FirebaseFirestore.QueryDocumentSnapshot[], field: string, weight?: (d: any) => number): Ev[] => {
         const out: Ev[] = [];
         docs.forEach((d) => {

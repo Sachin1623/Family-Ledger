@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 import { adminGet } from '../../lib/adminApi';
+import { fmtTime } from '../../lib/adminTime';
 
 interface TopEntry { groupId?: string; uid?: string; name: string; totalSpend: number; entryCount: number }
 interface TrendPoint { day: string; logins: number; activeUsers: number }
@@ -289,7 +290,7 @@ export default function AdminAnalytics() {
 
       {tab !== 'usage' && tab !== 'games' && (
         <div className="flex items-center justify-between text-[11px] text-text-muted">
-          <span>{product ? `Updated ${new Date(product.generatedAt).toLocaleTimeString()} · days are UTC, a "week" is a rolling 7 days` : ''}</span>
+          <span>{product ? `Updated ${fmtTime(product.generatedAt)} · days are IST, a "week" is a rolling 7 days` : ''}</span>
           <button onClick={() => loadProduct(true)} disabled={productLoading} className="font-bold text-primary underline disabled:opacity-50">
             {productLoading ? 'Loading…' : 'Refresh'}
           </button>

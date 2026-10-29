@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { adminGet, adminPost, adminDelete } from '../../lib/adminApi';
 import { auth } from '../../lib/firebase';
 import Comments from '../../components/Comments';
+import { fmtDateTime } from '../../lib/adminTime';
 
 interface FeedbackItem {
   id: string;
@@ -111,7 +112,7 @@ export default function AdminFeedback() {
                     )}
                   </div>
                   <p className="text-sm font-bold text-primary">{item.displayName}</p>
-                  <p className="text-xs text-text-muted">{item.email} · {new Date(item.createdAt).toLocaleString()}</p>
+                  <p className="text-xs text-text-muted">{item.email} · {fmtDateTime(item.createdAt)}</p>
                 </div>
               </div>
               <p className="text-sm text-on-surface whitespace-pre-wrap">{item.text}</p>

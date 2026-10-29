@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { adminGet, adminDelete } from '../../lib/adminApi';
+import { fmtDateTime, fmtDate } from '../../lib/adminTime';
 
 interface Detail {
   profile: any;
@@ -96,7 +97,7 @@ export default function AdminUserDetail() {
             <div key={e.id} className="flex justify-between text-sm border-b border-border-subtle last:border-0 py-2">
               <div>
                 <p className="font-medium">{e.description}</p>
-                <p className="text-xs text-text-muted">{e.category} · {new Date(e.createdAt).toLocaleDateString()}</p>
+                <p className="text-xs text-text-muted">{e.category} · {fmtDate(e.createdAt)}</p>
               </div>
               <span className="font-bold">{e.amount.toLocaleString()}</span>
             </div>
@@ -120,7 +121,7 @@ export default function AdminUserDetail() {
           {detail.activities.map((a) => (
             <div key={a.id} className="text-sm border-b border-border-subtle last:border-0 py-2">
               <p>{a.description || a.type}</p>
-              <p className="text-xs text-text-muted">{new Date(a.createdAt).toLocaleString()}</p>
+              <p className="text-xs text-text-muted">{fmtDateTime(a.createdAt)}</p>
             </div>
           ))}
         </div>

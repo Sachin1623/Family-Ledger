@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { adminGet, adminPost } from '../../lib/adminApi';
 import { useAuth } from '../../context/AuthContext';
+import { fmtDate } from '../../lib/adminTime';
 
 interface AdminEntry {
   uid: string;
@@ -91,7 +92,7 @@ export default function AdminManageAdmins() {
             <div>
               <p className="font-bold text-primary text-sm">{a.email}</p>
               <p className="text-xs text-text-muted">
-                Granted {new Date(a.grantedAt).toLocaleDateString()} by {a.grantedBy}
+                Granted {fmtDate(a.grantedAt)} by {a.grantedBy}
               </p>
             </div>
             <button

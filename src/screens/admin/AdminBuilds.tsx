@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { auth } from '../../lib/firebase';
 import { adminGet } from '../../lib/adminApi';
 import { shareOrDownloadFile } from '../../lib/fileShare';
+import { fmtDateTime } from '../../lib/adminTime';
 
 interface Build {
   name: string;
@@ -73,7 +74,7 @@ export default function AdminBuilds() {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-bold text-on-surface break-all">{b.name}</p>
               <p className="text-xs text-text-muted">
-                {formatSize(b.sizeBytes)}{b.updatedAt ? ` · ${new Date(b.updatedAt).toLocaleString()}` : ''}
+                {formatSize(b.sizeBytes)}{b.updatedAt ? ` · ${fmtDateTime(b.updatedAt)}` : ''}
               </p>
             </div>
             <button

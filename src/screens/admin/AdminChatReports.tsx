@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost, adminDelete } from '../../lib/adminApi';
+import { fmtDateTime } from '../../lib/adminTime';
 
 interface ChatReport {
   id: string;
@@ -117,7 +118,7 @@ export default function AdminChatReports() {
                 </div>
                 <p className="text-sm font-bold text-primary">From: {item.messageUserName}</p>
                 <p className="text-xs text-text-muted">
-                  Reported by {item.reportedByName} · {new Date(item.createdAt).toLocaleString()}
+                  Reported by {item.reportedByName} · {fmtDateTime(item.createdAt)}
                 </p>
               </div>
             </div>

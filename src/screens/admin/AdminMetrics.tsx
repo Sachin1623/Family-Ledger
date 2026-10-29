@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { adminGet } from '../../lib/adminApi';
+import { fmtDateTime, fmtTime, adminNowParts } from '../../lib/adminTime';
 
 // The admin health dashboard: Today / Growth / Health / Cost / Product. Every number comes from data the app already keeps (users, expenses,
 // the sign-in counters, the server's own request counters and the Google Cloud billing export). Things only Google Play knows (installs,
@@ -420,9 +421,9 @@ export default function AdminMetrics() {
       }
     }
     const voiceRate = pct(total.vu, total.vc);
-    const now = new Date();
-    const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const forecast = cost?.thisMonth !== undefined ? (cost.thisMonth / Math.max(1, now.getDate())) * dim : null;
+    const now = adminNowParts();
+    const dim = new Date(now.year, now.month, 0).getDate();
+    const forecast = cost?.thisMonth !== undefined ? (cost.thisMonth / Math.max(1, now.day)) * dim : null;
     const forecastVsLast = forecast !== null && cost?.lastMonth ? Math.round(((forecast - cost.lastMonth) / cost.lastMonth) * 100) : null;
     const avg30 = m.users.newByDay.reduce((n, d) => n + d.count, 0) / Math.max(1, m.users.newByDay.length);
     return { f, fp, taps, signInFail, signInFailPrev, total, serverErr, p95, p95Label, voiceRate, forecast, forecastVsLast, avg30, dim };
@@ -466,7 +467,7 @@ export default function AdminMetrics() {
             <span className={`w-3 h-3 rounded-full ${alerts.some((a) => a.level === 'bad') ? 'bg-red-200' : alerts.length ? 'bg-amber-200' : 'bg-green-400'}`} />
             <div className="min-w-0 flex-1">
               <p className="font-black">{alerts.some((a) => a.level === 'bad') ? 'Something needs fixing' : alerts.length ? 'Worth a look' : 'All systems healthy'}</p>
-              <p className="text-[11px] opacity-80 truncate">Backend {m.revision.replace('familyledger-backend-', '')} · errors {fmtPct(derived.serverErr)} · slowest 5% {derived.p95Label} · updated {new Date(m.generatedAt).toLocaleTimeString()}</p>
+              <p className="text-[11px] opacity-80 truncate">Backend {m.revision.replace('familyledger-backend-', '')} · errors {fmtPct(derived.serverErr)} · slowest 5% {derived.p95Label} · updated {fmtTime(m.generatedAt)}</p>
             </div>
             <button type="button" onClick={() => load(true)} disabled={refreshing} className="shrink-0 px-3 py-1.5 rounded-lg bg-white/20 text-xs font-black disabled:opacity-50">{refreshing ? '…' : 'Refresh'}</button>
           </div>
@@ -687,7 +688,7 @@ export default function AdminMetrics() {
               <div key={b.id} className="bg-white rounded-2xl border border-border-subtle p-4 space-y-3">
                 <div>
                   <p className="text-sm font-black text-primary leading-tight">{b.title}</p>
-                  <p className="text-[11px] text-text-muted">{b.sentAt ? new Date(b.sentAt).toLocaleString() : ''}</p>
+                  <p className="text-[11px] text-text-muted">{b.sentAt ? fmtDateTime(b.sentAt) : ''}</p>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   <Tile label="Sent to" value={num(b.recipients)} sub={`${num(b.pushSent)} notified`} />

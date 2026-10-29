@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { adminGet, adminPost } from '../../lib/adminApi';
+import { fmtDateTime, fmtDate } from '../../lib/adminTime';
 
 interface AdminUser {
   uid: string;
@@ -293,8 +294,8 @@ export default function AdminUsers() {
                   </Link>
                   <p className="text-xs text-text-muted">{u.email}</p>
                 </td>
-                <td className="p-3 text-xs text-text-muted">{u.joinedAt ? new Date(u.joinedAt).toLocaleDateString() : '—'}</td>
-                <td className="p-3 text-xs text-text-muted">{u.lastActiveAt ? new Date(u.lastActiveAt).toLocaleString() : '—'}</td>
+                <td className="p-3 text-xs text-text-muted">{u.joinedAt ? fmtDate(u.joinedAt) : '—'}</td>
+                <td className="p-3 text-xs text-text-muted">{u.lastActiveAt ? fmtDateTime(u.lastActiveAt) : '—'}</td>
                 <td className="p-3">{u.groupCount}</td>
                 <td className="p-3">{u.expenseCount}</td>
                 <td className="p-3 font-bold">{u.totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { adminGet } from '../../lib/adminApi';
 import { useAuth } from '../../context/AuthContext';
+import { fmtDate, getAdminTz, setAdminTzMode } from '../../lib/adminTime';
 
 interface CountryStats {
   country: string;
@@ -152,6 +153,12 @@ export default function AdminDashboard() {
         <p className="text-sm text-text-muted font-medium">
           Signed in as {admin.isSuperAdmin ? 'primary admin' : admin.isPrimaryAdmin ? 'primary admin' : 'secondary admin'}
         </p>
+        <p className="text-xs text-text-muted mt-1">
+          Times shown in {getAdminTz() ? 'Indian time (IST)' : 'your device time'} ·{' '}
+          <button type="button" className="font-bold text-primary underline" onClick={() => { setAdminTzMode(getAdminTz() ? 'device' : 'ist'); window.location.reload(); }}>
+            {getAdminTz() ? 'Use my device time' : 'Back to IST'}
+          </button>
+        </p>
       </div>
 
       {error && (
@@ -201,7 +208,7 @@ export default function AdminDashboard() {
                 <h3 className="text-lg font-bold text-primary">Cloud Costs</h3>
                 {cloudCost?.tableReady && cloudCost.hasData ? (
                   <p className="text-sm text-text-muted">
-                    Since {cloudCost.earliest ? new Date(cloudCost.earliest).toLocaleDateString() : 'export started'}
+                    Since {cloudCost.earliest ? fmtDate(cloudCost.earliest) : 'export started'}
                   </p>
                 ) : (
                   <p className="text-sm text-text-muted">

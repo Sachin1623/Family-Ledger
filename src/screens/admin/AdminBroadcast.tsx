@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BROADCAST_TEMPLATES } from '../../lib/broadcastTemplates';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost, adminDelete } from '../../lib/adminApi';
+import { fmtDateTime, isoToLocalInput, localInputToIso, adminTzLabel } from '../../lib/adminTime';
 
 const MAX_IMAGES = 5;
 const MAX_MESSAGE_LENGTH = 800;
@@ -58,14 +59,10 @@ function resizeImage(file: File, maxWidth = 600, maxHeight = 600): Promise<strin
   });
 }
 
-// datetime-local inputs work in the browser's LOCAL wall-clock time with no timezone suffix —
-// `new Date(...)` parses that as local time correctly, and toISOString() converts it to the UTC
-// timestamp the server compares scheduledFor against.
+// datetime-local inputs hold a wall-clock time with no zone. It is read and written as Indian time (IST) unless the admin switched to device time,
+// then converted to the UTC timestamp the server compares scheduledFor against (see src/lib/adminTime.ts).
 function toDatetimeLocalValue(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return iso ? isoToLocalInput(iso) : '';
 }
 
 function minDatetimeLocalValue(): string {
@@ -206,7 +203,7 @@ export default function AdminBroadcast() {
   };
 
   const handleCancelScheduled = async (b: BroadcastRecord) => {
-    if (!window.confirm(`Cancel this scheduled broadcast (was set for ${new Date(b.scheduledFor!).toLocaleString()})?`)) return;
+    if (!window.confirm(`Cancel this scheduled broadcast (was set for ${fmtDateTime(b.scheduledFor!)})?`)) return;
     try {
       await adminDelete(`/api/admin/broadcast/${b.id}`);
       if (editingId === b.id) resetForm();
@@ -247,16 +244,16 @@ export default function AdminBroadcast() {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
-    const scheduledFor = scheduleEnabled && scheduledForLocal ? new Date(scheduledForLocal).toISOString() : null;
+    const scheduledFor = scheduleEnabled && scheduledForLocal ? localInputToIso(scheduledForLocal) : null;
     if (scheduleEnabled && (!scheduledFor || new Date(scheduledFor).getTime() <= Date.now())) {
       setError('Pick a future date/time to schedule for.');
       return;
     }
 
     const confirmText = editingId
-      ? `Update this scheduled broadcast for ${new Date(scheduledFor!).toLocaleString()}?`
+      ? `Update this scheduled broadcast for ${fmtDateTime(scheduledFor!)}?`
       : scheduleEnabled
-      ? `Schedule this message to send to every user at ${new Date(scheduledFor!).toLocaleString()}?`
+      ? `Schedule this message to send to every user at ${fmtDateTime(scheduledFor!)}?`
       : 'Send this message to every user right now? This cannot be undone or recalled.';
     if (!window.confirm(confirmText)) return;
 
@@ -324,7 +321,7 @@ export default function AdminBroadcast() {
                 </div>
               )}
               {current.createdAt && (
-                <p className="text-[11px] text-text-muted">{new Date(current.createdAt).toLocaleString()}</p>
+                <p className="text-[11px] text-text-muted">{fmtDateTime(current.createdAt)}</p>
               )}
               <button
                 type="button"
@@ -460,6 +457,7 @@ export default function AdminBroadcast() {
                   className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
                 />
               )}
+              {scheduleEnabled && <p className="text-[11px] text-text-muted">Time is in {adminTzLabel()}.</p>}
             </div>
 
             {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200">{error}</div>}
@@ -499,9 +497,9 @@ export default function AdminBroadcast() {
                   </div>
                 )}
                 <p className="text-[11px] text-text-muted">
-                  {b.status === 'scheduled' && b.scheduledFor && <>Scheduled for {new Date(b.scheduledFor).toLocaleString()}</>}
-                  {b.status === 'sent' && b.sentAt && <>Sent {new Date(b.sentAt).toLocaleString()} · {b.recipientCount ?? 0} recipients</>}
-                  {b.status === 'canceled' && b.canceledAt && <>Canceled {new Date(b.canceledAt).toLocaleString()}</>}
+                  {b.status === 'scheduled' && b.scheduledFor && <>Scheduled for {fmtDateTime(b.scheduledFor)}</>}
+                  {b.status === 'sent' && b.sentAt && <>Sent {fmtDateTime(b.sentAt)} · {b.recipientCount ?? 0} recipients</>}
+                  {b.status === 'canceled' && b.canceledAt && <>Canceled {fmtDateTime(b.canceledAt)}</>}
                 </p>
                 <div className="flex gap-2 pt-1">
                   {b.status === 'scheduled' && (

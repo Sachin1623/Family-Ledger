@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost } from '../../lib/adminApi';
+import { fmtDateTime } from '../../lib/adminTime';
 
 interface PlatformFields {
   latestVersionCode: string;
@@ -154,7 +155,7 @@ export default function AdminAppVersion() {
         <form onSubmit={handleSave} className="space-y-4">
           {current?.updatedAt && (
             <p className="text-[11px] text-text-muted">
-              Last updated {new Date(current.updatedAt).toLocaleString()} by {current.updatedBy || 'unknown'}
+              Last updated {fmtDateTime(current.updatedAt)} by {current.updatedBy || 'unknown'}
             </p>
           )}
 
