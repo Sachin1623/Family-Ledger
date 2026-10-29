@@ -42,8 +42,8 @@ class AlarmScheduler {
         PendingIntent pi = buildPendingIntent(context, id, title, body, hour, minute, weekdaysCsv, intervalDays, startDate, route);
         // setAlarmClock() (API 21+, this app's minSdk is 24) is Android's dedicated API for genuine
         // "alarm clock" apps — unlike setExactAndAllowWhileIdle(), it is NOT subject to Doze-mode
-        // deferral at all and doesn't depend on the user having granted the "Alarms & reminders"
-        // special permission. It also puts a persistent alarm-clock icon in the status bar, which
+        // deferral at all. (It DOES need the "Alarms & reminders" special permission from Android 12 on — see armAlarm() for what happens
+        // without it.) It also puts a persistent alarm-clock icon in the status bar, which
         // in practice makes OEM battery managers (ColorOS/OxygenOS, seen killing an
         // setExactAndAllowWhileIdle alarm outright on a Vivo device, and suspected on a OnePlus one
         // too, despite standard Doze whitelisting + exact-alarm permission both already granted)
@@ -51,8 +51,28 @@ class AlarmScheduler {
         // vouching for it. `showIntent` is what launches if the user taps that status-bar icon
         // before the alarm fires; opening the app plainly is enough; AlarmReceiver/AlarmActivity
         // still own everything about what actually happens when it fires.
-        PendingIntent showIntent = buildShowIntent(context, id);
-        am.setAlarmClock(new AlarmManager.AlarmClockInfo(trigger, showIntent), pi);
+        armAlarm(am, trigger, buildShowIntent(context, id), pi);
+    }
+
+    /**
+     * Arms one alarm. From Android 12 on, setAlarmClock() throws a SecurityException unless the person has switched on "Alarms & reminders" for the
+     * app (off by default on Android 14+), and that exception used to escape from the sign-in alarm sync and close the whole app. Without the
+     * permission the alarm is armed as a normal one instead (it can be a little late in Doze, but it still rings); with it, nothing changes.
+     */
+    private static void armAlarm(AlarmManager am, long trigger, PendingIntent showIntent, PendingIntent pi) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
+            } else {
+                am.setAlarmClock(new AlarmManager.AlarmClockInfo(trigger, showIntent), pi);
+            }
+        } catch (SecurityException e) {
+            try {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi);
+            } catch (Exception ignored) {
+                // the OS refuses every kind of alarm: nothing more can be done, but the app must not close because of it
+            }
+        }
     }
 
     /**
@@ -78,8 +98,7 @@ class AlarmScheduler {
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
         long trigger = System.currentTimeMillis() + (long) delayMinutes * 60_000L;
-        PendingIntent showIntent = buildShowIntent(context, id);
-        am.setAlarmClock(new AlarmManager.AlarmClockInfo(trigger, showIntent), pi);
+        armAlarm(am, trigger, buildShowIntent(context, id), pi);
     }
 
     // ---- "Only ring what the app currently wants" ----------------------------------------------

@@ -132,7 +132,12 @@ public class AlarmClockPlugin extends Plugin {
 
         String feature = call.getString("feature", "");
         String endDate = call.getString("endDate", "");
-        AlarmScheduler.schedule(getContext(), id, title, body, hour, minute, csv.toString(), intervalDays, startDate, route, feature, endDate);
+        try {
+            AlarmScheduler.schedule(getContext(), id, title, body, hour, minute, csv.toString(), intervalDays, startDate, route, feature, endDate);
+        } catch (Exception e) {
+            call.reject("Could not arm the alarm", e); // never let a refused alarm close the app
+            return;
+        }
         call.resolve();
     }
 
