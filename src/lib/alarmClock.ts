@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { checkAppPermissions, openPermissionSettings } from './appPermissions';
+import { askAlarmPermissions } from './alarmPermissions';
 
 // Bridges a fully custom native plugin (android/app/src/main/java/com/familyledger/app/
 // AlarmClockPlugin.java + AlarmReceiver/AlarmRingingService/AlarmActivity/AlarmBootReceiver
@@ -84,9 +85,28 @@ function guardFarStart(opts: AlarmClockSchedule): AlarmClockSchedule {
   return opts;
 }
 
+// Android 12+ makes the phone's alarm call throw unless "Alarms & reminders" is switched on for the app (off by default on Android 14+), and in
+// app versions before the native fix that exception closed the whole app right after sign-in. So the call is simply not made while the switch is
+// off: the app stays up, and the person is asked to switch it on (the "Let your alarms ring on time" prompt, at most once a day; the App Permissions
+// menu entry keeps its red dot). Several alarms are armed back to back, so the answer is reused for a few seconds.
+let exactAlarmCheck: { at: number; allowed: boolean } | null = null;
+
+async function exactAlarmsAllowed(): Promise<boolean> {
+  if (exactAlarmCheck && Date.now() - exactAlarmCheck.at < 4000) return exactAlarmCheck.allowed;
+  const status = await checkAppPermissions();
+  // an older app without this answer is treated as before
+  const allowed = !status || status.exactAlarm !== false;
+  exactAlarmCheck = { at: Date.now(), allowed };
+  return allowed;
+}
+
 export async function scheduleAlarm(opts: AlarmClockSchedule) {
   if (!isSupported()) return;
   try {
+    if (!(await exactAlarmsAllowed())) {
+      askAlarmPermissions(opts.feature === 'medicine' ? 'medicine' : 'reminder');
+      return;
+    }
     await native.schedule(guardFarStart(opts));
   } catch (err) {
     console.error('Failed to schedule alarm:', err);
