@@ -41,6 +41,10 @@ export default function FeedbackRatingPrompt() {
   useEffect(() => {
     if (!user || !Capacitor.isNativePlatform() || hasRequestedAppReview || dismissedThisSession) return;
     if (xp <= 0) return;
+    // App Store guideline 5.6.3: never ask for a rating on first launch or during onboarding. Points come quickly in the first session, so
+    // the ask also waits until the account is at least a week old (by which time the person has had real use of the app).
+    const created = Date.parse(user.metadata?.creationTime || '');
+    if (!created || Date.now() - created < 7 * 86_400_000) return;
     const currentMilestone = Math.floor(xp / 50);
     const lastMilestone = Math.floor(feedbackPromptedAtXp / 50);
     if (currentMilestone > lastMilestone) setVisible(true);
