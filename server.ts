@@ -4700,7 +4700,12 @@ async function startServer() {
           const ev: Record<string, number> = { ...(x.events || {}) };
           Object.keys(x).forEach((k) => { if (k.startsWith('events.')) ev[k.slice(7)] = (ev[k.slice(7)] || 0) + Number(x[k] || 0); });
           const segs = x.segs || {};
-          return { date: d.id, all: ev, new: (segs.new || {}) as Record<string, number>, ret: (segs.ret || {}) as Record<string, number> };
+          const us = x.usegs || {};
+          return {
+            date: d.id, all: ev, new: (segs.new || {}) as Record<string, number>, ret: (segs.ret || {}) as Record<string, number>,
+            // Devices: counted once per phone per day. Split by new/returning only from the day usegs started being written.
+            uAll: (x.unique || {}) as Record<string, number>, uNew: (us.new || {}) as Record<string, number>, uRet: (us.ret || {}) as Record<string, number>, uSeg: !!x.usegs,
+          };
         })
         .sort((a, b) => (a.date < b.date ? -1 : 1))
         .slice(-70);
@@ -5566,6 +5571,8 @@ async function startServer() {
       const update: Record<string, any> = { date: day, events: { [event]: admin.firestore.FieldValue.increment(1) } };
       if (req.body?.first === true) update.unique = { [event]: admin.firestore.FieldValue.increment(1) };
       if (req.body?.seg === 'new' || req.body?.seg === 'ret') update.segs = { [req.body.seg]: { [event]: admin.firestore.FieldValue.increment(1) } };
+      // Devices (first report of the day from a phone) split the same way, for the admin "Unique devices" filter.
+      if (req.body?.first === true && (req.body?.seg === 'new' || req.body?.seg === 'ret')) update.usegs = { [req.body.seg]: { [event]: admin.firestore.FieldValue.increment(1) } };
       if (detail && (event === 'google_error' || event === 'email_login_fail')) update.errors = { [`${event}__${detail.replace(/\./g, '_')}`]: admin.firestore.FieldValue.increment(1) };
       await adminDb.collection('funnelDaily').doc(day).set(update, { merge: true });
     } catch (error) {

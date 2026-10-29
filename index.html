@@ -50,7 +50,15 @@
           }
           if (!ok) return;
           var seg = localStorage.getItem('fl_first_signin_at') ? 'ret' : 'new';
-          fetch('/api/funnel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'app_open', seg: seg }), keepalive: true }).catch(function () {});
+          // First open of the day on this phone/browser (same local flag funnel.ts uses), so the server can keep a devices count too.
+          var first = false;
+          try {
+            var day = new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+            var raw = localStorage.getItem('fl_funnel_seen'), saved = raw ? JSON.parse(raw) : null;
+            var seen = saved && saved.day === day && Array.isArray(saved.seen) ? saved.seen : [];
+            if (seen.indexOf('app_open') < 0) { first = true; localStorage.setItem('fl_funnel_seen', JSON.stringify({ day: day, seen: seen.concat(['app_open']) })); }
+          } catch (e2) {}
+          fetch('/api/funnel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'app_open', seg: seg, first: first || undefined }), keepalive: true }).catch(function () {});
         } catch (e) {}
       })();
     </script>

@@ -34,7 +34,7 @@ interface Metrics {
   retention: Record<'d1' | 'd7' | 'd30', { cohort: number; returned: number }>;
   activation: { cohort: number; firstExpense: number; threeExpenses: number };
   funnel: {
-    days?: { date: string; all: Record<string, number>; new: Record<string, number>; ret: Record<string, number> }[];
+    days?: { date: string; all: Record<string, number>; new: Record<string, number>; ret: Record<string, number>; uAll?: Record<string, number>; uNew?: Record<string, number>; uRet?: Record<string, number>; uSeg?: boolean }[];
     signinDays?: { date: string; taps: number; errors: number; cancels: number; codes: Record<string, number> }[];
     current: Record<string, number>;
     previous: Record<string, number>;
@@ -145,7 +145,8 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
 // those who tapped a sign-in button but did not get in (amber) and those who never tapped (red). Newest first.
 function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> }) {
   const [mode, setMode] = useState<'days' | 'weeks'>('days');
-  const [seg, setSeg] = useState<'all' | 'new' | 'ret'>('all');
+  const [seg, setSeg] = useState<'all' | 'new' | 'ret'>('new');
+  const [unique, setUnique] = useState(true);
   type Row = { key: string; label: string; open: number; btn: number; view: number; tap: number; signed: number; fresh: number };
   const tally = (ev: Record<string, number>) => ({
     open: ev.app_open || 0,
@@ -156,7 +157,14 @@ function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> })
     fresh: (ev.google_success_new || 0) + (ev.email_signup_ok || 0),
   });
   const rows: Row[] = useMemo(() => {
-    const per = days.map((d) => ({ date: d.date, ...tally(d[seg]) }));
+    // Unique devices: each phone once a day. New/returning device counts exist only from the day they started being kept; earlier days fall back to all visits.
+    const pick = (d: (typeof days)[number]) => {
+      if (!unique) return d[seg];
+      if (seg === 'all') return d.uAll && Object.keys(d.uAll).length ? { ...d.all, ...d.uAll } : d.all;
+      if (!d.uSeg) return d[seg];
+      return seg === 'new' ? (d.uNew || {}) : (d.uRet || {});
+    };
+    const per = days.map((d) => ({ date: d.date, ...tally(pick(d)) }));
     if (mode === 'days') return per.slice(-14).reverse().map((r) => ({ key: r.date, label: shortDate(r.date), open: r.open, btn: r.btn, view: r.view, tap: r.tap, signed: r.signed, fresh: r.fresh }));
     const weeks = new Map<string, Row>();
     per.forEach((r) => {
@@ -168,20 +176,22 @@ function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> })
       weeks.set(k, w);
     });
     return Array.from(weeks.values()).sort((a, b) => (a.key < b.key ? 1 : -1)).slice(0, 8);
-  }, [days, mode, seg]);
+  }, [days, mode, seg, unique]);
   const top = Math.max(1, ...rows.map((r) => Math.max(r.open, r.view, r.tap)));
   const chip = (on: boolean) => `px-3 py-1 rounded-full text-xs font-black border ${on ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`;
   return (
     <div className="bg-white rounded-2xl border border-border-subtle p-4 space-y-3">
       <div>
         <p className="text-sm font-black text-primary">Drop-off trend · {mode === 'days' ? 'day by day' : 'week by week'}</p>
-        <p className="text-[11px] text-text-muted">Each bar is everyone who opened the app that {mode === 'days' ? 'day' : 'week'}, split by how far they got. (Opens are only counted from 29 Oct.)</p>
+        <p className="text-[11px] text-text-muted">Each bar is everyone who opened the app that {mode === 'days' ? 'day' : 'week'}, split by how far they got. (Opens are only counted from 29 Oct.){unique ? ' Unique devices counts each phone once a day; the new/returning split of that starts on the day this went live, earlier days show all visits.' : ''}</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
         <button type="button" onClick={() => setMode('days')} className={chip(mode === 'days')}>Daily</button>
         <button type="button" onClick={() => setMode('weeks')} className={chip(mode === 'weeks')}>Weekly</button>
         <span className="w-2" />
         {([['all', 'Everyone'], ['new', 'New devices'], ['ret', 'Returning']] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setSeg(k)} className={chip(seg === k)}>{l}</button>)}
+        <span className="w-2" />
+        <button type="button" onClick={() => setUnique((u) => !u)} className={chip(unique)}>Unique devices</button>
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] font-bold text-text-muted">
         <span className="inline-flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-green-500" />Signed in</span>

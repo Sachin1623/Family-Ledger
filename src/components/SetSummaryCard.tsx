@@ -78,6 +78,8 @@ export default function SetSummaryCard({
     const diff = total - prevTotal;
     if (diff === 0) return `Same as ${prevMonthName} (${signed(prevTotal)})`;
     const arrow = diff > 0 ? '▲' : '▼';
+    // an earlier month of net income has no sensible "more than": say what it was instead of a difference that reads like a spending jump
+    if (prevTotal < 0) return `${prevMonthName} was net income: ${money(prevTotal)} more came in than went out`;
     if (prevTotal > 0) return `${arrow} ${Math.abs(Math.round((diff / prevTotal) * 100))}% vs ${prevMonthName} (${signed(prevTotal)})`;
     return `${arrow} ${money(diff)} ${diff > 0 ? 'more' : 'less'} than ${prevMonthName} (${signed(prevTotal)})`;
   })();
@@ -135,6 +137,9 @@ export default function SetSummaryCard({
                   <span key={r.g.id} className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: SEGMENT_COLORS[i % SEGMENT_COLORS.length] }} />{r.g.name} {Math.round((r.cur / positiveTotal) * 100)}%</span>
                 ))}
               </div>
+              {groups.length > positive.length && (
+                <p className="mt-1 text-[10.5px] font-bold text-white/80">{groups.length - positive.length} group{groups.length - positive.length === 1 ? ' has' : 's have'} no spending this month, so {groups.length - positive.length === 1 ? 'it is' : 'they are'} not in the bar.</p>
+              )}
             </>
           )}
           {currencies.length > 1 && <p className="mt-2 text-[10.5px] text-amber-100 font-bold">These groups use different currencies, so the total adds the numbers as they are.</p>}
