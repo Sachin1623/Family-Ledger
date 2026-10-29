@@ -44,7 +44,7 @@
           var cap = window.Capacitor, plat = cap && cap.getPlatform ? cap.getPlatform() : 'web';
           if (plat === 'ios') return;
           var stored = localStorage.getItem('familyledger_analytics_consent'), ok = stored === 'granted';
-          if (!stored && plat === 'android') {
+          if (!stored) {
             var tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '');
             ok = !(tz.indexOf('Europe/') === 0 || tz === 'Atlantic/Reykjavik' || tz === 'Atlantic/Azores' || tz === 'Atlantic/Madeira' || tz === 'Atlantic/Canary');
           }

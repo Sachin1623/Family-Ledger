@@ -138,7 +138,9 @@ export function getAnalyticsConsent(): 'granted' | 'denied' | null {
   if (isIosApp()) return 'denied';
   const stored = getStoredAnalyticsConsent();
   if (stored) return stored;
-  if (isAndroidApp() && !looksLikeEurope()) return 'granted';
+  // Anonymous counts are on by default (a ticked box on the login page lets people turn them off); where the phone looks to be in Europe
+  // they stay off until the person ticks it.
+  if (!looksLikeEurope()) return 'granted';
   return null;
 }
 

@@ -24,6 +24,8 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useNavigate, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { hasAuthHint } from "../lib/authHint";
+import { getAnalyticsConsent, setAnalyticsConsent, looksLikeEurope } from "../lib/firebase";
+import { isIosApp } from "../lib/platform";
 import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from "../context/LanguageContext";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx } from "clsx";
@@ -40,7 +42,15 @@ export default function Login() {
   // Opens automatically as soon as the login screen is ready to show — the user picks (or
   // confirms) a language before doing anything else — and stays reachable afterward via the
   // top-right chip button for changing it mid-session.
-  const [showLangPicker, setShowLangPicker] = React.useState(true);
+  // English by default; the language button in the corner opens the list. (It used to open on top of the login page for every new visitor.)
+  const [showLangPicker, setShowLangPicker] = React.useState(false);
+  // Anonymous usage counts: ticked by default (unticked where the phone looks to be in Europe, which needs a real opt-in). Changing it saves at once.
+  const [shareStats, setShareStats] = React.useState(() => getAnalyticsConsent() === 'granted');
+  const toggleStats = (on: boolean) => {
+    setShareStats(on);
+    setAnalyticsConsent(on ? 'granted' : 'denied');
+    trackFunnel(on ? 'consent_accept' : 'consent_decline');
+  };
   const [mode, setMode] = React.useState<LoginMode>("google");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -229,6 +239,20 @@ export default function Login() {
   // completes and `user` appears.
   React.useEffect(() => {
     trackFunnel('login_screen_view');
+  }, []);
+
+  // Counts the moment the Continue with Google button is really on screen (not covered by a pop-up, not below the fold), once per visit,
+  // so the funnel can tell "never saw the button" from "saw it and did not tap".
+  const buttonSeen = React.useRef(false);
+  const googleBtnRef = React.useCallback((el: HTMLButtonElement | null) => {
+    if (!el || buttonSeen.current || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((entries) => {
+      if (buttonSeen.current || !entries.some((e) => e.isIntersecting && e.intersectionRatio >= 0.6)) return;
+      buttonSeen.current = true;
+      trackFunnel('login_button_visible');
+      io.disconnect();
+    }, { threshold: [0.6] });
+    io.observe(el);
   }, []);
 
   if (loading && hasAuthHint()) return null;
@@ -914,10 +938,10 @@ export default function Login() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-white p-8 rounded-3xl shadow-xl border border-border-subtle text-center space-y-8"
+        className="w-full max-w-md bg-white p-5 sm:p-8 rounded-3xl shadow-xl border border-border-subtle text-center space-y-5 sm:space-y-8"
       >
         <div className="space-y-3">
-          <div className="w-16 h-16 rounded-2xl shadow-inner mx-auto overflow-hidden">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl shadow-inner mx-auto overflow-hidden">
             <svg viewBox="0 0 80 100" className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
               <rect width="80" height="100" rx="12" fill="url(#login_ledger_grad)" />
               <path d="M60 30C60 26.6863 62.6863 24 66 24H80V76H66C62.6863 76 60 73.3137 60 70V30Z" fill="#1E3A8A" />
@@ -937,15 +961,13 @@ export default function Login() {
               </defs>
             </svg>
           </div>
-          <h1 className="text-3xl font-black text-primary tracking-tight">
+          <h1 className="text-2xl sm:text-3xl font-black text-primary tracking-tight">
             FamilyLedger
           </h1>
           <p className="text-sm text-text-muted font-medium max-w-xs mx-auto">
             {t('auth.tagline')}
           </p>
         </div>
-
-        {mode === "google" && <LoginSlider />}
 
         {loginError && (
           <div className="p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200 text-left font-medium flex items-start gap-2">
@@ -971,6 +993,7 @@ export default function Login() {
 
         <div className="space-y-4">
           <button
+            ref={googleBtnRef}
             onClick={handleGoogleSignIn}
             disabled={isLoggingIn}
             className="w-full py-4 px-6 bg-white border-2 border-border-subtle hover:border-primary text-primary font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-sm hover:shadow-md disabled:opacity-50"
@@ -1064,7 +1087,26 @@ export default function Login() {
               <p className="text-[11px] font-semibold text-text-muted">✓ {t('auth.freeQuick')}</p>
             </div>
           )}
+
+          {mode === "google" && !isIosApp() && (
+            <label className="flex items-start gap-2 text-left text-[11px] text-text-muted leading-snug cursor-pointer">
+              <input
+                type="checkbox"
+                checked={shareStats}
+                onChange={(e) => toggleStats(e.target.checked)}
+                className="mt-0.5 w-4 h-4 shrink-0 accent-[#003049]"
+              />
+              <span>
+                {t('consent.checkbox')}{' '}
+                <button type="button" onClick={(e) => { e.preventDefault(); window.open('/privacy', '_blank'); }} className="underline text-primary font-semibold">
+                  {t('consent.privacyLink')}
+                </button>
+              </span>
+            </label>
+          )}
         </div>
+
+        {mode === "google" && <LoginSlider />}
 
         {mode !== "google" && (
           <div className="space-y-4 text-left">

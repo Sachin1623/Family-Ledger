@@ -1191,6 +1191,7 @@ const en = {
   'update.later': 'Later',
   'consent.body': "We'd like to use privacy-friendly analytics to understand how the app is used and fix problems faster. You can decline and the app works exactly the same either way. See our",
   'consent.privacyLink': 'Privacy Policy.',
+  'consent.checkbox': 'Share anonymous usage counts to help improve the app (never your expenses or messages). Untick to turn off.',
   'consent.noticeBody': 'FamilyLedger counts anonymous usage (which screens are used, never your expenses or messages) to improve the app and measure our ads. You can turn this off and everything works the same. See our',
   'consent.noticeOff': 'Turn off',
   'consent.noticeOk': 'OK',

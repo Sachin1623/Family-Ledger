@@ -6,6 +6,7 @@ import { getAnalyticsConsent } from './firebase';
 export type FunnelEvent =
   | 'app_open' // sent by the small script in index.html the moment the page starts, before the app itself has downloaded
   | 'login_screen_view'
+  | 'login_button_visible' // the Continue with Google button was actually on screen (at least 60% in view), not just the page loaded
   | 'google_tap'
   | 'google_success_new'
   | 'google_success_existing'

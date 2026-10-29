@@ -146,9 +146,10 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
 function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> }) {
   const [mode, setMode] = useState<'days' | 'weeks'>('days');
   const [seg, setSeg] = useState<'all' | 'new' | 'ret'>('all');
-  type Row = { key: string; label: string; open: number; view: number; tap: number; signed: number; fresh: number };
+  type Row = { key: string; label: string; open: number; btn: number; view: number; tap: number; signed: number; fresh: number };
   const tally = (ev: Record<string, number>) => ({
     open: ev.app_open || 0,
+    btn: ev.login_button_visible || 0,
     view: ev.login_screen_view || 0,
     tap: (ev.google_tap || 0) + (ev.email_tap || 0) + (ev.apple_tap || 0),
     signed: (ev.google_success_new || 0) + (ev.google_success_existing || 0) + (ev.email_signup_ok || 0) + (ev.email_login_ok || 0) + (ev.apple_success || 0),
@@ -156,14 +157,14 @@ function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> })
   });
   const rows: Row[] = useMemo(() => {
     const per = days.map((d) => ({ date: d.date, ...tally(d[seg]) }));
-    if (mode === 'days') return per.slice(-14).reverse().map((r) => ({ key: r.date, label: shortDate(r.date), open: r.open, view: r.view, tap: r.tap, signed: r.signed, fresh: r.fresh }));
+    if (mode === 'days') return per.slice(-14).reverse().map((r) => ({ key: r.date, label: shortDate(r.date), open: r.open, btn: r.btn, view: r.view, tap: r.tap, signed: r.signed, fresh: r.fresh }));
     const weeks = new Map<string, Row>();
     per.forEach((r) => {
       const dt = new Date(`${r.date}T00:00:00Z`);
       dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
       const k = dt.toISOString().slice(0, 10);
-      const w = weeks.get(k) || { key: k, label: `Week of ${shortDate(k)}`, open: 0, view: 0, tap: 0, signed: 0, fresh: 0 };
-      w.open += r.open; w.view += r.view; w.tap += r.tap; w.signed += r.signed; w.fresh += r.fresh;
+      const w = weeks.get(k) || { key: k, label: `Week of ${shortDate(k)}`, open: 0, btn: 0, view: 0, tap: 0, signed: 0, fresh: 0 };
+      w.open += r.open; w.btn += r.btn; w.view += r.view; w.tap += r.tap; w.signed += r.signed; w.fresh += r.fresh;
       weeks.set(k, w);
     });
     return Array.from(weeks.values()).sort((a, b) => (a.key < b.key ? 1 : -1)).slice(0, 8);
@@ -201,7 +202,7 @@ function FunnelTrend({ days }: { days: NonNullable<Metrics['funnel']['days']> })
             <div key={r.key} className="py-2.5 space-y-1">
               <div className="flex items-baseline justify-between gap-2">
                 <p className="text-xs font-black text-primary">{r.label}</p>
-                <p className="text-[11px] font-bold text-text-muted tabular-nums">{hasOpen ? `${r.open} opened → ` : ''}{r.view} saw → {r.tap} tapped → <span className="text-green-700">{r.signed} in</span>{r.fresh > 0 ? ` (${r.fresh} new)` : ''}</p>
+                <p className="text-[11px] font-bold text-text-muted tabular-nums">{hasOpen ? `${r.open} opened → ` : ''}{r.view} saw login → {r.btn > 0 ? `${r.btn} saw the button → ` : ''}{r.tap} tapped → <span className="text-green-700">{r.signed} in</span>{r.fresh > 0 ? ` (${r.fresh} new)` : ''}</p>
               </div>
               {total === 0 && r.tap === 0 ? (
                 <p className="text-[11px] text-text-muted">No visits.</p>

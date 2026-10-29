@@ -127,7 +127,6 @@ const AdminBroadcast = lazyScreen(() => import('./screens/admin/AdminBroadcast')
 const AdminChatReports = lazyScreen(() => import('./screens/admin/AdminChatReports'));
 import UpdatePrompt from './components/UpdatePrompt';
 import UpdateBanner from './components/UpdateBanner';
-import ConsentBanner from './components/ConsentBanner';
 import GlobalChatPopup from './components/GlobalChatPopup';
 import ReceiptShareBridge from './components/ReceiptShareBridge';
 const ReceiptShare = lazyScreen(() => import('./screens/ReceiptShare'));
@@ -327,7 +326,6 @@ export default function App() {
           <PointsFlyAnimation />
           <UpdatePrompt />
           <UpdateBanner />
-          <ConsentBanner />
           <GlobalChatPopup />
           <BroadcastBanner />
           <SpreadWordPrompt />

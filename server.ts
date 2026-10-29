@@ -5547,7 +5547,7 @@ async function startServer() {
   const FUNNEL_EVENTS = new Set([
     'login_screen_view', 'google_tap', 'google_success_new', 'google_success_existing', 'google_cancel', 'google_error',
     'email_tap', 'email_login_ok', 'email_login_fail', 'email_signup_ok', 'apple_tap', 'apple_success',
-    'consent_accept', 'consent_decline', 'group_created', 'app_open',
+    'consent_accept', 'consent_decline', 'group_created', 'app_open', 'login_button_visible',
   ]);
   const funnelHits = new Map<string, { n: number; resetAt: number }>();
   app.post('/api/funnel', async (req, res) => {
