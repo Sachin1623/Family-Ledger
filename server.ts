@@ -4600,7 +4600,11 @@ async function startServer() {
       const count = (fn: (u: { joined: number; active: number }) => boolean) => users.filter(fn).length;
       const newByDay: Record<string, number> = {};
       for (let i = 0; i < 60; i++) newByDay[istKey(now - i * DAY)] = 0; // 60 days: the last 30 for the chart, the 30 before for the comparison
-      users.forEach((u) => { if (u.joined) { const k = istKey(u.joined); if (k in newByDay) newByDay[k] += 1; } });
+      // Sign-in account creation times, not the user record's joinedAt: about half of recent accounts have no joinedAt, which under-counted new users
+      // (App Health said 0 while the Admin overview said 2). Falls back to joinedAt if the account list cannot be read.
+      let createdTimes: number[] = users.map((u) => u.joined).filter(Boolean);
+      try { createdTimes = (await accountCreationTimes()).map((iso: string) => Date.parse(iso)).filter(Boolean); } catch (err) { console.error('metrics: account creation times:', err); }
+      createdTimes.forEach((t) => { const k = istKey(t); if (k in newByDay) newByDay[k] += 1; });
       const usersOut = {
         total: users.length,
         newToday: newByDay[todayKey] || 0,
@@ -4888,10 +4892,15 @@ async function startServer() {
       const startIst = new Date(istNow.getTime() - (days - 1) * 86_400_000);
       // Midnight at the start of the first IST day, expressed in UTC (joinedAt is stored as a UTC ISO string).
       const windowStartUtc = new Date(`${dayKey(startIst)}T00:00:00+05:30`).toISOString();
-      const snap = await adminDb.collection('users').where('joinedAt', '>=', windowStartUtc).select('joinedAt').get();
-      snap.docs.forEach((d) => {
-        const at = d.data().joinedAt;
-        if (!at) return;
+      // Sign-in account creation times (same source as the overview), since many user records have no joinedAt.
+      let ats: string[];
+      try {
+        ats = (await accountCreationTimes()).filter((iso: string) => iso >= windowStartUtc);
+      } catch {
+        const snap = await adminDb.collection('users').where('joinedAt', '>=', windowStartUtc).select('joinedAt').get();
+        ats = snap.docs.map((d) => d.data().joinedAt).filter(Boolean);
+      }
+      ats.forEach((at) => {
         const key = dayKey(new Date(new Date(at).getTime() + 5.5 * 60 * 60 * 1000));
         if (key in counts) counts[key] += 1;
       });
