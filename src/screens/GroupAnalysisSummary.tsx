@@ -1751,14 +1751,14 @@ export default function GroupAnalysisSummary() {
                       </button>
                     </div>
                   </div>
-                  <div className="space-y-6 overflow-y-auto">
+                  <div className="space-y-3 overflow-y-auto">
                     {groupSpendingData.length > 0 ? (
                       groupSpendingData.sort((a, b) => b.value - a.value).map((entry, index) => {
                         const total = groupSpendingData.reduce((acc, curr) => acc + curr.value, 0);
                         const pct = (entry.value / total) * 100;
                         const group = allGroups.find(g => g.name === entry.name);
                         return (
-                          <div key={entry.name} className="space-y-1 cursor-pointer hover:bg-surface-container/5 p-2 rounded-xl transition-all" onClick={() => group && setSelectedGroupId(group.id)}>
+                          <div key={entry.name} className="space-y-1 cursor-pointer p-3 bg-white border border-border-subtle rounded-2xl shadow-sm hover:bg-surface-container/40 transition-all" onClick={() => group && setSelectedGroupId(group.id)}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-lg bg-primary/5 border border-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
                                 {group?.photoURL ? (
@@ -1770,7 +1770,7 @@ export default function GroupAnalysisSummary() {
                                 )}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="flex justify-between items-center mb-1">
+                                <div className="flex justify-between items-center">
                                   <span className="font-bold text-primary truncate text-xs flex items-center gap-1">
                                     {group?.archived && <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('analysis.archivedTag')}>archive</span>}
                                     {entry.name}
@@ -1778,28 +1778,21 @@ export default function GroupAnalysisSummary() {
                                   <span className="flex items-center gap-1.5 ml-2 shrink-0">
                                     {entry.expense > 0 && (
                                       <span className="font-bold text-success text-xs whitespace-nowrap">
-                                        {getCurrencySymbol(group?.currency)}{formatAmountCompact(entry.expense, group?.currency, profile?.numberSystem)}
+                                        {getCurrencySymbol(group?.currency)}{formatAmountCompact(Math.round(entry.expense), group?.currency, profile?.numberSystem)}
                                       </span>
                                     )}
                                     {entry.income > 0 && (
                                       <span className="font-bold text-[#0F7A38] text-xs whitespace-nowrap">
-                                        +{getCurrencySymbol(group?.currency)}{formatAmountCompact(entry.income, group?.currency, profile?.numberSystem)}
+                                        +{getCurrencySymbol(group?.currency)}{formatAmountCompact(Math.round(entry.income), group?.currency, profile?.numberSystem)}
                                       </span>
                                     )}
                                   </span>
-                                </div>
-                                <div className="h-2 w-full bg-surface-container rounded-full overflow-hidden">
-                                  <motion.div 
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${pct}%` }}
-                                    className="h-full bg-primary rounded-full shadow-sm"
-                                    style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                                  />
                                 </div>
                               </div>
                             </div>
                             <div className="flex items-center justify-between gap-2">
                               <MonthComparisonLine
+                                compact
                                 thisMonth={monthComparisonByGroup.thisMonth[entry.name] || 0}
                                 lastMonth={monthComparisonByGroup.lastMonth[entry.name] || 0}
                                 currencySymbol={getCurrencySymbol(group?.currency)}
