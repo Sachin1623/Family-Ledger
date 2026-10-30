@@ -1,4 +1,5 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
+import ConnectionLost, { isConnectionError } from './ConnectionLost';
 
 interface Props {
   children: ReactNode;
@@ -36,6 +37,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   render() {
+    if (this.state.error && isConnectionError(this.state.error)) return <ConnectionLost />;
     if (this.state.error) {
       return (
         <div className="min-h-screen bg-surface flex items-center justify-center p-6">
