@@ -2073,7 +2073,7 @@ export default function GroupAnalysisSummary() {
                   <DonutList items={peopleShares} currencySymbol={currencySymbol} numberSystem={profile?.numberSystem} centerNote={`${peopleShares.length} ${peopleShares.length === 1 ? 'person' : 'people'}`} />
                 </div>
               )}
-              <div className="space-y-6">
+              <div className="space-y-3">
                 {[...groupMembers]
                   .filter((m: any) => showAllMembers || categoryMemberContributionExpenses.some((exp: any) => memberShare(exp, m.userId) > 0 || memberContribution(exp, m.userId) > 0))
                   .sort((a: any, b: any) => {
@@ -2101,7 +2101,7 @@ export default function GroupAnalysisSummary() {
                   const sortedCats = Object.entries(catBuckets).sort((a, b) => b[1] - a[1]);
 
                   return (
-                    <div key={member.userId} className="space-y-3 cursor-pointer hover:bg-surface-container/40 p-2 rounded-xl transition-all" onClick={() => navigate(buildExpensesLink(undefined, member.userId))}>
+                    <div key={member.userId} className="space-y-3 cursor-pointer p-3 bg-white border border-border-subtle rounded-2xl shadow-sm hover:bg-surface-container/40 transition-all" onClick={() => navigate(buildExpensesLink(undefined, member.userId))}>
                       <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2">
                           <img src={member.photoURL || `https://ui-avatars.com/api/?name=${member.displayName}`} className="w-8 h-8 rounded-full border border-border-subtle" alt="avatar" />
@@ -2123,12 +2123,12 @@ export default function GroupAnalysisSummary() {
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
                             {memberExpenseTotal > 0 && (
                               <span className="text-sm font-bold text-primary whitespace-nowrap">
-                                {currencySymbol}{formatAmountCompact(memberExpenseTotal, undefined, profile?.numberSystem)}
+                                {currencySymbol}{formatAmountCompact(Math.round(memberExpenseTotal), undefined, profile?.numberSystem)}
                               </span>
                             )}
                             {memberIncomeTotal > 0 && (
                               <span className="text-sm font-bold text-[#0F7A38] whitespace-nowrap">
-                                +{currencySymbol}{formatAmountCompact(memberIncomeTotal, undefined, profile?.numberSystem)}
+                                +{currencySymbol}{formatAmountCompact(Math.round(memberIncomeTotal), undefined, profile?.numberSystem)}
                               </span>
                             )}
                           </div>
@@ -2137,6 +2137,7 @@ export default function GroupAnalysisSummary() {
                         </div>
                       </div>
                       <MonthComparisonLine
+                        compact
                         thisMonth={monthComparisonByMember.thisMonth[member.userId] || 0}
                         lastMonth={monthComparisonByMember.lastMonth[member.userId] || 0}
                         currencySymbol={currencySymbol}
@@ -2150,7 +2151,7 @@ export default function GroupAnalysisSummary() {
                         const settledGot = st?.received || 0;
                         const settleScopeOn = !((selectedCategory && selectedCategory !== 'all') || selectedClassification !== 'all' || entryTypeFilter === 'income');
                         if (memberExpenseTotal <= 0 && memberPaidTotal <= 0 && settledPaid < 0.5 && settledGot < 0.5) return null;
-                        const f = (n: number) => `${currencySymbol}${formatAmountCompact(n, undefined, profile?.numberSystem)}`;
+                        const f = (n: number) => `${currencySymbol}${formatAmountCompact(Math.round(n), undefined, profile?.numberSystem)}`;
                         const covered = memberPaidTotal + (settleScopeOn ? settledPaid - settledGot : 0);
                         const left = memberExpenseTotal - covered; // > 0: still to pay, < 0: still to receive
                         const status = !settleScopeOn ? null : Math.abs(left) < 0.5 ? { text: '✓ Settled', cls: 'bg-success/15 text-success' } : left > 0 ? { text: `To pay ${f(left)}`, cls: 'bg-error/10 text-error' } : { text: `To get ${f(-left)}`, cls: 'bg-success/15 text-success' };
