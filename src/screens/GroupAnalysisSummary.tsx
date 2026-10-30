@@ -58,7 +58,9 @@ function MonthComparisonLine({
   currencySymbol,
   numberSystem,
   t,
+  compact,
 }: {
+  compact?: boolean; // category tiles: only the % change (this month's amount is already the tile's headline)
   thisMonth: number;
   lastMonth: number;
   currencySymbol: string;
@@ -68,11 +70,20 @@ function MonthComparisonLine({
   if (thisMonth === 0 && lastMonth === 0) return null;
   const delta = thisMonth - lastMonth;
   const pct = lastMonth > 0 ? Math.round((Math.abs(delta) / lastMonth) * 100) : null;
+  if (compact) {
+    if (pct === null) return <div className="text-[10px] font-bold text-text-muted mt-0.5">New this month</div>;
+    if (delta === 0) return <div className="text-[10px] font-bold text-text-muted mt-0.5">No change vs last month</div>;
+    return (
+      <div className={clsx('text-[10px] font-black mt-0.5', delta > 0 ? 'text-error' : 'text-success')}>
+        {delta > 0 ? '▲' : '▼'} {pct}% <span className="font-bold text-text-muted">vs last month</span>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5 text-[9px] font-bold text-text-muted mt-0.5 flex-wrap">
-      <span>{t('analysis.thisMonth')} {currencySymbol}{formatAmountCompact(thisMonth, undefined, numberSystem)}</span>
+      <span>{t('analysis.thisMonth')} {currencySymbol}{formatAmountCompact(Math.round(thisMonth), undefined, numberSystem)}</span>
       <span className="opacity-40">·</span>
-      <span>{t('analysis.lastMonth')} {currencySymbol}{formatAmountCompact(lastMonth, undefined, numberSystem)}</span>
+      <span>{t('analysis.lastMonth')} {currencySymbol}{formatAmountCompact(Math.round(lastMonth), undefined, numberSystem)}</span>
       {pct !== null && delta !== 0 && (
         <span className={delta > 0 ? 'text-error' : 'text-success'}>
           {delta > 0 ? '▲' : '▼'} {pct}%
@@ -1919,7 +1930,7 @@ export default function GroupAnalysisSummary() {
                   );
                 })()}
 
-                <div className="space-y-6 overflow-y-auto">
+                <div className="space-y-3 overflow-y-auto">
                   {(() => {
                     // A category with nothing spent/earned this period isn't worth a row — every
                     // category used to render (categoryData pre-seeds every category at 0 so it
@@ -1932,7 +1943,7 @@ export default function GroupAnalysisSummary() {
                         <div
                           key={entry.name}
                           onClick={() => navigate(buildExpensesLink(entry.name))}
-                          className="space-y-1 p-1 hover:bg-surface-container/40 rounded-xl transition-all cursor-pointer"
+                          className="space-y-1 p-3 bg-white border border-border-subtle rounded-2xl shadow-sm hover:bg-surface-container/40 transition-all cursor-pointer"
                         >
                           <div className="flex items-center gap-3">
                             <CategoryBadge id={entry.name} icon={CATEGORIES_LIST.find(c => c.id === entry.name)?.icon || '🧾'} size={32} />
@@ -1954,6 +1965,7 @@ export default function GroupAnalysisSummary() {
                           </div>
                           <div className="flex items-center justify-between gap-2">
                             <MonthComparisonLine
+                              compact
                               thisMonth={monthComparisonByCategory.thisMonth[entry.name] || 0}
                               lastMonth={monthComparisonByCategory.lastMonth[entry.name] || 0}
                               currencySymbol={currencySymbol}
