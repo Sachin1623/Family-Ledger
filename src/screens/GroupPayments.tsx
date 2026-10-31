@@ -10,7 +10,7 @@ import { parseLocalDate } from '../lib/dateUtils';
 import { useIdentities } from '../lib/userIdentity';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
-import TrackPaymentSheet from '../components/TrackPaymentSheet';
+import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
 
 // A "Payments" group: money one member pays another (rent, maintenance, salary, EMI, fees). It is a record, not a split, so
 // nothing here makes anyone owe anyone. The payer adds the entry (fromUid is always the signed-in user) and is asked for a
@@ -209,14 +209,20 @@ function PaymentForm({
   const [trackIt, setTrackIt] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const finalLabel = label === 'Other' ? (customLabel.trim() || 'Payment') : label;
+  // "Also track it in my group": the group, category and split choices appear here once the switch is on
+  const track = useTrackInGroup({ amount: Number(amount) || 0, label: finalLabel, note: note.trim(), date, images, groupId }, 'payer', trackIt);
 
   const save = async () => {
     const value = Number(amount);
     if (!toUid) return setError('Choose who you paid.');
     if (!(value > 0)) return setError('Enter the amount you paid.');
+    if (trackIt) {
+      const { error: problem } = track.validate();
+      if (problem) return setError(problem);
+    }
     setSaving(true);
     setError('');
-    const finalLabel = label === 'Other' ? (customLabel.trim() || 'Payment') : label;
     const data = {
       groupId,
       fromUid: uid,
@@ -231,7 +237,16 @@ function PaymentForm({
     };
     try {
       const ref = await addDoc(collection(db, 'groupPayments'), data);
-      onSaved({ id: ref.id, ...data }, trackIt);
+      const saved = { id: ref.id, ...data };
+      if (trackIt) {
+        try {
+          await track.commit(saved);
+        } catch (trackErr) {
+          console.error('Payment saved, but it could not be tracked:', trackErr);
+          window.alert('The payment is saved, but it could not be tracked in your group. You can try again with “Track as expense” on the entry.');
+        }
+      }
+      onSaved(saved, false);
     } catch (err) {
       console.error('Could not save payment:', err);
       setError('Could not save the payment. Check your connection and try again.');
@@ -316,9 +331,11 @@ function PaymentForm({
           <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', trackIt ? 'bg-primary' : 'bg-border-subtle')}><span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', trackIt ? 'left-6' : 'left-1')} /></span>
         </button>
 
+        {trackIt && <div className="rounded-2xl bg-surface p-3.5">{track.fields}</div>}
+
         {error && <p className="text-xs font-bold text-error">{error}</p>}
         <button type="button" onClick={save} disabled={saving} className="w-full rounded-xl bg-primary text-white py-3 text-sm font-black active:scale-95 disabled:opacity-50">
-          {saving ? 'Saving…' : 'Save payment'}
+          {saving ? 'Saving…' : trackIt ? 'Save and track' : 'Save payment'}
         </button>
       </div>
     </div>
