@@ -496,11 +496,16 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
           {subPanel === null && (
             <div className="space-y-0.5">
               <MenuRow icon="person_add" label="Add Members" onClick={() => setSubPanel('addMembers')} />
-              <ToggleRow icon="event" label="One-off Event" checked={group?.groupType === 'event'} busy={togglingType} onToggle={handleToggleType} />
-              <ToggleRow icon="call_split" label="Split Expenses" checked={!!group?.splitEnabled} busy={togglingSplit} onToggle={handleToggleSplit} />
-              <ToggleRow icon="payments" label="Track Income" checked={!!group?.incomeEnabled} busy={togglingIncome} onToggle={handleToggleIncome} />
-              <MenuRow icon="account_balance_wallet" label={budget ? 'Edit Budget' : 'Set Budget'} onClick={() => setSubPanel('budget')} />
-              <MenuRow icon="event_repeat" label="Recurring Expenses" onClick={() => { onClose(); navigate(`/recurring-expenses?groupId=${groupId}`); }} />
+              {/* a Payments group has no event/split/income switches, budget or recurring expenses */}
+              {group?.groupType !== 'payments' && (
+                <>
+                  <ToggleRow icon="event" label="One-off Event" checked={group?.groupType === 'event'} busy={togglingType} onToggle={handleToggleType} />
+                  <ToggleRow icon="call_split" label="Split Expenses" checked={!!group?.splitEnabled} busy={togglingSplit} onToggle={handleToggleSplit} />
+                  <ToggleRow icon="payments" label="Track Income" checked={!!group?.incomeEnabled} busy={togglingIncome} onToggle={handleToggleIncome} />
+                  <MenuRow icon="account_balance_wallet" label={budget ? 'Edit Budget' : 'Set Budget'} onClick={() => setSubPanel('budget')} />
+                  <MenuRow icon="event_repeat" label="Recurring Expenses" onClick={() => { onClose(); navigate(`/recurring-expenses?groupId=${groupId}`); }} />
+                </>
+              )}
               <MenuRow
                 icon={group?.archived ? 'unarchive' : 'archive'}
                 label={archiving ? 'Working…' : group?.archived ? 'Resume Group' : 'Archive Group'}

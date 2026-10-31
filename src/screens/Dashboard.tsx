@@ -954,7 +954,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   const showAll = viewAll || isEventGroup;
   // A Payments group has no expenses or budget, so it gets its own card
   if (group?.groupType === 'payments') {
-    return <PaymentsGroupCard groupId={groupId} group={group} membersCount={members.length} index={index} />;
+    return <PaymentsGroupCard groupId={groupId} group={group} members={members} index={index} tileState={tileState} onToggleCollapse={onToggleCollapse} />;
   }
   const currencySymbol = CURRENCY_SYMBOLS[group?.currency] || group?.currency || '$';
   // Budget tracks spending only — income entries (see monthIncome/monthSpend above) never offset
