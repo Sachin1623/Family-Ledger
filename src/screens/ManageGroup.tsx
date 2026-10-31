@@ -1588,11 +1588,23 @@ export default function ManageGroup() {
               last: lastBy[id] || 0,
               limit: hasShares ? ((shares[id] || 0) / 100) * budget!.amount : 0,
             }))
-            .filter((r) => r.spent > 0 || r.limit > 0 || (isMonthly && r.last > 0))
-            .sort((x, y) => y.spent - x.spent || y.limit - x.limit);
+            .filter((r) => (isMonthly && budget ? r.limit > 0 : r.spent > 0 || r.limit > 0 || (isMonthly && r.last > 0)))
+            .sort((x, y) => (isMonthly && budget ? y.limit - x.limit : y.spent - x.spent || y.limit - x.limit));
+          const titled = isMonthly && !!budget;
+          if (titled && !hasShares) {
+            return (
+              <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-2" data-tour="manage-group-category-budget">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-primary">Budget by category</h3>
+                  <button onClick={openBudgetCategoryPanel} className="text-xs font-black" style={{ color: KIND_STYLE[gk].dark }}>Set</button>
+                </div>
+                <p className="text-xs text-text-muted">No category budgets yet. Decide how much of the {fmt(budget!.amount)} budget each category gets, and each one will show here against what has been spent.</p>
+                <button onClick={openBudgetCategoryPanel} className="w-full py-2.5 bg-primary/5 border border-primary/20 text-primary font-bold rounded-xl text-xs">Set category budgets</button>
+              </section>
+            );
+          }
           if (rows.length === 0) return null;
           const scale = Math.max(1, ...rows.flatMap((r) => [r.spent, r.limit]));
-          const titled = isMonthly && !!budget;
           return (
             <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3.5" data-tour="manage-group-category-budget">
               <div className="flex items-center justify-between">
@@ -1611,13 +1623,19 @@ export default function ManageGroup() {
                         <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: r.color }} />
                         <span className="w-[88px] shrink-0 text-[13px] font-semibold text-on-surface truncate">{r.name}</span>
                         <div className="flex-1 h-2 rounded-full bg-surface overflow-hidden">
-                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (r.spent / scale) * 100)}%`, background: over ? '#dc2626' : r.color }} />
+                          <div className="h-full rounded-full transition-all" style={{ width: `${titled ? Math.min(100, r.limit > 0 ? (r.spent / r.limit) * 100 : 0) : Math.min(100, (r.spent / scale) * 100)}%`, background: over ? '#dc2626' : r.color }} />
                         </div>
                         <span className={clsx('shrink-0 text-[13px] font-extrabold tabular-nums text-right', over ? 'text-error' : 'text-on-surface')}>
-                          {fmt(r.spent)}{r.limit > 0 && <span className="text-text-muted font-semibold text-[11px]"> / {fmt(r.limit)}</span>}
+                          {titled ? fmt(r.limit) : fmt(r.spent)}
                         </span>
                       </div>
-                      {isMonthly && (r.last > 0 || r.spent > 0) && (
+                      {titled && (
+                        <p className="text-[10.5px] text-text-muted font-semibold pl-[22px] mt-0.5">
+                          Spent {fmt(r.spent)} · <span className={clsx('font-black', over ? 'text-error' : 'text-success')}>{over ? `over by ${fmt(r.spent - r.limit)}` : `${fmt(r.limit - r.spent)} left`}</span>
+                          {r.last > 0 && <span> · Last month {fmt(r.last)}</span>}
+                        </p>
+                      )}
+                      {!titled && isMonthly && (r.last > 0 || r.spent > 0) && (
                         <p className="text-[10.5px] text-text-muted font-semibold pl-[22px] mt-0.5">
                           Last month {fmt(r.last)}
                           {change !== null ? (
