@@ -100,6 +100,7 @@ export default function CreateGroup() {
   const [groupType, setGroupType] = useState<'regular' | 'event' | 'payments'>('regular');
   // The type is the first decision (it changes what the rest of the form asks); the guided tour keeps its own order and skips this screen
   const [typeChosen, setTypeChosen] = useState(guide);
+  const [moreOpen, setMoreOpen] = useState(false); // budget, categories and description stay tucked away until asked for
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [newExpenseCatIcon, setNewExpenseCatIcon] = useState('🏷️');
@@ -285,6 +286,232 @@ export default function CreateGroup() {
   }
 
   const typeLabel = groupType === 'regular' ? 'Regular' : groupType === 'event' ? 'Event' : 'Payments';
+
+  // Everyone but the guided tour gets the simple layout: what matters first, the rest one tap away
+  if (!guide) {
+    const isPayments = groupType === 'payments';
+    const canCreate = name.trim().length > 0 && !loading;
+    const eyebrow = 'text-[11px] font-bold uppercase tracking-wider text-[#587080] px-1 mb-2 block';
+    const chipCls = (hidden: boolean) =>
+      clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[12px] font-bold transition-all', hidden ? 'bg-transparent text-[#98a8b3] border-[#e4ebf0] line-through' : 'bg-white text-[#06222f] border-[#d5e0e6]');
+    const customChip = (cat: CustomCategory) => (
+      <div key={cat.id} className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full border border-[#12b89a]/50 bg-[#effcf8] text-[12px] font-bold text-[#0b6b5a]">
+        <span>{cat.icon}</span>{cat.name}
+        <button type="button" onClick={() => removeCustomCategory(cat.id)} aria-label={`Remove ${cat.name}`} className="w-4 h-4 flex items-center justify-center text-[#0b6b5a]/70">
+          <span className="material-symbols-outlined text-[14px]">close</span>
+        </button>
+      </div>
+    );
+    const addRow = (kind: 'expense' | 'income') => (
+      <div className="flex items-center gap-2 mt-2">
+        <CategoryIconPicker value={kind === 'expense' ? newExpenseCatIcon : newIncomeCatIcon} onChange={kind === 'expense' ? setNewExpenseCatIcon : setNewIncomeCatIcon} />
+        <input
+          value={kind === 'expense' ? newExpenseCatName : newIncomeCatName}
+          onChange={(e) => (kind === 'expense' ? setNewExpenseCatName : setNewIncomeCatName)(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCategory(kind); } }}
+          className="flex-1 h-10 px-3 rounded-xl border border-[#d5e0e6] bg-white text-sm outline-none focus:border-[#12b89a]"
+          placeholder={t('createGroup.addCategoryPlaceholder')}
+        />
+        <button type="button" onClick={() => addCustomCategory(kind)} className="h-10 px-4 rounded-xl bg-[#06222f] text-white text-xs font-bold shrink-0 active:scale-95">{t('common.add')}</button>
+      </div>
+    );
+    return (
+      <div className="flex flex-col min-h-screen bg-[#06222f]">
+        <div className="max-w-2xl w-full mx-auto px-6 pt-6 pb-8 text-white">
+          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New {typeLabel.toLowerCase()} group</p>
+          <div className="flex items-center gap-4 mt-3">
+            <label className="relative w-[68px] h-[68px] rounded-[22px] bg-white/10 border border-white/20 flex items-center justify-center text-[34px] shrink-0 cursor-pointer">
+              <span className="w-full h-full rounded-[22px] overflow-hidden flex items-center justify-center">
+                {photoURL ? <img src={photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span>{icon}</span>}
+              </span>
+              <span className="absolute -right-1.5 -bottom-1.5 w-[26px] h-[26px] rounded-full bg-[#12b89a] text-[#04251f] flex items-center justify-center">
+                <span className="material-symbols-outlined text-[15px]">photo_camera</span>
+              </span>
+              <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
+            </label>
+            <input
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="min-w-0 flex-1 bg-transparent text-[22px] font-extrabold text-white placeholder-white/40 border-b-2 border-[#12b89a] pb-1 outline-none"
+              placeholder={t('createGroup.groupNamePlaceholder')}
+              type="text"
+              autoFocus
+            />
+          </div>
+          {photoError && <p className="text-xs text-red-300 font-bold mt-2">{photoError}</p>}
+          <button type="button" onClick={() => setTypeChosen(false)} className="inline-flex items-center gap-1.5 mt-3 rounded-full bg-[#12b89a]/20 text-[#5fe0c4] pl-3 pr-2 py-1 text-xs font-bold active:scale-95">
+            {typeLabel} · {currency}
+            <span className="underline underline-offset-2 opacity-80">Change type</span>
+          </button>
+        </div>
+
+        <main className="flex-1 bg-[#f6f9fb] rounded-t-[32px] px-5 pt-6 pb-60">
+          <div className="max-w-2xl mx-auto space-y-6">
+            <section>
+              <span className={eyebrow}>{photoURL ? 'Group picture' : 'Icon'}</span>
+              {photoURL ? (
+                <div className="flex items-center justify-between rounded-2xl bg-white border border-[#e4ebf0] px-4 py-3">
+                  <span className="text-sm text-[#587080]">Using your photo as the group picture</span>
+                  <button type="button" onClick={() => setPhotoURL(null)} className="text-xs font-bold text-[#0b6b5a]">Use an icon</button>
+                </div>
+              ) : (
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+                  {ICONS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setIcon(item.icon)}
+                      aria-label={item.id}
+                      className={clsx('w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center text-[22px] border-[1.5px] transition-all active:scale-95', icon === item.icon ? 'border-[#12b89a] bg-[#effcf8] shadow-[0_4px_12px_rgba(18,184,154,0.2)]' : 'border-[#e4ebf0] bg-white')}
+                    >
+                      {item.icon}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <span className={eyebrow}>Currency</span>
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+                {CURRENCIES.map((curr) => (
+                  <button
+                    key={curr}
+                    type="button"
+                    onClick={() => setCurrency(curr)}
+                    className={clsx('shrink-0 px-4 h-10 rounded-full text-[13px] font-bold border-[1.5px] transition-all active:scale-95', currency === curr ? 'bg-[#06222f] text-white border-[#06222f]' : 'bg-white text-[#06222f] border-[#e4ebf0]')}
+                  >
+                    {getCurrencySymbol(curr)} {curr}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {isPayments ? (
+              <>
+                <section>
+                  <span className={eyebrow}>{t('createGroup.descriptionOptional')}</span>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows={2}
+                    className="w-full p-3 rounded-2xl border border-[#e4ebf0] bg-white text-sm outline-none focus:border-[#12b89a] resize-none"
+                    placeholder="e.g. Monthly rent to landlord"
+                  />
+                </section>
+                <div className="flex gap-2.5 px-1 text-[13px] text-[#587080] leading-relaxed">
+                  <span className="material-symbols-outlined text-[20px] text-[#12b89a] shrink-0">info</span>
+                  <span>No budget or splitting to set up. Right after creating, you’ll invite the person you pay (or who pays you).</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <section className="space-y-2.5">
+                  <span className={eyebrow}>How this group works</span>
+                  <ToggleCard icon="call_split" title={t('createGroup.expenseSplitting')} desc="Share bills between members and see who owes whom" on={splitEnabled} onToggle={() => setSplitEnabled(!splitEnabled)} />
+                  <ToggleCard icon="add_card" title={t('createGroup.trackIncome')} desc="Log money coming in too, not just spending" on={incomeEnabled} onToggle={() => setIncomeEnabled(!incomeEnabled)} />
+                </section>
+
+                <section>
+                  <button
+                    type="button"
+                    onClick={() => setMoreOpen(!moreOpen)}
+                    aria-expanded={moreOpen}
+                    className="w-full flex items-center gap-3 rounded-2xl bg-white border border-[#e4ebf0] px-4 py-3.5 text-left active:scale-[0.99]"
+                  >
+                    <span className="w-10 h-10 rounded-xl bg-[#eef2f5] text-[#06222f] flex items-center justify-center shrink-0"><span className="material-symbols-outlined text-[22px]">tune</span></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-extrabold text-[#06222f]">More options</span>
+                      <span className="block text-xs text-[#587080] mt-0.5">Description, monthly budget, categories</span>
+                    </span>
+                    <span className="material-symbols-outlined text-[#587080] transition-transform" style={{ transform: moreOpen ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+                  </button>
+
+                  {moreOpen && (
+                    <div className="mt-3 space-y-6 rounded-2xl bg-white border border-[#e4ebf0] p-4">
+                      <div>
+                        <span className={eyebrow}>{t('createGroup.descriptionOptional')}</span>
+                        <textarea
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                          rows={2}
+                          className="w-full p-3 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[#12b89a] resize-none"
+                          placeholder={t('createGroup.descriptionPlaceholder')}
+                        />
+                      </div>
+
+                      <div>
+                        <span className={eyebrow}>Monthly budget (optional)</span>
+                        <div className="flex items-center gap-2">
+                          <span className="w-10 h-11 rounded-xl bg-[#eef2f5] text-sm font-bold text-[#06222f] flex items-center justify-center shrink-0">{getCurrencySymbol(currency)}</span>
+                          <input
+                            value={budgetInput}
+                            onChange={(e) => setBudgetInput(e.target.value)}
+                            inputMode="decimal"
+                            className="flex-1 h-11 px-4 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[#12b89a]"
+                            placeholder="e.g. 20000 or 15000+5000"
+                          />
+                        </div>
+                        {hasAmountSumOperator(budgetInput) && evaluateAmountSum(budgetInput) !== null && (
+                          <p className="text-xs font-bold text-[#0b6b5a] px-1 mt-1.5">= {getCurrencySymbol(currency)}{evaluateAmountSum(budgetInput)!.toFixed(2)}</p>
+                        )}
+                        <p className="text-xs text-[#587080] px-1 mt-1.5">You get a heads-up as spending nears this each month. Easy to change later.</p>
+                      </div>
+
+                      <div>
+                        <span className={eyebrow}>{t('createGroup.categoriesTitle')}</span>
+                        <p className="text-xs text-[#587080] px-1 mb-2.5">Tap one to hide it from this group, or add your own below.</p>
+                        <div className="flex flex-wrap gap-2">
+                          {EXPENSE_CATEGORIES.map((cat) => (
+                            <button key={cat.id} type="button" onClick={() => toggleHiddenCategory(cat.id)} className={chipCls(hiddenCategories.includes(cat.id))}>
+                              <span>{cat.icon}</span>{t(`category.${cat.id}`)}
+                            </button>
+                          ))}
+                          {customCategories.filter((c) => c.type === 'expense').map(customChip)}
+                        </div>
+                        {addRow('expense')}
+                      </div>
+
+                      {incomeEnabled && (
+                        <div>
+                          <span className={eyebrow}>{t('createGroup.incomeCategoriesTitle')}</span>
+                          <div className="flex flex-wrap gap-2">
+                            {INCOME_CATEGORIES.map((cat) => (
+                              <button key={cat.id} type="button" onClick={() => toggleHiddenCategory(cat.id)} className={chipCls(hiddenCategories.includes(cat.id))}>
+                                <span>{cat.icon}</span>{t(`income.${cat.id}`)}
+                              </button>
+                            ))}
+                            {customCategories.filter((c) => c.type === 'income').map(customChip)}
+                          </div>
+                          {addRow('income')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+          </div>
+        </main>
+
+        <div className="fixed left-0 right-0 z-20 px-5 py-3 bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom))' }}>
+          <div className="max-w-2xl mx-auto">
+            {!name.trim() && <p className="text-center text-xs font-bold text-[#587080] mb-2">Give your group a name to continue</p>}
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canCreate}
+              className="w-full h-14 rounded-[18px] bg-[#12b89a] text-[#04251f] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-45"
+            >
+              {loading ? t('createGroup.creating') : (<><span className="material-symbols-outlined text-[22px]">group_add</span>{t('createGroup.create')}</>)}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={clsx('flex flex-col min-h-screen', guide ? 'bg-surface' : 'bg-[#06222f]')}>
       <main className={clsx('flex-1 pb-32', guide ? 'p-4 md:p-8' : 'p-0')}>
@@ -724,5 +951,29 @@ export default function CreateGroup() {
         </div>
       </main>
     </div>
+  );
+}
+
+// One switch with its meaning spelled out, as a tappable card
+function ToggleCard({ icon, title, desc, on, onToggle }: { icon: string; title: string; desc: string; on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      className={clsx('w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-4 py-3.5 text-left transition-all active:scale-[0.99]', on ? 'border-[#12b89a] bg-gradient-to-t from-[#effcf8] to-white' : 'border-[#e4ebf0] bg-white')}
+    >
+      <span className={clsx('w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors', on ? 'bg-[#12b89a] text-white' : 'bg-[#eef2f5] text-[#06222f]')}>
+        <span className="material-symbols-outlined text-[22px]">{icon}</span>
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-extrabold text-[#06222f]">{title}</span>
+        <span className="block text-xs text-[#587080] mt-0.5 leading-snug">{desc}</span>
+      </span>
+      <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', on ? 'bg-[#12b89a]' : 'bg-[#cbd7df]')}>
+        <span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', on ? 'left-6' : 'left-1')} />
+      </span>
+    </button>
   );
 }
