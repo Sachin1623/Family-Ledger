@@ -359,6 +359,31 @@ service cloud.firestore {
     // --- Expenses ---
     // A payment between two members of a group ("Ravi paid Anita 500"). Deliberately NOT an expense: it never counts as spending, only moves the balance.
     // Written once and never edited; the person who recorded it or a group admin can delete it.
+    // A payment from one member to another inside a "Payments" group (rent, maintenance, salary, EMI...). It is a record,
+    // not a split: no balances come from it. The payer creates it, so `fromUid` must be the caller; the payer (or a group
+    // admin) can edit it later, which is how a receipt gets added after saving.
+    match /groupPayments/{paymentId} {
+      allow read: if isSignedIn() && (isSachin() || canModifyGroup(resource.data.groupId));
+      allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidGroupPayment(incoming()) &&
+        incoming().fromUid == request.auth.uid && incoming().addedBy == request.auth.uid;
+      allow update: if isUserVerified() && canModifyGroup(existing().groupId) &&
+        (request.auth.uid == existing().addedBy || isAdmin(existing().groupId)) && isValidGroupPayment(incoming()) &&
+        incoming().groupId == existing().groupId && incoming().fromUid == existing().fromUid && incoming().addedBy == existing().addedBy;
+      allow delete: if isUserVerified() && canModifyGroup(existing().groupId) && (
+        request.auth.uid == existing().addedBy || isAdmin(existing().groupId)
+      );
+
+      function isValidGroupPayment(data) {
+        return data.keys().hasAll(['groupId', 'fromUid', 'toUid', 'amount', 'date', 'addedBy', 'createdAt']) &&
+               data.groupId is string && data.fromUid is string && data.toUid is string && data.fromUid != data.toUid &&
+               data.amount is number && data.amount > 0 &&
+               data.date is string && data.createdAt is string &&
+               (!('label' in data) || (data.label is string && data.label.size() <= 60)) &&
+               (!('note' in data) || (data.note is string && data.note.size() <= 300)) &&
+               (!('images' in data) || (data.images is list && data.images.size() <= 3));
+      }
+    }
+
     match /settlements/{settlementId} {
       allow read: if isSignedIn() && (isSachin() || canModifyGroup(resource.data.groupId));
       allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidSettlement(incoming());

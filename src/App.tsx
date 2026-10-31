@@ -21,6 +21,7 @@ const ManageGroup = lazyScreen(() => import('./screens/ManageGroup'));
 const AddExpense = lazyScreen(() => import('./screens/AddExpense'));
 const GroupAnalysisSummary = lazyScreen(() => import('./screens/GroupAnalysisSummary'));
 const GroupExpenses = lazyScreen(() => import('./screens/GroupExpenses'));
+import PaymentsGate from './components/PaymentsGate';
 const Profile = lazyScreen(() => import('./screens/Profile'));
 const ActivityFeed = lazyScreen(() => import('./screens/ActivityFeed'));
 const Settlements = lazyScreen(() => import('./screens/Settlements'));
@@ -377,8 +378,8 @@ export default function App() {
 
               {/* Protected App Routes */}
               <Route path="/" element={<AuthenticatedLayout><Dashboard /></AuthenticatedLayout>} />
-              <Route path="/groups/:groupId" element={<AuthenticatedLayout><GroupAnalysisSummary /></AuthenticatedLayout>} />
-              <Route path="/groups/:groupId/expenses" element={<AuthenticatedLayout><GroupExpenses /></AuthenticatedLayout>} />
+              <Route path="/groups/:groupId" element={<AuthenticatedLayout><PaymentsGate><GroupAnalysisSummary /></PaymentsGate></AuthenticatedLayout>} />
+              <Route path="/groups/:groupId/expenses" element={<AuthenticatedLayout><PaymentsGate><GroupExpenses /></PaymentsGate></AuthenticatedLayout>} />
               <Route path="/groups/:groupId/manage" element={<AuthenticatedLayout><ManageGroup /></AuthenticatedLayout>} />
               <Route path="/create-group" element={<AuthenticatedLayout><CreateGroup /></AuthenticatedLayout>} />
               <Route path="/add-expense" element={<AuthenticatedLayout><AddExpense /></AuthenticatedLayout>} />

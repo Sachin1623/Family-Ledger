@@ -96,7 +96,7 @@ export default function CreateGroup() {
   // it's one tap to turn off for the minority that just want spend tracking. Applies to every
   // group creation, not just the guided flow.
   const [incomeEnabled, setIncomeEnabled] = useState(true);
-  const [groupType, setGroupType] = useState<'regular' | 'event'>('regular');
+  const [groupType, setGroupType] = useState<'regular' | 'event' | 'payments'>('regular');
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [newExpenseCatIcon, setNewExpenseCatIcon] = useState('🏷️');
@@ -143,7 +143,7 @@ export default function CreateGroup() {
     if (guideActive('currency')) goToNextGuideStep();
   };
 
-  const handleGroupTypePick = (type: 'regular' | 'event') => {
+  const handleGroupTypePick = (type: 'regular' | 'event' | 'payments') => {
     setGroupType(type);
     if (guideActive('grouptype')) goToNextGuideStep();
   };
@@ -186,7 +186,7 @@ export default function CreateGroup() {
         currency,
         icon,
         photoURL,
-        splitEnabled,
+        splitEnabled: groupType === 'payments' ? false : splitEnabled,
         incomeEnabled,
         groupType,
         ...(hiddenCategories.length > 0 && { hiddenCategories }),
@@ -574,13 +574,23 @@ export default function CreateGroup() {
                       >
                         {t('createGroup.oneOffEvent')}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handleGroupTypePick('payments')}
+                        className={clsx(
+                          'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
+                          groupType === 'payments' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'
+                        )}
+                      >
+                        Payments
+                      </button>
                     </div>
                     <p className="text-[10px] text-text-muted px-1">
-                      Regular/Monthly resets budgets and spending each month — pick this for ongoing groups. One-off Event is for a single trip or occasion instead.
+                      Regular/Monthly resets budgets and spending each month — pick this for ongoing groups. One-off Event is for a single trip or occasion instead. Payments is for money one member pays another, such as rent, maintenance, salary or EMI: it keeps a record with receipts, with no splitting.
                     </p>
                     {guideActive('grouptype') && (
                       <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">
-                        {groupType === 'regular' ? 'Regular/Monthly looks right, Next →' : 'One-off Event looks right, Next →'}
+                        {groupType === 'regular' ? 'Regular/Monthly looks right, Next →' : groupType === 'event' ? 'One-off Event looks right, Next →' : 'Payments looks right, Next →'}
                       </button>
                     )}
                   </div>
