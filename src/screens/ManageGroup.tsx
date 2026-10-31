@@ -12,8 +12,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import {
   EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification,
-  getAllGroupCategories, getCategoryNameOverride, makeCustomCategoryId, CustomCategory,
+  getAllGroupCategories, getCategoryNameOverride, getCategoryIcon, makeCustomCategoryId, CustomCategory,
 } from '../lib/constants';
+import CategoryBadge from '../components/CategoryBadge';
 import { inviteToGroup, inviteUserToGroup, searchUsers, linkGroupParticipant, FoundUser } from '../lib/inviteApi';
 import { logGrowthEvent } from '../lib/growthEvents';
 import { placeholderRows, participantInUse, participantExpenseCount, participantInRecurringUse } from '../lib/groupParticipants';
@@ -1550,59 +1551,95 @@ export default function ManageGroup() {
             <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
           </button>
         )}
-        {/* Budget by category, below recurring: each category's spend (this month for a Regular group, the whole event for an Event)
-            against the share of the budget given to it. Without category shares it ranks where the money went. */}
+        {/* Budget by category, below recurring: for a Regular group each category this month against last month, and against the
+            share of the budget given to it; for an Event the whole event's spending by category. Icons and names are the ones Add
+            Expense shows (the group's own renames included). */}
         {kindOf(group) !== 'payments' && (() => {
           const gk = kindOf(group);
+          const isMonthly = gk === 'regular';
           const symbol = getCurrencySymbol(group.currency);
           const fmt = (n: number) => `${symbol}${formatAmountCompact(n, group.currency, profile?.numberSystem)}`;
-          const spendBy: Record<string, number> = {};
+          const [my, mm] = monthKey.split('-').map(Number);
+          const prevD = new Date(my, mm - 2, 1);
+          const prevKey = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`;
+          const thisBy: Record<string, number> = {};
+          const lastBy: Record<string, number> = {};
           (groupExpensesValue?.docs || []).forEach((d) => {
             const e: any = d.data();
             if (e.type === 'income' || typeof e.date !== 'string') return;
-            if (gk === 'regular' && !e.date.startsWith(monthKey)) return;
-            spendBy[e.category || 'misc'] = (spendBy[e.category || 'misc'] || 0) + (e.amount || 0);
+            const cat = e.category || 'misc';
+            if (!isMonthly) { thisBy[cat] = (thisBy[cat] || 0) + (e.amount || 0); return; }
+            if (e.date.startsWith(monthKey)) thisBy[cat] = (thisBy[cat] || 0) + (e.amount || 0);
+            else if (e.date.startsWith(prevKey)) lastBy[cat] = (lastBy[cat] || 0) + (e.amount || 0);
           });
-          const shares = (gk === 'regular' ? (budget?.categoryAllocations as Record<string, number> | undefined) : undefined) || {};
+          const shares = (isMonthly ? (budget?.categoryAllocations as Record<string, number> | undefined) : undefined) || {};
           const hasShares = Object.keys(shares).length > 0 && !!budget;
-          const ids = Array.from(new Set([...Object.keys(shares), ...Object.keys(spendBy)]));
-          const metaOf = (id: string) => {
-            const built = EXPENSE_CATEGORIES.find((c) => c.id === id);
-            if (built) return { icon: built.icon, name: t(`category.${built.id}`) };
-            const custom = (group.customCategories || []).find((c: any) => c.id === id);
-            return { icon: custom?.icon || '🏷️', name: custom?.name || id };
-          };
+          const ids = Array.from(new Set([...Object.keys(shares), ...Object.keys(thisBy), ...Object.keys(lastBy)]));
           const rows = ids
-            .map((id) => ({ id, ...metaOf(id), spent: spendBy[id] || 0, limit: hasShares ? ((shares[id] || 0) / 100) * budget!.amount : 0 }))
-            .sort((a, b) => (b.limit || b.spent) - (a.limit || a.spent))
-            .filter((r) => r.spent > 0 || r.limit > 0);
+            .map((id) => ({
+              id,
+              icon: getCategoryIcon(group, id, 'expense'),
+              name: getCategoryNameOverride(group, id) || t(`category.${id}`),
+              spent: thisBy[id] || 0,
+              last: lastBy[id] || 0,
+              limit: hasShares ? ((shares[id] || 0) / 100) * budget!.amount : 0,
+            }))
+            .filter((r) => r.spent > 0 || r.last > 0 || r.limit > 0)
+            .sort((x, y) => y.spent - x.spent || y.last - x.last);
           if (rows.length === 0) return null;
-          const maxSpent = Math.max(1, ...rows.map((r) => r.spent));
+          const scale = Math.max(1, ...rows.flatMap((r) => [r.spent, r.last, r.limit]));
+          const totalNow = rows.reduce((n, r) => n + r.spent, 0);
+          const totalLast = rows.reduce((n, r) => n + r.last, 0);
           return (
             <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-category-budget">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-primary">{hasShares ? t('manageGroup.budgetByCategory') : 'Spending by category'}</h3>
-                {gk === 'regular' && budget && (
+                {isMonthly && budget && (
                   <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">
                     {hasShares ? t('common.edit') : 'Set category budgets'}
                   </button>
                 )}
               </div>
-              <p className="text-[10px] text-text-muted -mt-1.5">{gk === 'regular' ? 'This month' : 'Whole event'}</p>
-              <div className="space-y-3">
+              {isMonthly ? (
+                <div className="flex items-center gap-3 text-[10px] font-bold text-text-muted -mt-1">
+                  <span className="flex items-center gap-1"><i className="w-2.5 h-1.5 rounded-full bg-primary inline-block" />This month {fmt(totalNow)}</span>
+                  <span className="flex items-center gap-1"><i className="w-2.5 h-1.5 rounded-full bg-primary/25 inline-block" />Last month {fmt(totalLast)}</span>
+                </div>
+              ) : (
+                <p className="text-[10px] text-text-muted -mt-1.5">Whole event · {fmt(totalNow)}</p>
+              )}
+              <div className="space-y-3.5">
                 {rows.map((r) => {
                   const over = r.limit > 0 && r.spent > r.limit;
-                  const pct = r.limit > 0 ? Math.min(100, (r.spent / r.limit) * 100) : (r.spent / maxSpent) * 100;
+                  const change = r.last > 0 ? Math.round(((r.spent - r.last) / r.last) * 100) : null;
                   return (
-                    <div key={r.id}>
-                      <div className="flex items-center justify-between gap-2 text-xs font-bold text-on-surface">
-                        <span className="flex items-center gap-1.5 min-w-0"><span>{r.icon}</span><span className="truncate">{r.name}</span></span>
-                        <span className={clsx('shrink-0 tabular-nums', over && 'text-error')}>
-                          {fmt(r.spent)}{r.limit > 0 && <span className="text-text-muted font-semibold"> / {fmt(r.limit)}</span>}
-                        </span>
-                      </div>
-                      <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden mt-1.5">
-                        <div className={clsx('h-full rounded-full transition-all', over ? 'bg-error' : 'bg-primary')} style={{ width: `${pct}%` }} />
+                    <div key={r.id} className="flex items-center gap-3">
+                      <CategoryBadge id={r.id} icon={r.icon} size={36} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-xs font-bold text-on-surface truncate">{r.name}</span>
+                          <span className={clsx('text-xs font-black tabular-nums shrink-0', over && 'text-error')}>
+                            {fmt(r.spent)}{r.limit > 0 && <span className="text-text-muted font-semibold"> / {fmt(r.limit)}</span>}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden mt-1.5">
+                          <div className={clsx('h-full rounded-full transition-all', over ? 'bg-error' : 'bg-primary')} style={{ width: `${(r.spent / scale) * 100}%` }} />
+                        </div>
+                        {isMonthly && (
+                          <>
+                            <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden mt-1">
+                              <div className="h-full rounded-full bg-primary/25 transition-all" style={{ width: `${(r.last / scale) * 100}%` }} />
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-text-muted font-semibold mt-1">
+                              <span>Last month {fmt(r.last)}</span>
+                              {change !== null ? (
+                                <span className={clsx('font-black', change > 0 ? 'text-error' : change < 0 ? 'text-success' : '')}>{change > 0 ? '▲' : change < 0 ? '▼' : '＝'} {Math.abs(change)}%</span>
+                              ) : r.spent > 0 ? (
+                                <span className="font-black text-text-muted">New</span>
+                              ) : null}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
