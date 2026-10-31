@@ -1,4 +1,5 @@
 import GroupTypePicker from '../components/GroupTypePicker';
+import { kindVars } from '../lib/groupKindStyle';
 import React, { useState } from 'react';
 import { trackFunnel } from '../lib/funnel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -199,6 +200,8 @@ export default function CreateGroup() {
         splitEnabled: groupType === 'payments' ? false : splitEnabled,
         incomeEnabled,
         groupType,
+        // an event has one budget for the whole event, not a monthly one
+        ...(groupType === 'event' && (evaluateAmountSum(budgetInput) || 0) > 0 ? { eventBudget: evaluateAmountSum(budgetInput) } : {}),
         ...(hiddenCategories.length > 0 && { hiddenCategories }),
         ...(customCategories.length > 0 && { customCategories }),
         createdBy: user.uid,
@@ -234,7 +237,7 @@ export default function CreateGroup() {
       // ManageGroup.tsx's own "Set a budget" form writes, so this group shows a budget-progress
       // tile on Dashboard immediately rather than needing a separate visit to set one.
       const parsedBudget = evaluateAmountSum(budgetInput);
-      if (parsedBudget && parsedBudget > 0) {
+      if (groupType === 'regular' && parsedBudget && parsedBudget > 0) {
         const monthKey = currentLocalMonthKey();
         fireWrite(setDoc(doc(db, 'groupBudgets', `${groupRef.id}_${monthKey}`), {
           groupId: groupRef.id,
@@ -261,12 +264,12 @@ export default function CreateGroup() {
 
   if (!typeChosen) {
     return (
-      <div className="flex flex-col min-h-screen bg-[#06222f]">
+      <div className="flex flex-col min-h-screen bg-[color:var(--hero)]" style={kindVars(groupType)}>
         <div className="max-w-2xl w-full mx-auto px-6 pt-6 pb-8 text-white">
           <button type="button" onClick={() => navigate(-1)} aria-label="Back" className="-ml-2 mb-3 w-10 h-10 rounded-full flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-95">
             <span className="material-symbols-outlined text-[24px]">arrow_back</span>
           </button>
-          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New group</p>
+          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[color:var(--acc-light)]">New group</p>
           <h1 className="text-[28px] leading-tight font-extrabold tracking-tight mt-2">What are you<br />creating?</h1>
           <p className="text-sm text-[#9fbccb] mt-2">Choose a type. We’ll only ask what it needs.</p>
         </div>
@@ -279,7 +282,7 @@ export default function CreateGroup() {
           <button
             type="button"
             onClick={() => setTypeChosen(true)}
-            className="max-w-2xl mx-auto w-full h-14 rounded-[18px] bg-[#12b89a] text-[#04251f] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+            className="max-w-2xl mx-auto w-full h-14 rounded-[18px] bg-[color:var(--acc)] text-[color:var(--on-acc)] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
           >
             Continue <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
           </button>
@@ -298,9 +301,9 @@ export default function CreateGroup() {
     const chipCls = (hidden: boolean) =>
       clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[12px] font-bold transition-all', hidden ? 'bg-transparent text-[#98a8b3] border-[#e4ebf0] line-through' : 'bg-white text-[#06222f] border-[#d5e0e6]');
     const customChip = (cat: CustomCategory) => (
-      <div key={cat.id} className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full border border-[#12b89a]/50 bg-[#effcf8] text-[12px] font-bold text-[#0b6b5a]">
+      <div key={cat.id} className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full border border-[color:var(--acc)]/50 bg-[color:var(--acc-tint)] text-[12px] font-bold text-[color:var(--acc-dark)]">
         <span>{cat.icon}</span>{cat.name}
-        <button type="button" onClick={() => removeCustomCategory(cat.id)} aria-label={`Remove ${cat.name}`} className="w-4 h-4 flex items-center justify-center text-[#0b6b5a]/70">
+        <button type="button" onClick={() => removeCustomCategory(cat.id)} aria-label={`Remove ${cat.name}`} className="w-4 h-4 flex items-center justify-center text-[color:var(--acc-dark)]/70">
           <span className="material-symbols-outlined text-[14px]">close</span>
         </button>
       </div>
@@ -312,25 +315,25 @@ export default function CreateGroup() {
           value={kind === 'expense' ? newExpenseCatName : newIncomeCatName}
           onChange={(e) => (kind === 'expense' ? setNewExpenseCatName : setNewIncomeCatName)(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCategory(kind); } }}
-          className="flex-1 h-10 px-3 rounded-xl border border-[#d5e0e6] bg-white text-sm outline-none focus:border-[#12b89a]"
+          className="flex-1 h-10 px-3 rounded-xl border border-[#d5e0e6] bg-white text-sm outline-none focus:border-[color:var(--acc)]"
           placeholder={t('createGroup.addCategoryPlaceholder')}
         />
-        <button type="button" onClick={() => addCustomCategory(kind)} className="h-10 px-4 rounded-xl bg-[#06222f] text-white text-xs font-bold shrink-0 active:scale-95">{t('common.add')}</button>
+        <button type="button" onClick={() => addCustomCategory(kind)} className="h-10 px-4 rounded-xl bg-[color:var(--hero)] text-white text-xs font-bold shrink-0 active:scale-95">{t('common.add')}</button>
       </div>
     );
     return (
-      <div className="flex flex-col min-h-screen bg-[#06222f]">
+      <div className="flex flex-col min-h-screen bg-[color:var(--hero)]" style={kindVars(groupType)}>
         <div className="max-w-2xl w-full mx-auto px-6 pt-6 pb-8 text-white">
           <button type="button" onClick={() => setTypeChosen(false)} aria-label="Back to group type" className="-ml-2 mb-3 w-10 h-10 rounded-full flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-95">
             <span className="material-symbols-outlined text-[24px]">arrow_back</span>
           </button>
-          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New {typeLabel.toLowerCase()} group</p>
+          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[color:var(--acc-light)]">New {typeLabel.toLowerCase()} group</p>
           <div className="flex items-center gap-4 mt-3">
             <label className="relative w-[68px] h-[68px] rounded-[22px] bg-white/10 border border-white/20 flex items-center justify-center text-[34px] shrink-0 cursor-pointer">
               <span className="w-full h-full rounded-[22px] overflow-hidden flex items-center justify-center">
                 {photoURL ? <img src={photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span>{icon}</span>}
               </span>
-              <span className="absolute -right-1.5 -bottom-1.5 w-[26px] h-[26px] rounded-full bg-[#12b89a] text-[#04251f] flex items-center justify-center">
+              <span className="absolute -right-1.5 -bottom-1.5 w-[26px] h-[26px] rounded-full bg-[color:var(--acc)] text-[color:var(--on-acc)] flex items-center justify-center">
                 <span className="material-symbols-outlined text-[15px]">photo_camera</span>
               </span>
               <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
@@ -339,14 +342,14 @@ export default function CreateGroup() {
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-[22px] font-extrabold text-white placeholder-white/40 border-b-2 border-[#12b89a] pb-1 outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[22px] font-extrabold text-white placeholder-white/40 border-b-2 border-[color:var(--acc)] pb-1 outline-none"
               placeholder={t('createGroup.groupNamePlaceholder')}
               type="text"
               autoFocus
             />
           </div>
           {photoError && <p className="text-xs text-red-300 font-bold mt-2">{photoError}</p>}
-          <button type="button" onClick={() => setTypeChosen(false)} className="inline-flex items-center gap-1.5 mt-3 rounded-full bg-[#12b89a]/20 text-[#5fe0c4] pl-3 pr-2 py-1 text-xs font-bold active:scale-95">
+          <button type="button" onClick={() => setTypeChosen(false)} className="inline-flex items-center gap-1.5 mt-3 rounded-full bg-[color:var(--acc)]/20 text-[color:var(--acc-light)] pl-3 pr-2 py-1 text-xs font-bold active:scale-95">
             {typeLabel} · {currency}
             <span className="underline underline-offset-2 opacity-80">Change type</span>
           </button>
@@ -359,7 +362,7 @@ export default function CreateGroup() {
               {photoURL ? (
                 <div className="flex items-center justify-between rounded-2xl bg-white border border-[#e4ebf0] px-4 py-3">
                   <span className="text-sm text-[#587080]">Using your photo as the group picture</span>
-                  <button type="button" onClick={() => setPhotoURL(null)} className="text-xs font-bold text-[#0b6b5a]">Use an icon</button>
+                  <button type="button" onClick={() => setPhotoURL(null)} className="text-xs font-bold text-[color:var(--acc-dark)]">Use an icon</button>
                 </div>
               ) : (
                 <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
@@ -369,7 +372,7 @@ export default function CreateGroup() {
                       type="button"
                       onClick={() => setIcon(item.icon)}
                       aria-label={item.id}
-                      className={clsx('w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center text-[22px] border-[1.5px] transition-all active:scale-95', icon === item.icon ? 'border-[#12b89a] bg-[#effcf8] shadow-[0_4px_12px_rgba(18,184,154,0.2)]' : 'border-[#e4ebf0] bg-white')}
+                      className={clsx('w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center text-[22px] border-[1.5px] transition-all active:scale-95', icon === item.icon ? 'border-[color:var(--acc)] bg-[color:var(--acc-tint)] shadow-[0_4px_12px_rgba(18,184,154,0.2)]' : 'border-[#e4ebf0] bg-white')}
                     >
                       {item.icon}
                     </button>
@@ -386,7 +389,7 @@ export default function CreateGroup() {
                     key={curr}
                     type="button"
                     onClick={() => setCurrency(curr)}
-                    className={clsx('shrink-0 px-4 h-10 rounded-full text-[13px] font-bold border-[1.5px] transition-all active:scale-95', currency === curr ? 'bg-[#06222f] text-white border-[#06222f]' : 'bg-white text-[#06222f] border-[#e4ebf0]')}
+                    className={clsx('shrink-0 px-4 h-10 rounded-full text-[13px] font-bold border-[1.5px] transition-all active:scale-95', currency === curr ? 'bg-[color:var(--hero)] text-white border-[color:var(--hero)]' : 'bg-white text-[#06222f] border-[#e4ebf0]')}
                   >
                     {getCurrencySymbol(curr)} {curr}
                   </button>
@@ -402,7 +405,7 @@ export default function CreateGroup() {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     rows={2}
-                    className="w-full p-3 rounded-2xl border border-[#e4ebf0] bg-white text-sm outline-none focus:border-[#12b89a] resize-none"
+                    className="w-full p-3 rounded-2xl border border-[#e4ebf0] bg-white text-sm outline-none focus:border-[color:var(--acc)] resize-none"
                     placeholder="e.g. Monthly rent to landlord"
                   />
                 </section>
@@ -429,7 +432,7 @@ export default function CreateGroup() {
                     <span className="w-10 h-10 rounded-xl bg-[#eef2f5] text-[#06222f] flex items-center justify-center shrink-0"><span className="material-symbols-outlined text-[22px]">tune</span></span>
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm font-extrabold text-[#06222f]">More options</span>
-                      <span className="block text-xs text-[#587080] mt-0.5">Description, monthly budget, categories</span>
+                      <span className="block text-xs text-[#587080] mt-0.5">{groupType === 'event' ? 'Description, event budget, categories' : 'Description, monthly budget, categories'}</span>
                     </span>
                     <span className="material-symbols-outlined text-[#587080] transition-transform" style={{ transform: moreOpen ? 'rotate(180deg)' : 'none' }}>expand_more</span>
                   </button>
@@ -442,27 +445,27 @@ export default function CreateGroup() {
                           value={description}
                           onChange={(e) => setDescription(e.target.value)}
                           rows={2}
-                          className="w-full p-3 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[#12b89a] resize-none"
+                          className="w-full p-3 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[color:var(--acc)] resize-none"
                           placeholder={t('createGroup.descriptionPlaceholder')}
                         />
                       </div>
 
                       <div>
-                        <span className={eyebrow}>Monthly budget (optional)</span>
+                        <span className={eyebrow}>{groupType === 'event' ? 'Budget for the whole event (optional)' : 'Monthly budget (optional)'}</span>
                         <div className="flex items-center gap-2">
                           <span className="w-10 h-11 rounded-xl bg-[#eef2f5] text-sm font-bold text-[#06222f] flex items-center justify-center shrink-0">{getCurrencySymbol(currency)}</span>
                           <input
                             value={budgetInput}
                             onChange={(e) => setBudgetInput(e.target.value)}
                             inputMode="decimal"
-                            className="flex-1 h-11 px-4 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[#12b89a]"
+                            className="flex-1 h-11 px-4 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[color:var(--acc)]"
                             placeholder="e.g. 20000 or 15000+5000"
                           />
                         </div>
                         {hasAmountSumOperator(budgetInput) && evaluateAmountSum(budgetInput) !== null && (
-                          <p className="text-xs font-bold text-[#0b6b5a] px-1 mt-1.5">= {getCurrencySymbol(currency)}{evaluateAmountSum(budgetInput)!.toFixed(2)}</p>
+                          <p className="text-xs font-bold text-[color:var(--acc-dark)] px-1 mt-1.5">= {getCurrencySymbol(currency)}{evaluateAmountSum(budgetInput)!.toFixed(2)}</p>
                         )}
-                        <p className="text-xs text-[#587080] px-1 mt-1.5">You get a heads-up as spending nears this each month. Easy to change later.</p>
+                        <p className="text-xs text-[#587080] px-1 mt-1.5">{groupType === 'event' ? 'One budget for the whole event, not a monthly one. You can see how much of it is used as spending is added.' : 'You get a heads-up as spending nears this each month. Easy to change later.'}</p>
                       </div>
 
                       <div>
@@ -508,7 +511,7 @@ export default function CreateGroup() {
               type="button"
               onClick={handleSubmit}
               disabled={!canCreate}
-              className="w-full h-14 rounded-[18px] bg-[#12b89a] text-[#04251f] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-45"
+              className="w-full h-14 rounded-[18px] bg-[color:var(--acc)] text-[color:var(--on-acc)] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-45"
             >
               {loading ? t('createGroup.creating') : (<><span className="material-symbols-outlined text-[22px]">group_add</span>{t('createGroup.create')}</>)}
             </button>
@@ -968,16 +971,16 @@ function ToggleCard({ icon, title, desc, on, onToggle }: { icon: string; title: 
       role="switch"
       aria-checked={on}
       onClick={onToggle}
-      className={clsx('w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-4 py-3.5 text-left transition-all active:scale-[0.99]', on ? 'border-[#12b89a] bg-gradient-to-t from-[#effcf8] to-white' : 'border-[#e4ebf0] bg-white')}
+      className={clsx('w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-4 py-3.5 text-left transition-all active:scale-[0.99]', on ? 'border-[color:var(--acc)] bg-gradient-to-t from-[color:var(--acc-tint)] to-white' : 'border-[#e4ebf0] bg-white')}
     >
-      <span className={clsx('w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors', on ? 'bg-[#12b89a] text-white' : 'bg-[#eef2f5] text-[#06222f]')}>
+      <span className={clsx('w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors', on ? 'bg-[color:var(--acc)] text-white' : 'bg-[#eef2f5] text-[#06222f]')}>
         <span className="material-symbols-outlined text-[22px]">{icon}</span>
       </span>
       <span className="flex-1 min-w-0">
         <span className="block text-sm font-extrabold text-[#06222f]">{title}</span>
         <span className="block text-xs text-[#587080] mt-0.5 leading-snug">{desc}</span>
       </span>
-      <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', on ? 'bg-[#12b89a]' : 'bg-[#cbd7df]')}>
+      <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', on ? 'bg-[color:var(--acc)]' : 'bg-[#cbd7df]')}>
         <span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', on ? 'left-6' : 'left-1')} />
       </span>
     </button>

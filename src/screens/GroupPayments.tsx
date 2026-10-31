@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteDoc, doc, query, updateDoc, where } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
@@ -32,6 +32,7 @@ const todayLocal = () => {
 
 export default function GroupPayments() {
   const { groupId } = useParams<{ groupId: string }>();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const [groupSnap] = useDocument(groupId ? doc(db, 'groups', groupId) : null);
   const group: any = groupSnap?.data();
@@ -54,7 +55,7 @@ export default function GroupPayments() {
   const symbol = getCurrencySymbol(group?.currency);
   const money = (n: number) => `${symbol}${Math.round(n).toLocaleString()}`;
 
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(searchParams.get('add') === '1'); // the Dashboard card's "Add a payment" lands here with the form open
   const [receiptFor, setReceiptFor] = useState<any | null>(null); // the entry the receipt prompt / "add receipt" is about
   const [lightbox, setLightbox] = useState<string | null>(null);
 
@@ -69,7 +70,7 @@ export default function GroupPayments() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 pb-28 pt-4 space-y-4">
-      <div className="rounded-3xl p-4 text-white shadow-lg" style={{ background: 'linear-gradient(140deg,#0b3b57,#0f7a8f 55%,#22c1a5)' }}>
+      <div className="rounded-3xl p-4 text-white shadow-lg" style={{ background: 'linear-gradient(140deg,#2e2a8f,#4f46e5 55%,#818cf8)' }}>
         <p className="text-[11px] font-black uppercase tracking-wider text-white/85 truncate">{group?.icon} {group?.name || 'Payments'} · Payments</p>
         <p className="text-[28px] font-black leading-tight tabular-nums">{money(paidThisMonth)}</p>
         <p className="text-[12px] text-white/90">paid this month · {payments.length} payment{payments.length === 1 ? '' : 's'} in all</p>
@@ -77,7 +78,7 @@ export default function GroupPayments() {
           type="button"
           onClick={() => setShowForm(true)}
           disabled={others.length === 0}
-          className="mt-3 w-full rounded-xl bg-white text-[#0b3b57] py-2.5 text-sm font-black active:scale-95 disabled:opacity-50"
+          className="mt-3 w-full rounded-xl bg-white text-[#4338ca] py-2.5 text-sm font-black active:scale-95 disabled:opacity-50"
         >
           ＋ Add a payment
         </button>

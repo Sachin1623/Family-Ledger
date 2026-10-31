@@ -29,6 +29,8 @@ import { netBalances, simplifyDebts } from '../lib/settleMath';
 import { useGroupSets, GroupSet } from '../lib/groupSets';
 import { GroupSetEditor } from '../components/GroupSets';
 import SetSummaryCard, { SummaryGroup } from '../components/SetSummaryCard';
+import PaymentsGroupCard from '../components/PaymentsGroupCard';
+import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
 
 const CATEGORIES = EXPENSE_CATEGORIES;
 
@@ -947,10 +949,22 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   }
 
   const isEventGroup = group?.groupType === 'event';
+  const kindStyle = KIND_STYLE[kindOf(group)];
+  // An event is one occasion: its card always shows everything so far, never a single month
+  const showAll = viewAll || isEventGroup;
+  // A Payments group has no expenses or budget, so it gets its own card
+  if (group?.groupType === 'payments') {
+    return <PaymentsGroupCard groupId={groupId} group={group} membersCount={members.length} index={index} />;
+  }
   const currencySymbol = CURRENCY_SYMBOLS[group?.currency] || group?.currency || '$';
   // Budget tracks spending only — income entries (see monthIncome/monthSpend above) never offset
   // it, so a group budget can't look "under" just because someone logged income that month.
-  const budgetStatus = budget ? getBudgetStatus(monthExpense, budget.amount) : null;
+  // An event has one budget for the whole event (set when it was created) measured against everything spent so far;
+  // a regular group has a monthly budget measured against the month on show.
+  const eventBudgetAmount = isEventGroup && Number(group?.eventBudget) > 0 ? Number(group.eventBudget) : 0;
+  const budgetView = isEventGroup ? (eventBudgetAmount ? { amount: eventBudgetAmount } : undefined) : budget;
+  const budgetSpent = isEventGroup ? allTime.expense : monthExpense;
+  const budgetStatus = budgetView ? getBudgetStatus(budgetSpent, budgetView.amount) : null;
 
   const stopAnd = (fn: () => void) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1014,6 +1028,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             this handler on top of their own action. */}
         <div
           onClick={onToggleCollapse}
+          style={{ background: kindStyle.headerWash }}
           className="flex items-center justify-between gap-2 -mx-6 -mt-6 mb-1 px-6 pt-4 pb-3 rounded-t-2xl bg-gradient-to-r from-[#4ADE80]/15 to-[#3B82F6]/15 border-b border-border-subtle cursor-pointer"
         >
           <div className="flex items-center gap-3 min-w-0">
@@ -1036,7 +1051,10 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                   <span className="material-symbols-outlined text-[14px] text-primary shrink-0" title="Split Enabled">call_split</span>
                 )}
               </div>
-              <p className="text-sm text-text-muted">{t('dashboard.membersCount', { count: members.length })}</p>
+              <p className="text-sm text-text-muted flex items-center gap-2">
+                <span>{t('dashboard.membersCount', { count: members.length })}</span>
+                <span className="text-[10px] font-black uppercase tracking-wider rounded-full px-2 py-0.5" style={{ background: kindStyle.tint, color: kindStyle.dark }}>{kindStyle.label}</span>
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -1110,7 +1128,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             <div className="w-[70%] bg-surface-container/40 rounded-2xl p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">
-                  {t('common.budget')} {currencySymbol}{formatAmountCompact(budget.amount, group?.currency, profile?.numberSystem)}
+                  {isEventGroup ? 'Event budget' : t('common.budget')} {currencySymbol}{formatAmountCompact(budgetView!.amount, group?.currency, profile?.numberSystem)}
                 </span>
                 <span className={clsx('text-xs font-black shrink-0', budgetStatus.textClass)}>
                   {Math.round(budgetStatus.percent)}%
@@ -1120,17 +1138,17 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                 <div className={clsx('h-full rounded-full transition-all', budgetStatus.barClass)} style={{ width: `${Math.min(100, budgetStatus.percent)}%` }} />
               </div>
               <div className="flex items-center justify-between gap-2 text-[9px] text-text-muted font-bold">
-                <span className="truncate">{t('common.spent')} {currencySymbol}{formatAmountCompact(monthExpense, group?.currency, profile?.numberSystem)}</span>
+                <span className="truncate">{t('common.spent')} {currencySymbol}{formatAmountCompact(budgetSpent, group?.currency, profile?.numberSystem)}</span>
                 <span className={clsx(budgetStatus.percent > 100 ? 'text-error' : '', 'truncate text-right')}>
-                  {budgetStatus.percent > 100 ? t('common.overBy') : t('common.remaining')} {currencySymbol}{formatAmountCompact(Math.abs(budget.amount - monthExpense), group?.currency, profile?.numberSystem)}
+                  {budgetStatus.percent > 100 ? t('common.overBy') : t('common.remaining')} {currencySymbol}{formatAmountCompact(Math.abs(budgetView!.amount - budgetSpent), group?.currency, profile?.numberSystem)}
                 </span>
               </div>
             </div>
-            <div className="w-[30%] flex items-center">{viewAll ? null : monthPickerEl}</div>
+            <div className="w-[30%] flex items-center">{showAll ? null : monthPickerEl}</div>
           </div>
         ) : (
           <div className="flex justify-end">
-            <div className="w-[30%]">{viewAll ? null : monthPickerEl}</div>
+            <div className="w-[30%]">{showAll ? null : monthPickerEl}</div>
           </div>
         )}
 
@@ -1330,7 +1348,10 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             Only shown at tileState >= 2, same as the action row/budget card above. */}
         {tileState >= 2 && (
         <div className="pt-2 border-t border-gray-50 space-y-2.5">
-          <div className="flex bg-surface-container/60 rounded-xl p-0.5" onClick={(e) => e.stopPropagation()}>
+          {isEventGroup && (
+            <p className="text-[11px] font-black uppercase tracking-wider text-center rounded-xl py-1.5" style={{ background: kindStyle.tint, color: kindStyle.dark }}>Whole event · everything spent so far</p>
+          )}
+          <div className={clsx('flex bg-surface-container/60 rounded-xl p-0.5', isEventGroup && 'hidden')} onClick={(e) => e.stopPropagation()}>
             {([['month', 'Month'], ['all', 'All time']] as const).map(([id, label]) => (
               <button
                 key={id}
@@ -1342,7 +1363,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
               </button>
             ))}
           </div>
-          {viewAll ? (
+          {showAll ? (
             <div className="space-y-2">
               <p className="text-[10px] text-text-muted font-bold text-center">Since {allTime.sinceLabel} · {allTime.months} month{allTime.months === 1 ? '' : 's'}</p>
               {group?.incomeEnabled ? (
