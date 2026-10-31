@@ -1,3 +1,4 @@
+import GroupTypePicker from '../components/GroupTypePicker';
 import React, { useState } from 'react';
 import { trackFunnel } from '../lib/funnel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -552,42 +553,8 @@ export default function CreateGroup() {
                 <div className="space-y-4 pt-2 border-t border-border-subtle">
                   <div className={clsx('space-y-1', guideWrapClass('grouptype'))}>
                     {stepBadge('grouptype')}
-                    <label className="text-[11px] text-text-muted px-1 font-bold">{t('createGroup.groupType')}</label>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleGroupTypePick('regular')}
-                        className={clsx(
-                          'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                          groupType === 'regular' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'
-                        )}
-                      >
-                        {t('createGroup.regularMonthly')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleGroupTypePick('event')}
-                        className={clsx(
-                          'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                          groupType === 'event' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'
-                        )}
-                      >
-                        {t('createGroup.oneOffEvent')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleGroupTypePick('payments')}
-                        className={clsx(
-                          'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                          groupType === 'payments' ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'
-                        )}
-                      >
-                        Payments
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-text-muted px-1">
-                      Regular/Monthly resets budgets and spending each month — pick this for ongoing groups. One-off Event is for a single trip or occasion instead. Payments is for money one member pays another, such as rent, maintenance, salary or EMI: it keeps a record with receipts, with no splitting.
-                    </p>
+                    <label className="text-[11px] text-text-muted px-1 font-bold">What will this group be used for?</label>
+                    <GroupTypePicker value={groupType} onPick={handleGroupTypePick} />
                     {guideActive('grouptype') && (
                       <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">
                         {groupType === 'regular' ? 'Regular/Monthly looks right, Next →' : groupType === 'event' ? 'One-off Event looks right, Next →' : 'Payments looks right, Next →'}
@@ -597,6 +564,8 @@ export default function CreateGroup() {
 
                   {guideDone && (
                     <>
+                      {groupType !== 'payments' && (
+                      <>
                       <div>
                         <div className="flex items-center justify-between p-3 bg-surface rounded-xl border border-border-subtle group cursor-pointer" onClick={() => setSplitEnabled(!splitEnabled)}>
                           <div className="flex items-center gap-3">
@@ -658,6 +627,8 @@ export default function CreateGroup() {
                           </p>
                         )}
                       </div>
+                      </>
+                      )}
 
                       <div className="pt-6">
                         <button

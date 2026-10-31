@@ -1,3 +1,4 @@
+import GroupTypePicker, { GroupKind } from '../components/GroupTypePicker';
 import React, { useState, useEffect, useRef } from 'react';
 import RecurringQuickEdit from '../components/RecurringQuickEdit';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1933,33 +1934,12 @@ export default function ManageGroup() {
               {groupTypeStep === 1 ? (
                 <>
                   <h3 className="text-base font-bold text-primary">{t('manageGroup.groupTypeStep1Title')}</h3>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleSetGroupType('regular')}
-                      className={clsx(
-                        'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                        (group.groupType || 'regular') === 'regular'
-                          ? 'bg-primary text-white border-primary'
-                          : 'bg-surface text-text-muted border-border-subtle'
-                      )}
-                    >
-                      {t('createGroup.regularMonthly')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSetGroupType('event')}
-                      className={clsx(
-                        'flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all',
-                        group.groupType === 'event'
-                          ? 'bg-primary text-white border-primary'
-                          : 'bg-surface text-text-muted border-border-subtle'
-                      )}
-                    >
-                      {t('createGroup.oneOffEvent')}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-text-muted px-1">{t('manageGroup.eventGroupsDesc')}</p>
+                  {/* Payments is chosen when a group is created: switching a group that already has expenses would hide them */}
+                  <GroupTypePicker
+                    value={(group.groupType || 'regular') as GroupKind}
+                    kinds={group.groupType === 'payments' ? ['payments'] : ['regular', 'event']}
+                    onPick={(k) => handleSetGroupType(k as 'regular' | 'event')}
+                  />
                   <button
                     type="button"
                     onClick={() => setGroupTypeStep(2)}
