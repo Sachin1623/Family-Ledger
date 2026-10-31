@@ -3070,7 +3070,9 @@ async function processBudgetReminders(db: Firestore, ctx: CronCtx = makeCronCtx(
     const chunk = groupsSnap.docs.slice(i, i + 300);
     const budgetSnaps = await db.getAll(...chunk.map((g) => db.collection('groupBudgets').doc(`${g.id}_${monthKeyOf.get(g.id)}`)));
     chunk.forEach((g, idx) => {
-      if (!budgetSnaps[idx].exists) needsWork.push(g);
+      // a Payments group has no budget, and an Event has one budget for the whole event: neither is nudged to set a monthly one
+      const kind = g.data().groupType;
+      if (!budgetSnaps[idx].exists && kind !== 'payments' && kind !== 'event') needsWork.push(g);
     });
   }
 
@@ -15020,6 +15022,115 @@ async function startServer() {
     } catch (error) {
       console.error('settlement-reminder error:', error);
       return res.status(500).json({ error: 'Unable to send reminder.' });
+    }
+  });
+
+  // Fired after a payment in a Payments group is created, edited by its payer, or given a receipt (the write itself goes straight
+  // to Firestore under firestore.rules). Each person's own tracked copy of the payment (an expense for the payer, income for the
+  // receiver, each in their OWN group, listed in `paymentLinks`) is brought in line here with the Admin SDK, because the receiver's
+  // copy lives in a group the payer is not a member of; the receiver is told about a new payment or a change.
+  //   created: tell the receiver.  edited: update every tracked copy and tell the receiver.  receipt: update the copies quietly.
+  app.post('/api/group-payment-updated', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const paymentId = String(req.body?.paymentId || '');
+    const event = String(req.body?.event || 'edited');
+    const oldAmount = Number(req.body?.oldAmount);
+    if (!paymentId || !['created', 'edited', 'receipt'].includes(event)) return res.status(400).json({ error: 'paymentId and a valid event are required.' });
+
+    try {
+      const paySnap = await db.collection('groupPayments').doc(paymentId).get();
+      if (!paySnap.exists) return res.status(404).json({ error: 'Payment not found.' });
+      const p: any = paySnap.data();
+      if (p.addedBy !== decoded.uid) return res.status(403).json({ error: 'Only the person who recorded the payment can do this.' });
+
+      const groupSnap = await db.collection('groups').doc(p.groupId).get();
+      const groupName = groupSnap.exists ? groupSnap.data()?.name || 'the group' : 'the group';
+      const actorName = decoded.name || 'Someone';
+      const label = p.label || 'Payment';
+      const description = `${label}${p.note ? ` – ${p.note}` : ''}`.slice(0, 200);
+      const nowIso = new Date().toISOString();
+      const money = (n: number) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+      // 1. bring every tracked copy in line
+      let updated = 0;
+      const touchedUids = new Set<string>();
+      if (event !== 'created') {
+        const linksSnap = await db.collection('paymentLinks').where('paymentId', '==', paymentId).get();
+        for (const linkDoc of linksSnap.docs) {
+          const link: any = linkDoc.data();
+          try {
+            const expRef = db.collection('expenses').doc(String(link.expenseId));
+            const expSnap = await expRef.get();
+            if (!expSnap.exists) continue;
+            const e: any = expSnap.data();
+            const before = Number(e.amount) || 0;
+            const patch: any = {
+              amount: p.amount,
+              description,
+              date: p.date,
+              updatedAt: nowIso,
+              images: Array.isArray(p.images) && p.images.length > 0 ? p.images : admin.firestore.FieldValue.delete(),
+            };
+            // a split follows the new amount: equal shares are re-divided, percentages recomputed, fixed amounts scaled together
+            if (e.splitInfo && Array.isArray(e.splitInfo.splits)) {
+              const kind = e.splitInfo.splitType;
+              const factor = before > 0 ? p.amount / before : 1;
+              patch.splitInfo = {
+                ...e.splitInfo,
+                splits: e.splitInfo.splits.map((s: any) => (
+                  kind === 'equally' ? { ...s, amount: p.amount / e.splitInfo.splits.length }
+                  : kind === 'percentage' ? { ...s, amount: (p.amount * (Number(s.percentage) || 0)) / 100 }
+                  : { ...s, amount: (Number(s.amount) || 0) * factor }
+                )),
+              };
+            }
+            const batch = db.batch();
+            batch.update(expRef, patch);
+            const delta = p.amount - before;
+            if (delta !== 0) {
+              batch.update(db.collection('groups').doc(String(link.groupId)), link.role === 'receiver'
+                ? { totalIncome: admin.firestore.FieldValue.increment(delta) }
+                : { totalSpending: admin.firestore.FieldValue.increment(delta) });
+            }
+            await batch.commit();
+            updated++;
+            touchedUids.add(String(link.uid));
+            if (event === 'edited') {
+              await logFeedActivity(db, {
+                userId: String(link.uid), type: 'edit_expense', description: `${description} updated`, userName: actorName,
+                groupId: String(link.groupId),
+                data: { description, oldAmount: before, newAmount: p.amount, groupName: link.groupName || '', fromPayment: true },
+              });
+            }
+          } catch (linkErr) {
+            console.error('group-payment-updated: could not update a tracked copy:', linkErr);
+          }
+        }
+      }
+
+      // 2. tell the receiver
+      let sent = 0;
+      if (event !== 'receipt' && p.toUid && p.toUid !== decoded.uid) {
+        const changedAmount = Number.isFinite(oldAmount) && oldAmount !== p.amount;
+        let body = event === 'created'
+          ? `${actorName} recorded a payment of ${money(p.amount)} to you for ${label} in "${groupName}".`
+          : changedAmount
+            ? `${actorName} changed the "${label}" payment from ${money(oldAmount)} to ${money(p.amount)} in "${groupName}".`
+            : `${actorName} updated the "${label}" payment in "${groupName}".`;
+        if (event === 'edited' && touchedUids.has(String(p.toUid))) body += ' Your tracked entry was updated too.';
+        const tokens = await collectPushTokens(db, [p.toUid], 'notificationsEnabled');
+        sent = await sendPush(tokens, event === 'created' ? `${actorName} recorded a payment` : `${actorName} updated a payment`, body, { type: 'group_activity', groupId: p.groupId });
+        await logFeedActivity(db, {
+          userId: p.toUid, type: 'payment_updated', description: body, userName: actorName,
+          data: { groupId: p.groupId, paymentId, event },
+        });
+      }
+      return res.json({ updated, sent });
+    } catch (error) {
+      console.error('group-payment-updated error:', error);
+      return res.status(500).json({ error: 'Unable to update the payment copies.' });
     }
   });
 

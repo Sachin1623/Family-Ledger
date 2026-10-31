@@ -26,6 +26,7 @@ import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
 import { useIdentities } from '../lib/userIdentity';
 import PaymentRolePicker from '../components/PaymentRolePicker';
+import PaymentTrackingDefaults from '../components/PaymentTrackingDefaults';
 import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
@@ -1978,8 +1979,11 @@ export default function ManageGroup() {
             />
           </section>
         )}
+        {kindOf(group) === 'payments' && !!currentMember && <PaymentTrackingDefaults groupId={groupId!} member={currentMember} />}
         {isAdminOrOwner && (
           <section className="space-y-2">
+            {kindOf(group) !== 'payments' && (
+            <>
             <button
               type="button"
               onClick={() => { setGroupTypeStep(1); setShowGroupTypeFlow(true); }}
@@ -2018,6 +2022,26 @@ export default function ManageGroup() {
               </div>
               <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
             </button>
+            </>
+            )}
+            {kindOf(group) === 'payments' && (
+            <button
+              type="button"
+              onClick={() => navigate(`/groups/${groupId}/payment-categories`)}
+              className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">category</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-primary truncate">Payment categories</p>
+                  <p className="text-[11px] text-text-muted truncate">Rent, maintenance, salary and your own</p>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
+            </button>
+            )}
           </section>
         )}
 

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { addDoc, collection, deleteDoc, doc, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, deleteField, doc, query, updateDoc, where } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
 import { db } from '../lib/firebase';
@@ -11,21 +11,18 @@ import { useIdentities } from '../lib/userIdentity';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
+import { notifyPaymentChange } from '../lib/paymentApi';
 import PaymentRolePicker, { canReceive, PAYMENT_ROLE_LABEL, isPaymentRole } from '../components/PaymentRolePicker';
+import { PaymentCategory, isMaterialIcon, paymentCategoryIcon, visiblePaymentCategories } from '../lib/paymentCategories';
 
 // A "Payments" group: money one member pays another (rent, maintenance, salary, EMI, fees). It is a record, not a split, so
 // nothing here makes anyone owe anyone. The payer adds the entry (fromUid is always the signed-in user) and is asked for a
 // receipt; the receiver sees it, receipt included, with no confirmation step.
 
-const LABELS: Array<{ label: string; icon: string }> = [
-  { label: 'Rent', icon: 'home' },
-  { label: 'Maintenance', icon: 'build' },
-  { label: 'Salary', icon: 'badge' },
-  { label: 'EMI', icon: 'account_balance' },
-  { label: 'Fees', icon: 'school' },
-  { label: 'Other', icon: 'payments' },
-];
-const iconFor = (label?: string) => LABELS.find((l) => l.label.toLowerCase() === (label || '').toLowerCase())?.icon || 'payments';
+// a category's icon: a Material symbol for the built-in ones, an emoji for ones the group added
+const Glyph = ({ icon }: { icon: string }) => (isMaterialIcon(icon)
+  ? <span className="material-symbols-outlined text-[20px]">{icon}</span>
+  : <span className="text-[20px] leading-none">{icon}</span>);
 
 const todayLocal = () => {
   const d = new Date();
@@ -60,6 +57,7 @@ export default function GroupPayments() {
   const [showForm, setShowForm] = useState(searchParams.get('add') === '1'); // the Dashboard card's "Add a payment" lands here with the form open
   const [receiptFor, setReceiptFor] = useState<any | null>(null); // the entry the receipt prompt / "add receipt" is about
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [editFor, setEditFor] = useState<any | null>(null); // the payment its payer is editing
   const [trackFor, setTrackFor] = useState<any | null>(null); // the entry being kept in one of my own groups
   // where I have already kept each payment (one note per payment per person), so it is offered once and shows where it went
   const [linksSnap] = useCollection(user ? query(collection(db, 'paymentLinks'), where('uid', '==', user.uid)) : null);
@@ -73,7 +71,8 @@ export default function GroupPayments() {
   const paidThisMonth = payments.filter((p) => (p.date || '').startsWith(monthKey)).reduce((s, p) => s + (p.amount || 0), 0);
   // receivers first, so the people you most likely pay are at the front
   const others = members.filter((m) => m.userId !== user?.uid).sort((a, b) => Number(canReceive(b.paymentRole)) - Number(canReceive(a.paymentRole)));
-  const myRole = members.find((m) => m.userId === user?.uid)?.paymentRole;
+  const myMember = members.find((m) => m.userId === user?.uid);
+  const myRole = myMember?.paymentRole;
 
   const removePayment = async (p: any) => {
     if (!window.confirm(`Delete this ${money(p.amount)} payment?`)) return;
@@ -113,7 +112,7 @@ export default function GroupPayments() {
             <div key={p.id} className="p-3 bg-white border border-border-subtle rounded-2xl shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-[20px]">{iconFor(p.label)}</span>
+                  <Glyph icon={paymentCategoryIcon(group, p.label)} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-2">
@@ -121,7 +120,7 @@ export default function GroupPayments() {
                     <p className="text-base font-black tabular-nums text-on-surface whitespace-nowrap">{money(p.amount)}</p>
                   </div>
                   <p className="text-[12px] font-bold text-text-muted">{nameOf(p.fromUid)} → {nameOf(p.toUid)}</p>
-                  <p className="text-[11px] text-text-muted">{parseLocalDate(p.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                  <p className="text-[11px] text-text-muted">{parseLocalDate(p.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}{p.editedAt && ' · edited'}</p>
                   {p.note && <p className="text-xs text-on-surface mt-1 break-words">{p.note}</p>}
                 </div>
               </div>
@@ -149,6 +148,9 @@ export default function GroupPayments() {
                     </button>
                   )
                 )}
+                {p.addedBy === user?.uid && (
+                  <button type="button" onClick={() => setEditFor(p)} className="text-[11px] font-bold text-primary px-2 py-1">Edit</button>
+                )}
                 <span className="flex-1" />
                 {(mine || group?.createdBy === user?.uid) && (
                   <button type="button" onClick={() => removePayment(p)} className="text-[11px] font-bold text-error px-2 py-1" aria-label="Delete payment">Delete</button>
@@ -159,15 +161,18 @@ export default function GroupPayments() {
         })}
       </div>
 
-      {showForm && user && groupId && (
+      {(showForm || editFor) && user && groupId && (
         <PaymentForm
+          editing={editFor}
           groupId={groupId}
           uid={user.uid}
           symbol={symbol}
           others={others}
           myRole={myRole}
+          categories={visiblePaymentCategories(group)}
+          defaultTrackGroupId={myMember?.trackExpenseGroupId}
           nameOf={nameOf}
-          onClose={() => setShowForm(false)}
+          onClose={() => { setShowForm(false); setEditFor(null); }}
           onSaved={(saved, track) => {
             setShowForm(false);
             // saved without a receipt: ask for it straight away, since a payment with no proof is the usual dispute
@@ -185,7 +190,7 @@ export default function GroupPayments() {
       )}
 
       {trackFor && !receiptFor && user && (
-        <TrackPaymentSheet payment={trackFor} role={trackFor.fromUid === user.uid ? 'payer' : 'receiver'} onClose={() => setTrackFor(null)} />
+        <TrackPaymentSheet payment={trackFor} role={trackFor.fromUid === user.uid ? 'payer' : 'receiver'} defaultGroupId={trackFor.fromUid === user.uid ? myMember?.trackExpenseGroupId : myMember?.trackIncomeGroupId} onClose={() => setTrackFor(null)} />
       )}
 
       {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
@@ -194,32 +199,39 @@ export default function GroupPayments() {
 }
 
 function PaymentForm({
-  groupId, uid, symbol, others, myRole, nameOf, onClose, onSaved,
+  groupId, uid, symbol, others, editing, myRole, categories, defaultTrackGroupId, nameOf, onClose, onSaved,
 }: {
   groupId: string;
   uid: string;
   symbol: string;
   others: any[];
+  editing?: any;
   myRole?: string;
+  categories: PaymentCategory[];
+  defaultTrackGroupId?: string;
   nameOf: (uid: string) => string;
   onClose: () => void;
   onSaved: (saved: any, track: boolean) => void;
 }) {
   // one clear receiver (by role) is pre-selected; with several, or none marked, you choose
   const receivers = others.filter((m) => canReceive(m.paymentRole));
-  const [toUid, setToUid] = useState<string>(others.length === 1 ? others[0].userId : receivers.length === 1 ? receivers[0].userId : '');
-  const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(todayLocal());
-  const [label, setLabel] = useState('Rent');
-  const [customLabel, setCustomLabel] = useState('');
-  const [note, setNote] = useState('');
-  const [images, setImages] = useState<string[]>([]);
-  const [trackIt, setTrackIt] = useState(false);
+  // editing starts from the saved payment; a label that is no longer one of the categories is shown under "Other"
+  const knownLabel = !!editing && categories.some((c) => c.name === editing.label);
+  const [toUid, setToUid] = useState<string>(editing ? editing.toUid : others.length === 1 ? others[0].userId : receivers.length === 1 ? receivers[0].userId : '');
+  const [amount, setAmount] = useState(editing ? String(editing.amount) : '');
+  const [date, setDate] = useState(editing?.date || todayLocal());
+  const [label, setLabel] = useState(editing ? (knownLabel ? editing.label : (categories.find((c) => c.id === 'other')?.name || editing.label)) : (categories[0]?.name || 'Payment'));
+  const [customLabel, setCustomLabel] = useState(editing && !knownLabel ? editing.label : '');
+  const [note, setNote] = useState(editing?.note || '');
+  const [images, setImages] = useState<string[]>(editing?.images || []);
+  // switched on from the start when this person has chosen a group to track their payments in
+  const [trackIt, setTrackIt] = useState(!editing && !!defaultTrackGroupId);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const finalLabel = label === 'Other' ? (customLabel.trim() || 'Payment') : label;
+  const isOtherCategory = categories.find((c) => c.name === label)?.id === 'other';
+  const finalLabel = isOtherCategory ? (customLabel.trim() || 'Payment') : label;
   // "Also track it in my group": the group, category and split choices appear here once the switch is on
-  const track = useTrackInGroup({ amount: Number(amount) || 0, label: finalLabel, note: note.trim(), date, images, groupId }, 'payer', trackIt);
+  const track = useTrackInGroup({ amount: Number(amount) || 0, label: finalLabel, note: note.trim(), date, images, groupId }, 'payer', trackIt, defaultTrackGroupId);
 
   const save = async () => {
     const value = Number(amount);
@@ -231,6 +243,27 @@ function PaymentForm({
     }
     setSaving(true);
     setError('');
+    if (editing) {
+      // the payer changes the payment; the server then updates every tracked copy and tells the receiver
+      try {
+        await updateDoc(doc(db, 'groupPayments', editing.id), {
+          toUid,
+          amount: value,
+          date,
+          label: finalLabel.slice(0, 60),
+          note: note.trim() ? note.trim().slice(0, 300) : deleteField(),
+          images: images.length ? images : deleteField(),
+          editedAt: new Date().toISOString(),
+        });
+        void notifyPaymentChange(editing.id, 'edited', editing.amount);
+        onClose();
+      } catch (err) {
+        console.error('Could not save the changes:', err);
+        setError('Could not save the changes. Check your connection and try again.');
+        setSaving(false);
+      }
+      return;
+    }
     const data = {
       groupId,
       fromUid: uid,
@@ -246,6 +279,7 @@ function PaymentForm({
     try {
       const ref = await addDoc(collection(db, 'groupPayments'), data);
       const saved = { id: ref.id, ...data };
+      void notifyPaymentChange(ref.id, 'created'); // lets the receiver know
       if (trackIt) {
         try {
           await track.commit(saved);
@@ -267,7 +301,7 @@ function PaymentForm({
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black text-primary">Add a payment</h2>
+          <h2 className="text-lg font-black text-primary">{editing ? 'Edit payment' : 'Add a payment'}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-text-muted"><span className="material-symbols-outlined">close</span></button>
         </div>
 
@@ -307,18 +341,18 @@ function PaymentForm({
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-text-muted px-1">What for</label>
           <div className="flex flex-wrap gap-2">
-            {LABELS.map((l) => (
+            {categories.map((c) => (
               <button
-                key={l.label}
+                key={c.id}
                 type="button"
-                onClick={() => setLabel(l.label)}
-                className={clsx('px-3 py-1.5 rounded-full text-xs font-bold border', label === l.label ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
+                onClick={() => setLabel(c.name)}
+                className={clsx('px-3 py-1.5 rounded-full text-xs font-bold border', label === c.name ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
               >
-                {l.label}
+                {c.name}
               </button>
             ))}
           </div>
-          {label === 'Other' && (
+          {isOtherCategory && (
             <input value={customLabel} maxLength={60} onChange={(e) => setCustomLabel(e.target.value)} placeholder="e.g. Pocket money" className="w-full rounded-xl border border-border-subtle px-3 py-2.5 text-sm font-bold bg-transparent" />
           )}
         </div>
@@ -333,7 +367,7 @@ function PaymentForm({
           <ImageAttachments images={images} onChange={setImages} label="Add payment receipt" />
         </div>
 
-        <button type="button" role="switch" aria-checked={trackIt} onClick={() => setTrackIt(!trackIt)} className={clsx('w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-3.5 py-3 text-left transition-all', trackIt ? 'border-primary bg-primary/5' : 'border-border-subtle')}>
+        <button type="button" role="switch" aria-checked={trackIt} onClick={() => setTrackIt(!trackIt)} className={clsx(editing && 'hidden', 'w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-3.5 py-3 text-left transition-all', trackIt ? 'border-primary bg-primary/5' : 'border-border-subtle')}>
           <span className={clsx('w-9 h-9 rounded-xl flex items-center justify-center shrink-0', trackIt ? 'bg-primary text-white' : 'bg-surface text-primary')}><span className="material-symbols-outlined text-[20px]">account_tree</span></span>
           <span className="flex-1 min-w-0">
             <span className="block text-sm font-extrabold text-primary">Also track it in my group</span>
@@ -344,9 +378,10 @@ function PaymentForm({
 
         {trackIt && <div className="rounded-2xl bg-surface p-3.5">{track.fields}</div>}
 
+        {editing && <p className="text-[11px] text-text-muted">The receiver is told about the change, and any copy of this payment tracked in a group is updated too.</p>}
         {error && <p className="text-xs font-bold text-error">{error}</p>}
         <button type="button" onClick={save} disabled={saving} className="w-full rounded-xl bg-primary text-white py-3 text-sm font-black active:scale-95 disabled:opacity-50">
-          {saving ? 'Saving…' : trackIt ? 'Save and track' : 'Save payment'}
+          {saving ? 'Saving…' : editing ? 'Save changes' : trackIt ? 'Save and track' : 'Save payment'}
         </button>
       </div>
     </div>
@@ -366,6 +401,7 @@ function ReceiptSheet({ payment, onClose }: { payment: any; onClose: () => void 
     setError('');
     try {
       await updateDoc(doc(db, 'groupPayments', payment.id), { images: [...existing, ...images].slice(0, 3) });
+      void notifyPaymentChange(payment.id, 'receipt'); // tracked copies show the receipt too
       onClose();
     } catch (err) {
       console.error('Could not attach receipt:', err);

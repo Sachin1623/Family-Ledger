@@ -228,6 +228,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       case 'goal_shared': return 'flag';
       case 'reports_shared': return 'show_chart';
       case 'settlement_reminder': return 'payments';
+      case 'payment_updated': return 'edit_note';
       case 'loan_reminder': case 'loan_installment_due': case 'loan_activity': return 'payments';
       case 'admin_feedback': return 'feedback';
       case 'feedback_reply': return 'forum';
@@ -808,6 +809,8 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
               if (data.amount) params.set('amount', data.amount);
               if (data.reminderId) params.set('reminderId', data.reminderId);
               goTo(`/add-expense${params.toString() ? `?${params.toString()}` : ''}`);
+            } else if (type === 'payment_updated' && data.groupId) {
+              goTo(`/groups/${data.groupId}`);
             } else if (type === 'settlement_reminder' && data.groupId && data.settleWith) {
               const params = new URLSearchParams({ groupId: data.groupId, settleWith: data.settleWith, description: 'Settlement', category: 'misc' });
               if (data.amount) params.set('amount', String(data.amount));

@@ -34,7 +34,7 @@ const guessCategory = (label: string | undefined, income: boolean) => {
   return 'misc';
 };
 
-export function useTrackInGroup(draft: TrackDraft, role: Role, enabled = true) {
+export function useTrackInGroup(draft: TrackDraft, role: Role, enabled = true, defaultGroupId?: string) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const income = role === 'receiver';
@@ -52,7 +52,13 @@ export function useTrackInGroup(draft: TrackDraft, role: Role, enabled = true) {
 
   const [groupId, setGroupId] = useState('');
   const group: any = groups.find((g: any) => g.id === groupId);
-  useEffect(() => { if (enabled && !groupId && groups.length === 1) setGroupId(groups[0].id); }, [enabled, groups, groupId]);
+  // the group this person chose as their default for this Payments group is pre-selected (still changeable for this payment);
+  // otherwise, with a single possible group, that one
+  useEffect(() => {
+    if (!enabled || groupId) return;
+    if (defaultGroupId && groups.some((g: any) => g.id === defaultGroupId)) setGroupId(defaultGroupId);
+    else if (groups.length === 1) setGroupId(groups[0].id);
+  }, [enabled, groups, groupId, defaultGroupId]);
 
   const [category, setCategory] = useState(guessCategory(draft.label, income));
   const categories = useMemo(() => (group ? getGroupCategories(group, income ? 'income' : 'expense') : []), [group, income]);
@@ -244,15 +250,16 @@ export function useTrackInGroup(draft: TrackDraft, role: Role, enabled = true) {
 
 // For an entry that already exists: the same choices in a sheet, with its own save
 export default function TrackPaymentSheet({
-  payment, role, onClose, onDone,
+  payment, role, defaultGroupId, onClose, onDone,
 }: {
   payment: TrackSaved;
   role: Role;
+  defaultGroupId?: string;
   onClose: () => void;
   onDone?: (info: { groupId: string; groupName: string }) => void;
 }) {
   const income = role === 'receiver';
-  const track = useTrackInGroup(payment, role);
+  const track = useTrackInGroup(payment, role, true, defaultGroupId);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 

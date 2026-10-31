@@ -138,12 +138,26 @@ export default function Dashboard() {
     const data = d.data();
     return data.status !== 'archived' && !data.isCashHolding;
   });
+  // "Not now" hides the tile for 15 days. It is remembered on this phone and on the account (so another phone agrees), not only
+  // for this visit: the old in-memory flag brought the tile back on every relaunch.
+  const SAVINGS_TILE_SNOOZE_MS = 15 * 24 * 60 * 60 * 1000;
+  const savingsSnoozeKey = `fl_savings_tile_snoozed_${user?.uid || ''}`;
   const [accountsGoalsBannerDismissed, setAccountsGoalsBannerDismissed] = useState(false);
+  const savingsTileSnoozed = (() => {
+    let at = profile?.accountsGoalsBannerSnoozedAt ? Date.parse(profile.accountsGoalsBannerSnoozedAt) || 0 : 0;
+    try { at = Math.max(at, Number(localStorage.getItem(savingsSnoozeKey)) || 0); } catch { /* storage unavailable */ }
+    return Date.now() - at < SAVINGS_TILE_SNOOZE_MS;
+  })();
+  const snoozeSavingsTile = () => {
+    setAccountsGoalsBannerDismissed(true);
+    try { localStorage.setItem(savingsSnoozeKey, String(Date.now())); } catch { /* storage unavailable */ }
+    if (user) updateDoc(doc(db, 'users', user.uid), { accountsGoalsBannerSnoozedAt: new Date().toISOString() }).catch((err) => console.error('Could not save the snooze:', err));
+  };
   // Waits for both queries to actually resolve (not `undefined`, i.e. still loading) before
   // deciding to show — otherwise every user would flash the banner for a moment on every load.
   const showAccountsGoalsBanner =
     !!user && financialAccountsValue !== undefined && goalsForBannerValue !== undefined
-    && !hasAnyAccount && !hasAnyRealGoal && !accountsGoalsBannerDismissed;
+    && !!profile && !hasAnyAccount && !hasAnyRealGoal && !accountsGoalsBannerDismissed && !savingsTileSnoozed;
   const [showBannerAccountsExplainer, setShowBannerAccountsExplainer] = useState(false);
 
   const memberships = membershipsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [];
@@ -381,7 +395,7 @@ export default function Dashboard() {
               </button>
               <button
                 type="button"
-                onClick={() => setAccountsGoalsBannerDismissed(true)}
+                onClick={snoozeSavingsTile}
                 className="text-xs font-bold text-text-muted hover:text-primary"
               >
                 Not now
