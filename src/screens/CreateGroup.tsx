@@ -146,11 +146,10 @@ export default function CreateGroup() {
     if (guideActive('currency')) goToNextGuideStep();
   };
 
-  // the first screen: one tap chooses the type and moves on, with an icon that suits it unless one was already picked
+  // the first screen: choosing a type sets an icon that suits it (unless one was already picked); Continue moves on
   const pickTypeFirst = (type: 'regular' | 'event' | 'payments') => {
     setGroupType(type);
     if (icon === '🏠') setIcon(type === 'event' ? '✈️' : type === 'payments' ? '💸' : '🏠');
-    setTypeChosen(true);
   };
 
   const handleGroupTypePick = (type: 'regular' | 'event' | 'payments') => {
@@ -261,25 +260,64 @@ export default function CreateGroup() {
 
   if (!typeChosen) {
     return (
-      <div className="flex flex-col min-h-screen bg-surface">
-        <main className="flex-1 p-4 md:p-8 pb-32">
-          <div className="max-w-2xl mx-auto space-y-4">
-            <div className="px-1">
-              <h1 className="text-xl font-black text-primary">What are you creating?</h1>
-              <p className="text-sm text-text-muted mt-1">Pick the one that fits best. The next screen asks only what that type needs.</p>
-            </div>
-            <GroupTypePicker value={groupType} onPick={pickTypeFirst} />
+      <div className="flex flex-col min-h-screen bg-[#06222f]">
+        <div className="max-w-2xl w-full mx-auto px-6 pt-6 pb-8 text-white">
+          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New group</p>
+          <h1 className="text-[28px] leading-tight font-extrabold tracking-tight mt-2">What are you<br />creating?</h1>
+          <p className="text-sm text-[#9fbccb] mt-2">Choose a type. We’ll only ask what it needs.</p>
+        </div>
+        <main className="flex-1 bg-[#f6f9fb] rounded-t-[32px] px-5 pt-6 pb-32">
+          <div className="max-w-2xl mx-auto">
+            <GroupTypePicker value={groupType} onPick={pickTypeFirst} look="sheet" />
           </div>
         </main>
+        <div className="fixed left-0 right-0 bottom-0 z-20 px-5 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent">
+          <button
+            type="button"
+            onClick={() => setTypeChosen(true)}
+            className="max-w-2xl mx-auto w-full h-14 rounded-[18px] bg-[#12b89a] text-[#04251f] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+          >
+            Continue <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+          </button>
+        </div>
       </div>
     );
   }
 
+  const typeLabel = groupType === 'regular' ? 'Regular' : groupType === 'event' ? 'Event' : 'Payments';
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 pb-32">
-        <div className="max-w-2xl mx-auto space-y-4">
-          <section className="bg-white rounded-2xl p-5 border border-border-subtle shadow-sm flex flex-col items-center">
+    <div className={clsx('flex flex-col min-h-screen', guide ? 'bg-surface' : 'bg-[#06222f]')}>
+      <main className={clsx('flex-1 pb-32', guide ? 'p-4 md:p-8' : 'p-0')}>
+        <div className={clsx('max-w-2xl mx-auto', guide ? 'space-y-4' : 'flex flex-col min-h-[calc(100vh-4rem)]')}>
+          {!guide && (
+            <div className="px-6 pt-6 pb-8 text-white">
+              <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New {typeLabel.toLowerCase()} group</p>
+              <div className="flex items-center gap-4 mt-3">
+                <label className="relative w-[68px] h-[68px] rounded-[22px] bg-white/10 border border-white/20 flex items-center justify-center text-[34px] shrink-0 cursor-pointer">
+                  <span className="w-full h-full rounded-[22px] overflow-hidden flex items-center justify-center">
+                    {photoURL ? <img src={photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span>{icon}</span>}
+                  </span>
+                  <span className="absolute -right-1.5 -bottom-1.5 w-[26px] h-[26px] rounded-full bg-[#12b89a] text-[#04251f] flex items-center justify-center">
+                    <span className="material-symbols-outlined text-[15px]">photo_camera</span>
+                  </span>
+                  <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
+                </label>
+                <input
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="min-w-0 flex-1 bg-transparent text-[22px] font-extrabold text-white placeholder-white/40 border-b-2 border-[#12b89a] pb-1 outline-none"
+                  placeholder={t('createGroup.groupNamePlaceholder')}
+                  type="text"
+                />
+              </div>
+              {photoError && <p className="text-xs text-red-300 font-bold mt-2">{photoError}</p>}
+              <span className="inline-flex items-center gap-1.5 mt-3 rounded-full bg-[#12b89a]/20 text-[#5fe0c4] px-3 py-1 text-xs font-bold">
+                {typeLabel} · {currency}
+              </span>
+            </div>
+          )}
+          <section className={clsx('p-5 flex flex-col items-center', guide ? 'bg-white rounded-2xl border border-border-subtle shadow-sm' : 'flex-1 bg-[#f6f9fb] rounded-t-[32px]')}>
             <div className="w-full space-y-4">
               {guideActive('suggestions') && (
                 <div className="w-full bg-primary/5 border-2 border-primary/70 rounded-2xl p-4 space-y-3 fl-tour-glow">
@@ -317,7 +355,7 @@ export default function CreateGroup() {
               {guideReached('icon') && (
                 <div data-step="icon" className={clsx('flex flex-col items-center gap-2 py-0', guideWrapClass('icon'))}>
                   {stepBadge('icon')}
-                  <div className="relative group">
+                  {guide && <div className="relative group">
                     <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center border-2 border-primary/20 shadow-inner overflow-hidden">
                       {photoURL ? (
                         <img src={photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -329,13 +367,13 @@ export default function CreateGroup() {
                       <span className="material-symbols-outlined text-[18px]">photo_camera</span>
                       <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
                     </label>
-                  </div>
+                  </div>}
                   {guideActive('icon') && !photoURL && (
                     <p className="text-[10px] text-text-muted text-center max-w-[220px]">
                       👉 Pick an icon below that fits your group, or tap the small camera button above to add a real photo of your family or group instead.
                     </p>
                   )}
-                  {photoError && <p className="text-xs text-error font-bold text-center">{photoError}</p>}
+                  {guide && photoError && <p className="text-xs text-error font-bold text-center">{photoError}</p>}
 
                   {!photoURL && (
                     <div className="w-full">
@@ -367,7 +405,7 @@ export default function CreateGroup() {
                 </div>
               )}
 
-              {guideReached('name') && (
+              {guide && guideReached('name') && (
                 <div className={clsx('space-y-1', guideWrapClass('name'))}>
                   {stepBadge('name')}
                   <label className="text-[11px] text-text-muted px-1 font-bold">{t('createGroup.groupName')}</label>
@@ -667,7 +705,7 @@ export default function CreateGroup() {
                           type="button"
                           onClick={handleSubmit}
                           disabled={loading || !name}
-                          className="w-full h-12 bg-primary text-white rounded-2xl font-bold text-base flex items-center justify-center gap-2 shadow-lg hover:opacity-95 active:scale-[0.98] transition-all disabled:opacity-50"
+                          className={clsx('w-full h-12 rounded-2xl font-bold text-base flex items-center justify-center gap-2 shadow-lg hover:opacity-95 active:scale-[0.98] transition-all disabled:opacity-50', guide ? 'bg-primary text-white' : 'bg-[#12b89a] text-[#04251f]')}
                         >
                           {loading ? t('createGroup.creating') : (
                             <>
