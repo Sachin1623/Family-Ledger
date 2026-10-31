@@ -60,7 +60,7 @@ type GuideStepId = typeof GUIDE_STEPS[number];
 
 export default function RecurringExpenses() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const [showForm, setShowForm] = useState(false);
@@ -405,7 +405,7 @@ export default function RecurringExpenses() {
           action: 'recurring_changed',
           description: trimmedDescription || catInfo?.name,
           amount: parsedAmount,
-          actorName: user.displayName || 'Someone',
+          actorName: profile?.displayName || user.displayName || 'Someone',
         });
       } else {
         await addDoc(collection(db, 'recurringExpenses'), {
@@ -432,7 +432,7 @@ export default function RecurringExpenses() {
           action: 'recurring_created',
           description: trimmedDescription || catInfo?.name,
           amount: parsedAmount,
-          actorName: user.displayName || 'Someone',
+          actorName: profile?.displayName || user.displayName || 'Someone',
         });
       }
       resetFormFields();
@@ -454,7 +454,7 @@ export default function RecurringExpenses() {
         action: 'recurring_changed',
         description: rule.description || catInfo?.name,
         amount: rule.amount,
-        actorName: user?.displayName || 'Someone',
+        actorName: profile?.displayName || user?.displayName || 'Someone',
       });
     } catch (err) {
       console.error('Failed to toggle recurring expense:', err);
@@ -471,7 +471,7 @@ export default function RecurringExpenses() {
         action: 'recurring_deleted',
         description: rule.description || catInfo?.name,
         amount: rule.amount,
-        actorName: user?.displayName || 'Someone',
+        actorName: profile?.displayName || user?.displayName || 'Someone',
       });
     } catch (err) {
       console.error('Failed to delete recurring expense:', err);

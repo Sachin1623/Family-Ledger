@@ -2317,7 +2317,7 @@ export default function ManageGroup() {
                     groupId={groupId!}
                     currencySymbol={getCurrencySymbol(group.currency)}
                     canSetAutoAdd={rule.userId === user?.uid}
-                    actorName={user?.displayName || 'Someone'}
+                    actorName={profile?.displayName || user?.displayName || 'Someone'}
                     onClose={() => setEditingRecurringId(null)}
                     onMoreOptions={() => { setShowRecurringPanel(false); setEditingRecurringId(null); navigate(`/recurring-expenses?groupId=${groupId}&edit=${rule.id}`); }}
                   />

@@ -6,6 +6,7 @@ import { doc, runTransaction } from 'firebase/firestore';
 import { checkLeaderboard } from './leaderboardCheck';
 import { addToDayScores } from './leaderboardPeriods';
 import { readPendingScores, removePendingScore, SudokuScoreRecord } from './sudoku';
+import { ownDisplayName, ownPhoto } from './userIdentity';
 
 async function syncOneScore(uid: string, userName: string, userPhoto: string, record: SudokuScoreRecord) {
   const ref = doc(db, 'sudokuLeaderboard', `${uid}_${record.difficulty}`);
@@ -45,7 +46,7 @@ export async function flushPendingSudokuScores(): Promise<void> {
   const pending = readPendingScores();
   for (const record of pending) {
     try {
-      await syncOneScore(user.uid, user.displayName || 'Someone', user.photoURL || '', record);
+      await syncOneScore(user.uid, ownDisplayName(user), ownPhoto(user), record);
       removePendingScore(record.id);
       void checkLeaderboard('sudoku', record.difficulty);
     } catch (err) {

@@ -5,6 +5,7 @@ import { useCollection } from 'react-firebase-hooks/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { clsx } from 'clsx';
+import { useIdentities } from '../lib/userIdentity';
 
 function timeAgo(iso: string) {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -50,7 +51,13 @@ export default function Comments({
   const commentsRef = collection(db, pathSegments[0], ...pathSegments.slice(1));
 
   const [commentsValue, loading] = useCollection(query(commentsRef, orderBy('createdAt', 'asc')));
-  const comments = commentsValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
+  const rawComments = commentsValue?.docs.map(d => ({ id: d.id, ...d.data() })) || [] as any[];
+  // a comment keeps the name it was posted under; show the commenter as their profile says now
+  const resolveIdentity = useIdentities(rawComments.map((c: any) => c.userId));
+  const comments = rawComments.map((c: any) => {
+    const who = resolveIdentity(c.userId, c.displayName, c.photoURL);
+    return { ...c, displayName: who.name, photoURL: who.photo };
+  });
 
   const handlePost = async () => {
     const trimmed = text.trim();

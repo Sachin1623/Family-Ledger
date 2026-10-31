@@ -612,7 +612,7 @@ export default function AddExpense() {
         userName: profile?.displayName || user.displayName || 'Someone',
         userPhoto: profile?.photoURL || user.photoURL || '',
         type: isIncome ? 'add_income' : 'add_expense',
-        description: `${user.displayName || 'Someone'} ${isIncome ? 'added income' : 'added an expense'}: ${description}`,
+        description: `${profile?.displayName || user.displayName || 'Someone'} ${isIncome ? 'added income' : 'added an expense'}: ${description}`,
         data: {
           amount: evaluatedAmount,
           description,

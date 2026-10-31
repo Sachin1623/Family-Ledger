@@ -1,5 +1,6 @@
 import { auth, db } from './firebase';
 import { addDoc, collection } from 'firebase/firestore';
+import { ownDisplayName, ownPhoto } from './userIdentity';
 
 type GroupActivityAction =
   | 'added' | 'updated' | 'deleted' | 'commented' | 'recurring_created' | 'recurring_changed'
@@ -88,8 +89,8 @@ export function notifyGroupActivity(params: {
     addDoc(collection(db, 'activities'), {
       groupId: params.groupId,
       userId: currentUser.uid,
-      userName: params.actorName || currentUser.displayName || 'Someone',
-      userPhoto: currentUser.photoURL || '',
+      userName: params.actorName || ownDisplayName(currentUser),
+      userPhoto: ownPhoto(currentUser),
       type,
       // Kept only as a plain-text fallback for contexts that read `description` directly instead
       // of composing from `data` (e.g. a future admin view) — the Feed itself ignores this for

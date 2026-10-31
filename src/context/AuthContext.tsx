@@ -8,6 +8,7 @@ import { handleFirestoreError, OperationType } from '../lib/firebase';
 import { encryptPII, decryptPII } from '../lib/encryption';
 import { updateGlobalStats } from '../services/statsService';
 import { Capacitor } from '@capacitor/core';
+import { setOwnIdentity, syncMemberIdentity } from '../lib/userIdentity';
 import { initPushNotifications } from '../lib/pushNotifications';
 import { getApproxCountry } from '../lib/geo';
 import { FrequencyConfig, firstOccurrenceOnOrAfter, sanitizeFrequencyConfig } from '../lib/frequency';
@@ -208,6 +209,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const unsubPublic = onSnapshot(userDocRef, (snap) => {
               const publicData = snap.data();
               setProfile((prev: any) => ({ ...prev, ...publicData }));
+              // the profile is who this person is everywhere: share it with screens and helpers that only see the sign-in user,
+              // and bring the copies on this person's group-member rows in line with it
+              const ownName = publicData?.displayName || authUser.displayName || '';
+              const ownPhoto = publicData?.photoURL || authUser.photoURL || '';
+              setOwnIdentity(myUid, ownName, ownPhoto);
+              void syncMemberIdentity(myUid, ownName, ownPhoto);
             });
 
             const unsubPrivate = onSnapshot(privateDocRef, (snap) => {

@@ -6,6 +6,7 @@ import { doc, runTransaction } from 'firebase/firestore';
 import { checkLeaderboard } from './leaderboardCheck';
 import { addToDayScores } from './leaderboardPeriods';
 import { readPendingScores, removePendingScore, ScrambleScoreRecord } from './scramble';
+import { ownDisplayName, ownPhoto } from './userIdentity';
 
 async function syncOneScore(uid: string, userName: string, userPhoto: string, record: ScrambleScoreRecord) {
   const ref = doc(db, 'scrambleLeaderboard', `${uid}_${record.wordLength}_${record.timerMode}`);
@@ -40,7 +41,7 @@ export async function flushPendingScrambleScores(): Promise<void> {
   const pending = readPendingScores();
   for (const record of pending) {
     try {
-      await syncOneScore(user.uid, user.displayName || 'Someone', user.photoURL || '', record);
+      await syncOneScore(user.uid, ownDisplayName(user), ownPhoto(user), record);
       removePendingScore(record.id);
       void checkLeaderboard('scramble', record.wordLength);
     } catch (err) {

@@ -5,6 +5,7 @@ import { auth, db } from './firebase';
 import { addDoc, collection } from 'firebase/firestore';
 
 import { isIosApp } from './platform';
+import { ownDisplayName } from './userIdentity';
 
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
 // iPhone app: the website link instead of Google Play (see platform.ts).
@@ -21,7 +22,7 @@ export function logShopActivity(shopId: string, type: ShopActivityType, descript
   if (!currentUser) return;
   addDoc(collection(db, 'shops', shopId, 'activities'), {
     userId: currentUser.uid,
-    userName: actorName || currentUser.displayName || 'Someone',
+    userName: actorName || ownDisplayName(currentUser),
     type,
     description,
     createdAt: new Date().toISOString(),

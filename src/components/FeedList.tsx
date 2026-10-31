@@ -11,6 +11,15 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAppUpdateAvailable, hardReloadApp } from '../lib/appUpdate';
 import { MONTH_KEYS } from './MonthCalendar';
 import { formatTimeOfDay } from '../lib/frequency';
+import { useIdentities } from '../lib/userIdentity';
+
+// Activity types where `userId` is the person who did it (the rest are notifications, where userId is the recipient or the name is a label)
+const PERSON_ACTIVITY_TYPES = new Set([
+  'add_expense', 'add_income', 'edit_expense', 'delete_expense', 'settle_payment', 'comment', 'join', 'leave', 'invite',
+  'create_group', 'update_group_icon', 'made_admin', 'budget_set', 'shopping_list_created', 'todo_created', 'todo_completed',
+  'recurring_created', 'recurring_changed', 'recurring_deleted', 'account_shared', 'goal_shared', 'reports_shared', 'group_chat',
+]);
+const isPersonActivity = (a: any) => !!a.userId && !a.personal && PERSON_ACTIVITY_TYPES.has(a.type) && !/^Recurring (expense|income)$/.test(a.userName || '');
 
 // The activity list itself (data-fetching + rendering), shared by the full-page /feed route
 // (ActivityFeed.tsx, kept for direct navigation/deep links) and the Header's slide-over FeedPanel
@@ -102,7 +111,7 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
   // filters below need to see everything that could match before the list gets cut down,
   // otherwise filtering to e.g. one group could show fewer results than actually exist just
   // because the unfiltered top-30 happened to be dominated by other groups.
-  const allActivities = React.useMemo(() => {
+  const rawActivities = React.useMemo(() => {
     const rawSpecificActs = specificGroupActivitiesValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [];
     const personalActs = personalActivitiesValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [];
 
@@ -116,6 +125,19 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }, [specificGroupActivitiesValue, personalActivitiesValue]);
+
+  // Entries a person caused carry the name and picture that were saved the moment they happened, and those drift from the
+  // person's profile (the Google sign-in name versus the one set on the Profile page). So the person always shows as their
+  // profile says. Only entries where `userId` is the actor are swapped: reminders, loan notes and game invites keep their own label.
+  const resolveIdentity = useIdentities(rawActivities.filter(isPersonActivity).map((a: any) => a.userId));
+  const allActivities = React.useMemo(
+    () => rawActivities.map((a: any) => {
+      if (!isPersonActivity(a)) return a;
+      const who = resolveIdentity(a.userId, a.userName, a.userPhoto);
+      return { ...a, userName: who.name || a.userName, userPhoto: who.photo || a.userPhoto };
+    }),
+    [rawActivities, resolveIdentity],
+  );
 
   // Filter option lists — derived from whichever activities are actually loaded (not a separate
   // query), same "derive from what's on screen" approach the rest of this app's client-side

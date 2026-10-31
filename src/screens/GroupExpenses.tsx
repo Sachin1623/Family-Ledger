@@ -38,7 +38,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { t } = useLanguage();
   
   const [searchTerm, setSearchTerm] = useState('');
@@ -589,10 +589,10 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
           transaction.set(activityRefNew, {
             groupId: editingExpense.groupId,
             userId: user.uid,
-            userName: user.displayName || 'Someone',
-            userPhoto: user.photoURL || '',
+            userName: (profile?.displayName || user.displayName || 'Someone'),
+            userPhoto: profile?.photoURL || user.photoURL || '',
             type: 'add_expense',
-            description: `${user.displayName || 'Someone'} moved expense "${editingExpense.description}" into this group`,
+            description: `${(profile?.displayName || user.displayName || 'Someone')} moved expense "${editingExpense.description}" into this group`,
             data: {
               amount: finalAmount,
               description: editingExpense.description,
@@ -665,10 +665,10 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
           transaction.set(activityRef, {
             groupId: targetGroupId,
             userId: user.uid,
-            userName: user.displayName || 'Someone',
-            userPhoto: user.photoURL || '',
+            userName: (profile?.displayName || user.displayName || 'Someone'),
+            userPhoto: profile?.photoURL || user.photoURL || '',
             type: 'edit_expense',
-            description: `${user.displayName || 'Someone'} updated expense: ${editingExpense.description}`,
+            description: `${(profile?.displayName || user.displayName || 'Someone')} updated expense: ${editingExpense.description}`,
             data: {
               oldAmount: originalExpense.amount,
               newAmount: finalAmount,
@@ -696,7 +696,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
         action: 'updated',
         description: editingExpense.description,
         amount: finalAmount,
-        actorName: user.displayName || 'Someone',
+        actorName: (profile?.displayName || user.displayName || 'Someone'),
       });
 
       // "Also make this recurring" — same as AddExpense.tsx: a brand new recurringExpenses rule
@@ -733,7 +733,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
           action: 'recurring_created',
           description: editingExpense.description || CATEGORIES.find((c) => c.id === editingExpense.category)?.name,
           amount: finalAmount,
-          actorName: user.displayName || 'Someone',
+          actorName: (profile?.displayName || user.displayName || 'Someone'),
         });
       }
 
@@ -776,10 +776,10 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
         transaction.set(activityRef, {
           groupId: targetGroupId,
           userId: user.uid,
-          userName: user.displayName || 'Someone',
-          userPhoto: user.photoURL || '',
+          userName: (profile?.displayName || user.displayName || 'Someone'),
+          userPhoto: profile?.photoURL || user.photoURL || '',
           type: 'delete_expense',
-          description: `${user.displayName || 'Someone'} deleted expense: ${editingExpense.description}`,
+          description: `${(profile?.displayName || user.displayName || 'Someone')} deleted expense: ${editingExpense.description}`,
           data: { 
             amount: editingExpense.amount, 
             description: editingExpense.description,
@@ -804,7 +804,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
         action: 'deleted',
         description: editingExpense.description,
         amount: editingExpense.amount,
-        actorName: user.displayName || 'Someone',
+        actorName: (profile?.displayName || user.displayName || 'Someone'),
       });
 
       closeEditModal();
@@ -1849,7 +1849,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
                     action: 'commented',
                     description: text,
                     contextLabel: editingExpense.description,
-                    actorName: user?.displayName || 'Someone',
+                    actorName: profile?.displayName || user?.displayName || 'Someone',
                     expenseId: editingExpense.id,
                   })}
                 />

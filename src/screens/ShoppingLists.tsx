@@ -33,7 +33,7 @@ export const tileTint = (category?: string) => TILE_TINTS[Array.from(category ||
 
 export default function ShoppingLists() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const [showForm, setShowForm] = useState(false);
@@ -233,7 +233,7 @@ export default function ShoppingLists() {
           action: 'shopping_list_created',
           description: trimmed,
           contextLabel: scheduledAt ? new Date(scheduledAt).toLocaleString() : undefined,
-          actorName: user.displayName || 'Someone',
+          actorName: profile?.displayName || user.displayName || 'Someone',
           listId: docRef.id,
         });
       }
