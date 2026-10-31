@@ -98,6 +98,8 @@ export default function CreateGroup() {
   // group creation, not just the guided flow.
   const [incomeEnabled, setIncomeEnabled] = useState(true);
   const [groupType, setGroupType] = useState<'regular' | 'event' | 'payments'>('regular');
+  // The type is the first decision (it changes what the rest of the form asks); the guided tour keeps its own order and skips this screen
+  const [typeChosen, setTypeChosen] = useState(guide);
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [newExpenseCatIcon, setNewExpenseCatIcon] = useState('🏷️');
@@ -142,6 +144,13 @@ export default function CreateGroup() {
   const handleCurrencyPick = (curr: string) => {
     setCurrency(curr);
     if (guideActive('currency')) goToNextGuideStep();
+  };
+
+  // the first screen: one tap chooses the type and moves on, with an icon that suits it unless one was already picked
+  const pickTypeFirst = (type: 'regular' | 'event' | 'payments') => {
+    setGroupType(type);
+    if (icon === '🏠') setIcon(type === 'event' ? '✈️' : type === 'payments' ? '💸' : '🏠');
+    setTypeChosen(true);
   };
 
   const handleGroupTypePick = (type: 'regular' | 'event' | 'payments') => {
@@ -249,6 +258,22 @@ export default function CreateGroup() {
       setLoading(false);
     }
   };
+
+  if (!typeChosen) {
+    return (
+      <div className="flex flex-col min-h-screen bg-surface">
+        <main className="flex-1 p-4 md:p-8 pb-32">
+          <div className="max-w-2xl mx-auto space-y-4">
+            <div className="px-1">
+              <h1 className="text-xl font-black text-primary">What are you creating?</h1>
+              <p className="text-sm text-text-muted mt-1">Pick the one that fits best. The next screen asks only what that type needs.</p>
+            </div>
+            <GroupTypePicker value={groupType} onPick={pickTypeFirst} />
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
@@ -423,7 +448,7 @@ export default function CreateGroup() {
                 </div>
               )}
 
-              {guideReached('budget') && (
+              {guideReached('budget') && groupType !== 'payments' && (
                 <div className={clsx('space-y-1', guideWrapClass('budget'))}>
                   {stepBadge('budget')}
                   <label className="text-[11px] text-text-muted px-1">Monthly Budget (Optional)</label>
@@ -450,7 +475,7 @@ export default function CreateGroup() {
                 </div>
               )}
 
-              {guideReached('categories') && (
+              {guideReached('categories') && groupType !== 'payments' && (
                 <div className={clsx('space-y-2.5 pt-2 border-t border-border-subtle', guideWrapClass('categories'))}>
                   {stepBadge('categories')}
                   <div>
@@ -553,8 +578,15 @@ export default function CreateGroup() {
                 <div className="space-y-4 pt-2 border-t border-border-subtle">
                   <div className={clsx('space-y-1', guideWrapClass('grouptype'))}>
                     {stepBadge('grouptype')}
-                    <label className="text-[11px] text-text-muted px-1 font-bold">What will this group be used for?</label>
-                    <GroupTypePicker value={groupType} onPick={handleGroupTypePick} />
+                    <label className="text-[11px] text-text-muted px-1 font-bold">{guide ? 'What will this group be used for?' : 'Group type'}</label>
+                    {guide ? (
+                      <GroupTypePicker value={groupType} onPick={handleGroupTypePick} />
+                    ) : (
+                      <button type="button" onClick={() => setTypeChosen(false)} className="w-full flex items-center justify-between rounded-xl border border-border-subtle bg-surface px-3 py-2.5 text-left active:scale-[0.99]">
+                        <span className="text-sm font-black text-primary">{groupType === 'regular' ? 'Regular / Monthly' : groupType === 'event' ? 'One-off Event' : 'Payments'}</span>
+                        <span className="text-[11px] font-bold text-primary">Change</span>
+                      </button>
+                    )}
                     {guideActive('grouptype') && (
                       <button type="button" onClick={goToNextGuideStep} className="text-[11px] font-bold text-primary hover:underline">
                         {groupType === 'regular' ? 'Regular/Monthly looks right, Next →' : groupType === 'event' ? 'One-off Event looks right, Next →' : 'Payments looks right, Next →'}
