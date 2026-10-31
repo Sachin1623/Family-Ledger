@@ -263,6 +263,9 @@ export default function CreateGroup() {
     return (
       <div className="flex flex-col min-h-screen bg-[#06222f]">
         <div className="max-w-2xl w-full mx-auto px-6 pt-6 pb-8 text-white">
+          <button type="button" onClick={() => navigate(-1)} aria-label="Back" className="-ml-2 mb-3 w-10 h-10 rounded-full flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-95">
+            <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+          </button>
           <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New group</p>
           <h1 className="text-[28px] leading-tight font-extrabold tracking-tight mt-2">What are you<br />creating?</h1>
           <p className="text-sm text-[#9fbccb] mt-2">Choose a type. We’ll only ask what it needs.</p>
@@ -318,6 +321,9 @@ export default function CreateGroup() {
     return (
       <div className="flex flex-col min-h-screen bg-[#06222f]">
         <div className="max-w-2xl w-full mx-auto px-6 pt-6 pb-8 text-white">
+          <button type="button" onClick={() => setTypeChosen(false)} aria-label="Back to group type" className="-ml-2 mb-3 w-10 h-10 rounded-full flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-95">
+            <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+          </button>
           <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New {typeLabel.toLowerCase()} group</p>
           <div className="flex items-center gap-4 mt-3">
             <label className="relative w-[68px] h-[68px] rounded-[22px] bg-white/10 border border-white/20 flex items-center justify-center text-[34px] shrink-0 cursor-pointer">
