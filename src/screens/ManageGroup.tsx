@@ -1550,6 +1550,67 @@ export default function ManageGroup() {
             <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
           </button>
         )}
+        {/* Budget by category, below recurring: each category's spend (this month for a Regular group, the whole event for an Event)
+            against the share of the budget given to it. Without category shares it ranks where the money went. */}
+        {kindOf(group) !== 'payments' && (() => {
+          const gk = kindOf(group);
+          const symbol = getCurrencySymbol(group.currency);
+          const fmt = (n: number) => `${symbol}${formatAmountCompact(n, group.currency, profile?.numberSystem)}`;
+          const spendBy: Record<string, number> = {};
+          (groupExpensesValue?.docs || []).forEach((d) => {
+            const e: any = d.data();
+            if (e.type === 'income' || typeof e.date !== 'string') return;
+            if (gk === 'regular' && !e.date.startsWith(monthKey)) return;
+            spendBy[e.category || 'misc'] = (spendBy[e.category || 'misc'] || 0) + (e.amount || 0);
+          });
+          const shares = (gk === 'regular' ? (budget?.categoryAllocations as Record<string, number> | undefined) : undefined) || {};
+          const hasShares = Object.keys(shares).length > 0 && !!budget;
+          const ids = Array.from(new Set([...Object.keys(shares), ...Object.keys(spendBy)]));
+          const metaOf = (id: string) => {
+            const built = EXPENSE_CATEGORIES.find((c) => c.id === id);
+            if (built) return { icon: built.icon, name: t(`category.${built.id}`) };
+            const custom = (group.customCategories || []).find((c: any) => c.id === id);
+            return { icon: custom?.icon || '🏷️', name: custom?.name || id };
+          };
+          const rows = ids
+            .map((id) => ({ id, ...metaOf(id), spent: spendBy[id] || 0, limit: hasShares ? ((shares[id] || 0) / 100) * budget!.amount : 0 }))
+            .sort((a, b) => (b.limit || b.spent) - (a.limit || a.spent))
+            .filter((r) => r.spent > 0 || r.limit > 0);
+          if (rows.length === 0) return null;
+          const maxSpent = Math.max(1, ...rows.map((r) => r.spent));
+          return (
+            <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-category-budget">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-primary">{hasShares ? t('manageGroup.budgetByCategory') : 'Spending by category'}</h3>
+                {gk === 'regular' && budget && (
+                  <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">
+                    {hasShares ? t('common.edit') : 'Set category budgets'}
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-text-muted -mt-1.5">{gk === 'regular' ? 'This month' : 'Whole event'}</p>
+              <div className="space-y-3">
+                {rows.map((r) => {
+                  const over = r.limit > 0 && r.spent > r.limit;
+                  const pct = r.limit > 0 ? Math.min(100, (r.spent / r.limit) * 100) : (r.spent / maxSpent) * 100;
+                  return (
+                    <div key={r.id}>
+                      <div className="flex items-center justify-between gap-2 text-xs font-bold text-on-surface">
+                        <span className="flex items-center gap-1.5 min-w-0"><span>{r.icon}</span><span className="truncate">{r.name}</span></span>
+                        <span className={clsx('shrink-0 tabular-nums', over && 'text-error')}>
+                          {fmt(r.spent)}{r.limit > 0 && <span className="text-text-muted font-semibold"> / {fmt(r.limit)}</span>}
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden mt-1.5">
+                        <div className={clsx('h-full rounded-full transition-all', over ? 'bg-error' : 'bg-primary')} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })()}
         </>
         )}
 
