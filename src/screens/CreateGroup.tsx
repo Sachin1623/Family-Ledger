@@ -266,12 +266,12 @@ export default function CreateGroup() {
           <h1 className="text-[28px] leading-tight font-extrabold tracking-tight mt-2">What are you<br />creating?</h1>
           <p className="text-sm text-[#9fbccb] mt-2">Choose a type. We’ll only ask what it needs.</p>
         </div>
-        <main className="flex-1 bg-[#f6f9fb] rounded-t-[32px] px-5 pt-6 pb-32">
+        <main className="flex-1 bg-[#f6f9fb] rounded-t-[32px] px-5 pt-6 pb-48">
           <div className="max-w-2xl mx-auto">
             <GroupTypePicker value={groupType} onPick={pickTypeFirst} look="sheet" />
           </div>
         </main>
-        <div className="fixed left-0 right-0 bottom-0 z-20 px-5 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent">
+        <div className="fixed left-0 right-0 z-20 px-5 py-3 bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom))' }}>
           <button
             type="button"
             onClick={() => setTypeChosen(true)}
