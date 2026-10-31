@@ -162,12 +162,10 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
 
   // --- Add Members sub-panel ---
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviting, setInviting] = useState(false);
   const [inviteFeedback, setInviteFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userSearchResults, setUserSearchResults] = useState<FoundUser[]>([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
-  const [invitingUid, setInvitingUid] = useState<string | null>(null);
   const [invitedUids, setInvitedUids] = useState<Set<string>>(new Set());
 
   // "People you already know" — friends, family, and co-members from any other group the caller
@@ -240,46 +238,71 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     logGrowthEvent('invite_whatsapp', user?.uid);
   };
 
-  const handleEmailInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const email = inviteEmail.trim();
-    if (!email) return;
-    setInviting(true);
+  // Adding someone does not invite them yet: they go into the "To invite" list at the bottom, which shows at once who has been
+  // added, and one Send button invites everybody together.
+  type Staged = { key: string; kind: 'user' | 'email'; uid?: string; email?: string; name: string; photoURL?: string };
+  const [staged, setStaged] = useState<Staged[]>([]);
+  const [sending, setSending] = useState(false);
+  const stagedUids = React.useMemo(() => new Set(staged.filter((x) => x.uid).map((x) => x.uid as string)), [staged]);
+
+  const toggleStagedUser = (u: FoundUser) => {
     setInviteFeedback(null);
-    try {
-      const result = await inviteToGroup(groupId, email);
-      if (result.method === 'already_member') {
-        setInviteFeedback({ type: 'error', text: t('manageGroup.alreadyInGroup', { name: email }) });
-      } else if (result.method === 'push') {
-        setInviteFeedback({ type: 'success', text: t('manageGroup.alreadyOnAppNotified', { name: email }) });
-        logGrowthEvent('invite_inapp', user?.uid);
-      } else {
-        setInviteFeedback({ type: 'success', text: t('manageGroup.inviteEmailSent', { email }) });
-        logGrowthEvent('invite_email', user?.uid);
-      }
-      setInviteEmail('');
-    } catch (err) {
-      setInviteFeedback({ type: 'error', text: err instanceof Error ? err.message : t('manageGroup.failedToSendInvite') });
-    } finally {
-      setInviting(false);
-    }
+    setStaged((prev) => (prev.some((x) => x.key === `u:${u.uid}`)
+      ? prev.filter((x) => x.key !== `u:${u.uid}`)
+      : [...prev, { key: `u:${u.uid}`, kind: 'user', uid: u.uid, name: u.displayName, photoURL: u.photoURL }]));
   };
 
-  const handleInviteFoundUser = async (foundUser: FoundUser) => {
-    setInvitingUid(foundUser.uid);
-    try {
-      const result = await inviteUserToGroup(groupId, foundUser.uid);
-      if (result.method === 'already_member') {
-        setInviteFeedback({ type: 'error', text: t('manageGroup.alreadyInGroup', { name: foundUser.displayName }) });
-      } else {
-        setInvitedUids((prev) => new Set(prev).add(foundUser.uid));
-        setInviteFeedback({ type: 'success', text: t('manageGroup.userNotified', { name: foundUser.displayName }) });
-        logGrowthEvent('invite_inapp', user?.uid);
+  const stageEmail = (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email) return;
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setInviteFeedback({ type: 'error', text: 'Enter a valid email address.' });
+      return;
+    }
+    setInviteFeedback(null);
+    setStaged((prev) => (prev.some((x) => x.key === `e:${email}`) ? prev : [...prev, { key: `e:${email}`, kind: 'email', email, name: email }]));
+    setInviteEmail('');
+  };
+
+  const handleSendAll = async () => {
+    if (staged.length === 0 || sending) return;
+    setSending(true);
+    setInviteFeedback(null);
+    const failed: Staged[] = [];
+    const problems: string[] = [];
+    let sent = 0;
+    for (const item of staged) {
+      try {
+        if (item.kind === 'user') {
+          const result = await inviteUserToGroup(groupId, item.uid as string);
+          if (result.method === 'already_member') {
+            problems.push(t('manageGroup.alreadyInGroup', { name: item.name }));
+          } else {
+            sent++;
+            setInvitedUids((prev) => new Set(prev).add(item.uid as string));
+            logGrowthEvent('invite_inapp', user?.uid);
+          }
+        } else {
+          const result = await inviteToGroup(groupId, item.email as string);
+          if (result.method === 'already_member') {
+            problems.push(t('manageGroup.alreadyInGroup', { name: item.name }));
+          } else {
+            sent++;
+            logGrowthEvent(result.method === 'push' ? 'invite_inapp' : 'invite_email', user?.uid);
+          }
+        }
+      } catch (err) {
+        failed.push(item);
+        problems.push(`${item.name}: ${err instanceof Error ? err.message : t('manageGroup.failedToSendInvite')}`);
       }
-    } catch (err) {
-      setInviteFeedback({ type: 'error', text: err instanceof Error ? err.message : t('manageGroup.failedToSendInvite') });
-    } finally {
-      setInvitingUid(null);
+    }
+    setStaged(failed); // whatever could not be sent stays in the list to try again
+    setSending(false);
+    if (problems.length > 0) {
+      setInviteFeedback({ type: 'error', text: `${sent > 0 ? `Invited ${sent}. ` : ''}${problems.join(' · ')}` });
+    } else {
+      setInviteFeedback({ type: 'success', text: sent === 1 ? 'Invite sent.' : `${sent} invites sent.` });
     }
   };
 
@@ -554,11 +577,11 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                         </div>
                         <span className="text-sm font-bold text-on-surface truncate flex-1">{u.displayName}</span>
                         <button
-                          onClick={() => handleInviteFoundUser(u)}
-                          disabled={invitingUid === u.uid || invitedUids.has(u.uid)}
-                          className="text-xs font-bold text-primary px-3 py-1.5 rounded-lg bg-primary/10 disabled:opacity-50 shrink-0"
+                          onClick={() => toggleStagedUser(u)}
+                          disabled={invitedUids.has(u.uid)}
+                          className={clsx('text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-50 shrink-0', stagedUids.has(u.uid) ? 'bg-primary text-white' : 'text-primary bg-primary/10')}
                         >
-                          {invitedUids.has(u.uid) ? 'Invited' : invitingUid === u.uid ? '…' : 'Add'}
+                          {invitedUids.has(u.uid) ? 'Invited' : stagedUids.has(u.uid) ? 'Added ✓' : 'Add'}
                         </button>
                       </div>
                     ))}
@@ -575,7 +598,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                 <span className="font-bold text-sm text-on-surface">Share via WhatsApp</span>
               </button>
 
-              <form onSubmit={handleEmailInvite} className="space-y-2">
+              <form onSubmit={stageEmail} className="space-y-2">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1 flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[14px]">mail</span>
                   Invite by Email
@@ -590,10 +613,10 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                   />
                   <button
                     type="submit"
-                    disabled={inviting || !inviteEmail.trim()}
+                    disabled={!inviteEmail.trim()}
                     className="px-4 bg-primary text-white font-bold rounded-xl disabled:opacity-50 shrink-0"
                   >
-                    {inviting ? '…' : 'Send'}
+                    Add
                   </button>
                 </div>
               </form>
@@ -627,11 +650,11 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                         </div>
                         <span className="text-sm font-bold text-on-surface truncate flex-1">{u.displayName}</span>
                         <button
-                          onClick={() => handleInviteFoundUser(u)}
-                          disabled={invitingUid === u.uid || invitedUids.has(u.uid)}
-                          className="text-xs font-bold text-primary px-3 py-1.5 rounded-lg bg-primary/10 disabled:opacity-50 shrink-0"
+                          onClick={() => toggleStagedUser(u)}
+                          disabled={invitedUids.has(u.uid)}
+                          className={clsx('text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-50 shrink-0', stagedUids.has(u.uid) ? 'bg-primary text-white' : 'text-primary bg-primary/10')}
                         >
-                          {invitedUids.has(u.uid) ? 'Invited' : invitingUid === u.uid ? '…' : 'Invite'}
+                          {invitedUids.has(u.uid) ? 'Invited' : stagedUids.has(u.uid) ? 'Added ✓' : 'Add'}
                         </button>
                       </div>
                     ))}
@@ -645,6 +668,34 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                   inviteFeedback.type === 'success' ? 'bg-success/10 text-success border-success/20' : 'bg-red-50 text-red-700 border-red-200',
                 )}>
                   {inviteFeedback.text}
+                </div>
+              )}
+
+              {staged.length > 0 && (
+                <div className="sticky bottom-0 -mx-2 -mb-2 px-4 pt-3 pb-4 bg-white border-t border-border-subtle shadow-[0_-8px_20px_rgba(0,0,0,0.06)] space-y-2.5">
+                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">To invite · {staged.length}</p>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                    {staged.map((x) => (
+                      <span key={x.key} className="flex items-center gap-1.5 pl-1.5 pr-1 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold max-w-full">
+                        <span className="w-5 h-5 rounded-full overflow-hidden bg-white shrink-0 flex items-center justify-center text-[10px]">
+                          {x.photoURL ? <img src={x.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : x.kind === 'email' ? <span className="material-symbols-outlined text-[12px]">mail</span> : x.name.slice(0, 1)}
+                        </span>
+                        <span className="truncate">{x.name}</span>
+                        <button type="button" onClick={() => setStaged((prev) => prev.filter((y) => y.key !== x.key))} aria-label={`Remove ${x.name}`} disabled={sending} className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-primary/20 disabled:opacity-50">
+                          <span className="material-symbols-outlined text-[14px]">close</span>
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSendAll}
+                    disabled={sending}
+                    className="w-full h-12 rounded-2xl bg-primary text-white font-black text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">send</span>
+                    {sending ? 'Sending…' : staged.length === 1 ? 'Send invite' : `Send ${staged.length} invites`}
+                  </button>
                 </div>
               )}
             </div>
