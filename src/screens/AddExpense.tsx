@@ -143,7 +143,15 @@ export default function AddExpense() {
     groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null
   );
 
-  const groups = groupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  const allMyGroups = groupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  // A Payments group is a record of payments between members, not a place for expenses: it is never offered here.
+  const groups = allMyGroups.filter((g: any) => g.groupType !== 'payments');
+  // A link or shortcut that points at a Payments group goes to its own add-a-payment form instead
+  const paymentsGroupTarget = groupId && allMyGroups.some((g: any) => g.id === groupId && g.groupType === 'payments') ? groupId : '';
+  React.useEffect(() => {
+    if (paymentsGroupTarget) navigate(`/groups/${paymentsGroupTarget}?add=1`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentsGroupTarget]);
   // Archived groups stay fully usable if one is already selected (a deep link, or a favorite that
   // happened to get archived later) — only the picker's own option list hides them, so you can't
   // newly pick one to log an expense against.

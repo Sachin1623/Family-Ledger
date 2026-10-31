@@ -124,7 +124,8 @@ export default function RecurringExpenses() {
   const [groupsValue] = useCollection(
     groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null,
   );
-  const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [];
+  // Payments groups take no expenses, so they have nothing to repeat
+  const groups = (groupsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || []).filter((g: any) => g.groupType !== 'payments');
   const selectedGroup = groups.find((g: any) => g.id === groupId);
 
   const [groupMembersValue] = useCollection(

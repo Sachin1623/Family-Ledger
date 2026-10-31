@@ -55,7 +55,7 @@ export async function loadMyGroups(uid: string): Promise<MyGroup[]> {
   await Promise.all(
     ids.map(async (id) => {
       const snap = await getDoc(doc(db, 'groups', id)).catch(() => null);
-      if (snap?.exists() && !(snap.data() as any).archived) out.push({ id: snap.id, name: (snap.data() as any).name || '' });
+      if (snap?.exists() && !(snap.data() as any).archived && (snap.data() as any).groupType !== 'payments') out.push({ id: snap.id, name: (snap.data() as any).name || '' });
     }),
   );
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -79,7 +79,7 @@ async function pickGroup(uid: string, hint?: string): Promise<{ id: string; data
   await Promise.all(
     ids.map(async (id) => {
       const snap = await getDoc(doc(db, 'groups', id)).catch(() => null);
-      if (snap?.exists() && !(snap.data() as any).archived) groups.push({ id: snap.id, data: snap.data() });
+      if (snap?.exists() && !(snap.data() as any).archived && (snap.data() as any).groupType !== 'payments') groups.push({ id: snap.id, data: snap.data() });
     }),
   );
   if (groups.length === 1) return groups[0];

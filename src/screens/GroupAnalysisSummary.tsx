@@ -438,7 +438,8 @@ export default function GroupAnalysisSummary() {
   const [allGroupsValue] = useCollection(
     memberGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', memberGroupIds)) : null
   );
-  const allGroupsAll = allGroupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
+  // Payments groups hold payments between members, not spending, so they are left out of every analysis total and scope
+  const allGroupsAll = (allGroupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[]).filter((g: any) => g.groupType !== 'payments');
   const allGroups = activeSet ? allGroupsAll.filter((g: any) => activeSet.groupIds.includes(g.id)) : allGroupsAll;
 
   // Group-aware: hides whatever the relevant group(s) hid and includes their custom categories —
