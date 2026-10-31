@@ -10,6 +10,7 @@ import { getCurrencySymbol } from '../lib/constants';
 import { parseLocalDate } from '../lib/dateUtils';
 import { useIdentities } from '../lib/userIdentity';
 import { KIND_STYLE } from '../lib/groupKindStyle';
+import PaymentRolePicker from './PaymentRolePicker';
 import GroupQuickActionsMenu from './GroupQuickActionsMenu';
 
 // A Payments group on the Dashboard. It has no expenses, budget or month-to-month comparison, so it does not use the group
@@ -81,6 +82,7 @@ export default function PaymentsGroupCard({
                 <p className="text-sm text-text-muted flex items-center gap-2">
                   <span>{t('dashboard.membersCount', { count: members.length })}</span>
                   <span className="text-[10px] font-black uppercase tracking-wider rounded-full px-2 py-0.5" style={{ background: style.tint, color: style.dark }}>{style.label}</span>
+                  <PaymentRolePicker value={members.find((m: any) => m.userId === user?.uid)?.paymentRole} editable={false} className="!px-2 !py-0.5" />
                 </p>
               </div>
             </div>

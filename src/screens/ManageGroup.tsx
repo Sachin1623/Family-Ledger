@@ -25,6 +25,7 @@ import { describeFrequency } from '../lib/frequency';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
 import { useIdentities } from '../lib/userIdentity';
+import PaymentRolePicker from '../components/PaymentRolePicker';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
@@ -1877,6 +1878,15 @@ export default function ManageGroup() {
                   <div>
                     <p className="font-bold text-primary">{member.displayName} {member.userId === user?.uid && t('manageGroup.youSuffix')}</p>
                     <p className="text-xs text-text-muted capitalize">{t(member.role === 'owner' ? 'manageGroup.roleOwner' : member.role === 'admin' ? 'manageGroup.roleAdmin' : 'manageGroup.roleMember')} {member.userId === group.createdBy && t('manageGroup.creatorSuffix')}</p>
+                    {kindOf(group) === 'payments' && (
+                      <div className="mt-1">
+                        <PaymentRolePicker
+                          value={member.paymentRole}
+                          editable={isAdminOrOwner || member.userId === user?.uid}
+                          onChange={(r) => updateDoc(doc(db, 'members', member.id), { paymentRole: r }).catch((err) => console.error('Could not set the role:', err))}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
@@ -2040,6 +2050,15 @@ export default function ManageGroup() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-bold text-on-surface truncate">{label}</p>
+                      {kindOf(group) === 'payments' && (
+                        <div className="mb-0.5">
+                          <PaymentRolePicker
+                            value={invite.paymentRole}
+                            editable={canManage}
+                            onChange={(r) => updateDoc(doc(db, 'groups', groupId!, 'invites', invite.id), { paymentRole: r }).catch((err) => console.error('Could not set the role:', err))}
+                          />
+                        </div>
+                      )}
                       <p className="text-[11px] text-text-muted truncate">
                         {who.name ? `${invite.email} · ` : ''}{invite.resendCount > 0 ? t('manageGroup.pendingResent', { count: invite.resendCount }) : 'Invite sent, not joined yet'}
                       </p>

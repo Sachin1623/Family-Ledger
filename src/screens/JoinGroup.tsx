@@ -154,6 +154,9 @@ export default function JoinGroup() {
             where('email', '==', user.email.trim().toLowerCase()),
             where('status', '==', 'pending'),
           ));
+          // a Payments group invite may carry the role (payer, receiver or both) the person was invited with
+          const invitedRole = invitesSnap.docs.map((d) => (d.data() as any).paymentRole).find((r) => r === 'payer' || r === 'receiver' || r === 'both');
+          if (invitedRole) await updateDoc(doc(db, 'members', membershipId), { paymentRole: invitedRole }).catch((e) => console.error('Could not set the payment role:', e));
           await Promise.all(invitesSnap.docs.map((d) => updateDoc(d.ref, { status: 'accepted' })));
         } catch (inviteErr) {
           console.error('Failed to mark invite accepted:', inviteErr);

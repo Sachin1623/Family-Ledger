@@ -20,6 +20,7 @@ import { useFamilies } from '../lib/useFamilies';
 import { useAllGroupMembers } from '../lib/useAllGroupMembers';
 import { groupIconEmoji } from '../lib/groupIcons';
 import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
+import PaymentRolePicker, { PaymentRole } from './PaymentRolePicker';
 
 type SubPanel = null | 'addMembers' | 'budget' | 'budgetCategory' | 'exitDelete';
 
@@ -242,7 +243,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
 
   // Adding someone does not invite them yet: they go into the "To invite" list at the bottom, which shows at once who has been
   // added, and one Send button invites everybody together.
-  type Staged = { key: string; kind: 'user' | 'email'; uid?: string; email?: string; name: string; photoURL?: string };
+  type Staged = { key: string; kind: 'user' | 'email'; uid?: string; email?: string; name: string; photoURL?: string; paymentRole?: PaymentRole | '' };
   const [staged, setStaged] = useState<Staged[]>([]);
   const [sending, setSending] = useState(false);
   const stagedUids = React.useMemo(() => new Set(staged.filter((x) => x.uid).map((x) => x.uid as string)), [staged]);
@@ -277,7 +278,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     for (const item of staged) {
       try {
         if (item.kind === 'user') {
-          const result = await inviteUserToGroup(groupId, item.uid as string);
+          const result = await inviteUserToGroup(groupId, item.uid as string, item.paymentRole || undefined);
           if (result.method === 'already_member') {
             problems.push(t('manageGroup.alreadyInGroup', { name: item.name }));
           } else {
@@ -286,7 +287,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
             logGrowthEvent('invite_inapp', user?.uid);
           }
         } else {
-          const result = await inviteToGroup(groupId, item.email as string);
+          const result = await inviteToGroup(groupId, item.email as string, item.paymentRole || undefined);
           if (result.method === 'already_member') {
             problems.push(t('manageGroup.alreadyInGroup', { name: item.name }));
           } else {
@@ -747,6 +748,17 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                       </span>
                     ))}
                   </div>
+                  {kindOf(group) === 'payments' && (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-text-muted">Who pays and who receives? You can skip this and set it later.</p>
+                      {staged.map((x) => (
+                        <div key={`role-${x.key}`} className="flex items-center gap-2">
+                          <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{x.name}</span>
+                          <PaymentRolePicker value={x.paymentRole} editable onChange={(r) => setStaged((prev) => prev.map((y) => (y.key === x.key ? { ...y, paymentRole: r } : y)))} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={handleSendAll}

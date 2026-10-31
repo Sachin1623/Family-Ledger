@@ -20,14 +20,14 @@ export type InviteResult =
 
 // Invites someone to a group by email via the backend: if they already have a FamilyLedger
 // account they get a push notification, otherwise they get an email with a join link.
-export async function inviteToGroup(groupId: string, email: string): Promise<InviteResult> {
+export async function inviteToGroup(groupId: string, email: string, paymentRole?: string): Promise<InviteResult> {
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) throw new Error('Not signed in.');
 
   const res = await fetch('/api/invite-to-group', {
     method: 'POST',
     headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ groupId, email }),
+    body: JSON.stringify({ groupId, email, ...(paymentRole ? { paymentRole } : {}) }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
@@ -38,14 +38,14 @@ export async function inviteToGroup(groupId: string, email: string): Promise<Inv
 // "Search FamilyLedger Users" picker (see ManageGroup.tsx), where the target is already a known
 // account rather than something the inviter typed in. Always resolves to a push notification
 // (never the email-invite path) since a found uid always has an account already.
-export async function inviteUserToGroup(groupId: string, uid: string): Promise<InviteResult> {
+export async function inviteUserToGroup(groupId: string, uid: string, paymentRole?: string): Promise<InviteResult> {
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) throw new Error('Not signed in.');
 
   const res = await fetch('/api/invite-to-group', {
     method: 'POST',
     headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ groupId, uid }),
+    body: JSON.stringify({ groupId, uid, ...(paymentRole ? { paymentRole } : {}) }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);

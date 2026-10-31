@@ -11,6 +11,7 @@ import { useIdentities } from '../lib/userIdentity';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
+import PaymentRolePicker, { canReceive, PAYMENT_ROLE_LABEL, isPaymentRole } from '../components/PaymentRolePicker';
 
 // A "Payments" group: money one member pays another (rent, maintenance, salary, EMI, fees). It is a record, not a split, so
 // nothing here makes anyone owe anyone. The payer adds the entry (fromUid is always the signed-in user) and is asked for a
@@ -70,7 +71,9 @@ export default function GroupPayments() {
 
   const monthKey = todayLocal().slice(0, 7);
   const paidThisMonth = payments.filter((p) => (p.date || '').startsWith(monthKey)).reduce((s, p) => s + (p.amount || 0), 0);
-  const others = members.filter((m) => m.userId !== user?.uid);
+  // receivers first, so the people you most likely pay are at the front
+  const others = members.filter((m) => m.userId !== user?.uid).sort((a, b) => Number(canReceive(b.paymentRole)) - Number(canReceive(a.paymentRole)));
+  const myRole = members.find((m) => m.userId === user?.uid)?.paymentRole;
 
   const removePayment = async (p: any) => {
     if (!window.confirm(`Delete this ${money(p.amount)} payment?`)) return;
@@ -83,6 +86,7 @@ export default function GroupPayments() {
         <p className="text-[11px] font-black uppercase tracking-wider text-white/85 truncate">{group?.icon} {group?.name || 'Payments'} · Payments</p>
         <p className="text-[28px] font-black leading-tight tabular-nums">{money(paidThisMonth)}</p>
         <p className="text-[12px] text-white/90">paid this month · {payments.length} payment{payments.length === 1 ? '' : 's'} in all</p>
+        {isPaymentRole(myRole) && <p className="mt-1 text-[11px] font-black uppercase tracking-wider text-white/85">You are: {PAYMENT_ROLE_LABEL[myRole]}</p>}
         <button
           type="button"
           onClick={() => setShowForm(true)}
@@ -161,6 +165,7 @@ export default function GroupPayments() {
           uid={user.uid}
           symbol={symbol}
           others={others}
+          myRole={myRole}
           nameOf={nameOf}
           onClose={() => setShowForm(false)}
           onSaved={(saved, track) => {
@@ -189,17 +194,20 @@ export default function GroupPayments() {
 }
 
 function PaymentForm({
-  groupId, uid, symbol, others, nameOf, onClose, onSaved,
+  groupId, uid, symbol, others, myRole, nameOf, onClose, onSaved,
 }: {
   groupId: string;
   uid: string;
   symbol: string;
   others: any[];
+  myRole?: string;
   nameOf: (uid: string) => string;
   onClose: () => void;
   onSaved: (saved: any, track: boolean) => void;
 }) {
-  const [toUid, setToUid] = useState<string>(others.length === 1 ? others[0].userId : '');
+  // one clear receiver (by role) is pre-selected; with several, or none marked, you choose
+  const receivers = others.filter((m) => canReceive(m.paymentRole));
+  const [toUid, setToUid] = useState<string>(others.length === 1 ? others[0].userId : receivers.length === 1 ? receivers[0].userId : '');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(todayLocal());
   const [label, setLabel] = useState('Rent');
@@ -263,6 +271,9 @@ function PaymentForm({
           <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-text-muted"><span className="material-symbols-outlined">close</span></button>
         </div>
 
+        {myRole === 'receiver' && (
+          <p className="text-[11px] font-bold rounded-xl bg-amber-50 text-amber-800 px-3 py-2">You are marked as a receiver in this group. Add a payment only if you paid someone.</p>
+        )}
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-text-muted px-1">You paid</label>
           <div className="flex flex-wrap gap-2">
@@ -273,7 +284,7 @@ function PaymentForm({
                 onClick={() => setToUid(m.userId)}
                 className={clsx('px-3 py-2 rounded-xl text-xs font-bold border', toUid === m.userId ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
               >
-                {nameOf(m.userId)}
+                {nameOf(m.userId)}{isPaymentRole(m.paymentRole) && <span className="ml-1.5 opacity-75 font-semibold">· {PAYMENT_ROLE_LABEL[m.paymentRole]}</span>}
               </button>
             ))}
           </div>

@@ -247,8 +247,8 @@ service cloud.firestore {
         ))
       );
       allow update: if isSignedIn() && (
-        (request.auth.uid == existing().userId && incoming().diff(existing()).affectedKeys().hasOnly(['photoURL', 'displayName'])) ||
-        (isAdmin(existing().groupId) && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'canInvite']))
+        (request.auth.uid == existing().userId && incoming().diff(existing()).affectedKeys().hasOnly(['photoURL', 'displayName', 'paymentRole'])) ||
+        (isAdmin(existing().groupId) && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'canInvite', 'paymentRole']))
       );
       allow delete: if isSignedIn() && (
         request.auth.uid == existing().userId ||

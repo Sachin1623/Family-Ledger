@@ -15515,6 +15515,9 @@ async function startServer() {
     // since the rest of this handler (pending-invite dedup, the email itself) is written in
     // terms of `email`.
     const rawUid = String(req.body?.uid || '');
+    // Payments groups: the role (payer, receiver or both) the invited person is meant to have; carried on the invite until they join
+    const paymentRoleRaw = String(req.body?.paymentRole || '');
+    const paymentRole = ['payer', 'receiver', 'both'].includes(paymentRoleRaw) ? paymentRoleRaw : '';
     let email = normalizeEmail(String(req.body?.email || ''));
     if (!groupId || (!email && !rawUid)) return res.status(400).json({ error: 'groupId and (email or uid) are required.' });
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -15564,12 +15567,14 @@ async function startServer() {
           await pendingSnap.docs[0].ref.update({
             lastSentAt: nowIso,
             resendCount: admin.firestore.FieldValue.increment(1),
+            ...(paymentRole ? { paymentRole } : {}),
             ...(targetUid ? { targetUid } : {}),
           });
         } else {
           await invitesRef.add({
             email, invitedBy: decoded.uid, status: 'pending', groupName, link: joinLink,
             createdAt: nowIso, lastSentAt: nowIso, resendCount: 0,
+            ...(paymentRole ? { paymentRole } : {}),
             ...(targetUid ? { targetUid } : {}),
           });
         }
