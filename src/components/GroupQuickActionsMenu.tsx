@@ -30,6 +30,8 @@ interface Props {
   members: any[];
   budget: any;
   onClose: () => void;
+  // open directly on one panel (Manage Group's Invite button opens Add Members); its back arrow then closes the sheet
+  initialPanel?: SubPanel;
 }
 
 function MenuRow({
@@ -95,11 +97,11 @@ function ToggleRow({
 // exact same Firestore writes/side-effects (claimPoints, notifyGroupActivity, activity logging)
 // as ManageGroup.tsx's equivalents, kept separate rather than shared so that screen — explicitly
 // meant to stay untouched — can't be affected by changes made here.
-export default function GroupQuickActionsMenu({ groupId, group, members, budget, onClose }: Props) {
+export default function GroupQuickActionsMenu({ groupId, group, members, budget, onClose, initialPanel }: Props) {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const [subPanel, setSubPanel] = useState<SubPanel>(null);
+  const [subPanel, setSubPanel] = useState<SubPanel>(initialPanel ?? null);
 
   const currentMember = members.find((m: any) => m.userId === user?.uid);
   const isCreator = !!user?.uid && group?.createdBy === user.uid;
@@ -528,7 +530,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
         ) : (
         <div className="flex items-center justify-between px-2 py-2 border-b border-border-subtle sticky top-0 bg-white z-10">
           {subPanel ? (
-            <button onClick={() => setSubPanel(subPanel === 'budgetCategory' ? 'budget' : null)} className="p-2 text-text-muted hover:bg-surface rounded-full">
+            <button onClick={() => (initialPanel && subPanel === initialPanel ? onClose() : setSubPanel(subPanel === 'budgetCategory' ? 'budget' : null))} className="p-2 text-text-muted hover:bg-surface rounded-full">
               <span className="material-symbols-outlined text-[20px] block">arrow_back</span>
             </button>
           ) : <span className="w-9" />}

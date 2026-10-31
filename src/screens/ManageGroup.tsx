@@ -26,6 +26,7 @@ import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
 import { useIdentities } from '../lib/userIdentity';
 import PaymentRolePicker from '../components/PaymentRolePicker';
+import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
@@ -1654,139 +1655,9 @@ export default function ManageGroup() {
         </>
         )}
 
+        {/* Invite opens the same Add Members panel as the group menu on the Dashboard */}
         {showInviteSheet && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center">
-          <div className="absolute inset-0 bg-black/45" onClick={() => setShowInviteSheet(false)} />
-          <div className="relative w-full max-w-lg bg-surface rounded-t-[28px] max-h-[88vh] overflow-y-auto px-4 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-4 shadow-2xl">
-            <div className="w-10 h-1.5 rounded-full bg-border-subtle mx-auto" />
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-extrabold text-primary truncate">Invite to {group.name}</h2>
-              <button type="button" onClick={() => setShowInviteSheet(false)} aria-label="Close" className="p-1.5 rounded-full text-text-muted hover:bg-white"><span className="material-symbols-outlined text-[22px]">close</span></button>
-            </div>
-        <>
-        {/* Invite Section — a method picker instead of every invite path stacked and expanded;
-            each method opens its own focused floating panel (built further down). */}
-        {!!currentMember && (
-          <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-            <div>
-              <h3 className="text-sm font-bold text-primary">{t('manageGroup.inviteMembers')}</h3>
-              <p className="text-[11px] text-text-muted mt-0.5">{t('manageGroup.anyoneCanInvite')}</p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleShare('native')}
-                className="flex-1 bg-primary/5 text-primary py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-primary/10 active:scale-[0.98] transition-all border border-primary/10 shadow-sm"
-              >
-                <span className="material-symbols-outlined text-[18px]">{navigator.share ? 'share' : 'content_copy'}</span>
-                <span>{navigator.share ? t('manageGroup.shareLink') : t('manageGroup.copyLinkBtn')}</span>
-              </button>
-              <button
-                onClick={() => handleShare('copy')}
-                className="w-10 h-10 bg-surface border border-border-subtle rounded-xl flex items-center justify-center text-primary active:scale-95 transition-all"
-                title={t('manageGroup.copyFullMessage')}
-              >
-                <span className="material-symbols-outlined text-[18px]">chat</span>
-              </button>
-            </div>
-
-            {showInviteGuide && !inviteMethodPanel && (
-              <div className="flex items-start justify-between gap-2 bg-primary/5 border border-primary/20 rounded-2xl p-3">
-                <div className="flex items-start gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-[18px] text-primary shrink-0">tips_and_updates</span>
-                  <p className="text-[11px] text-text-muted">
-                    <span className="font-black text-primary block">Pick how to invite</span>
-                    Tap any option below — WhatsApp, email, or search are the fastest if they're already on your phone or FamilyLedger.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInviteGuideSkipped(true);
-                    if (newGroupOnboardingActive) { setShowGroupTourOffer(true); setNewGroupOnboardingActive(false); }
-                  }}
-                  className="text-[9px] font-bold text-text-muted hover:text-primary shrink-0"
-                >
-                  Skip
-                </button>
-              </div>
-            )}
-            <div className={clsx('pt-1 space-y-1.5', showInviteGuide && !inviteMethodPanel && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-2 -m-2 bg-primary/5')}>
-              {([
-                ...(Capacitor.isNativePlatform() ? [['contacts', 'contacts', 'manageGroup.browseContacts'] as const] : []),
-                ['whatsapp', 'chat', 'manageGroup.inviteViaWhatsapp'],
-                ['email', 'mail', 'manageGroup.inviteByEmail'],
-                ['search', 'person_search', 'manageGroup.searchUsersLabel'],
-                ...(addableFriends.length > 0 ? [['friends', 'group_add', 'manageGroup.inviteFromFriends'] as const] : []),
-                ...(group?.splitEnabled ? [['placeholder', 'badge', 'manageGroup.addOffApp'] as const] : []),
-              ] as const).map(([key, icon, labelKey]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setInviteMethodPanel(key);
-                    if (key === 'contacts' && !deviceContacts) loadDeviceContacts();
-                  }}
-                  className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border border-border-subtle bg-surface/30 hover:bg-surface transition-colors text-left"
-                >
-                  {key === 'whatsapp' ? (
-                    <WhatsAppIcon className="w-5 h-5 shrink-0 text-[#25D366]" />
-                  ) : (
-                    <span className="material-symbols-outlined text-primary text-[20px] shrink-0">{icon}</span>
-                  )}
-                  <span className="flex-1 text-xs font-bold text-on-surface">{t(labelKey)}</span>
-                  <span className="material-symbols-outlined text-text-muted text-[18px] shrink-0">chevron_right</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Pending Invites */}
-        {!!pendingInvitesValue?.docs.length && (
-          <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3">
-            <h3 className="text-sm font-bold text-primary">{t('manageGroup.pendingInvites')}</h3>
-            <div className="space-y-2">
-              {pendingInvitesValue.docs.map((inviteDoc) => {
-                const invite = { id: inviteDoc.id, ...inviteDoc.data() } as any;
-                const canManage = isCreator || invite.invitedBy === user?.uid;
-                return (
-                  <div key={invite.id} className="flex items-center justify-between gap-2 p-3 rounded-xl bg-surface/50 border border-border-subtle">
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-on-surface truncate">{invite.email}</p>
-                      <p className="text-[10px] text-text-muted font-bold uppercase tracking-wide">
-                        {invite.resendCount > 0 ? t('manageGroup.pendingResent', { count: invite.resendCount }) : t('manageGroup.pendingLabel')}
-                      </p>
-                    </div>
-                    {canManage && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          onClick={() => handleResendInvite(invite.email, invite.id)}
-                          disabled={resendingInviteId === invite.id}
-                          className="px-3 h-8 rounded-lg text-[11px] font-bold text-primary border border-primary/30 hover:bg-primary/5 transition-all disabled:opacity-50 flex items-center gap-1"
-                        >
-                          <span className={clsx("material-symbols-outlined text-[14px]", resendingInviteId === invite.id && "animate-spin")}>
-                            {resendingInviteId === invite.id ? 'sync' : 'refresh'}
-                          </span>
-                          {t('manageGroup.resend')}
-                        </button>
-                        <button
-                          onClick={() => handleCancelInvite(invite.id)}
-                          className="w-8 h-8 rounded-lg text-error hover:bg-error/5 transition-all flex items-center justify-center"
-                          title={t('manageGroup.cancelInvite')}
-                        >
-                          <span className="material-symbols-outlined text-[16px]">close</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-        </>
-          </div>
-        </div>
+          <GroupQuickActionsMenu groupId={groupId!} group={group} members={members} budget={budget} initialPanel="addMembers" onClose={() => setShowInviteSheet(false)} />
         )}
 
         {activeTab === 'members' && (
