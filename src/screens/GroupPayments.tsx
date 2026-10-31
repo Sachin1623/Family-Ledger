@@ -10,6 +10,7 @@ import { parseLocalDate } from '../lib/dateUtils';
 import { useIdentities } from '../lib/userIdentity';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
+import TrackPaymentSheet from '../components/TrackPaymentSheet';
 
 // A "Payments" group: money one member pays another (rent, maintenance, salary, EMI, fees). It is a record, not a split, so
 // nothing here makes anyone owe anyone. The payer adds the entry (fromUid is always the signed-in user) and is asked for a
@@ -58,6 +59,14 @@ export default function GroupPayments() {
   const [showForm, setShowForm] = useState(searchParams.get('add') === '1'); // the Dashboard card's "Add a payment" lands here with the form open
   const [receiptFor, setReceiptFor] = useState<any | null>(null); // the entry the receipt prompt / "add receipt" is about
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [trackFor, setTrackFor] = useState<any | null>(null); // the entry being kept in one of my own groups
+  // where I have already kept each payment (one note per payment per person), so it is offered once and shows where it went
+  const [linksSnap] = useCollection(user ? query(collection(db, 'paymentLinks'), where('uid', '==', user.uid)) : null);
+  const linkByPayment = useMemo(() => {
+    const map: Record<string, any> = {};
+    linksSnap?.docs.forEach((d) => { const l: any = d.data(); map[l.paymentId] = l; });
+    return map;
+  }, [linksSnap]);
 
   const monthKey = todayLocal().slice(0, 7);
   const paidThisMonth = payments.filter((p) => (p.date || '').startsWith(monthKey)).reduce((s, p) => s + (p.amount || 0), 0);
@@ -127,6 +136,15 @@ export default function GroupPayments() {
                 {images.length > 0 && mine && images.length < 3 && (
                   <button type="button" onClick={() => setReceiptFor(p)} className="text-[11px] font-bold text-primary px-2 py-1">＋ Add another</button>
                 )}
+                {(mine || p.toUid === user?.uid) && (
+                  linkByPayment[p.id] ? (
+                    <span className="text-[11px] font-black rounded-full bg-success/10 text-success px-3 py-1.5">Tracked in {linkByPayment[p.id].groupName} ✓</span>
+                  ) : (
+                    <button type="button" onClick={() => setTrackFor(p)} className="text-[11px] font-black rounded-full bg-primary/10 text-primary px-3 py-1.5 active:scale-95">
+                      {mine ? 'Track as expense' : 'Track as income'}
+                    </button>
+                  )
+                )}
                 <span className="flex-1" />
                 {(mine || group?.createdBy === user?.uid) && (
                   <button type="button" onClick={() => removePayment(p)} className="text-[11px] font-bold text-error px-2 py-1" aria-label="Delete payment">Delete</button>
@@ -145,10 +163,11 @@ export default function GroupPayments() {
           others={others}
           nameOf={nameOf}
           onClose={() => setShowForm(false)}
-          onSaved={(saved) => {
+          onSaved={(saved, track) => {
             setShowForm(false);
             // saved without a receipt: ask for it straight away, since a payment with no proof is the usual dispute
             if (!saved.images?.length) setReceiptFor(saved);
+            if (track) setTrackFor(saved);
           }}
         />
       )}
@@ -158,6 +177,10 @@ export default function GroupPayments() {
           payment={receiptFor}
           onClose={() => setReceiptFor(null)}
         />
+      )}
+
+      {trackFor && !receiptFor && user && (
+        <TrackPaymentSheet payment={trackFor} role={trackFor.fromUid === user.uid ? 'payer' : 'receiver'} onClose={() => setTrackFor(null)} />
       )}
 
       {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
@@ -174,7 +197,7 @@ function PaymentForm({
   others: any[];
   nameOf: (uid: string) => string;
   onClose: () => void;
-  onSaved: (saved: any) => void;
+  onSaved: (saved: any, track: boolean) => void;
 }) {
   const [toUid, setToUid] = useState<string>(others.length === 1 ? others[0].userId : '');
   const [amount, setAmount] = useState('');
@@ -183,6 +206,7 @@ function PaymentForm({
   const [customLabel, setCustomLabel] = useState('');
   const [note, setNote] = useState('');
   const [images, setImages] = useState<string[]>([]);
+  const [trackIt, setTrackIt] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -207,7 +231,7 @@ function PaymentForm({
     };
     try {
       const ref = await addDoc(collection(db, 'groupPayments'), data);
-      onSaved({ id: ref.id, ...data });
+      onSaved({ id: ref.id, ...data }, trackIt);
     } catch (err) {
       console.error('Could not save payment:', err);
       setError('Could not save the payment. Check your connection and try again.');
@@ -282,6 +306,15 @@ function PaymentForm({
           <label className="text-[11px] font-bold text-text-muted px-1">Receipt or screenshot</label>
           <ImageAttachments images={images} onChange={setImages} label="Add payment receipt" />
         </div>
+
+        <button type="button" role="switch" aria-checked={trackIt} onClick={() => setTrackIt(!trackIt)} className={clsx('w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-3.5 py-3 text-left transition-all', trackIt ? 'border-primary bg-primary/5' : 'border-border-subtle')}>
+          <span className={clsx('w-9 h-9 rounded-xl flex items-center justify-center shrink-0', trackIt ? 'bg-primary text-white' : 'bg-surface text-primary')}><span className="material-symbols-outlined text-[20px]">account_tree</span></span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-extrabold text-primary">Also track it in my group</span>
+            <span className="block text-[11px] text-text-muted leading-snug">Keep it as an expense in one of your own groups, split if that group splits.</span>
+          </span>
+          <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', trackIt ? 'bg-primary' : 'bg-border-subtle')}><span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', trackIt ? 'left-6' : 'left-1')} /></span>
+        </button>
 
         {error && <p className="text-xs font-bold text-error">{error}</p>}
         <button type="button" onClick={save} disabled={saving} className="w-full rounded-xl bg-primary text-white py-3 text-sm font-black active:scale-95 disabled:opacity-50">

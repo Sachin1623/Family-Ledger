@@ -359,6 +359,15 @@ service cloud.firestore {
     // --- Expenses ---
     // A payment between two members of a group ("Ravi paid Anita 500"). Deliberately NOT an expense: it never counts as spending, only moves the balance.
     // Written once and never edited; the person who recorded it or a group admin can delete it.
+    // Where a person has kept a payment in one of their OWN groups (see TrackPaymentSheet): private to that person, one per payment.
+    match /paymentLinks/{linkId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isUserVerified() && incoming().uid == request.auth.uid && linkId == incoming().paymentId + '_' + request.auth.uid &&
+        incoming().groupId is string && canModifyGroup(incoming().groupId);
+      allow update: if false;
+      allow delete: if isSignedIn() && existing().uid == request.auth.uid;
+    }
+
     // A payment from one member to another inside a "Payments" group (rent, maintenance, salary, EMI...). It is a record,
     // not a split: no balances come from it. The payer creates it, so `fromUid` must be the caller; the payer (or a group
     // admin) can edit it later, which is how a receipt gets added after saving.
