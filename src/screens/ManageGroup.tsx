@@ -24,6 +24,7 @@ import { getBudgetStatus } from '../lib/budget';
 import { describeFrequency } from '../lib/frequency';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
+import { useIdentities } from '../lib/userIdentity';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
@@ -75,6 +76,9 @@ export default function ManageGroup() {
     query(collection(db, 'groups', groupId!, 'invites'), where('status', '==', 'pending'))
   );
   const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
+  // People already invited who have not joined yet: shown on the Members tab as soon as the invite goes out
+  const pendingInviteList = (pendingInvitesValue?.docs.map((d) => ({ id: d.id, ...d.data() })) || []) as any[];
+  const resolveInvitee = useIdentities(pendingInviteList.map((i) => i.targetUid));
 
   const group = groupValue?.data();
 
@@ -2018,6 +2022,54 @@ export default function ManageGroup() {
             </div>
           )}
         </section>
+
+        {/* Invited, waiting to join — appears here the moment an invite is sent */}
+        {pendingInviteList.length > 0 && (
+          <section className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2" data-tour="manage-group-invited">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-primary">Invited</h3>
+              <span className="text-[10px] font-black rounded-full bg-amber-100 text-amber-800 px-2.5 py-1">{pendingInviteList.length} WAITING TO JOIN</span>
+            </div>
+            <div className="divide-y divide-border-subtle">
+              {pendingInviteList.map((invite) => {
+                const who = resolveInvitee(invite.targetUid);
+                const label = who.name || invite.email;
+                const canManage = isCreator || invite.invitedBy === user?.uid;
+                return (
+                  <div key={invite.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                    <div className="w-10 h-10 rounded-full bg-surface overflow-hidden flex items-center justify-center shrink-0 text-text-muted">
+                      {who.photo ? <img src={who.photo} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span className="material-symbols-outlined text-[20px]">mail</span>}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-on-surface truncate">{label}</p>
+                      <p className="text-[11px] text-text-muted truncate">
+                        {who.name ? `${invite.email} · ` : ''}{invite.resendCount > 0 ? t('manageGroup.pendingResent', { count: invite.resendCount }) : 'Invite sent, not joined yet'}
+                      </p>
+                    </div>
+                    {canManage && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => handleResendInvite(invite.email, invite.id)}
+                          disabled={resendingInviteId === invite.id}
+                          className="px-3 h-8 rounded-lg text-[11px] font-bold text-primary border border-primary/30 hover:bg-primary/5 disabled:opacity-50"
+                        >
+                          {t('manageGroup.resend')}
+                        </button>
+                        <button
+                          onClick={() => handleCancelInvite(invite.id)}
+                          className="w-8 h-8 rounded-lg text-error hover:bg-error/5 flex items-center justify-center"
+                          title={t('manageGroup.cancelInvite')}
+                        >
+                          <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
         </>
         )}
 
