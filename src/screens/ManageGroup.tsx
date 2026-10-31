@@ -22,6 +22,7 @@ import { claimPoints, getLeaderboard, LeaderboardEntry } from '../lib/pointsApi'
 import { getBudgetStatus } from '../lib/budget';
 import { describeFrequency } from '../lib/frequency';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
+import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { currentLocalMonthKey } from '../lib/dateUtils';
 import { GROUP_ICONS, groupIconEmoji } from '../lib/groupIcons';
@@ -120,7 +121,7 @@ export default function ManageGroup() {
   useEffect(() => {
     const tab = searchParams.get('tab');
     if (tab !== 'overview' && tab !== 'members' && tab !== 'invite' && tab !== 'settings') return;
-    setActiveTab(tab);
+    openTab(tab);
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
@@ -137,11 +138,29 @@ export default function ManageGroup() {
   // invite/pending/leaderboard/members/danger zone all rendered at once); splitting it into
   // sections a visitor picks between keeps each screenful short and scannable.
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'invite' | 'settings'>('overview');
+  // Invite is no longer a tab: it opens as a sheet over People. Links and guides that still ask for the 'invite' tab land here.
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
+  const openTab = (tab: 'overview' | 'members' | 'invite' | 'settings') => {
+    if (tab === 'invite') { setActiveTab('members'); setShowInviteSheet(true); } else setActiveTab(tab);
+  };
+  // An event has one budget for the whole event (group.eventBudget), edited here
+  const [editingEventBudget, setEditingEventBudget] = useState(false);
+  const [eventBudgetInput, setEventBudgetInput] = useState('');
+  const handleSaveEventBudget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = evaluateAmountSum(eventBudgetInput);
+    try {
+      await updateDoc(doc(db, 'groups', groupId!), { eventBudget: parsed && parsed > 0 ? parsed : 0 });
+      setEditingEventBudget(false);
+    } catch (err) {
+      console.error('Could not save the event budget:', err);
+    }
+  };
   // Registers the 'group-explore' tour's tab-switch hook (src/lib/manageGroupTabRef.ts) — see its
   // own comment for why this needs to be an imperative ref rather than a prop.
   useEffect(() => {
     setManageGroupTabFn((tab: string) => {
-      if (tab === 'overview' || tab === 'members' || tab === 'invite' || tab === 'settings') setActiveTab(tab);
+      if (tab === 'overview' || tab === 'members' || tab === 'invite' || tab === 'settings') openTab(tab);
     });
     return () => setManageGroupTabFn(null);
   }, []);
@@ -1168,116 +1187,140 @@ export default function ManageGroup() {
       </AnimatePresence>
 
       <main className="flex-1 p-4 pb-16 max-w-4xl mx-auto w-full space-y-4">
-        {/* Group Info & Icon Section */}
-        <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm" data-tour="manage-group-identity">
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-4">
-              <div className="relative">
-                <div className="w-16 h-16 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-inner overflow-hidden">
-                  {group.photoURL ? (
-                    <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <span className="text-3xl">{groupIconEmoji(group.icon || groupIcon)}</span>
-                  )}
-                  {uploadingPhoto && (
-                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+        {/* Group hero — the group at a glance, in its own colour: who it is, what has been spent and how that stands against the budget */}
+        {(() => {
+          const gk = kindOf(group);
+          const ks = KIND_STYLE[gk];
+          const symbol = getCurrencySymbol(group.currency);
+          const gradients = {
+            regular: 'linear-gradient(135deg,#0b3b57,#0f7a8f 55%,#22c1a5)',
+            event: 'linear-gradient(135deg,#f59e0b,#f97316 60%,#fb7185)',
+            payments: 'linear-gradient(135deg,#2e2a8f,#4f46e5 55%,#818cf8)',
+          } as const;
+          const eventBudgetAmount = Number(group.eventBudget) > 0 ? Number(group.eventBudget) : 0;
+          const prog = gk === 'regular' && budget
+            ? { amount: budget.amount as number, spent: monthSpend, label: t('common.budget') }
+            : gk === 'event' && eventBudgetAmount
+              ? { amount: eventBudgetAmount, spent: group.totalSpending || 0, label: 'Event budget' }
+              : null;
+          const big = gk === 'regular' ? monthSpend : gk === 'event' ? (group.totalSpending || 0) : null;
+          const pct = prog ? Math.min(100, (prog.spent / prog.amount) * 100) : 0;
+          const fmt = (n: number) => `${symbol}${formatAmountCompact(n, group.currency, profile?.numberSystem)}`;
+          return (
+            <>
+              <section className="rounded-3xl p-4 text-white shadow-lg" style={{ background: gradients[gk] }} data-tour="manage-group-identity">
+                <div className="flex items-center gap-3">
+                  <div className="relative shrink-0">
+                    <div className="w-14 h-14 rounded-2xl bg-white/25 flex items-center justify-center overflow-hidden text-3xl">
+                      {group.photoURL ? (
+                        <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span>{groupIconEmoji(group.icon || groupIcon)}</span>
+                      )}
+                      {uploadingPhoto && (
+                        <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
                     </div>
-                  )}
+                    {isAdminOrOwner && (
+                      <label className="absolute -bottom-1.5 -right-1.5 w-6 h-6 bg-white rounded-full shadow-lg flex items-center justify-center text-primary active:scale-90 cursor-pointer">
+                        <span className="material-symbols-outlined text-[14px]">photo_camera</span>
+                        <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} disabled={uploadingPhoto} />
+                      </label>
+                    )}
+                    {isAdminOrOwner && !group.photoURL && (
+                      <button
+                        onClick={() => setShowIconGrid(!showIconGrid)}
+                        aria-label="Change icon"
+                        className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-white rounded-full shadow-lg flex items-center justify-center text-primary active:scale-90"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">edit</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {isAdminOrOwner ? (
+                      <input
+                        type="text"
+                        aria-label={t('createGroup.groupName')}
+                        className="w-full text-lg font-extrabold text-white bg-white/15 rounded-xl px-3 py-1 outline-none placeholder-white/60 focus:bg-white/25"
+                        value={group.name}
+                        onChange={async (e) => {
+                          await updateDoc(doc(db, 'groups', groupId!), { name: e.target.value });
+                        }}
+                      />
+                    ) : (
+                      <h2 className="text-lg font-extrabold truncate">{group.name}</h2>
+                    )}
+                    <p className="text-[11px] font-bold opacity-90 mt-1">
+                      {ks.label} · {t('manageGroup.createdMembers', { date: new Date(group.createdAt).toLocaleDateString(), count: members.length })}
+                    </p>
+                  </div>
                 </div>
-                {isAdminOrOwner && (
-                  <label className="absolute -bottom-1 -right-1 w-6 h-6 bg-white rounded-full shadow-lg border border-border-subtle flex items-center justify-center text-primary hover:bg-surface transition-all active:scale-90 cursor-pointer">
-                    <span className="material-symbols-outlined text-[14px]">photo_camera</span>
-                    <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} disabled={uploadingPhoto} />
-                  </label>
+
+                {big !== null && (
+                  <div className="mt-4">
+                    <p className="text-[32px] leading-none font-extrabold tracking-tight tabular-nums">{fmt(big)}</p>
+                    <p className="text-xs opacity-90 mt-1.5">
+                      {gk === 'regular' ? 'spent this month' : 'spent so far'}
+                      {prog ? ` · ${prog.label} ${fmt(prog.amount)}` : ''}
+                    </p>
+                    {prog && (
+                      <>
+                        <div className="h-2 rounded-full bg-white/30 overflow-hidden mt-2.5">
+                          <div className="h-full rounded-full bg-white transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] font-bold mt-1.5">
+                          <span>{Math.round((prog.spent / prog.amount) * 100)}% used</span>
+                          <span>{prog.spent > prog.amount ? `${t('common.overBy')} ${fmt(prog.spent - prog.amount)}` : `${fmt(prog.amount - prog.spent)} ${t('common.remaining').toLowerCase()}`}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
-                {isAdminOrOwner && !group.photoURL && (
-                  <button 
-                    onClick={() => setShowIconGrid(!showIconGrid)}
-                    className="absolute -top-1 -right-1 w-6 h-6 bg-white rounded-full shadow-lg border border-border-subtle flex items-center justify-center text-primary hover:bg-surface transition-all active:scale-90"
+              </section>
+
+              <AnimatePresence>
+                {showIconGrid && isAdminOrOwner && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="w-full overflow-hidden"
                   >
-                    <span className="material-symbols-outlined text-[14px]">edit</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="flex-1 min-w-0 space-y-1">
-                {isAdminOrOwner ? (
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-text-muted uppercase tracking-wider px-1">{t('createGroup.groupName')}</label>
-                    <input 
-                      type="text"
-                      className="w-full text-lg font-bold text-primary bg-surface/50 border border-border-subtle rounded-xl px-3 py-1 outline-none focus:border-primary transition-all"
-                      value={group.name}
-                      onChange={async (e) => {
-                        await updateDoc(doc(db, 'groups', groupId!), { name: e.target.value });
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <h2 className="text-lg font-bold text-primary truncate">{group.name}</h2>
-                )}
-                <p className="text-[11px] text-text-muted font-bold uppercase tracking-wider">{t('manageGroup.createdMembers', { date: new Date(group.createdAt).toLocaleDateString(), count: members.length })}</p>
-              </div>
-            </div>
-
-            {isAdminOrOwner && (
-              <div className="space-y-1 pt-2 border-t border-border-subtle/50">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('manageGroup.groupDescription')}</label>
-                <textarea
-                  value={group.description || ''}
-                  onChange={async (e) => {
-                    const newDesc = e.target.value;
-                    await updateDoc(doc(db, 'groups', groupId!), { description: newDesc });
-                  }}
-                  className="w-full p-2 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-none bg-surface/30"
-                  placeholder={t('createGroup.descriptionPlaceholder')}
-                  rows={2}
-                />
-              </div>
-            )}
-
-            <AnimatePresence>
-              {showIconGrid && isAdminOrOwner && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="w-full overflow-hidden"
-                >
-                  <div className="pt-2">
-                    <label className="text-[9px] font-bold text-text-muted uppercase tracking-wider mb-2 block">{t('manageGroup.selectIcon')}</label>
-                    <div className="grid grid-cols-5 gap-2">
-                      {ICONS.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => { handleUpdateIcon(item.icon); setShowIconGrid(false); }}
-                          className={clsx(
-                            "p-2 rounded-lg border transition-all active:scale-95",
-                            groupIconEmoji(group.icon || groupIcon) === item.icon
-                              ? "bg-primary text-white border-primary shadow-md"
-                              : "bg-surface text-on-surface border-border-subtle hover:bg-surface-container"
-                          )}
-                        >
-                          <span className="text-base">{item.icon}</span>
-                        </button>
-                      ))}
+                    <div className="bg-white rounded-2xl border border-border-subtle p-3">
+                      <label className="text-[9px] font-bold text-text-muted uppercase tracking-wider mb-2 block">{t('manageGroup.selectIcon')}</label>
+                      <div className="grid grid-cols-5 gap-2">
+                        {ICONS.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => { handleUpdateIcon(item.icon); setShowIconGrid(false); }}
+                            className={clsx(
+                              'p-2 rounded-lg border transition-all active:scale-95',
+                              groupIconEmoji(group.icon || groupIcon) === item.icon
+                                ? 'bg-primary text-white border-primary shadow-md'
+                                : 'bg-surface text-on-surface border-border-subtle hover:bg-surface-container',
+                            )}
+                          >
+                            <span className="text-base">{item.icon}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </section>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          );
+        })()}
 
-        {/* Tab bar — the rest of the page used to render every section at once; now only the
-            active tab's sections mount, so a visit is a short, single-purpose screenful. */}
-        <div className="flex bg-white rounded-xl border border-border-subtle p-1 gap-1 sticky top-[calc(0.5rem+env(safe-area-inset-top))] z-10">
+        {/* Tabs — Overview, People (members, with Invite one tap away) and Settings */}
+        <div className="flex border-b border-border-subtle sticky top-[calc(0.5rem+env(safe-area-inset-top))] z-10 bg-surface">
           {([
             ['overview', 'manageGroup.tabOverview'],
             ['members', 'manageGroup.tabMembers'],
-            ['invite', 'manageGroup.tabInvite'],
             ['settings', 'manageGroup.tabSettings'],
           ] as const).map(([key, labelKey]) => (
             <button
@@ -1285,36 +1328,30 @@ export default function ManageGroup() {
               type="button"
               data-tour={`manage-group-tab-${key}`}
               onClick={() => setActiveTab(key)}
-              className={clsx(
-                'flex-1 py-2 rounded-lg text-xs font-bold transition-all',
-                activeTab === key ? 'bg-primary text-white' : 'text-text-muted',
-              )}
+              className={clsx('flex-1 py-3 text-[13px] font-bold relative transition-colors', activeTab === key ? 'text-primary' : 'text-text-muted')}
             >
               {t(labelKey)}
+              {activeTab === key && <span className="absolute left-[22%] right-[22%] -bottom-px h-[3px] rounded-full" style={{ background: KIND_STYLE[kindOf(group)].acc }} />}
             </button>
           ))}
         </div>
 
         {activeTab === 'overview' && (
         <>
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white p-3.5 rounded-2xl border border-border-subtle shadow-sm min-w-0">
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('manageGroup.totalSpend')}</p>
-            <p
-              className="text-lg font-bold text-primary mt-0.5 truncate"
-              title={`${getCurrencySymbol(group.currency)}${((group.totalSpending || 0) - (group.totalIncome || 0)).toLocaleString()}`}
-            >
-              {getCurrencySymbol(group.currency)}{formatAmountCompact((group.totalSpending || 0) - (group.totalIncome || 0), group.currency, profile?.numberSystem)}
-            </p>
-          </div>
-          <div className="bg-white p-3.5 rounded-2xl border border-border-subtle shadow-sm">
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('manageGroup.members')}</p>
-            <p className="text-lg font-bold text-primary mt-0.5">{members.length}</p>
-          </div>
+        {/* Quick actions */}
+        <div className="flex gap-2">
+          {kindOf(group) === 'payments' ? (
+            <button type="button" onClick={() => navigate(`/groups/${groupId}`)} className="flex-1 rounded-2xl bg-white border border-border-subtle py-3 text-sm font-black text-primary active:scale-95">Open payments</button>
+          ) : (
+            <button type="button" onClick={() => navigate(`/add-expense?groupId=${groupId}`)} className="flex-1 rounded-2xl bg-white border border-border-subtle py-3 text-sm font-black text-primary active:scale-95">＋ Add expense</button>
+          )}
+          {!!currentMember && (
+            <button type="button" onClick={() => setShowInviteSheet(true)} className="flex-1 rounded-2xl bg-white border border-border-subtle py-3 text-sm font-black text-primary active:scale-95">Invite people</button>
+          )}
         </div>
 
-        {/* Monthly Budget */}
+        {/* Monthly Budget (Regular groups) */}
+        {kindOf(group) === 'regular' && (
         <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-budget">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-primary">
@@ -1435,6 +1472,57 @@ export default function ManageGroup() {
             </form>
           )}
         </section>
+        )}
+
+        {/* Event budget — one budget for the whole event */}
+        {kindOf(group) === 'event' && (
+          <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-budget">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-primary">Event budget</h3>
+              {isAdminOrOwner && !editingEventBudget && (
+                <button
+                  onClick={() => { setEventBudgetInput(Number(group.eventBudget) > 0 ? String(group.eventBudget) : ''); setEditingEventBudget(true); }}
+                  className="text-[11px] font-bold text-primary underline"
+                >
+                  {Number(group.eventBudget) > 0 ? t('common.edit') : t('manageGroup.setBudget')}
+                </button>
+              )}
+            </div>
+            {editingEventBudget ? (
+              <form onSubmit={handleSaveEventBudget} className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 flex items-center gap-1 bg-surface px-3 rounded-xl border border-border-subtle">
+                    <span className="text-sm font-bold text-primary">{getCurrencySymbol(group.currency)}</span>
+                    <input type="text" inputMode="decimal" value={eventBudgetInput} onChange={(e) => setEventBudgetInput(e.target.value)} placeholder="Budget for the whole event" autoFocus className="flex-1 h-10 bg-transparent text-sm outline-none" />
+                  </div>
+                  <button type="submit" disabled={!eventBudgetInput} className="px-4 h-10 bg-primary text-white rounded-xl text-xs font-bold disabled:opacity-50">{t('common.save')}</button>
+                  <button type="button" onClick={() => setEditingEventBudget(false)} className="w-10 h-10 rounded-xl text-text-muted flex items-center justify-center"><span className="material-symbols-outlined text-[18px]">close</span></button>
+                </div>
+                {hasAmountSumOperator(eventBudgetInput) && evaluateAmountSum(eventBudgetInput) !== null && (
+                  <p className="text-xs font-bold text-success px-1">= {getCurrencySymbol(group.currency)}{evaluateAmountSum(eventBudgetInput)!.toFixed(2)}</p>
+                )}
+                <p className="text-[10px] text-text-muted px-1">Clear it and save to remove the budget.</p>
+              </form>
+            ) : Number(group.eventBudget) > 0 ? (() => {
+              const spent = group.totalSpending || 0;
+              const total = Number(group.eventBudget);
+              const status = getBudgetStatus(spent, total);
+              return (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div><p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('common.budget')}</p><p className="text-sm font-bold text-primary">{getCurrencySymbol(group.currency)}{formatAmountCompact(total, group.currency, profile?.numberSystem)}</p></div>
+                    <div><p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{t('common.spent')}</p><p className="text-sm font-bold text-primary">{getCurrencySymbol(group.currency)}{formatAmountCompact(spent, group.currency, profile?.numberSystem)}</p></div>
+                    <div><p className="text-[9px] font-bold text-text-muted uppercase tracking-wider">{spent > total ? t('common.overBy') : t('common.remaining')}</p><p className={clsx('text-sm font-bold', status.textClass)}>{getCurrencySymbol(group.currency)}{formatAmountCompact(Math.abs(total - spent), group.currency, profile?.numberSystem)}</p></div>
+                  </div>
+                  <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all', status.barClass)} style={{ width: `${Math.min(100, status.percent)}%` }} /></div>
+                  <p className={clsx('text-[10px] font-bold text-right', status.textClass)}>{t('manageGroup.percentUsed', { percent: Math.round(status.percent) })}</p>
+                </div>
+              );
+            })() : (
+              <p className="text-xs text-text-muted">No budget set. An event has one budget for the whole event, not a monthly one.</p>
+            )}
+          </section>
+        )}
 
         {/* Recurring Expenses summary — tap to open the full list in a floating panel (manage
             your own rules via the dedicated Recurring Expenses screen, linked from there). */}
@@ -1465,7 +1553,15 @@ export default function ManageGroup() {
         </>
         )}
 
-        {activeTab === 'invite' && (
+        {showInviteSheet && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/45" onClick={() => setShowInviteSheet(false)} />
+          <div className="relative w-full max-w-lg bg-surface rounded-t-[28px] max-h-[88vh] overflow-y-auto px-4 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-4 shadow-2xl">
+            <div className="w-10 h-1.5 rounded-full bg-border-subtle mx-auto" />
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-extrabold text-primary truncate">Invite to {group.name}</h2>
+              <button type="button" onClick={() => setShowInviteSheet(false)} aria-label="Close" className="p-1.5 rounded-full text-text-muted hover:bg-white"><span className="material-symbols-outlined text-[22px]">close</span></button>
+            </div>
         <>
         {/* Invite Section — a method picker instead of every invite path stacked and expanded;
             each method opens its own focused floating panel (built further down). */}
@@ -1588,10 +1684,24 @@ export default function ManageGroup() {
           </section>
         )}
         </>
+          </div>
+        </div>
         )}
 
         {activeTab === 'members' && (
         <>
+        {!!currentMember && (
+          <button
+            type="button"
+            onClick={() => setShowInviteSheet(true)}
+            data-tour="manage-group-tab-invite"
+            className="w-full rounded-2xl py-3 text-sm font-black text-white shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
+            style={{ background: KIND_STYLE[kindOf(group)].acc, color: KIND_STYLE[kindOf(group)].onAcc }}
+          >
+            <span className="material-symbols-outlined text-[20px]">person_add</span>
+            Invite people
+          </button>
+        )}
         {/* Group leaderboard — friends-scoped ranking lives on My Progress; this is the same idea
             scoped to just this group's roster, using the same server endpoint with a different
             `scope` param. */}
@@ -1815,6 +1925,21 @@ export default function ManageGroup() {
 
         {activeTab === 'settings' && (
         <>
+        {isAdminOrOwner && (
+          <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-1">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('manageGroup.groupDescription')}</label>
+            <textarea
+              value={group.description || ''}
+              onChange={async (e) => {
+                const newDesc = e.target.value;
+                await updateDoc(doc(db, 'groups', groupId!), { description: newDesc });
+              }}
+              className="w-full p-2 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-none bg-surface/30"
+              placeholder={t('createGroup.descriptionPlaceholder')}
+              rows={2}
+            />
+          </section>
+        )}
         {isAdminOrOwner && (
           <section className="space-y-2">
             <button
