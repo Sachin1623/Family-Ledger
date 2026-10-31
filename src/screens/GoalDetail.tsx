@@ -806,7 +806,7 @@ export default function GoalDetail() {
   const displayAsCompleted = !!goal.completedAt;
 
   return (
-    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
+    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32 md:pb-32">
       <div className="flex items-center justify-end">
         {goal.isCashHolding ? (
           <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-primary/10 px-2.5 py-1 rounded-full">

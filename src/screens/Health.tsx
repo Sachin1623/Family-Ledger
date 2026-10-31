@@ -75,7 +75,7 @@ export default function Health({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <div className={embedded ? '' : 'flex flex-col min-h-screen bg-surface'}>
-      <main className={embedded ? 'space-y-3' : 'flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24'}>
+      <main className={embedded ? 'space-y-3' : 'flex-1 p-3 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24 md:pb-24'}>
         {!embedded ? (
           <div>
             <h1 className="text-2xl font-black text-slate-900">{t('health.title')}</h1>

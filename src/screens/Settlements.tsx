@@ -418,7 +418,7 @@ export default function Settlements() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-6 max-w-2xl mx-auto w-full space-y-6 pb-36">
+      <main className="flex-1 p-4 md:p-6 max-w-2xl mx-auto w-full space-y-6 pb-36 md:pb-36">
         {hasStaleDataWarning && (
           <div className="p-3 bg-warning/10 text-warning text-xs font-bold rounded-xl border border-warning/20 text-center">
             {t('settlements.serverTrouble')}

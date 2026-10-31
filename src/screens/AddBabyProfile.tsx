@@ -177,7 +177,7 @@ export default function AddBabyProfile() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5 pb-40">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5 pb-40 md:pb-40">
         <div>
           <h1 className="text-2xl font-black text-primary">{isEdit ? t('babyVax.editProfileTitle') : t('babyVax.addChildTitle')}</h1>
           {!isEdit && <p className="text-sm text-text-muted mt-1">{t('babyVax.addChildSubtitle')}</p>}

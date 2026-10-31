@@ -80,7 +80,7 @@ export default function PolicyDetail() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24 md:pb-24">
         <button onClick={() => navigate('/policies')} className="flex items-center gap-1 text-sm font-bold text-text-muted hover:text-primary">
           <span className="material-symbols-outlined text-[18px]">arrow_back</span>
           {t('policies.title')}

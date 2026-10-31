@@ -37,7 +37,7 @@ export default function ShopActivity() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24 md:pb-24">
         <div>
           <h1 className="text-2xl font-black text-[#7C3AED]">Shop Activity</h1>
           <p className="text-sm text-text-muted mt-1">Everything the team has done in this shop.</p>

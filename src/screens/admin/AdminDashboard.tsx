@@ -147,7 +147,7 @@ export default function AdminDashboard() {
   ] as const;
 
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6 pb-24">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6 pb-24 md:pb-24">
       <div>
         <h1 className="text-3xl font-black text-primary">Admin Panel</h1>
         <p className="text-sm text-text-muted font-medium">

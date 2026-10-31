@@ -531,7 +531,7 @@ export default function BabyVaccinations() {
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pt-0 max-w-xl mx-auto w-full space-y-4 pb-24">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pt-0 max-w-xl mx-auto w-full space-y-4 pb-24 md:pb-24">
         <div className="bg-primary/5 rounded-2xl p-3 flex gap-2">
           <span className="material-symbols-outlined text-[16px] text-primary shrink-0">info</span>
           <p className="text-[11px] text-primary leading-relaxed">{t('babyVax.scheduleDisclaimer')}</p>

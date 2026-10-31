@@ -1168,7 +1168,7 @@ export default function GroupAnalysisSummary() {
           onClose={() => setShowScopePicker(false)}
         />
       )}
-      <main className="flex-1 p-4 md:p-8 pb-32 max-w-4xl mx-auto w-full space-y-6">
+      <main className="flex-1 p-4 md:p-8 pb-32 max-w-4xl mx-auto w-full space-y-6 md:pb-32">
         {allGroupsAll.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-text-muted gap-4">
             <span className="material-symbols-outlined text-5xl">group_off</span>

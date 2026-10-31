@@ -1391,7 +1391,7 @@ export default function LudoGame() {
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <ReactionOverlay reactions={floatingReactions} />
-      <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24">
+      <main className="flex-1 p-4 md:p-6 max-w-md mx-auto w-full space-y-5 pb-24 md:pb-24">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
             <span className="text-xs font-bold text-primary">Ludo</span>

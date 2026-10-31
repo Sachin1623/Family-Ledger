@@ -245,7 +245,7 @@ export default function GoalFundingSetup() {
   }
 
   return (
-    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
+    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32 md:pb-32">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-2xl shrink-0">{goal.icon || '🎯'}</span>

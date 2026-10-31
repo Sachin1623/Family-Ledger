@@ -594,7 +594,7 @@ export default function LogVaccineVisit() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pt-0 max-w-xl mx-auto w-full space-y-4 pb-40">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pt-0 max-w-xl mx-auto w-full space-y-4 pb-40 md:pb-40">
         {/* Shots come first — they're the actual unit of proof and the primary way to record what
             was given. The vaccine checklist below is secondary, showing what's still outstanding. */}
         <div className="space-y-2">

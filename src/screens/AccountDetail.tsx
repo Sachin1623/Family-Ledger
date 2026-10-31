@@ -208,7 +208,7 @@ export default function AccountDetail() {
   });
 
   return (
-    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32">
+    <div className="p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32 md:pb-32">
       <div className="flex items-center justify-end">
         {canEdit ? (
           <button

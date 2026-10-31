@@ -258,7 +258,7 @@ export default function Tools() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24 md:pb-24">
         {!activeCat ? (
           <>
             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl px-3.5 py-2.5 shadow-sm">

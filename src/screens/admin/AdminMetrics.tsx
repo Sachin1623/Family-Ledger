@@ -444,7 +444,7 @@ export default function AdminMetrics() {
   const money = (v: number | null | undefined, cur?: string) => (v === null || v === undefined ? '—' : `${cur === 'INR' || !cur ? '₹' : `${cur} `}${Math.round(v).toLocaleString()}`);
 
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-5 pb-44">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-5 pb-44 md:pb-44">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-3xl font-black text-primary">App health</h1>
         <Link to="/admin" className="text-sm font-bold text-primary underline">Back to Admin</Link>

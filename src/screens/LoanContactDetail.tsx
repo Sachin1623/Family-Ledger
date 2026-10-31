@@ -293,7 +293,7 @@ export default function LoanContactDetail() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-6 pb-24 md:pb-24">
         <div className="flex items-center justify-between">
           <button onClick={() => navigate('/personal-loans')} className="text-xs font-bold text-primary flex items-center gap-1">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>

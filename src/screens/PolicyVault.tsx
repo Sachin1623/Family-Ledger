@@ -82,7 +82,7 @@ export default function PolicyVault() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5 pb-24">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-5 pb-24 md:pb-24">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-black text-primary">{t('policies.title')}</h1>

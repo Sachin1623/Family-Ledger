@@ -734,7 +734,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   };
 
   return (
-    <div className={embedded ? 'space-y-5' : 'p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32'}>
+    <div className={embedded ? 'space-y-5' : 'p-4 md:p-8 max-w-lg mx-auto space-y-5 pb-32 md:pb-32'}>
       {!embedded && (
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold text-primary">{t('accounts.title')}</h1>
