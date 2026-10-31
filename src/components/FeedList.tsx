@@ -21,6 +21,14 @@ const PERSON_ACTIVITY_TYPES = new Set([
 ]);
 const isPersonActivity = (a: any) => !!a.userId && !a.personal && PERSON_ACTIVITY_TYPES.has(a.type) && !/^Recurring (expense|income)$/.test(a.userName || '');
 
+// Entries the app itself produces (reminders, recurring runs, summaries, updates): they show the FamilyLedger icon, not a letter
+const SYSTEM_LABELS = new Set(['FamilyLedger', 'Recurring expense', 'Recurring income', 'Expense reminder', 'Policy renewal reminder', 'To-Do reminder', 'Budget reminder', 'Loan reminder']);
+const SYSTEM_TYPES = new Set([
+  'system_update', 'weekly_summary', 'expense_reminder', 'todo_reminder', 'budget_reminder', 'loan_reminder', 'loan_installment_due',
+  'policy_renewal', 'settlement_reminder', 'recurring_confirm_pending', 'medicine_missed', 'reminder_activity', 'loan_activity',
+]);
+const isSystemActivity = (a: any) => !a.userPhoto && (SYSTEM_LABELS.has(a.userName || '') || SYSTEM_TYPES.has(a.type) || !a.userId);
+
 // The activity list itself (data-fetching + rendering), shared by the full-page /feed route
 // (ActivityFeed.tsx, kept for direct navigation/deep links) and the Header's slide-over FeedPanel
 // — extracted so neither has to duplicate the three-query merge/dedupe or the per-type
@@ -823,7 +831,9 @@ export default function FeedList({ onNavigateAway, initialGroupId }: { onNavigat
         >
           <div className="relative shrink-0">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold overflow-hidden border-2 border-white shadow-md ring-1 ring-border-subtle/30">
-              {activity.userPhoto ? (
+              {isSystemActivity(activity) ? (
+                <img src="/brand/icon-poster-v1.webp" alt="FamilyLedger" className="w-full h-full object-cover" />
+              ) : activity.userPhoto ? (
                 <img
                   src={activity.userPhoto}
                   alt=""
