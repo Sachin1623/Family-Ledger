@@ -14,7 +14,7 @@ import {
   EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification,
   getAllGroupCategories, getCategoryNameOverride, getCategoryIcon, makeCustomCategoryId, CustomCategory,
 } from '../lib/constants';
-import CategoryBadge from '../components/CategoryBadge';
+import CategoryBadge, { CATEGORY_STYLE } from '../components/CategoryBadge';
 import { inviteToGroup, inviteUserToGroup, searchUsers, linkGroupParticipant, FoundUser } from '../lib/inviteApi';
 import { logGrowthEvent } from '../lib/growthEvents';
 import { placeholderRows, participantInUse, participantExpenseCount, participantInRecurringUse } from '../lib/groupParticipants';
@@ -1555,9 +1555,9 @@ export default function ManageGroup() {
             <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
           </button>
         )}
-        {/* Budget by category, below recurring: for a Regular group each category this month against last month, and against the
-            share of the budget given to it; for an Event the whole event's spending by category. Icons and names are the ones Add
-            Expense shows (the group's own renames included). */}
+        {/* Budget by category, below recurring: one compact row per category (colour dot, name, bar, amount). For a Regular group the
+            amount is this month's spend, against the category's share of the budget when one is set, with last month underneath;
+            for an Event it is the whole event's spend. Names are the group's own (renames included). */}
         {kindOf(group) !== 'payments' && (() => {
           const gk = kindOf(group);
           const isMonthly = gk === 'regular';
@@ -1582,85 +1582,49 @@ export default function ManageGroup() {
           const rows = ids
             .map((id) => ({
               id,
-              icon: getCategoryIcon(group, id, 'expense'),
               name: getCategoryNameOverride(group, id) || t(`category.${id}`),
+              color: CATEGORY_STYLE[id]?.color || '#003044',
               spent: thisBy[id] || 0,
               last: lastBy[id] || 0,
               limit: hasShares ? ((shares[id] || 0) / 100) * budget!.amount : 0,
             }))
-            .filter((r) => (isMonthly ? r.limit > 0 : r.spent > 0 || r.last > 0 || r.limit > 0))
-            .sort((x, y) => y.spent - x.spent || y.last - x.last);
-          // A Regular group shows this card only for its budget by category: with no category budgets yet it offers to set them
-          // (when there is a budget), and otherwise stays out of the way. Spending without a category budget is not listed.
-          if (isMonthly) {
-            if (!budget) return null;
-            if (!hasShares) {
-              return (
-                <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-2" data-tour="manage-group-category-budget">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-primary">{t('manageGroup.budgetByCategory')}</h3>
-                    <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">{t('manageGroup.setBudget')}</button>
-                  </div>
-                  <p className="text-xs text-text-muted">Decide how much of the monthly budget each category gets, then see each one against its share here.</p>
-                </section>
-              );
-            }
-          }
+            .filter((r) => r.spent > 0 || r.limit > 0 || (isMonthly && r.last > 0))
+            .sort((x, y) => y.spent - x.spent || y.limit - x.limit);
           if (rows.length === 0) return null;
-          const scale = Math.max(1, ...rows.flatMap((r) => [r.spent, r.last, r.limit]));
-          const totalNow = rows.reduce((n, r) => n + r.spent, 0);
-          const totalLast = rows.reduce((n, r) => n + r.last, 0);
+          const scale = Math.max(1, ...rows.flatMap((r) => [r.spent, r.limit]));
+          const titled = isMonthly && !!budget;
           return (
-            <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-category-budget">
+            <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3.5" data-tour="manage-group-category-budget">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-primary">{isMonthly ? t('manageGroup.budgetByCategory') : 'Spending by category'}</h3>
+                <h3 className="text-sm font-bold text-primary">{titled ? 'Budget by category' : 'Spending by category'}</h3>
                 {isMonthly && budget && (
-                  <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">
-                    {t('common.edit')}
-                  </button>
+                  <button onClick={openBudgetCategoryPanel} className="text-xs font-black" style={{ color: KIND_STYLE[gk].dark }}>Edit</button>
                 )}
               </div>
-              {isMonthly ? (
-                <div className="flex items-center gap-3 text-[10px] font-bold text-text-muted -mt-1">
-                  <span className="flex items-center gap-1"><i className="w-2.5 h-1.5 rounded-full bg-primary inline-block" />This month {fmt(totalNow)}</span>
-                  <span className="flex items-center gap-1"><i className="w-2.5 h-1.5 rounded-full bg-primary/25 inline-block" />Last month {fmt(totalLast)}</span>
-                </div>
-              ) : (
-                <p className="text-[10px] text-text-muted -mt-1.5">Whole event · {fmt(totalNow)}</p>
-              )}
-              <div className="space-y-3.5">
+              <div className="space-y-3">
                 {rows.map((r) => {
                   const over = r.limit > 0 && r.spent > r.limit;
-                  const change = r.last > 0 ? Math.round(((r.spent - r.last) / r.last) * 100) : null;
+                  const change = isMonthly && r.last > 0 ? Math.round(((r.spent - r.last) / r.last) * 100) : null;
                   return (
-                    <div key={r.id} className="flex items-center gap-3">
-                      <CategoryBadge id={r.id} icon={r.icon} size={36} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="text-xs font-bold text-on-surface truncate">{r.name}</span>
-                          <span className={clsx('text-xs font-black tabular-nums shrink-0', over && 'text-error')}>
-                            {fmt(r.spent)}{r.limit > 0 && <span className="text-text-muted font-semibold"> / {fmt(r.limit)}</span>}
-                          </span>
+                    <div key={r.id}>
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: r.color }} />
+                        <span className="w-[88px] shrink-0 text-[13px] font-semibold text-on-surface truncate">{r.name}</span>
+                        <div className="flex-1 h-2 rounded-full bg-surface overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (r.spent / scale) * 100)}%`, background: over ? '#dc2626' : r.color }} />
                         </div>
-                        <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden mt-1.5">
-                          <div className={clsx('h-full rounded-full transition-all', over ? 'bg-error' : 'bg-primary')} style={{ width: `${(r.spent / scale) * 100}%` }} />
-                        </div>
-                        {isMonthly && (
-                          <>
-                            <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden mt-1">
-                              <div className="h-full rounded-full bg-primary/25 transition-all" style={{ width: `${(r.last / scale) * 100}%` }} />
-                            </div>
-                            <div className="flex items-center justify-between text-[10px] text-text-muted font-semibold mt-1">
-                              <span>Last month {fmt(r.last)}</span>
-                              {change !== null ? (
-                                <span className={clsx('font-black', change > 0 ? 'text-error' : change < 0 ? 'text-success' : '')}>{change > 0 ? '▲' : change < 0 ? '▼' : '＝'} {Math.abs(change)}%</span>
-                              ) : r.spent > 0 ? (
-                                <span className="font-black text-text-muted">New</span>
-                              ) : null}
-                            </div>
-                          </>
-                        )}
+                        <span className={clsx('shrink-0 text-[13px] font-extrabold tabular-nums text-right', over ? 'text-error' : 'text-on-surface')}>
+                          {fmt(r.spent)}{r.limit > 0 && <span className="text-text-muted font-semibold text-[11px]"> / {fmt(r.limit)}</span>}
+                        </span>
                       </div>
+                      {isMonthly && (r.last > 0 || r.spent > 0) && (
+                        <p className="text-[10.5px] text-text-muted font-semibold pl-[22px] mt-0.5">
+                          Last month {fmt(r.last)}
+                          {change !== null ? (
+                            <span className={clsx('font-black ml-1.5', change > 0 ? 'text-error' : change < 0 ? 'text-success' : '')}>{change > 0 ? '▲' : change < 0 ? '▼' : '＝'} {Math.abs(change)}%</span>
+                          ) : r.spent > 0 ? <span className="font-black ml-1.5">New</span> : null}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
