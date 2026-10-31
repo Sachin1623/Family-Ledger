@@ -1620,8 +1620,8 @@ export default function ManageGroup() {
                   return (
                     <div key={r.id}>
                       <div className="flex items-center gap-2.5">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: r.color }} />
-                        <span className="w-[88px] shrink-0 text-[13px] font-semibold text-on-surface truncate">{r.name}</span>
+                        <CategoryBadge id={r.id} icon={getCategoryIcon(group, r.id, 'expense')} size={34} />
+                        <span className="w-[84px] shrink-0 text-[13px] font-semibold text-on-surface truncate">{r.name}</span>
                         <div className="flex-1 h-2 rounded-full bg-surface overflow-hidden">
                           <div className="h-full rounded-full transition-all" style={{ width: `${titled ? Math.min(100, r.limit > 0 ? (r.spent / r.limit) * 100 : 0) : Math.min(100, (r.spent / scale) * 100)}%`, background: over ? '#dc2626' : r.color }} />
                         </div>
@@ -1630,13 +1630,13 @@ export default function ManageGroup() {
                         </span>
                       </div>
                       {titled && (
-                        <p className="text-[10.5px] text-text-muted font-semibold pl-[22px] mt-0.5">
+                        <p className="text-[10.5px] text-text-muted font-semibold pl-[46px] mt-0.5">
                           Spent {fmt(r.spent)} · <span className={clsx('font-black', over ? 'text-error' : 'text-success')}>{over ? `over by ${fmt(r.spent - r.limit)}` : `${fmt(r.limit - r.spent)} left`}</span>
                           {r.last > 0 && <span> · Last month {fmt(r.last)}</span>}
                         </p>
                       )}
                       {!titled && isMonthly && (r.last > 0 || r.spent > 0) && (
-                        <p className="text-[10.5px] text-text-muted font-semibold pl-[22px] mt-0.5">
+                        <p className="text-[10.5px] text-text-muted font-semibold pl-[46px] mt-0.5">
                           Last month {fmt(r.last)}
                           {change !== null ? (
                             <span className={clsx('font-black ml-1.5', change > 0 ? 'text-error' : change < 0 ? 'text-success' : '')}>{change > 0 ? '▲' : change < 0 ? '▼' : '＝'} {Math.abs(change)}%</span>
