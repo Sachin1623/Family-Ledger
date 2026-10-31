@@ -1588,8 +1588,24 @@ export default function ManageGroup() {
               last: lastBy[id] || 0,
               limit: hasShares ? ((shares[id] || 0) / 100) * budget!.amount : 0,
             }))
-            .filter((r) => r.spent > 0 || r.last > 0 || r.limit > 0)
+            .filter((r) => (isMonthly ? r.limit > 0 : r.spent > 0 || r.last > 0 || r.limit > 0))
             .sort((x, y) => y.spent - x.spent || y.last - x.last);
+          // A Regular group shows this card only for its budget by category: with no category budgets yet it offers to set them
+          // (when there is a budget), and otherwise stays out of the way. Spending without a category budget is not listed.
+          if (isMonthly) {
+            if (!budget) return null;
+            if (!hasShares) {
+              return (
+                <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-2" data-tour="manage-group-category-budget">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-primary">{t('manageGroup.budgetByCategory')}</h3>
+                    <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">{t('manageGroup.setBudget')}</button>
+                  </div>
+                  <p className="text-xs text-text-muted">Decide how much of the monthly budget each category gets, then see each one against its share here.</p>
+                </section>
+              );
+            }
+          }
           if (rows.length === 0) return null;
           const scale = Math.max(1, ...rows.flatMap((r) => [r.spent, r.last, r.limit]));
           const totalNow = rows.reduce((n, r) => n + r.spent, 0);
@@ -1597,10 +1613,10 @@ export default function ManageGroup() {
           return (
             <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-3" data-tour="manage-group-category-budget">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-primary">{hasShares ? t('manageGroup.budgetByCategory') : 'Spending by category'}</h3>
+                <h3 className="text-sm font-bold text-primary">{isMonthly ? t('manageGroup.budgetByCategory') : 'Spending by category'}</h3>
                 {isMonthly && budget && (
                   <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">
-                    {hasShares ? t('common.edit') : 'Set category budgets'}
+                    {t('common.edit')}
                   </button>
                 )}
               </div>

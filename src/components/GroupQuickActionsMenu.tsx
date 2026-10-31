@@ -18,6 +18,8 @@ import { EXPENSE_CATEGORIES, getCurrencySymbol } from '../lib/constants';
 import { useFriendships } from '../lib/useFriendships';
 import { useFamilies } from '../lib/useFamilies';
 import { useAllGroupMembers } from '../lib/useAllGroupMembers';
+import { groupIconEmoji } from '../lib/groupIcons';
+import { KIND_STYLE, kindOf } from '../lib/groupKindStyle';
 
 type SubPanel = null | 'addMembers' | 'budget' | 'budgetCategory' | 'exitDelete';
 
@@ -493,16 +495,36 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     (group?.name || '');
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         onClick={stop}
-        className="relative w-full sm:max-w-sm bg-white rounded-3xl shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="relative w-full sm:max-w-sm bg-surface rounded-t-[28px] sm:rounded-3xl shadow-2xl max-h-[88vh] overflow-y-auto"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
+        {subPanel === null ? (
+          <div className="px-4 pt-3">
+            <div className="w-10 h-1.5 rounded-full bg-border-subtle mx-auto mb-3 sm:hidden" />
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 overflow-hidden flex items-center justify-center text-[26px] shrink-0">
+                {group?.photoURL ? <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span>{groupIconEmoji(group?.icon)}</span>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[17px] font-extrabold text-primary truncate">{group?.name || ''}</h3>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider rounded-full px-2 py-0.5" style={{ background: KIND_STYLE[kindOf(group)].tint, color: KIND_STYLE[kindOf(group)].dark }}>{KIND_STYLE[kindOf(group)].label}</span>
+                  <span className="text-[11px] text-text-muted font-semibold">{members.length} member{members.length === 1 ? '' : 's'}</span>
+                </div>
+              </div>
+              <button onClick={onClose} aria-label="Close" className="w-9 h-9 rounded-full bg-border-subtle/50 flex items-center justify-center text-text-muted shrink-0">
+                <span className="material-symbols-outlined text-[19px] block">close</span>
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="flex items-center justify-between px-2 py-2 border-b border-border-subtle sticky top-0 bg-white z-10">
           {subPanel ? (
             <button onClick={() => setSubPanel(subPanel === 'budgetCategory' ? 'budget' : null)} className="p-2 text-text-muted hover:bg-surface rounded-full">
@@ -514,36 +536,74 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
             <span className="material-symbols-outlined text-[20px] block">close</span>
           </button>
         </div>
+        )}
 
         <div className="p-2">
-          {subPanel === null && (
-            <div className="space-y-0.5">
-              <MenuRow icon="person_add" label="Add Members" onClick={() => setSubPanel('addMembers')} />
-              {/* a Payments group has no event/split/income switches, budget or recurring expenses */}
-              {group?.groupType !== 'payments' && (
-                <>
-                  <ToggleRow icon="event" label="One-off Event" checked={group?.groupType === 'event'} busy={togglingType} onToggle={handleToggleType} />
-                  <ToggleRow icon="call_split" label="Split Expenses" checked={!!group?.splitEnabled} busy={togglingSplit} onToggle={handleToggleSplit} />
-                  <ToggleRow icon="payments" label="Track Income" checked={!!group?.incomeEnabled} busy={togglingIncome} onToggle={handleToggleIncome} />
-                  <MenuRow icon="account_balance_wallet" label={budget ? 'Edit Budget' : 'Set Budget'} onClick={() => setSubPanel('budget')} />
-                  <MenuRow icon="event_repeat" label="Recurring Expenses" onClick={() => { onClose(); navigate(`/recurring-expenses?groupId=${groupId}`); }} />
-                </>
-              )}
-              <MenuRow
-                icon={group?.archived ? 'unarchive' : 'archive'}
-                label={archiving ? 'Working…' : group?.archived ? 'Resume Group' : 'Archive Group'}
-                onClick={handleToggleArchive}
-              />
-              <MenuRow
-                icon={isCreator ? 'delete_forever' : 'logout'}
-                label={isCreator ? 'Delete Group' : 'Exit Group'}
-                danger
-                onClick={() => setSubPanel('exitDelete')}
-              />
-              <div className="h-px bg-border-subtle my-1 mx-2" />
-              <MenuRow icon="settings" label="Manage Group" onClick={() => { onClose(); navigate(`/groups/${groupId}/manage?from=dashboard`); }} />
-            </div>
-          )}
+          {subPanel === null && (() => {
+            const gk = kindOf(group);
+            const isPayments = gk === 'payments';
+            const tiles: Array<{ icon: string; color: string; label: string; onClick: () => void }> = [
+              { icon: 'person_add', color: '#12b89a', label: 'Add members', onClick: () => setSubPanel('addMembers') },
+              ...(isPayments ? [] : [gk === 'event'
+                ? { icon: 'account_balance_wallet', color: '#3b82f6', label: 'Event budget', onClick: () => { onClose(); navigate(`/groups/${groupId}/manage?tab=overview&from=dashboard`); } }
+                : { icon: 'account_balance_wallet', color: '#3b82f6', label: budget ? 'Edit budget' : 'Set budget', onClick: () => setSubPanel('budget') },
+                { icon: 'event_repeat', color: '#8b5cf6', label: 'Recurring expenses', onClick: () => { onClose(); navigate(`/recurring-expenses?groupId=${groupId}`); } }]),
+              { icon: 'settings', color: '#64748b', label: 'Manage group', onClick: () => { onClose(); navigate(`/groups/${groupId}/manage?from=dashboard`); } },
+            ];
+            const feature = (label: string, desc: string, checked: boolean, busy: boolean, onToggle: () => void) => (
+              <div className="flex items-center gap-3 py-3 border-b border-border-subtle last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13.5px] font-bold text-on-surface">{label}</p>
+                  <p className="text-[11px] text-text-muted mt-0.5">{desc}</p>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={checked}
+                  onClick={onToggle}
+                  disabled={busy}
+                  className={clsx('w-11 h-6 rounded-full transition-all relative shrink-0 disabled:opacity-50', checked ? 'bg-[#12b89a]' : 'bg-border-subtle')}
+                >
+                  <div className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm', checked ? 'left-6' : 'left-1')} />
+                </button>
+              </div>
+            );
+            return (
+              <div className="space-y-3 pt-1">
+                <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(${tiles.length}, minmax(0, 1fr))` }}>
+                  {tiles.map((tile) => (
+                    <button key={tile.label} onClick={tile.onClick} className="bg-white border border-border-subtle rounded-2xl px-1 py-3 flex flex-col items-center gap-1.5 text-center active:scale-95 transition-transform">
+                      <span className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: tile.color }}>
+                        <span className="material-symbols-outlined text-[22px]">{tile.icon}</span>
+                      </span>
+                      <span className="text-[11px] font-extrabold text-on-surface leading-tight">{tile.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {!isPayments && (
+                  <div>
+                    <p className="text-[10.5px] font-extrabold uppercase tracking-[0.09em] text-text-muted px-1 mb-1.5">Group features</p>
+                    <div className="bg-white border border-border-subtle rounded-2xl px-4">
+                      {feature('One-off event', 'Whole-event totals, no monthly view', group?.groupType === 'event', togglingType, handleToggleType)}
+                      {feature('Split expenses', 'Share bills between members', !!group?.splitEnabled, togglingSplit, handleToggleSplit)}
+                      {feature('Track income', 'Log money coming in too', !!group?.incomeEnabled, togglingIncome, handleToggleIncome)}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button onClick={handleToggleArchive} disabled={archiving} className="flex items-center justify-center gap-2 rounded-2xl bg-white border border-border-subtle py-3 text-[13px] font-extrabold text-on-surface active:scale-95 disabled:opacity-60">
+                    <span className="material-symbols-outlined text-[20px]">{group?.archived ? 'unarchive' : 'archive'}</span>
+                    {archiving ? 'Working…' : group?.archived ? 'Resume' : 'Archive'}
+                  </button>
+                  <button onClick={() => setSubPanel('exitDelete')} className="flex items-center justify-center gap-2 rounded-2xl bg-error/10 border border-error/20 py-3 text-[13px] font-extrabold text-error active:scale-95">
+                    <span className="material-symbols-outlined text-[20px]">{isCreator ? 'delete_forever' : 'logout'}</span>
+                    {isCreator ? 'Delete group' : 'Exit group'}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {subPanel === 'addMembers' && (
             <div className="p-2 space-y-4">
