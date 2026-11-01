@@ -53,7 +53,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Browsing someone else's switcher pill (see GoalsHub.tsx's switcher) — "Share My Reports" only
   // controls whether that person's pill shows up at all (see useReportsSharing.ts); it is NOT a
@@ -237,6 +237,9 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   const [allocSectionExpanded, setAllocSectionExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [menuAccount, setMenuAccount] = useState<FinancialAccount | null>(null); // the "..." actions sheet on an account card
+  const [typePicked, setTypePicked] = useState(false); // a new account starts on the "what are you adding?" screen
+  const [openOpt, setOpenOpt] = useState<string | null>(null); // which optional row is expanded
 
   const allocTotal: number = Object.keys(allocPcts).reduce((s: number, k: string) => s + (allocPcts[k] || 0), 0);
   const nomineeTotal: number = nominees.reduce((s, n) => s + (n.pct || 0), 0);
@@ -268,6 +271,23 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
     );
   const guideWrapClass = (step: GuideStepId) =>
     clsx(guideActive(step) && 'fl-tour-glow ring-2 ring-primary/70 rounded-2xl p-3 -m-3 bg-primary/5');
+  // The new layout (type cards, then name + balance, then optional rows) applies everywhere except the guided first-time tour, which keeps its
+  // step-by-step stacked form. Optional rows are plain blocks kept mounted and hidden with CSS, so typed values are never lost when a row closes.
+  const fresh = !guide;
+  const optHidden = (id: string) => fresh && openOpt !== id;
+  const optHeader = (id: string, order: string, icon: string, title: string, summary: string) => fresh && (
+    <button
+      type="button" onClick={() => setOpenOpt(openOpt === id ? null : id)} aria-expanded={openOpt === id}
+      className={clsx('w-full flex items-center gap-3 bg-white border border-border-subtle rounded-2xl px-3.5 py-3 text-left active:scale-[0.99] transition-transform', order)}
+    >
+      <span className="w-9 h-9 rounded-xl bg-surface flex items-center justify-center text-lg shrink-0">{icon}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-bold text-primary truncate">{title}</span>
+        <span className="block text-[11.5px] text-text-muted truncate">{summary}</span>
+      </span>
+      <span className={clsx('material-symbols-outlined text-text-muted transition-transform', openOpt === id && 'rotate-180')}>expand_more</span>
+    </button>
+  );
   // The "allocate" step only has content when the account has goals it could allocate into — skip
   // straight past it (rather than showing a step with nothing to act on) when there are none.
   useEffect(() => {
@@ -337,6 +357,8 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
     setAllocSectionExpanded(false);
     setFormError(null);
     setGuideStepIndex(0);
+    setTypePicked(false);
+    setOpenOpt(null);
     setShowForm(true);
   };
   const openEdit = (a: FinancialAccount) => {
@@ -361,6 +383,8 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
     setShareFriendRoles(a.friendRoles || {});
     setAllocSectionExpanded(false);
     setFormError(null);
+    setTypePicked(true);
+    setOpenOpt(null);
     setShowForm(true);
   };
 
@@ -427,9 +451,13 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   const openAddParam = searchParams.get('openAdd');
   const openedAddRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!openAddParam || openAddParam === openedAddRef.current) return;
+    if (!openAddParam) { openedAddRef.current = null; return; }
+    if (openAddParam === openedAddRef.current) return;
     openedAddRef.current = openAddParam;
     openAdd();
+    // Consume the param: left in the URL, the floating "Add Account" button navigates to the very same address, nothing changes, and the form never reopens
+    // after being closed until the user leaves the tab and comes back.
+    setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('openAdd'); return next; }, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAddParam]);
 
@@ -774,19 +802,18 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span className="text-xs font-bold text-text-muted whitespace-nowrap">
-          {t('accounts.totalAcrossAccounts')} <span className="text-primary font-black">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalMinor), defaultCurrency, profile?.numberSystem)}</span>
-        </span>
-        {activeAccounts.length > 0 && (
+      <div className="bg-[#06222f] text-white rounded-3xl p-5 shadow-sm">
+        <p className="text-[11px] font-extrabold tracking-[0.12em] uppercase text-[#5fe0c4]">{t('accounts.totalAcrossAccounts')}</p>
+        <p className="text-[34px] leading-tight font-extrabold mt-1">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalMinor), defaultCurrency, profile?.numberSystem)}</p>
+        {activeAccounts.length > 0 && totalMinor > 0 && (
           <>
-            <span className="text-xs font-bold text-text-muted whitespace-nowrap flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px] text-primary">link</span>
-              {t('accounts.allocatedToGoals')} <span className="text-primary font-black">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalAllocatedMinor), defaultCurrency, profile?.numberSystem)}</span>
-            </span>
-            <span className="text-xs font-bold text-text-muted whitespace-nowrap">
-              {t('accounts.unallocated')} <span className="text-on-surface font-black">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalUnallocatedMinor), defaultCurrency, profile?.numberSystem)}</span>
-            </span>
+            <div className="h-2.5 rounded-full bg-white/15 overflow-hidden mt-3">
+              <div className="h-full rounded-full bg-[#10b394]" style={{ width: `${Math.max(0, Math.min(100, (totalAllocatedMinor / totalMinor) * 100))}%` }} />
+            </div>
+            <div className="flex items-center justify-between text-xs text-[#9fbccb] mt-2.5">
+              <span><b className="text-white">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalAllocatedMinor), defaultCurrency, profile?.numberSystem)}</b> {t('accounts.allocatedToGoals').toLowerCase()}</span>
+              <span><b className="text-white">{getCurrencySymbol(defaultCurrency)}{formatAmountCompact(fromMinorUnits(totalUnallocatedMinor), defaultCurrency, profile?.numberSystem)}</b> {t('accounts.unallocated').toLowerCase()}</span>
+            </div>
           </>
         )}
       </div>
@@ -815,98 +842,73 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
           <p className="text-xs text-text-muted">{t('accounts.emptyDesc')}</p>
         </div>
       ) : (
-        <div className="space-y-2" data-tour="goals-accounts-list">
-          {activeAccounts.map((a) => {
-            const meta = ACCOUNT_TYPES.find((tp) => tp.id === a.type);
-            const unallocatedMinor = accountUnallocatedMinor(a);
-            const allocatedPct = accountAllocatedPctTotal(a);
+        <div className="space-y-4" data-tour="goals-accounts-list">
+          {ACCOUNT_TYPES.map((tp) => ({ tp, list: activeAccounts.filter((x) => x.type === tp.id) })).filter((g) => g.list.length > 0).map(({ tp, list }) => {
+            const sameCurrency = list.every((x) => x.currency === list[0].currency);
+            const subtotal = list.reduce((sum, x) => sum + x.currentBalanceMinor, 0);
             return (
-              <div key={a.id} className="bg-white rounded-xl border border-border-subtle shadow-sm p-3 space-y-2">
-                <div role="button" tabIndex={0} onClick={() => openView(a)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openView(a); }} className="w-full flex items-center gap-3 text-left cursor-pointer">
-                  <span className="text-xl shrink-0">{meta?.icon || '💰'}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-on-surface truncate flex items-center gap-1">
-                      {a.name}
-                      {(a.groupId || (a.friendUids && a.friendUids.length > 0)) && (
-                        <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('accounts.sharedByYou')}>group</span>
-                      )}
-                    </p>
-                    <p className="text-[10px] text-text-muted truncate">
-                      {t(`accounts.type.${a.type}`)}
-                      {' · '}
-                      {t('accounts.asOf', { date: new Date(a.balanceAsOf || a.updatedAt || a.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })}
-                    </p>
-                    {a.interestRatePct != null && (
-                      <p className="text-[10px] text-text-muted truncate">
-                        {a.compoundFrequency
-                          ? t('accounts.interestRateDisplay', { rate: a.interestRatePct, frequency: t(`accounts.compound.${a.compoundFrequency}`) })
-                          : t('accounts.interestRateDisplayNoCompound', { rate: a.interestRatePct })}
-                        {a.interestNextDate && ` · ${t('accounts.interestNextDateShort', { date: new Date(a.interestNextDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) })}`}
-                      </p>
-                    )}
-                    {a.accountNumber && (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); toggleRevealAccountNumber(a.id); }} className="text-[10px] text-text-muted flex items-center gap-1 max-w-full">
-                        <span className="material-symbols-outlined text-[11px] shrink-0">{revealedAccountIds.has(a.id) ? 'visibility_off' : 'visibility'}</span>
-                        <span className="truncate">{revealedAccountIds.has(a.id) ? a.accountNumber : maskAccountNumber(a.accountNumber)}</span>
-                      </button>
-                    )}
-                  </div>
-                  <span className="text-sm font-bold text-primary shrink-0">{getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)}</span>
+              <div key={tp.id} className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[11px] font-extrabold tracking-[0.1em] uppercase text-text-muted">{t(`accounts.type.${tp.id}`)}</span>
+                  {sameCurrency && <span className="text-[11px] font-bold text-text-muted">{getCurrencySymbol(list[0].currency)}{formatAmountCompact(fromMinorUnits(subtotal), list[0].currency, profile?.numberSystem)}</span>}
                 </div>
-                {a.contributionFrequency && a.contributionAmountMinor != null && (
-                  <div className="pl-9">
-                    <p className="text-[10px] font-bold text-primary flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[11px]">autorenew</span>
-                      {t('accounts.sipBadge', {
-                        amount: `${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(a.contributionAmountMinor), a.currency, profile?.numberSystem)}`,
-                        frequency: t(`accounts.contributionFrequency.${a.contributionFrequency}`),
-                        date: a.contributionNextDate ? new Date(a.contributionNextDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—',
-                      })}
-                    </p>
-                  </div>
-                )}
-                {(a.nominees || []).length > 0 && (
-                  <div className="pl-9">
-                    <p className="text-[10px] text-text-muted">
-                      {t('accounts.nominees')}: {a.nominees!.map((n) => (a.nominees!.length > 1 ? `${n.name} (${n.pct}%)` : n.name)).join(', ')}
-                    </p>
-                  </div>
-                )}
-                {(a.goalAllocations || []).length > 0 && (
-                  <div className="pl-9 space-y-0.5">
-                    {(a.goalAllocations || []).map((g) => (
-                      <p key={g.goalId} className="text-[10px] text-primary font-bold flex items-center gap-0.5">
-                        <span className="material-symbols-outlined text-[11px]">link</span>
-                        {g.pct}% → {g.goalName}
-                      </p>
-                    ))}
-                  </div>
-                )}
-                <div className="pl-9">
-                  <p className="text-[10px] text-text-muted">
-                    {t('accounts.unallocatedAmount', { amount: `${getCurrencySymbol(a.currency)}${formatAmountCompact(fromMinorUnits(unallocatedMinor), a.currency, profile?.numberSystem)}`, pct: 100 - allocatedPct })}
-                  </p>
-                </div>
-                <div className="flex items-center justify-end gap-1 pt-1 border-t border-border-subtle">
-                  {!isViewingOther && (
-                    <button onClick={() => openShare(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('accounts.shareDetails')}>
-                      <span className="material-symbols-outlined text-[16px] block">share</span>
-                    </button>
-                  )}
-                  <button onClick={() => setHistoryAccount(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('accounts.history')}>
-                    <span className="material-symbols-outlined text-[16px] block">history</span>
-                  </button>
-                  {!isViewingOther && (
-                    <>
-                      <button onClick={() => openEdit(a)} className="p-1.5 text-text-muted hover:bg-surface rounded-full" aria-label={t('common.edit')}>
-                        <span className="material-symbols-outlined text-[16px] block">edit</span>
-                      </button>
-                      <button onClick={() => { setDeletingAccount(a); setDeleteError(null); }} className="p-1.5 text-text-muted hover:bg-error/10 hover:text-error rounded-full" aria-label={t('common.delete')}>
-                        <span className="material-symbols-outlined text-[16px] block">delete</span>
-                      </button>
-                    </>
-                  )}
-                </div>
+                {list.map((a) => {
+                  const allocatedPct = accountAllocatedPctTotal(a);
+                  const allocs = a.goalAllocations || [];
+                  return (
+                    <div
+                      key={a.id} role="button" tabIndex={0} onClick={() => openView(a)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openView(a); }}
+                      className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3.5 cursor-pointer active:scale-[0.995] transition-transform"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-10 h-10 rounded-xl bg-surface flex items-center justify-center text-[22px] shrink-0">{tp.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[15px] font-bold text-primary truncate flex items-center gap-1.5">
+                            <span className="truncate">{a.name}</span>
+                            {(a.groupId || (a.friendUids && a.friendUids.length > 0)) && (
+                              <span className="shrink-0 rounded-full bg-surface-container px-2 py-0.5 text-[10px] font-extrabold text-text-muted" title={t('accounts.sharedByYou')}>Shared</span>
+                            )}
+                          </p>
+                          <p className="text-xs text-text-muted truncate">
+                            {[a.accountNumber ? maskAccountNumber(a.accountNumber) : '', a.interestRatePct != null ? `${a.interestRatePct}% p.a.` : ''].filter(Boolean).join(' · ') || t(`accounts.type.${a.type}`)}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-[17px] font-extrabold text-primary">{getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)}</p>
+                          <p className="text-[11px] text-text-muted">{t('accounts.asOf', { date: new Date(a.balanceAsOf || a.updatedAt || a.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) })}</p>
+                        </div>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-surface-container overflow-hidden mt-3">
+                        <div className="h-full rounded-full bg-[#10b394]" style={{ width: `${Math.min(100, allocatedPct)}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        <div className="flex items-center gap-1.5 min-w-0 text-[11.5px] text-text-muted">
+                          {allocs.length > 0 ? (
+                            <>
+                              <span className="flex -space-x-1.5 shrink-0">
+                                {allocs.slice(0, 4).map((g) => (
+                                  <span key={g.goalId} title={g.goalName} className="w-6 h-6 rounded-full bg-white border border-border-subtle flex items-center justify-center text-[13px]">
+                                    {(linkableGoals.find((lg: any) => lg.id === g.goalId) as any)?.icon || '🎯'}
+                                  </span>
+                                ))}
+                                {allocs.length > 4 && <span className="w-6 h-6 rounded-full bg-surface-container border border-white text-[10px] font-bold flex items-center justify-center">+{allocs.length - 4}</span>}
+                              </span>
+                              <span className="truncate">{allocatedPct}% in {allocs.length === 1 ? allocs[0].goalName : `${allocs.length} goals`}</span>
+                            </>
+                          ) : (
+                            <span>Not in any goal yet</span>
+                          )}
+                        </div>
+                        <button
+                          type="button" onClick={(e) => { e.stopPropagation(); setMenuAccount(a); }}
+                          className="shrink-0 -mr-1.5 w-8 h-8 rounded-full text-text-muted hover:bg-surface flex items-center justify-center" aria-label="More actions"
+                        >
+                          <span className="material-symbols-outlined text-[20px]">more_horiz</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -938,19 +940,94 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
         </div>
       )}
 
-      {/* --- Add/Edit account modal --- */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowForm(false)}>
-          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
-              <h3 className="text-base font-black text-primary">{editingAccount ? t('accounts.editAccount') : t('accounts.addAccount')}</h3>
-              <button type="button" onClick={() => setShowForm(false)} className="p-1.5 -mr-1.5 text-text-muted hover:bg-surface rounded-full shrink-0" aria-label={t('common.close')}>
-                <span className="material-symbols-outlined text-[20px] block">close</span>
+      {/* --- Account actions sheet (the "..." on a card) --- */}
+      {menuAccount && (
+        <div className="fixed inset-0 z-50 bg-black/45 flex items-end justify-center" onClick={() => setMenuAccount(null)}>
+          <div className="bg-white w-full max-w-lg rounded-t-[26px] px-4 pt-2.5 pb-[max(1.25rem,env(safe-area-inset-bottom))]" onClick={(e) => e.stopPropagation()}>
+            <div className="w-11 h-1.5 rounded-full bg-border-subtle mx-auto mb-3" />
+            <p className="text-base font-extrabold text-primary px-1 pb-2 truncate">{menuAccount.name}</p>
+            {([
+              { icon: 'open_in_new', label: 'Open details', show: true, run: () => openView(menuAccount) },
+              { icon: 'history', label: t('accounts.history'), show: true, run: () => setHistoryAccount(menuAccount) },
+              { icon: 'share', label: t('accounts.shareDetails'), show: !isViewingOther, run: () => openShare(menuAccount) },
+              { icon: 'edit', label: t('common.edit'), show: !isViewingOther, run: () => openEdit(menuAccount) },
+              { icon: 'delete', label: t('common.delete'), show: !isViewingOther, danger: true, run: () => { setDeletingAccount(menuAccount); setDeleteError(null); } },
+            ] as { icon: string; label: string; show: boolean; danger?: boolean; run: () => void }[]).filter((m) => m.show).map((m) => (
+              <button
+                key={m.icon} type="button" onClick={() => { const go = m.run; setMenuAccount(null); go(); }}
+                className={clsx('w-full flex items-center gap-3.5 px-1 py-3.5 border-t border-border-subtle first:border-t-0 text-[15px] font-bold text-left', m.danger ? 'text-error' : 'text-primary')}
+              >
+                <span className="material-symbols-outlined text-[22px] w-7 text-center">{m.icon}</span>{m.label}
               </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* --- Add account, step 1: what is it? (new accounts only; the guided tour and edits skip straight to the form) --- */}
+      {showForm && fresh && !editingAccount && !typePicked && (
+        <div className="fixed inset-0 z-50 bg-[#f6f9fb] flex flex-col">
+          <div className="bg-[#06222f] text-white px-6 pt-5 pb-10 relative shrink-0">
+            <button type="button" onClick={() => setShowForm(false)} className="absolute right-4 top-4 w-9 h-9 rounded-full bg-white/15 flex items-center justify-center" aria-label={t('common.close')}>
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
+            <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">New account</p>
+            <h1 className="text-[26px] leading-tight font-extrabold tracking-tight mt-1.5">What are you adding?</h1>
+            <p className="text-sm text-[#9fbccb] mt-1.5">Pick one. You can change it later.</p>
+          </div>
+          <div className="flex-1 overflow-y-auto -mt-6 rounded-t-[28px] bg-[#f6f9fb] px-5 pt-9 pb-28">
+            <div className="max-w-lg mx-auto">
+              <div className="grid grid-cols-3 gap-2.5">
+                {ACCOUNT_TYPES.map((tp) => (
+                  <button
+                    key={tp.id} type="button" onClick={() => setType(tp.id)}
+                    className={clsx('rounded-2xl border-[1.5px] py-3.5 px-1 text-center active:scale-95 transition-transform', type === tp.id ? 'border-[#10b394] bg-[#e8faf5]' : 'border-border-subtle bg-white')}
+                  >
+                    <span className="block text-[26px] mb-1">{tp.icon}</span>
+                    <span className="block text-xs font-bold text-primary">{t(`accounts.type.${tp.id}`)}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[13px] text-text-muted mt-4 px-1">{t('accounts.typeDesc')}</p>
             </div>
-            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          </div>
+          <div className="fixed left-0 right-0 bottom-0 z-[51] px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent">
+            <button type="button" onClick={() => setTypePicked(true)} className="w-full max-w-lg mx-auto h-14 rounded-2xl bg-[#10b394] text-[#04221b] font-extrabold text-base flex items-center justify-center gap-2 shadow-lg active:scale-[0.99]">
+              {t('common.continue') !== 'common.continue' ? t('common.continue') : 'Continue'} <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- Add/Edit account modal --- */}
+      {showForm && (!fresh || !!editingAccount || typePicked) && (
+        <div className={clsx('fixed inset-0 z-50', fresh ? 'bg-[#f6f9fb] flex flex-col' : 'bg-black/40 flex items-center justify-center p-4')} onClick={() => { if (!fresh) setShowForm(false); }}>
+          <div className={clsx('w-full flex flex-col overflow-hidden', fresh ? 'flex-1 min-h-0' : 'bg-white max-w-sm rounded-2xl shadow-2xl max-h-[85vh]')} onClick={(e) => e.stopPropagation()}>
+            {fresh ? (
+              <div className="bg-[#06222f] text-white px-6 pt-5 pb-10 relative shrink-0">
+                <button type="button" onClick={() => setShowForm(false)} className="absolute right-4 top-4 w-9 h-9 rounded-full bg-white/15 flex items-center justify-center" aria-label={t('common.close')}>
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+                <p className="text-xs font-bold tracking-[0.12em] uppercase text-[#5fe0c4]">{editingAccount ? t('accounts.editAccount') : `New ${t(`accounts.type.${type}`).toLowerCase()} account`}</p>
+                <h1 className="text-[26px] leading-tight font-extrabold tracking-tight mt-1.5">{editingAccount ? 'Update the details' : 'Name it, add the balance'}</h1>
+                {!editingAccount && (
+                  <button type="button" onClick={() => setTypePicked(false)} className="inline-flex items-center gap-1.5 mt-3 rounded-full bg-[#10b394]/20 text-[#5fe0c4] pl-3 pr-2 py-1 text-xs font-bold active:scale-95">
+                    {(ACCOUNT_TYPES.find((x) => x.id === type)?.icon || '')} {t(`accounts.type.${type}`)} · {currency}
+                    <span className="underline underline-offset-2 opacity-80">Change type</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
+                <h3 className="text-base font-black text-primary">{editingAccount ? t('accounts.editAccount') : t('accounts.addAccount')}</h3>
+                <button type="button" onClick={() => setShowForm(false)} className="p-1.5 -mr-1.5 text-text-muted hover:bg-surface rounded-full shrink-0" aria-label={t('common.close')}>
+                  <span className="material-symbols-outlined text-[20px] block">close</span>
+                </button>
+              </div>
+            )}
+            <div className={clsx('flex-1 overflow-y-auto flex flex-col', fresh ? 'gap-4 -mt-6 rounded-t-[28px] bg-[#f6f9fb] px-5 pt-9 pb-28 w-full max-w-lg mx-auto [&_p.px-1]:hidden' : 'gap-3 p-5')}>
             {guideReached('name') && (
-              <div className={clsx('space-y-1.5', guideWrapClass('name'))}>
+              <div className={clsx('space-y-1.5', guideWrapClass('name'), fresh && 'order-1')}>
                 {stepBadge('name')}
                 <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.name')}</label>
                 <p className="text-[10px] text-text-muted px-1">{t('accounts.nameDesc')}</p>
@@ -965,7 +1042,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
               </div>
             )}
             {guideReached('type') && (
-              <div className={clsx('space-y-1.5', guideWrapClass('type'))}>
+              <div className={clsx('space-y-1.5', guideWrapClass('type'), fresh && 'hidden')}>
                 {stepBadge('type')}
                 <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.type')}</label>
                 <p className="text-[10px] text-text-muted px-1">{t('accounts.typeDesc')}</p>
@@ -982,9 +1059,9 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
               </div>
             )}
             {guideReached('balance') && (
-              <div className={clsx('space-y-2', guideWrapClass('balance'))}>
+              <div className={clsx('space-y-2', guideWrapClass('balance'), fresh && 'order-2')}>
                 {stepBadge('balance')}
-                <div className="space-y-1.5">
+                <div className={clsx('space-y-1.5', fresh && 'hidden')}>
                   <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.accountNumber')}</label>
                   <input
                     type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder={t('accounts.accountNumberPlaceholder')}
@@ -1000,7 +1077,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
                       <input
                         type="text" inputMode="decimal" autoFocus={guideActive('balance')} value={balanceInput} onChange={(e) => setBalanceInput(e.target.value)}
                         placeholder={editingAccount ? t('accounts.balancePlaceholder') : t('accounts.startingBalancePlaceholder')}
-                        className="w-full h-12 bg-surface pl-8 pr-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                        className={clsx('w-full bg-surface rounded-xl border border-border-subtle outline-none focus:ring-2 focus:ring-primary/20', fresh ? 'h-14 pl-9 pr-3 text-2xl font-extrabold text-primary' : 'h-12 pl-8 pr-3 text-sm')}
                       />
                     </div>
                     <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-24 h-12 bg-surface px-2 rounded-xl border border-border-subtle text-sm font-bold text-primary outline-none">
@@ -1015,8 +1092,19 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
               </div>
             )}
 
+            {optHeader('nominees', 'order-7', '📝', 'More details', nominees.length || accountNumberInput ? [accountNumberInput && 'Account number added', nominees.length && `${nominees.length} nominee${nominees.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ') : 'Account number, nominees, balance date')}
+            {fresh && (
+              <div className={clsx('space-y-1.5 order-7', optHidden('nominees') && 'hidden')}>
+                <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.accountNumber')}</label>
+                <input
+                  type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder={t('accounts.accountNumberPlaceholder')}
+                  className="w-full h-12 bg-white px-4 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <p className="text-[11px] text-text-muted px-1">{t('accounts.accountNumberNote')}</p>
+              </div>
+            )}
             {guideReached('nominees') && (
-            <div className={clsx('space-y-1.5', guideWrapClass('nominees'))}>
+            <div className={clsx('space-y-1.5', guideWrapClass('nominees'), fresh && 'order-7', optHidden('nominees') && 'hidden')}>
               {stepBadge('nominees')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.nomineesOptional')}</label>
               <p className="text-[10px] text-text-muted px-1">{t('accounts.nomineesDesc')}</p>
@@ -1061,7 +1149,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
             </div>
             )}
             {guideReached('balanceAsOf') && (
-            <div className={clsx('space-y-1.5', guideWrapClass('balanceAsOf'))}>
+            <div className={clsx('space-y-1.5', guideWrapClass('balanceAsOf'), fresh && 'order-7', optHidden('nominees') && 'hidden')}>
               {stepBadge('balanceAsOf')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.balanceAsOf')}</label>
               <p className="text-[10px] text-text-muted px-1">{t('accounts.balanceAsOfDesc')}</p>
@@ -1074,8 +1162,9 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
               )}
             </div>
             )}
+            {optHeader('interest', 'order-4', '📈', 'Interest & regular deposits', interestRateInput || contributionAmountInput ? [interestRateInput && `${interestRateInput}% interest`, contributionAmountInput && contributionFrequency && 'regular deposits'].filter(Boolean).join(' · ') : 'Rate, compounding, monthly top-ups')}
             {guideReached('interest') && (
-            <div className={clsx('space-y-1.5', guideWrapClass('interest'))}>
+            <div className={clsx('space-y-1.5', guideWrapClass('interest'), fresh && 'order-4', optHidden('interest') && 'hidden')}>
               {stepBadge('interest')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.interestRateOptional')}</label>
               <div className="relative">
@@ -1088,7 +1177,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
             </div>
             )}
             {guideReached('interest') && (
-            <div className="space-y-1.5">
+            <div className={clsx('space-y-1.5', fresh && 'order-4', optHidden('interest') && 'hidden')}>
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.compoundFrequencyLabel')}</label>
               <select
                 value={compoundFrequency}
@@ -1120,7 +1209,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
             )}
 
             {guideReached('contribution') && (
-            <div className={clsx('space-y-1.5', guideWrapClass('contribution'))}>
+            <div className={clsx('space-y-1.5', guideWrapClass('contribution'), fresh && 'order-4', optHidden('interest') && 'hidden')}>
               {stepBadge('contribution')}
               <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('accounts.contributionOptional')}</label>
               <div className="flex gap-2">
@@ -1157,13 +1246,14 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
               )}
             </div>
             )}
+            {fresh && (linkableGoals.length > 0 || hiddenAllocations.length > 0) && optHeader('allocate', 'order-5', '🎯', 'Use for goals', allocTotal > 0 ? `${allocTotal}% set aside` : 'Set aside a share for each goal')}
             {guideReached('allocate') && (linkableGoals.length > 0 || hiddenAllocations.length > 0) && (
-              <div className={clsx('space-y-1.5', guideWrapClass('allocate'))}>
+              <div className={clsx('space-y-1.5', guideWrapClass('allocate'), fresh && 'order-5', optHidden('allocate') && 'hidden')}>
                 {stepBadge('allocate')}
                 <button
                   type="button"
                   onClick={() => setAllocSectionExpanded((v) => !v)}
-                  className="w-full flex items-center justify-between px-1"
+                  className={clsx('w-full flex items-center justify-between px-1', fresh && 'hidden')}
                 >
                   <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('accounts.allocateToGoals')}</span>
                   <span className="flex items-center gap-1 text-[10px] font-bold text-primary">
@@ -1172,7 +1262,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
                   </span>
                 </button>
                 <p className="text-[10px] text-text-muted px-1">{t('accounts.allocateToGoalsDesc')}</p>
-                {allocSectionExpanded && (
+                {(allocSectionExpanded || fresh) && (
                   <>
                     <div className="space-y-2">
                       {linkableGoals.map((g: any) => (
@@ -1216,8 +1306,9 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
                 )}
               </div>
             )}
+            {fresh && (!editingAccount || editingAccount.userId === user?.uid) && optHeader('share', 'order-6', '👪', 'Share with a group', shareGroupId || shareFriendUids.length ? `Shared · ${shareGroupRole === 'edit' ? 'can edit' : 'can view'}` : 'Not shared')}
             {guideDone && (!editingAccount || editingAccount.userId === user?.uid) && (
-              <div className="space-y-1.5 pt-1 border-t border-border-subtle">
+              <div className={clsx('space-y-1.5', fresh ? 'order-6' : 'pt-1 border-t border-border-subtle', optHidden('share') && 'hidden')}>
                 <label className="text-[10px] font-bold text-text-muted px-1 uppercase tracking-wider">{t('goals.shareWith')}</label>
                 <p className="text-[11px] text-text-muted px-1">{t('accounts.shareWithDesc')}</p>
                 <select
@@ -1308,7 +1399,17 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
                 )}
               </div>
             )}
-            {guideDone && (
+            {fresh && (
+              <div className="fixed left-0 right-0 bottom-0 z-[51] px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent">
+                <div className="max-w-lg mx-auto space-y-2">
+                  {formError && <p className="text-xs text-error font-bold text-center bg-white rounded-lg py-1.5">{formError}</p>}
+                  <button onClick={handleSaveAccount} disabled={saving} className="w-full h-14 rounded-2xl bg-[#10b394] text-[#04221b] font-extrabold text-base shadow-lg disabled:opacity-50 active:scale-[0.99]">
+                    {saving ? t('goals.saving') : editingAccount ? t('common.save') : t('accounts.addAccount')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {!fresh && guideDone && (
               <>
                 {formError && <p className="text-xs text-error font-bold">{formError}</p>}
                 <div className="flex gap-2">
