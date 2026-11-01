@@ -320,6 +320,18 @@ export default function GroupAnalysisSummary() {
     if (user) setBookmarks(loadBookmarks(user.uid));
   }, [user]);
 
+  // One month control: picking a month (pill or Overview stepper) sets the Overview month AND the month/year filters the Trend, Categories, Groups and
+  // People tabs read, so the tabs never show a different month than the pill says.
+  const pickMonth = (key: string) => {
+    setOvMonthKey(key);
+    const y = Number(key.slice(0, 4));
+    const m = Number(key.slice(5, 7)) - 1;
+    if (Number.isFinite(y) && m >= 0 && m < 12) { setSelectedMonths([m]); setSelectedYears([y]); }
+  };
+  // true when the filters (set by hand in Filters) no longer match the single month in the pill
+  const monthFiltersCustom = !(selectedMonths.length === 1 && selectedYears.length === 1
+    && ovMonthKey === `${selectedYears[0]}-${String(selectedMonths[0] + 1).padStart(2, '0')}`);
+
   const toggleMonth = (m: number) => setSelectedMonths((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
   const toggleYear = (y: number) => setSelectedYears((prev) => (prev.includes(y) ? prev.filter((x) => x !== y) : [...prev, y]));
 
@@ -1199,10 +1211,11 @@ export default function GroupAnalysisSummary() {
               <div className="relative shrink-0">
                 <select
                   className="bg-primary text-white rounded-full text-xs font-bold pl-3.5 pr-8 py-2 appearance-none outline-none cursor-pointer shadow-sm"
-                  onChange={(e) => setOvMonthKey(e.target.value)}
-                  value={ovMonthKey}
+                  onChange={(e) => pickMonth(e.target.value)}
+                  value={monthFiltersCustom ? 'custom' : ovMonthKey}
                   aria-label="Month"
                 >
+                  {monthFiltersCustom && <option value="custom" disabled>Custom months</option>}
                   {overviewMonthOptions.map((o) => (
                     <option key={o.key} value={o.key}>{o.label}</option>
                   ))}
@@ -1425,7 +1438,7 @@ export default function GroupAnalysisSummary() {
               <OverviewTab
                 expenses={insightExpenses}
                 monthKey={ovMonthKey}
-                onMonthChange={setOvMonthKey}
+                onMonthChange={pickMonth}
                 currentMonthKey={thisMonthKey}
                 budget={selectedGroupId && selectedGroupId !== 'all' ? budgetsByMonth[ovMonthKey] ?? null : null}
                 hasIncomeData={entryTypeFilter !== 'expense'}
