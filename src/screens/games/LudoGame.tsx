@@ -582,6 +582,7 @@ export default function LudoGame() {
   // token that was on the board and is now back in the yard, while someone else's token moved.
   const prevTokensRef = React.useRef<Record<string, number[]> | null>(null);
   const [captureToast, setCaptureToast] = useState<{ id: number; text: string } | null>(null);
+  const captureTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (game?.status !== 'active') {
       prevTokensRef.current = null;
@@ -609,10 +610,13 @@ export default function LudoGame() {
       ? `${mover.displayName} captured your token!`
       : `${mover.displayName} captured ${victim.displayName}'s token!`;
     setCaptureToast({ id, text });
-    const t = setTimeout(() => setCaptureToast((cur) => (cur?.id === id ? null : cur)), 3500);
-    return () => clearTimeout(t);
+    // The timer lives in a ref, NOT in this effect's cleanup: the effect re-runs on every token move, and a
+    // cleanup-cancelled timer left the toast stuck on screen forever once another move followed the capture.
+    if (captureTimerRef.current) clearTimeout(captureTimerRef.current);
+    captureTimerRef.current = setTimeout(() => setCaptureToast((cur) => (cur?.id === id ? null : cur)), 3500);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionsKey, game?.status]);
+  useEffect(() => () => { if (captureTimerRef.current) clearTimeout(captureTimerRef.current); }, []);
 
   const [hideResult, setHideResult] = useState(false);
   const [showExitMenuLudo, setShowExitMenuLudo] = useState(false);
@@ -1223,7 +1227,12 @@ export default function LudoGame() {
                   initial={{ scale: 0.8, opacity: 0, y: 10 }}
                   animate={{ scale: 1, opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  className="text-center px-4 py-2.5 rounded-2xl bg-slate-900/95 border-2 border-amber-400 shadow-2xl text-sm font-extrabold"
+                  drag="x"
+                  dragSnapToOrigin
+                  dragElastic={0.6}
+                  onDragEnd={(_, info) => { if (Math.abs(info.offset.x) > 60 || Math.abs(info.velocity.x) > 400) setCaptureToast(null); }}
+                  onClick={() => setCaptureToast(null)}
+                  className="pointer-events-auto cursor-pointer touch-pan-y text-center px-4 py-2.5 rounded-2xl bg-slate-900/95 border-2 border-amber-400 shadow-2xl text-sm font-extrabold"
                 >
                   💥 {captureToast.text}
                   <span className="block text-[10px] font-semibold text-white/80 mt-0.5">A captured token goes back to its yard — it needs a 6 to come out</span>

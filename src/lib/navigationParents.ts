@@ -80,7 +80,7 @@ const PARENT_OVERRIDES: Record<string, string> = {
   '/shop/sales': '/',
   '/shop/reports': '/shop/sales',
   '/shop/activity': '/shop/sales',
-  '/admin': '/',
+  '/admin': '/profile',
   '/about': '/profile',
   '/privacy': '/profile',
   '/data-usage': '/privacy',
