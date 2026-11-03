@@ -263,7 +263,7 @@ export default function VaccineVisitDetail() {
 
   return (
     <div className="flex flex-col min-h-screen bg-surface">
-      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-10">
+      <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-32 md:pb-32">
         {/* Sticky, like LogVaccineVisit.tsx's own header — the baby icon and visit summary stay
             visible while only the dose list below scrolls, so it's always clear whose visit (and
             which one) this is even after scrolling past several doses. */}

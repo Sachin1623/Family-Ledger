@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { ShareBrandBadge } from './ShareBrandBadge';
+import BroadcastVideo from './BroadcastVideo';
 import { targetOf, trackBroadcast, type BroadcastVia } from '../lib/broadcastTrack';
 
 // Full-screen announcement modal, driven by a single `app_config/broadcast` doc an admin writes
@@ -133,24 +134,13 @@ export default function BroadcastBanner() {
 
             <div className="overflow-y-auto flex-1 px-5 space-y-4">
               <p className="text-sm text-on-surface whitespace-pre-wrap leading-relaxed">{renderMessage(broadcast?.message || '')}</p>
-              {/* a YouTube video plays right here (the privacy-friendly embed); a Short is shown tall */}
+              {/* a YouTube video plays right here, with its own full-screen view */}
               {broadcast?.videoId && /^[A-Za-z0-9_-]{11}$/.test(broadcast.videoId) && (
-                <div className="space-y-2">
-                  <div className={broadcast.videoShort ? 'mx-auto w-[62%] aspect-[9/16] max-h-[52vh]' : 'w-full aspect-video'}>
-                    <iframe
-                      src={`https://www.youtube-nocookie.com/embed/${broadcast.videoId}?rel=0&playsinline=1&modestbranding=1`}
-                      title="Video"
-                      className="w-full h-full rounded-2xl border border-border-subtle bg-black"
-                      allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                      allowFullScreen
-                      loading="lazy"
-                      referrerPolicy="strict-origin-when-cross-origin"
-                    />
-                  </div>
-                  <button type="button" onClick={() => openLink(`https://www.youtube.com/watch?v=${broadcast.videoId}`, 'button')} className="w-full text-center text-xs font-black text-primary underline underline-offset-2">
-                    Can't play it here? Open it on YouTube
-                  </button>
-                </div>
+                <BroadcastVideo
+                  videoId={broadcast.videoId}
+                  short={!!broadcast.videoShort}
+                  onOpenYouTube={() => openLink(`https://www.youtube.com/watch?v=${broadcast.videoId}`, 'button')}
+                />
               )}
               {broadcast?.images && broadcast.images.length > 0 && (
                 <div className="space-y-3">

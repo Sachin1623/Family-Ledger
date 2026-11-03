@@ -125,6 +125,7 @@ export default function AdminDashboard() {
   const supportTiles: Tile[] = [
     { to: '/admin/feedback', icon: 'forum', label: 'Feedback & Support', description: 'Suggestions, feedback & bug reports from users' },
     { to: '/admin/chat-reports', icon: 'report', label: 'Game Chat Reports', description: 'Reported messages from Ludo/Rummy/Business/Sweep chat' },
+    { to: '/admin/vaccine-mapping', icon: 'vaccines', label: 'Vaccine Mapping', description: 'Map each shot to the vaccines it covers, find unmapped shots, check with AI' },
     { to: '/admin/shopkeeper-requests', icon: 'storefront', label: 'Shopkeeper Requests', description: 'Review and approve requests to enable Shopkeeper mode' },
   ];
 

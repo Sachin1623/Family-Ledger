@@ -6420,6 +6420,161 @@ async function startServer() {
   });
 
   // ===================== Game chat abuse reports =====================
+  // ---- Vaccine shot <-> vaccine mapping (admin) -------------------------------------------------------------------------------------
+  // The one shared doc vaccineBrandCatalog/current lists each shot (a product like "Easysix") with the vaccines it covers; the Log Visit screen
+  // reads it to suggest shots and tick the covered vaccines in one tap. These endpoints let an admin edit it, see which shots people typed
+  // that are not in it yet, and ask Gemini to double-check the mapping.
+  const cleanVaccineEntries = (raw: unknown) => {
+    const seen = new Set<string>();
+    const out: { shotName: string; brand: string; vaccines: string[] }[] = [];
+    for (const e of (Array.isArray(raw) ? raw : []).slice(0, 400)) {
+      const shotName = String(e?.shotName || '').trim().slice(0, 80);
+      if (!shotName) continue;
+      const brand = String(e?.brand || '').trim().slice(0, 80);
+      const key = `${shotName}|${brand}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const vaccines = [...new Set((Array.isArray(e?.vaccines) ? e.vaccines : []).map((v: any) => String(v || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 20) as string[];
+      out.push({ shotName, brand, vaccines });
+    }
+    return out;
+  };
+
+  app.get('/api/admin/vaccine-mapping', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    try {
+      const [catalogSnap, groupSnap, doseSnap] = await Promise.all([
+        adminDb.collection('vaccineBrandCatalog').doc('current').get(),
+        adminDb.collection('vaccineDoseGroups').select('name', 'brand', 'deletedAt').get(),
+        adminDb.collection('vaccineDoses').select('vaccineName', 'deletedAt').get(),
+      ]);
+      const entries = cleanVaccineEntries(catalogSnap.exists ? catalogSnap.data()?.entries : []);
+      // every shot name people have actually used, with how many times
+      const shotMap = new Map<string, { name: string; brand: string; count: number }>();
+      groupSnap.docs.forEach((d) => {
+        const x = d.data() as any;
+        if (x.deletedAt) return;
+        const name = String(x.name || '').trim();
+        if (!name) return;
+        const brand = String(x.brand || '').trim();
+        const k = `${name}|${brand}`.toLowerCase();
+        const cur = shotMap.get(k);
+        if (cur) cur.count += 1; else shotMap.set(k, { name, brand, count: 1 });
+      });
+      // every vaccine name in use, so the picker offers real names (DTP, Hep B ...)
+      const vaccineMap = new Map<string, { name: string; count: number }>();
+      doseSnap.docs.forEach((d) => {
+        const x = d.data() as any;
+        if (x.deletedAt) return;
+        const name = String(x.vaccineName || '').trim();
+        if (!name) return;
+        const k = name.toLowerCase();
+        const cur = vaccineMap.get(k);
+        if (cur) cur.count += 1; else vaccineMap.set(k, { name, count: 1 });
+      });
+      return res.json({
+        entries,
+        updatedAt: catalogSnap.data()?.updatedAt || null,
+        usedShots: [...shotMap.values()].sort((a, b) => b.count - a.count),
+        usedVaccines: [...vaccineMap.values()].sort((a, b) => b.count - a.count),
+      });
+    } catch (error) {
+      console.error('admin/vaccine-mapping error:', error);
+      return res.status(500).json({ error: 'Unable to load the vaccine mapping.' });
+    }
+  });
+
+  app.post('/api/admin/vaccine-mapping', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    try {
+      const entries = cleanVaccineEntries(req.body?.entries);
+      await adminDb.collection('vaccineBrandCatalog').doc('current').set({
+        entries,
+        updatedAt: new Date().toISOString(),
+        updatedBy: decoded.email || decoded.uid,
+      });
+      return res.json({ ok: true, entries });
+    } catch (error) {
+      console.error('admin/vaccine-mapping save error:', error);
+      return res.status(500).json({ error: 'Unable to save the vaccine mapping.' });
+    }
+  });
+
+  // Gemini checks the mapping: for each shot, does the list of vaccines match what that product really contains? Advice only, nothing is saved.
+  app.post('/api/admin/vaccine-mapping/verify', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    const entries = cleanVaccineEntries(req.body?.entries).slice(0, 80);
+    if (entries.length === 0) return res.status(400).json({ error: 'Nothing to check yet.' });
+    const vocabulary: string[] = [...new Set((Array.isArray(req.body?.vaccineNames) ? req.body.vaccineNames : []).map((v: any) => String(v || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 120) as string[];
+    try {
+      const prompt = [
+        'You are a paediatric vaccine expert checking an app\'s table that maps each vaccine product ("shot") given to a baby to the vaccines it covers. The app is used mostly in India (UIP and IAP schedules) but also the US, UK and elsewhere.',
+        'For each numbered entry decide whether its vaccine list is correct for that product, using the product name and brand. Judge only what you are reasonably sure of; if you do not recognise the product, verdict is "unsure".',
+        `The app's own vaccine names are: ${JSON.stringify(vocabulary)}. When you suggest a corrected list, use these exact names whenever one means the same vaccine (e.g. "DTP" or "Hep B"), and only add a new name if none fits.`,
+        'Verdicts: "ok" (list is right), "fix" (something missing or wrong; give the full corrected list in suggestedVaccines), "unsure" (cannot tell).',
+        'note: one short plain sentence saying why, e.g. "Easysix is a 6-in-1: adds Polio (IPV)".',
+        `Entries: ${JSON.stringify(entries.map((e, i) => ({ index: i, shotName: e.shotName, brand: e.brand, vaccines: e.vaccines })))}`,
+        'Return JSON only.',
+      ].join('\n');
+      const request = (model: string, location: string) => voiceClientFor(location).models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: GenAiType.OBJECT,
+            properties: {
+              results: {
+                type: GenAiType.ARRAY,
+                items: {
+                  type: GenAiType.OBJECT,
+                  properties: {
+                    index: { type: GenAiType.INTEGER },
+                    verdict: { type: GenAiType.STRING, enum: ['ok', 'fix', 'unsure'] },
+                    suggestedVaccines: { type: GenAiType.ARRAY, items: { type: GenAiType.STRING } },
+                    note: { type: GenAiType.STRING },
+                  },
+                  required: ['index', 'verdict', 'note'],
+                },
+              },
+            },
+            required: ['results'],
+          },
+        },
+      });
+      // a stronger model first (this is a rare admin action, so cost and speed matter little), then the same fallbacks the voice feature uses
+      const attempts = [{ model: 'gemini-3.5-flash', location: 'global' }, ...VOICE_ATTEMPTS];
+      let response: Awaited<ReturnType<typeof request>> | null = null;
+      let lastError: any = null;
+      for (const a of attempts) {
+        try { response = await request(a.model, a.location); break; } catch (err: any) {
+          lastError = err;
+          if (!/NOT_FOUND|404|RESOURCE_EXHAUSTED|429|UNAVAILABLE|503/.test(String(err?.message || err))) throw err;
+        }
+      }
+      if (!response) throw lastError || new Error('no model available');
+      let parsed: any = {};
+      try { parsed = JSON.parse(response.text || '{}'); } catch { parsed = {}; }
+      const results = (Array.isArray(parsed.results) ? parsed.results : [])
+        .filter((r: any) => Number.isInteger(r?.index) && r.index >= 0 && r.index < entries.length && ['ok', 'fix', 'unsure'].includes(r.verdict))
+        .map((r: any) => ({
+          shotName: entries[r.index].shotName,
+          brand: entries[r.index].brand,
+          verdict: r.verdict,
+          suggestedVaccines: r.verdict === 'fix' ? (Array.isArray(r.suggestedVaccines) ? r.suggestedVaccines : []).map((v: any) => String(v || '').trim().slice(0, 60)).filter(Boolean).slice(0, 20) : [],
+          note: String(r.note || '').slice(0, 240),
+        }));
+      return res.json({ ok: true, model: 'Gemini', results });
+    } catch (error: any) {
+      console.error('admin/vaccine-mapping/verify error:', error);
+      return res.status(500).json({ error: 'The AI check could not run just now. Try again in a minute.' });
+    }
+  });
+
   app.get('/api/admin/chat-reports', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;

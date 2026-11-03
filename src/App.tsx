@@ -127,6 +127,7 @@ const AdminAppVersion = lazyScreen(() => import('./screens/admin/AdminAppVersion
 const AdminBuilds = lazyScreen(() => import('./screens/admin/AdminBuilds'));
 const AdminBroadcast = lazyScreen(() => import('./screens/admin/AdminBroadcast'));
 const AdminChatReports = lazyScreen(() => import('./screens/admin/AdminChatReports'));
+const AdminVaccineMapping = lazyScreen(() => import('./screens/admin/AdminVaccineMapping'));
 import UpdatePrompt from './components/UpdatePrompt';
 import UpdateBanner from './components/UpdateBanner';
 import GlobalChatPopup from './components/GlobalChatPopup';
@@ -489,6 +490,7 @@ export default function App() {
               <Route path="/admin/broadcast" element={<AdminRoute><AdminBroadcast /></AdminRoute>} />
               <Route path="/admin/shopkeeper-requests" element={<AdminRoute><AdminShopkeeperRequests /></AdminRoute>} />
               <Route path="/admin/chat-reports" element={<AdminRoute><AdminChatReports /></AdminRoute>} />
+              <Route path="/admin/vaccine-mapping" element={<AdminRoute><AdminVaccineMapping /></AdminRoute>} />
 
               {/* Global Catch-all */}
               <Route path="*" element={<Navigate to="/" replace />} />
