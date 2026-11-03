@@ -3425,6 +3425,27 @@ async function cleanupOldActivities(db: Firestore): Promise<number> {
 // path. Filters `status === 'scheduled'` alone (no range clause combined with it, matching this
 // project's usual composite-index-avoidance convention) and checks `scheduledFor <= now` in
 // memory instead; the number of pending scheduled broadcasts at any moment is always tiny.
+// A YouTube link (watch, youtu.be, Shorts, embed or live) -> its 11-character video id, and whether it is a Short. Anything else is null,
+// so only a real YouTube video can ever be put in a broadcast's player.
+function parseYouTubeLink(raw: unknown): { id: string; short: boolean } | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!text) return null;
+  let url: URL;
+  try { url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`); } catch { return null; }
+  const host = url.hostname.toLowerCase().replace(/^(www|m)\./, '');
+  let id = '';
+  let short = false;
+  if (host === 'youtu.be') {
+    id = url.pathname.slice(1).split('/')[0];
+  } else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts[0] === 'watch') id = url.searchParams.get('v') || '';
+    else if (['shorts', 'embed', 'live', 'v'].includes(parts[0])) { id = parts[1] || ''; short = parts[0] === 'shorts'; }
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(id) ? { id, short } : null;
+}
+
 async function processScheduledBroadcasts(db: Firestore): Promise<number> {
   const now = new Date();
   const snap = await db.collection('broadcasts').where('status', '==', 'scheduled').get();
@@ -3445,6 +3466,7 @@ async function processScheduledBroadcasts(db: Firestore): Promise<number> {
         message,
         images: b.images || [],
         imageLinks: b.imageLinks || [],
+        ...(b.videoId ? { videoId: b.videoId, videoShort: !!b.videoShort } : {}),
         createdAt: new Date().toISOString(),
         createdBy: b.createdBy,
       });
@@ -6777,6 +6799,13 @@ async function startServer() {
     // Where tapping each picture goes (a web address, or empty), one entry per picture.
     const imageLinks: string[] = images.map((_: string, i: number) => { const l = Array.isArray(req.body?.imageLinks) ? req.body.imageLinks[i] : ''; return typeof l === 'string' && /^https?:\/\//.test(l) ? l.slice(0, 300) : ''; });
     const scheduledFor = req.body?.scheduledFor ? String(req.body.scheduledFor) : null;
+    // An optional YouTube video that plays inside the message.
+    const videoRaw = typeof req.body?.videoUrl === 'string' ? req.body.videoUrl.trim() : '';
+    const video = videoRaw ? parseYouTubeLink(videoRaw) : null;
+    if (videoRaw && !video) {
+      return res.status(400).json({ error: 'Enter a valid YouTube link (a video or a Short).' });
+    }
+    const videoFields = video ? { videoId: video.id, videoShort: video.short } : {};
     if (!message) {
       return res.status(400).json({ error: 'message is required.' });
     }
@@ -6800,6 +6829,7 @@ async function startServer() {
           message,
           images,
           imageLinks,
+          ...videoFields,
           status: 'scheduled',
           scheduledFor,
           createdAt: new Date().toISOString(),
@@ -6814,6 +6844,7 @@ async function startServer() {
         message,
         images,
         imageLinks,
+        ...videoFields,
         createdAt: new Date().toISOString(),
         createdBy,
       });
@@ -6828,6 +6859,7 @@ async function startServer() {
         message,
         images,
         imageLinks,
+        ...videoFields,
         status: 'sent',
         createdAt: new Date().toISOString(),
         sentAt: new Date().toISOString(),
@@ -6866,6 +6898,9 @@ async function startServer() {
       // Where tapping each picture goes (a web address, or empty), one entry per picture.
       const imageLinks: string[] = images.map((_: string, i: number) => { const l = Array.isArray(req.body?.imageLinks) ? req.body.imageLinks[i] : ''; return typeof l === 'string' && /^https?:\/\//.test(l) ? l.slice(0, 300) : ''; });
       const scheduledFor = req.body?.scheduledFor ? String(req.body.scheduledFor) : null;
+      const videoRaw = typeof req.body?.videoUrl === 'string' ? req.body.videoUrl.trim() : '';
+      const video = videoRaw ? parseYouTubeLink(videoRaw) : null;
+      if (videoRaw && !video) return res.status(400).json({ error: 'Enter a valid YouTube link (a video or a Short).' });
       if (!message) return res.status(400).json({ error: 'message is required.' });
       if (message.length > 800) return res.status(400).json({ error: 'message must be 800 characters or fewer.' });
       if (!scheduledFor || Number.isNaN(new Date(scheduledFor).getTime()) || new Date(scheduledFor).getTime() <= Date.now()) {
@@ -6875,7 +6910,11 @@ async function startServer() {
         return res.status(400).json({ error: 'Those images are too large combined — remove one or use smaller photos.' });
       }
 
-      await ref.update({ title, message, images, imageLinks, scheduledFor });
+      await ref.update({
+        title, message, images, imageLinks, scheduledFor,
+        videoId: video ? video.id : admin.firestore.FieldValue.delete(),
+        videoShort: video ? video.short : admin.firestore.FieldValue.delete(),
+      });
       return res.json({ ok: true });
     } catch (error) {
       console.error('admin/broadcast update error:', error);

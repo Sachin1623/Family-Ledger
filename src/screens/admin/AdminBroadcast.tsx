@@ -13,6 +13,8 @@ interface BroadcastRecord {
   message: string;
   images?: string[];
   imageLinks?: string[];
+  videoId?: string;
+  videoShort?: boolean;
   status: 'sent' | 'scheduled' | 'canceled';
   createdAt: string;
   createdBy?: string;
@@ -81,6 +83,8 @@ export default function AdminBroadcast() {
   const [images, setImages] = useState<string[]>([]);
   // where tapping each picture goes (aligned with `images`; empty = nothing)
   const [imageLinks, setImageLinks] = useState<string[]>([]);
+  // a YouTube video that plays inside the message (optional)
+  const [videoUrl, setVideoUrl] = useState('');
   const [processingImages, setProcessingImages] = useState(false);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledForLocal, setScheduledForLocal] = useState('');
@@ -149,6 +153,7 @@ export default function AdminBroadcast() {
     setMessage('');
     setImages([]);
     setImageLinks([]);
+    setVideoUrl('');
     setScheduleEnabled(false);
     setScheduledForLocal('');
   };
@@ -182,6 +187,7 @@ export default function AdminBroadcast() {
     setMessage(b.message);
     setImages(b.images || []);
     setImageLinks(b.imageLinks || []);
+    setVideoUrl(b.videoId ? `https://youtu.be/${b.videoId}` : '');
     setScheduleEnabled(false);
     setScheduledForLocal('');
     setResult(null);
@@ -195,6 +201,7 @@ export default function AdminBroadcast() {
     setMessage(b.message);
     setImages(b.images || []);
     setImageLinks(b.imageLinks || []);
+    setVideoUrl(b.videoId ? `https://youtu.be/${b.videoId}` : '');
     setScheduleEnabled(true);
     setScheduledForLocal(toDatetimeLocalValue(b.scheduledFor));
     setResult(null);
@@ -262,9 +269,9 @@ export default function AdminBroadcast() {
     setResult(null);
     try {
       if (editingId) {
-        await adminPost(`/api/admin/broadcast/${editingId}`, { title, message: message.trim(), images, imageLinks, scheduledFor });
+        await adminPost(`/api/admin/broadcast/${editingId}`, { title, message: message.trim(), images, imageLinks, videoUrl: videoUrl.trim(), scheduledFor });
       } else {
-        const data = await adminPost('/api/admin/broadcast', { title, message: message.trim(), images, imageLinks, scheduledFor });
+        const data = await adminPost('/api/admin/broadcast', { title, message: message.trim(), images, imageLinks, videoUrl: videoUrl.trim(), scheduledFor });
         if (!scheduledFor) {
           setResult({ recipientCount: data.recipientCount, pushSent: data.pushSent });
           setCurrent({ id: data.broadcastId, title, message: message.trim(), images, createdAt: new Date().toISOString() });
@@ -433,6 +440,19 @@ export default function AdminBroadcast() {
                   <input type="file" accept="image/*" multiple className="hidden" onChange={handleAddImages} disabled={processingImages} />
                 </label>
               )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">YouTube video (optional)</label>
+              <input
+                type="url"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+                placeholder="Paste a YouTube video or Short link"
+                maxLength={300}
+                className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <p className="text-[10px] text-text-muted px-1">It plays right inside the message. People tap play; it needs an internet connection.</p>
             </div>
 
             <div className="space-y-2 border-t border-border-subtle pt-4">
