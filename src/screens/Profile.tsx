@@ -28,6 +28,7 @@ import { logGrowthEvent } from '../lib/growthEvents';
 import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
 import SpreadPosterPicker from '../components/SpreadPosterPicker';
 import AppVersionChip from '../components/AppVersionChip';
+import { FavoriteButton } from '../components/FavoriteButton';
 import { loadSpreadPosters } from '../lib/spreadPosterCache';
 import { shareImageToApp, DirectShareTarget } from '../lib/appShare';
 import type { SpreadVariantId } from '../lib/spreadCardImage';
@@ -1038,13 +1039,17 @@ export default function Profile() {
             bottom of the page, past every settings section, which meant a scroll to reach it on
             every visit. */}
         {admin.isAdmin && (
-          <button
-            onClick={() => navigate('/admin')}
-            className="w-full flex items-center justify-center gap-2 py-4 bg-primary text-white font-bold rounded-2xl active:scale-[0.98] transition-all shadow-sm"
-          >
-            <span className="material-symbols-outlined">admin_panel_settings</span>
-            Admin Panel
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => navigate('/admin')}
+              className="w-full flex items-center justify-center gap-2 py-4 bg-primary text-white font-bold rounded-2xl active:scale-[0.98] transition-all shadow-sm"
+            >
+              <span className="material-symbols-outlined">admin_panel_settings</span>
+              Admin Panel
+            </button>
+            {/* star = pin the Admin Panel to the favorites row on the home screen */}
+            <span className="absolute right-2 top-1/2 -translate-y-1/2"><FavoriteButton itemKey="admin-panel" className="!text-white/70" /></span>
+          </div>
         )}
 
         {/* Prioritized per explicit request — placed right under the header, ahead of every

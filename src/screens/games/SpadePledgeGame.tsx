@@ -265,7 +265,8 @@ export default function SpadePledgeGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remainingMs, dealId, deal?.turnStartedAt, deal?.status]);
 
-  if (tableLoading || (table?.status === 'active' && dealLoading)) return <div className="p-8 text-center text-text-muted">Loading…</div>;
+  // Inside GameShell (the full-screen cover): a bare div here let the app's bottom nav show through between deals, and a stray tap closed the game.
+  if (tableLoading || (table?.status === 'active' && dealLoading)) return <GameShell><div className="p-8 text-center text-white/70">Loading…</div></GameShell>;
   if (!table || !user || !tableId) return <div className="p-8 text-center text-text-muted">Table not found.</div>;
 
   const myIndex = table.players.findIndex((p) => p.uid === user.uid);
@@ -544,7 +545,7 @@ export default function SpadePledgeGame() {
   }
 
   // ---- Active ----
-  if (!deal) return <div className="p-8 text-center text-text-muted">Loading hand…</div>;
+  if (!deal) return <GameShell><div className="p-8 text-center text-white/70">Loading hand…</div></GameShell>;
 
   const currentTurnUid = deal.players[deal.currentTurnSeatIndex]?.uid;
   const currentTurnIsMyBot = me?.isBot && currentTurnUid === user.uid;

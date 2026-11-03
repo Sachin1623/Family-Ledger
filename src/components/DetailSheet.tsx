@@ -12,6 +12,9 @@ export default function DetailSheet({
   onClose,
   onEdit,
   onDelete,
+  onDone,
+  doneLabel,
+  deleteInHeader,
   aboveNav,
   children,
 }: {
@@ -19,25 +22,35 @@ export default function DetailSheet({
   onClose: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onDone?: () => void; // a primary Done button at the bottom
+  doneLabel?: string;
+  deleteInHeader?: boolean; // delete goes to the top left of the header instead of the bottom row
   aboveNav?: boolean; // stop above the bottom bar instead of running down over it
   children: React.ReactNode;
 }) {
   const { t } = useLanguage();
   return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center" style={aboveNav ? { paddingBottom: 'calc(4rem + env(safe-area-inset-bottom))' } : undefined} onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center" style={aboveNav ? { paddingBottom: 'calc(4rem + env(safe-area-inset-bottom) + 0.75rem)' } : undefined} onClick={onClose}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
-        className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" style={aboveNav ? { maxHeight: 'calc(85vh - 4rem - env(safe-area-inset-bottom))' } : undefined}
+        className={`relative w-full sm:max-w-md bg-white ${aboveNav ? 'rounded-3xl' : 'rounded-t-3xl sm:rounded-3xl'} shadow-2xl flex flex-col max-h-[85vh] overflow-hidden`} style={aboveNav ? { maxHeight: 'calc(100dvh - 4rem - env(safe-area-inset-bottom) - 3rem)' } : undefined}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-5 border-b border-border-subtle flex items-center justify-between shrink-0">
-          <h2 className="text-base font-bold text-primary">{title}</h2>
+          <div className="flex items-center gap-2 min-w-0">
+            {onDelete && deleteInHeader && (
+              <button onClick={onDelete} title={t('common.delete')} aria-label={t('common.delete')} className="p-2 -ml-2 hover:bg-error/10 rounded-full text-error shrink-0">
+                <span className="material-symbols-outlined">delete</span>
+              </button>
+            )}
+            <h2 className="text-base font-bold text-primary truncate">{title}</h2>
+          </div>
           <button onClick={onClose} className="p-2 hover:bg-surface rounded-full">
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">{children}</div>
-        {(onEdit || onDelete) && (
+        {(onEdit || (onDelete && !deleteInHeader) || onDone) && (
           <div
             className="p-4 border-t border-border-subtle shrink-0 flex gap-2"
             style={{ paddingBottom: aboveNav ? '1rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}
@@ -52,13 +65,22 @@ export default function DetailSheet({
                 {t('common.edit')}
               </button>
             )}
-            {onDelete && (
+            {onDelete && !deleteInHeader && (
               <button
                 onClick={onDelete}
                 className="flex-1 h-12 border-2 border-error/30 text-error font-bold rounded-xl active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
               >
                 <span className="material-symbols-outlined text-[18px]">delete</span>
                 {t('common.delete')}
+              </button>
+            )}
+            {onDone && (
+              <button
+                onClick={onDone}
+                className="flex-1 h-12 bg-primary text-white font-bold rounded-xl active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[18px]">check</span>
+                {doneLabel || t('common.done')}
               </button>
             )}
           </div>

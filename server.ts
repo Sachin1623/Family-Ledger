@@ -2765,6 +2765,167 @@ async function processPolicyRenewalReminders(db: Firestore): Promise<number> {
 // server delivery is only needed here because it's the only thing that can reach a device other
 // than the one that set the reminder. Marks reminderSent so it doesn't fire again; editing the
 // to-do's reminder time clears that flag (ToDoList.tsx), letting it fire again.
+// ---- Weekly shopping routine ----
+// A person can have one routine per group, or one for "just me" (`users/{uid}.shoppingRoutines`, keyed by group id or 'me'),
+// each with its own shopping day and time, and its own repeating items (`users/{uid}.shoppingRecurring`, each entry naming
+// the routine it belongs to). `shoppingRoutineActive` is true while any routine is on, so the job only reads those people.
+// On a routine's day, once it is 6 AM or later in the person's own timezone, the items that are due go into that group's list:
+//   - daily and weekly items are due every routine day, "every 2 weeks" items every second week counted from the day they
+//     started repeating, and monthly items on the first routine day of the month;
+//   - daily items only ride along: a list is made only when at least one weekly, 2-weekly or monthly item is due;
+//   - never two lists on one day for a group, and never a new one while that group's last automatic list is still open: the
+//     due items are added to that open list instead (an item already in it is not added twice).
+type ShoppingFreq = 'daily' | 'weekly' | 'biweekly' | 'monthly';
+interface ShoppingRecurringItem { name: string; qty?: number | null; unit?: string | null; store?: string | null; freq: ShoppingFreq; anchor?: string | null; lastAdded?: string | null }
+
+const normalizeShoppingName = (text: string) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const shoppingKey = (text: string) => normalizeShoppingName(text).replace(/[.\/\[\]*`~]/g, '_').slice(0, 100);
+
+function shoppingItemDue(item: ShoppingRecurringItem, localDate: string, ignoreLastAdded: boolean): boolean {
+  if (!ignoreLastAdded && item.lastAdded === localDate) return false;
+  switch (item.freq) {
+    case 'daily':
+    case 'weekly':
+      return true;
+    case 'biweekly': {
+      if (!item.anchor) return true;
+      const diffDays = Math.round((Date.parse(`${localDate}T00:00:00Z`) - Date.parse(`${item.anchor}T00:00:00Z`)) / 86400000);
+      return diffDays < 0 ? true : Math.floor(diffDays / 7) % 2 === 0;
+    }
+    case 'monthly':
+      return Number(localDate.slice(8, 10)) <= 7;
+    default:
+      return false;
+  }
+}
+
+async function runShoppingRoutineForUser(
+  db: Firestore, ctx: CronCtx, uid: string, userData: FirebaseFirestore.DocumentData, routineKey: string, opts: { force?: boolean } = {},
+): Promise<{ result: 'created' | 'appended' | 'none' | 'skipped'; listId?: string; added?: number }> {
+  const routine = (userData.shoppingRoutines || {})[routineKey] as { enabled?: boolean; dayOfWeek?: number; time?: string; groupId?: string | null; lastRunDate?: string | null } | undefined;
+  if (!routine || (!routine.enabled && !opts.force)) return { result: 'skipped' };
+  const groupId = routine.groupId || null;
+
+  const timeZone = (await ctx.tz(uid)) || 'Asia/Kolkata';
+  const localNow = nowInTimeZone(timeZone);
+  const localDate = dateStringInTimeZone(new Date(), timeZone);
+  if (!opts.force) {
+    if (localNow.getDay() !== (routine.dayOfWeek ?? 0)) return { result: 'skipped' };
+    if (localNow.getHours() < 6) return { result: 'skipped' };
+    if (routine.lastRunDate === localDate) return { result: 'skipped' };
+  }
+
+  // only this routine's items
+  const recurring = (userData.shoppingRecurring || {}) as Record<string, ShoppingRecurringItem & { routine?: string }>;
+  const due = Object.entries(recurring).filter(([, it]) => it && it.name && it.routine === routineKey && shoppingItemDue(it, localDate, !!opts.force));
+  const userRef = db.collection('users').doc(uid);
+  const markRan = () => userRef.set({ shoppingRoutines: { [routineKey]: { lastRunDate: localDate } } }, { merge: true });
+  if (!due.some(([, it]) => it.freq !== 'daily')) {
+    if (!opts.force) await markRan();
+    return { result: 'none' };
+  }
+
+  // the open list to add to, for THIS group only: its last automatic list if it is still open, otherwise any open list of
+  // this group already scheduled for today (so a group never gets two lists on one day)
+  const openSnap = await db.collection('shoppingLists').where('userId', '==', uid).where('completed', '==', false).get();
+  const openLists = openSnap.docs.map((d) => ({ ref: d.ref, id: d.id, data: d.data() })).filter((l) => (l.data.groupId || null) === groupId);
+  const target =
+    openLists.filter((l) => l.data.auto === true).sort((a, b) => String(b.data.createdAt || '').localeCompare(String(a.data.createdAt || '')))[0] ||
+    openLists.find((l) => l.data.scheduledAt && dateStringInTimeZone(new Date(l.data.scheduledAt), timeZone) === localDate);
+
+  const [hh, mm] = String(routine.time || '17:00').split(':').map((n) => parseInt(n, 10));
+  const [y, mo, d] = localDate.split('-').map(Number);
+  const scheduledAt = fakeLocalToRealIso(new Date(y, mo - 1, d, Number.isFinite(hh) ? hh : 17, Number.isFinite(mm) ? mm : 0, 0), timeZone);
+  const nowIso = new Date().toISOString();
+
+  let groupName = '';
+  if (groupId) {
+    try { groupName = String((await db.collection('groups').doc(groupId).get()).data()?.name || ''); } catch { /* the list is just named without it */ }
+  }
+
+  let listRef: FirebaseFirestore.DocumentReference;
+  let existingCount = 0;
+  const existingKeys = new Set<string>();
+  const created = !target;
+  if (target) {
+    listRef = target.ref;
+    const itemsSnap = await listRef.collection('items').get();
+    existingCount = itemsSnap.size;
+    itemsSnap.docs.forEach((it) => existingKeys.add(shoppingKey(String(it.data().text || ''))));
+  } else {
+    listRef = db.collection('shoppingLists').doc();
+  }
+
+  const toAdd = due.filter(([, it]) => !existingKeys.has(shoppingKey(it.name)));
+  const batch = db.batch();
+  if (created) {
+    const title = groupName ? `Weekly shopping · ${groupName}` : 'Weekly shopping';
+    batch.set(listRef, {
+      userId: uid,
+      title,
+      description: title,
+      category: 'groceries',
+      groupId,
+      scheduledAt,
+      completed: false,
+      itemCount: toAdd.length,
+      doneCount: 0,
+      createdAt: nowIso,
+      auto: true,
+    });
+  } else {
+    const patch: Record<string, unknown> = { itemCount: existingCount + toAdd.length };
+    if (target!.data.auto === true) patch.scheduledAt = scheduledAt;
+    batch.update(listRef, patch);
+  }
+  toAdd.forEach(([, it], i) => {
+    batch.set(listRef.collection('items').doc(), {
+      text: it.name,
+      status: 'pending',
+      addedBy: uid,
+      createdAt: new Date(Date.now() + i).toISOString(),
+      repeat: it.freq,
+      ...(it.qty != null ? { qty: it.qty } : {}),
+      ...(it.unit ? { unit: it.unit } : {}),
+      ...(it.store ? { store: it.store } : {}),
+    });
+  });
+  // remember that every due item is covered for today, whether it was added now or was already in the list
+  const covered: Record<string, { lastAdded: string }> = {};
+  due.forEach(([key]) => { covered[key] = { lastAdded: localDate }; });
+  batch.set(userRef, { shoppingRecurring: covered, shoppingRoutines: { [routineKey]: { lastRunDate: localDate } } }, { merge: true });
+  await batch.commit();
+
+  if (toAdd.length > 0) {
+    try {
+      const tokens = await ctx.tokens([uid], 'notificationsEnabled');
+      const when = new Date(y, mo - 1, d, Number.isFinite(hh) ? hh : 17, Number.isFinite(mm) ? mm : 0).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      await sendPush(tokens, groupName ? `Your ${groupName} shopping list is ready` : 'Your shopping list is ready', `${toAdd.length} item${toAdd.length === 1 ? '' : 's'} for ${when}. Tap to review before you go.`, { type: 'shopping_list', listId: listRef.id });
+    } catch (err) {
+      console.error('shopping routine push failed:', err);
+    }
+  }
+  return { result: created ? 'created' : 'appended', listId: listRef.id, added: toAdd.length };
+}
+
+async function processShoppingRoutines(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
+  const snap = await db.collection('users').where('shoppingRoutineActive', '==', true).get();
+  let made = 0;
+  await ctx.prefetch(snap.docs.map((d) => d.id), 'tz');
+  await mapLimit(snap.docs, CRON_CONCURRENCY, async (userDoc) => {
+    const data = userDoc.data();
+    for (const routineKey of Object.keys(data.shoppingRoutines || {})) {
+      try {
+        const out = await runShoppingRoutineForUser(db, ctx, userDoc.id, data, routineKey);
+        if (out.result === 'created' || out.result === 'appended') made++;
+      } catch (err) {
+        console.error(`processShoppingRoutines failed for ${userDoc.id}/${routineKey}:`, err);
+      }
+    }
+  });
+  return made;
+}
+
 async function processTodoReminders(db: Firestore, ctx: CronCtx = makeCronCtx(db)): Promise<number> {
   const now = new Date();
   const candidates = await queryDue(db, 'todos', { field: 'done', value: false }, 'reminderAt', now.toISOString());
@@ -16294,6 +16455,24 @@ async function startServer() {
   // minutes instead of every 1 minute, i.e. 96x/day instead of 1,440x/day) is the main lever for
   // Cloud Run cost here — the job's cost scales with (invocations/day) × (work done per invocation),
   // and this cuts the first factor by 15x on this endpoint and moves the rest to run only once/day.
+  // "Make my list now" in the shopping routine screen: the same thing a routine does on its day, run for the caller and one of
+  // their routines right away. It ignores the day, the time and what was already added today, but still adds to that group's
+  // open automatic list instead of making a second one, and never adds an item twice.
+  app.post('/api/shopping-routine/run-now', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Sign in first.' });
+    const routineKey = typeof req.body?.routineKey === 'string' ? req.body.routineKey.slice(0, 200) : '';
+    if (!routineKey) return res.status(400).json({ error: 'routineKey is required.' });
+    try {
+      const snap = await adminDb.collection('users').doc(decoded.uid).get();
+      const out = await runShoppingRoutineForUser(adminDb, makeCronCtx(adminDb), decoded.uid, snap.data() || {}, routineKey, { force: true });
+      return res.json(out);
+    } catch (error) {
+      console.error('shopping-routine run-now error:', error);
+      return res.status(500).json({ error: 'Could not create the list.' });
+    }
+  });
+
   app.post('/api/cron/send-reminders', async (req, res) => {
     const providedSecret = req.headers['x-cron-secret'];
     if (!process.env.CRON_SECRET || providedSecret !== process.env.CRON_SECRET) {
@@ -16347,7 +16526,7 @@ async function startServer() {
       const [
         recurringExpensesProcessed, recurringRemindersNudged, expenseRemindersSent, budgetRemindersSent,
         todoRemindersSent, recurringTodosProcessed, habitRemindersSent, loanRemindersSent,
-        scheduledBroadcastsSent, missedMedicineDosesAlerted, streakWarningsSent,
+        scheduledBroadcastsSent, missedMedicineDosesAlerted, streakWarningsSent, shoppingRoutinesMade,
       ] = await Promise.all([
         run('recurringExpenses', () => processRecurringExpenses(db, ctx), 0),
         run('recurringNudges', () => processRecurringReminderNudges(db, ctx), 0),
@@ -16360,6 +16539,7 @@ async function startServer() {
         run('broadcasts', () => processScheduledBroadcasts(db), 0),
         run('missedMedicine', () => processMissedMedicineDoses(db, ctx), 0),
         run('streakWarnings', () => processStreakWarnings(db, ctx), 0),
+        runSlowTier ? run('shoppingRoutines', () => processShoppingRoutines(db, ctx), 0) : Promise.resolve(0),
       ]);
       console.log(`cron/send-reminders done in ${Date.now() - startedAt}ms`, JSON.stringify({ timings, failed, slowTier: runSlowTier }));
 
@@ -16377,6 +16557,7 @@ async function startServer() {
         scheduledBroadcastsSent,
         missedMedicineDosesAlerted,
         streakWarningsSent,
+        shoppingRoutinesMade,
       });
     } catch (error) {
       console.error('cron/send-reminders error:', error);

@@ -94,7 +94,7 @@ function dmChatId(uidA: string, uidB: string): string {
 }
 
 export default function Dashboard() {
-  const { user, profile } = useAuth();
+  const { user, profile, admin } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useLanguage();
@@ -198,6 +198,7 @@ export default function Dashboard() {
   // Unknown keys (e.g. an item that's since been removed from the registry) are silently dropped
   // rather than rendering a broken tile.
   const favoriteItems = (profile?.favorites || [])
+    .filter((key: string) => key !== 'admin-panel' || admin?.isAdmin)
     .map((key: string) => FAVORITABLE_BY_KEY[key])
     .filter(Boolean);
 

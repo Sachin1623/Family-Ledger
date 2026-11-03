@@ -32,6 +32,8 @@ export const FAVORITABLE_ITEMS: FavoritableItem[] = [
   { key: 'glucose-tracker', to: '/health/glucose', icon: '🩸', label: 'Glucose Tracker' },
   { key: 'bp-tracker', to: '/health/blood-pressure', icon: '❤️', label: 'Blood Pressure Tracker' },
   { key: 'medicine-tracker', to: '/health/medicines', icon: '💊', label: 'Medicine Reminders' },
+  // admins only: the star is on the Admin Panel button in Profile, and Dashboard hides it for anyone who is not an admin
+  { key: 'admin-panel', to: '/admin', icon: '🛠️', label: 'Admin Panel' },
 ];
 
 export const FAVORITABLE_BY_KEY: Record<string, FavoritableItem> = Object.fromEntries(
