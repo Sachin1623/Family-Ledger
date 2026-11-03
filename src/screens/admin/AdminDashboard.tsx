@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { adminGet } from '../../lib/adminApi';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate, getAdminTz, setAdminTzMode } from '../../lib/adminTime';
+
+// the Growth tab shows the full report itself (charts included), loaded only when that tab is opened
+const AdminGrowth = React.lazy(() => import('./AdminGrowth'));
 
 interface CountryStats {
   country: string;
@@ -133,10 +136,6 @@ export default function AdminDashboard() {
     { to: '/admin/app-version', icon: 'system_update', label: 'App Version', description: 'Set release notes and force-update prompt' },
     { to: '/admin/builds', icon: 'android', label: 'App Builds', description: 'Download test APKs and release bundles (admins only)' },
     { to: '/admin/broadcast', icon: 'campaign', label: 'Broadcast Message', description: 'Send a push + in-app announcement to every user' },
-  ];
-
-  const growthTiles: Tile[] = [
-    { to: '/admin/growth', icon: 'trending_up', label: 'Invites & Spread the Word', description: 'This week vs last week, by channel — is anyone actually using these?' },
   ];
 
   const TABS = [
@@ -298,7 +297,11 @@ export default function AdminDashboard() {
       {activeTab === 'users' && <TileGrid tiles={userTiles} />}
       {activeTab === 'support' && <TileGrid tiles={supportTiles} />}
       {activeTab === 'announcements' && <TileGrid tiles={announcementTiles} />}
-      {activeTab === 'growth' && <TileGrid tiles={growthTiles} />}
+      {activeTab === 'growth' && (
+        <Suspense fallback={<p className="text-sm text-text-muted">Loading…</p>}>
+          <AdminGrowth embedded />
+        </Suspense>
+      )}
     </div>
   );
 }

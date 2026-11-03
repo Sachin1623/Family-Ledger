@@ -380,3 +380,33 @@ export function ageLabel(dob: string, asOf: Date = new Date()): string {
   if (days < 730) return `${Math.floor(days / 30.44)} months old`;
   return `${Math.floor(days / 365.25)} years old`;
 }
+
+// Which real vaccines a name stands for, so "Hep B", "HepB" and "Hepatitis B" are the same thing and a combo name like
+// "Hexavalent (6-in-1)" or "DTP-HepB-Hib" stands for each vaccine inside it. Empty when the name is not recognised.
+const VACCINE_ALIASES: [string, RegExp][] = [
+  ['dtp', /\b(dtp|dtwp|dtap|dpt|diphtheria|pertussis)\b/],
+  ['hepb', /\b(hep|hepatitis)\s*b\b|\bhepb\b/],
+  ['hib', /\b(hib|haemophilus|hemophilus)\b/],
+  ['ipv', /\b(ipv|inactivated polio|injectable polio)\b/],
+  ['opv', /\b(opv|oral polio)\b/],
+  ['pcv', /\b(pcv\d*|pneumococcal)\b/],
+  ['rota', /\brota(virus)?\b/],
+];
+export function vaccineTokens(name: string): Set<string> {
+  const text = ` ${name.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `.replace(/ 6 in 1 | hexavalent /, ' hexavalent ').replace(/ 5 in 1 | pentavalent /, ' pentavalent ');
+  const out = new Set<string>();
+  VACCINE_ALIASES.forEach(([token, re]) => { if (re.test(text)) out.add(token); });
+  if (/\bpentavalent\b/.test(text)) ['dtp', 'hepb', 'hib'].forEach((t) => out.add(t));
+  if (/\bhexavalent\b/.test(text)) ['dtp', 'hepb', 'hib', 'ipv'].forEach((t) => out.add(t));
+  return out;
+}
+// True when two vaccine names mean the same vaccine (or share one, for combos); names we do not recognise fall back to a plain text match.
+export function vaccineNamesMatch(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  const ta = vaccineTokens(x);
+  const tb = vaccineTokens(y);
+  if (ta.size > 0 && tb.size > 0) return [...ta].some((t) => tb.has(t));
+  return x === y || x.includes(y) || y.includes(x);
+}

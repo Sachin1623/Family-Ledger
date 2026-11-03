@@ -5580,6 +5580,31 @@ async function startServer() {
   // Growth tab — is the invite flow and "Spread the Word" share flow actually getting used?
   // Rolling 7-day windows rather than calendar weeks (Mon-Sun) — simpler, no timezone-dependent
   // week-start logic, and "this week vs previous week" reads the same either way.
+  // A brand-new account says which WhatsApp/SMS join link it came from (the sender's uid and the channel are in the link). Accepted
+  // only for an account created in the last two days, once, and never for yourself, so an old user opening a link cannot claim credit.
+  app.post('/api/referral/claim', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb || !adminAuth) return res.status(401).json({ error: 'Unauthorized.' });
+    const ref = String(req.body?.ref || '');
+    const via = String(req.body?.via || '');
+    if (!/^[A-Za-z0-9]{10,64}$/.test(ref) || (via !== 'wa' && via !== 'sms') || ref === decoded.uid) return res.json({ ok: false });
+    try {
+      const record = await adminAuth.getUser(decoded.uid);
+      const createdMs = new Date(record.metadata.creationTime).getTime();
+      if (!Number.isFinite(createdMs) || Date.now() - createdMs > 2 * 24 * 60 * 60 * 1000) return res.json({ ok: false });
+      const userRef = adminDb.collection('users').doc(decoded.uid);
+      const existing = await userRef.get();
+      if (existing.exists && existing.data()?.referredBy) return res.json({ ok: false });
+      const sender = await adminDb.collection('users').doc(ref).get();
+      if (!sender.exists) return res.json({ ok: false });
+      await userRef.set({ referredBy: ref, referralChannel: via, referredAt: new Date(createdMs).toISOString() }, { merge: true });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('referral/claim error:', error);
+      return res.status(500).json({ error: 'Could not record the referral.' });
+    }
+  });
+
   app.get('/api/admin/analytics/growth', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
@@ -5633,7 +5658,82 @@ async function startServer() {
         .map(([day, b]) => ({ day, ...b }))
         .sort((a, b) => a.day.localeCompare(b.day));
 
-      return res.json({ invites, shares, dailyTrend });
+      // Did the invited people actually sign up? Only an email invite to someone with no account yet can lead to a new registration: it is
+      // matched by email (the account was created after the first invite sent to that address). An in-app invite goes to someone who is
+      // already registered, so for those we count how many accepted and joined the group instead. WhatsApp and SMS invites are just a link
+      // shared outside the app, with nothing in it that says who sent it, so they cannot be matched to a registration.
+      const registrations: { day: string; email: string }[] = [];
+      let emailInvited = 0;
+      let emailRegistered = 0;
+      let emailJoined = 0;
+      let inAppInvited = 0;
+      let inAppJoined = 0;
+      try {
+        const inviteSnap = await db.collectionGroup('invites').get();
+        const firstInviteByEmail = new Map<string, number>();
+        inviteSnap.docs.forEach((d) => {
+          const x = d.data() as any;
+          const sentAt = new Date(x.createdAt).getTime();
+          if (!Number.isFinite(sentAt)) return;
+          if (x.targetUid) {
+            inAppInvited += 1;
+            if (x.status === 'accepted') inAppJoined += 1;
+            return;
+          }
+          const email = normalizeEmail(String(x.email || ''));
+          if (!email) return;
+          if (x.status === 'accepted') emailJoined += 1;
+          const prev = firstInviteByEmail.get(email);
+          if (prev === undefined || sentAt < prev) firstInviteByEmail.set(email, sentAt);
+        });
+        emailInvited = firstInviteByEmail.size;
+        if (adminAuth) {
+          const emails = [...firstInviteByEmail.keys()];
+          for (let i = 0; i < emails.length; i += 100) {
+            const chunk = emails.slice(i, i + 100);
+            const found = await adminAuth.getUsers(chunk.map((email) => ({ email }))).catch(() => null);
+            (found?.users || []).forEach((u) => {
+              const email = normalizeEmail(u.email || '');
+              const invitedAt = firstInviteByEmail.get(email);
+              const createdMs = new Date(u.metadata.creationTime).getTime();
+              if (invitedAt === undefined || !Number.isFinite(createdMs) || createdMs < invitedAt) return; // had an account before being invited
+              emailRegistered += 1;
+              registrations.push({ day: new Date(createdMs).toISOString().slice(0, 10), email });
+            });
+          }
+        }
+      } catch (convErr) {
+        console.error('admin/analytics/growth: conversion lookup failed:', convErr);
+      }
+      // WhatsApp / SMS: new accounts that arrived through a tagged join link and told us who sent it (see /api/referral/claim)
+      let waRegistered = 0;
+      let smsRegistered = 0;
+      try {
+        const refSnap = await db.collection('users').where('referredAt', '>', '').get();
+        refSnap.docs.forEach((d) => {
+          const x = d.data() as any;
+          if (x.referralChannel === 'wa') waRegistered += 1;
+          else if (x.referralChannel === 'sms') smsRegistered += 1;
+          else return;
+          registrations.push({ day: String(x.referredAt).slice(0, 10), email: '' });
+        });
+      } catch (refErr) {
+        console.error('admin/analytics/growth: referral lookup failed:', refErr);
+      }
+      const regPerDay = new Map<string, number>();
+      registrations.forEach((r) => regPerDay.set(r.day, (regPerDay.get(r.day) || 0) + 1));
+      // the daily chart covers the last 14 days, every day listed (including days with nothing), so a quiet day shows as zero
+      const days: string[] = [];
+      for (let i = 13; i >= 0; i--) days.push(new Date(now - i * DAY_MS).toISOString().slice(0, 10));
+      const trendByDay = new Map(dailyTrend.map((x) => [x.day, x]));
+      const fullTrend = days.map((day) => ({ day, invites: trendByDay.get(day)?.invites || 0, shares: trendByDay.get(day)?.shares || 0, registered: regPerDay.get(day) || 0 }));
+      const last14 = new Set(days);
+      const registeredLast14 = registrations.filter((r) => last14.has(r.day)).length;
+
+      return res.json({
+        invites, shares, dailyTrend: fullTrend,
+        conversion: { emailInvited, emailRegistered, emailJoined, registeredLast14, inAppInvited, inAppJoined, waRegistered, smsRegistered },
+      });
     } catch (error) {
       console.error('admin/analytics/growth error:', error);
       return res.status(500).json({ error: 'Unable to load growth analytics.' });

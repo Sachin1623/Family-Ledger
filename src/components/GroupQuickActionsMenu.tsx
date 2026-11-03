@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { inviteToGroup, inviteUserToGroup, searchUsers, FoundUser } from '../lib/inviteApi';
 import { logGrowthEvent } from '../lib/growthEvents';
+import { inviteJoinLink } from '../lib/referral';
 import { claimPoints } from '../lib/pointsApi';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { evaluateAmountSum } from '../lib/amountMath';
@@ -236,7 +237,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
   }, [userSearchQuery, groupId]);
 
   const handleWhatsAppShare = () => {
-    const link = `${window.location.origin}/join/${groupId}`;
+    const link = inviteJoinLink(groupId!, user?.uid, 'wa');
     const inviterName = profile?.displayName || user?.displayName || 'A friend';
     const message = `Hi! ${inviterName} is inviting you to join the group "${group?.name}" on FamilyLedger. Join here: ${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');

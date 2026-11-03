@@ -7,7 +7,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { todayLocalDateString } from '../lib/dateUtils';
-import { VaccineDose, VaccineDoseGroup, VaccineBrandCatalogEntry, VaccineAppointment, vaccineAppointmentId, appointmentSummaryText } from '../lib/vaccinations';
+import { VaccineDose, VaccineDoseGroup, VaccineBrandCatalogEntry, VaccineAppointment, vaccineAppointmentId, appointmentSummaryText, vaccineNamesMatch } from '../lib/vaccinations';
 import { cancelVaccineRemindersForVisit } from '../lib/vaccinationReminders';
 import { getParentPath } from '../lib/navigationParents';
 import ImageAttachments from '../components/ImageAttachments';
@@ -202,12 +202,27 @@ export default function LogVaccineVisit() {
   // "+ Add Shot" — name is the only thing required to create one; vaccines, photo, brand and batch
   // can all be filled in afterward (or never, for a bare-minimum record). Creating one opens its
   // full detail popup right away so there's somewhere to add vaccines to it next.
+  // Puts every not-yet-assigned vaccine on this visit that matches one of these names into the shot (see vaccineNamesMatch for what counts).
+  const assignMatchingVaccines = (shotKey: string, names: string[]) => {
+    setRows((r) => {
+      const next = { ...r };
+      Object.keys(next).forEach((id) => {
+        if (next[id].groupKey) return;
+        const vaccine = next[id].vaccineName;
+        if (vaccine && names.some((n) => vaccineNamesMatch(vaccine, n))) next[id] = { ...next[id], groupKey: shotKey };
+      });
+      return next;
+    });
+  };
+
   const confirmAddShot = () => {
     const name = newShotName.trim();
     if (!name) return;
     const shotKey = `shot_${nextShotTempId++}`;
-    setShots((s) => ({ ...s, [shotKey]: { name, brand: '', batch: '', expiryDate: '', photoFront: null, photoBack: null } }));
+    const known = brandCatalog.find((e) => e.shotName.trim().toLowerCase() === name.toLowerCase() || (e.brand && e.brand.trim().toLowerCase() === name.toLowerCase()));
+    setShots((s) => ({ ...s, [shotKey]: { name, brand: known && known.shotName.toLowerCase() !== name.toLowerCase() ? known.brand : '', batch: '', expiryDate: '', photoFront: null, photoBack: null } }));
     setShotOrder((o) => [...o, shotKey]);
+    assignMatchingVaccines(shotKey, known ? [...known.vaccines, known.shotName, name] : [name]);
     setShowAddShotModal(false);
     setNewShotName('');
     setCatalogSearch('');
@@ -222,18 +237,7 @@ export default function LogVaccineVisit() {
     const shotKey = `shot_${nextShotTempId++}`;
     setShots((s) => ({ ...s, [shotKey]: { name: entry.shotName, brand: entry.brand, batch: '', expiryDate: '', photoFront: null, photoBack: null } }));
     setShotOrder((o) => [...o, shotKey]);
-    const wantedNames = entry.vaccines.map((v) => v.toLowerCase());
-    setRows((r) => {
-      const next = { ...r };
-      Object.keys(next).forEach((id) => {
-        if (next[id].groupKey) return;
-        const nameLower = next[id].vaccineName.toLowerCase();
-        if (nameLower && wantedNames.some((w) => nameLower.includes(w) || w.includes(nameLower))) {
-          next[id] = { ...next[id], groupKey: shotKey };
-        }
-      });
-      return next;
-    });
+    assignMatchingVaccines(shotKey, [...entry.vaccines, entry.shotName]);
     setShowAddShotModal(false);
     setNewShotName('');
     setCatalogSearch('');

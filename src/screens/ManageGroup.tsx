@@ -17,6 +17,7 @@ import {
 import CategoryBadge, { CATEGORY_STYLE } from '../components/CategoryBadge';
 import { inviteToGroup, inviteUserToGroup, searchUsers, linkGroupParticipant, FoundUser } from '../lib/inviteApi';
 import { logGrowthEvent } from '../lib/growthEvents';
+import { inviteJoinLink, InviteVia } from '../lib/referral';
 import { placeholderRows, participantInUse, participantExpenseCount, participantInRecurringUse } from '../lib/groupParticipants';
 import { useFriendships } from '../lib/useFriendships';
 import { claimPoints, getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
@@ -807,24 +808,24 @@ export default function ManageGroup() {
     }
   };
 
-  const buildInviteShareMessage = () => {
-    const link = `${window.location.origin}/join/${groupId}`;
+  const buildInviteShareMessage = (via: InviteVia) => {
+    const link = inviteJoinLink(groupId!, user?.uid, via);
     return `Hey I am using Family Ledger to track and organise my expenses lets manage our expenses together: ${link}`;
   };
 
   const handleSendWhatsApp = () => {
     const digits = contactPhone.replace(/[^\d+]/g, '').replace(/^\+/, '');
     const url = digits
-      ? `https://wa.me/${digits}?text=${encodeURIComponent(buildInviteShareMessage())}`
-      : `https://wa.me/?text=${encodeURIComponent(buildInviteShareMessage())}`;
+      ? `https://wa.me/${digits}?text=${encodeURIComponent(buildInviteShareMessage('wa'))}`
+      : `https://wa.me/?text=${encodeURIComponent(buildInviteShareMessage('wa'))}`;
     window.open(url, '_blank');
     logGrowthEvent('invite_whatsapp', user?.uid);
   };
 
   const handleSendSms = () => {
     const url = contactPhone
-      ? `sms:${contactPhone}?body=${encodeURIComponent(buildInviteShareMessage())}`
-      : `sms:?body=${encodeURIComponent(buildInviteShareMessage())}`;
+      ? `sms:${contactPhone}?body=${encodeURIComponent(buildInviteShareMessage('sms'))}`
+      : `sms:?body=${encodeURIComponent(buildInviteShareMessage('sms'))}`;
     window.location.href = url;
     logGrowthEvent('invite_sms', user?.uid);
   };

@@ -67,7 +67,8 @@ const DAILY_BONUS: QuestDef = { id: 'd_all', title: 'Daily sweep', desc: 'Finish
 // ---------- Weekly: new set every Monday (a new person gets this week's set the day they join) ----------
 const WEEKLY_FIXED: QuestDef[] = [
   { id: 'w_days5', title: 'Log on 5 days', desc: 'Add an expense on five different days this week.', icon: 'event_available', target: 5, xp: 40, coins: 40, metric: { kind: 'days', keys: EXPENSE }, go: '/add-expense' },
-  { id: 'w_recap', title: 'Share your weekly recap', desc: 'Send your recap pictures to family and friends.', icon: 'ios_share', target: 1, xp: 25, coins: 25, metric: { kind: 'count', keys: ['ev_recap_shared', 'ev_spread_shared'] }, go: '/weekly-summary' },
+  { id: 'w_recap', title: 'Share your weekly recap', desc: 'Send your recap pictures to family and friends.', icon: 'ios_share', target: 1, xp: 25, coins: 25, metric: { kind: 'count', keys: ['ev_recap_shared'] }, go: '/weekly-summary' },
+  { id: 'w_spread', title: 'Spread the Word', desc: 'Share FamilyLedger with a friend or family member this week.', icon: 'campaign', target: 1, xp: 30, coins: 30, metric: { kind: 'count', keys: ['ev_spread_shared'] }, go: '/profile' },
 ];
 const WEEKLY_POOL: QuestDef[] = [
   { id: 'w_tasks5', title: 'Complete 5 tasks', desc: 'Any mix of to-dos and habits.', icon: 'task_alt', target: 5, xp: 30, coins: 30, metric: { kind: 'count', keys: TASKS }, go: '/tools?category=productivity', needs: 'history', historyKeys: TASKS },

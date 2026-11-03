@@ -1,3 +1,4 @@
+import { pendingReferral, clearReferral } from '../lib/referral';
 import { setAuthHint } from '../lib/authHint';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { resetCachesIfAccountChanged } from '../lib/deviceUserCache';
@@ -281,6 +282,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           fetch('/api/ensure-short-id', { method: 'POST', headers: authHeader }).catch((shortIdError) =>
             console.error('ensure-short-id request failed:', shortIdError),
           );
+
+          // A brand-new account that arrived through a WhatsApp/SMS join link tells the server who sent it (it only accepts this
+          // for accounts just created); then the note is dropped either way.
+          const referral = pendingReferral();
+          if (referral) {
+            fetch('/api/referral/claim', { method: 'POST', headers: { ...authHeader, 'Content-Type': 'application/json' }, body: JSON.stringify(referral) })
+              .then(() => clearReferral())
+              .catch((claimError) => console.error('referral claim failed:', claimError));
+          }
         });
 
         // Login/activity tracking, used by the admin analytics dashboard and (later) idle

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost } from '../../lib/adminApi';
+import { vaccineNamesMatch } from '../../lib/vaccinations';
 import DetailSheet from '../../components/DetailSheet';
 
 interface Entry { shotName: string; brand: string; vaccines: string[] }
@@ -11,12 +12,7 @@ interface Check { shotName: string; brand: string; verdict: 'ok' | 'fix' | 'unsu
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const entryKey = (e: { shotName: string; brand: string }) => `${e.shotName}|${e.brand}`.toLowerCase();
 
-// The same loose match the Log Visit screen uses to tick vaccines when a shot is picked.
-const nameMatches = (a: string, b: string) => {
-  const x = a.trim().toLowerCase();
-  const y = b.trim().toLowerCase();
-  return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
-};
+const nameMatches = vaccineNamesMatch;
 
 const VERDICT_STYLE: Record<Check['verdict'], { label: string; icon: string; cls: string }> = {
   ok: { label: 'Looks right', icon: 'check_circle', cls: 'bg-green-50 text-green-700' },

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 import { adminGet } from '../../lib/adminApi';
 
 interface WeekBucket {
@@ -11,7 +11,8 @@ interface WeekBucket {
 interface GrowthResponse {
   invites: { thisWeek: WeekBucket; previousWeek: WeekBucket };
   shares: { thisWeek: WeekBucket; previousWeek: WeekBucket };
-  dailyTrend: { day: string; invites: number; shares: number }[];
+  dailyTrend: { day: string; invites: number; shares: number; registered: number }[];
+  conversion: { emailInvited: number; emailRegistered: number; emailJoined: number; registeredLast14: number; inAppInvited: number; inAppJoined: number; waRegistered: number; smsRegistered: number };
 }
 
 const INVITE_CHANNEL_LABELS: Record<string, string> = {
@@ -99,7 +100,7 @@ function WeekCompareCard({
   );
 }
 
-export default function AdminGrowth() {
+export default function AdminGrowth({ embedded = false }: { embedded?: boolean }) {
   const [data, setData] = useState<GrowthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -110,14 +111,16 @@ export default function AdminGrowth() {
   }, []);
 
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6 pb-24 md:pb-24">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-black text-primary">Growth</h1>
-          <p className="text-sm text-text-muted font-medium">Are invites and "Spread the Word" actually getting used?</p>
+    <div className={embedded ? 'space-y-6' : 'p-4 md:p-8 max-w-5xl mx-auto space-y-6 pb-24 md:pb-24'}>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-black text-primary">Growth</h1>
+            <p className="text-sm text-text-muted font-medium">Are invites and "Spread the Word" actually getting used?</p>
+          </div>
+          <Link to="/admin" className="text-sm font-bold text-primary underline shrink-0">Back to Admin</Link>
         </div>
-        <Link to="/admin" className="text-sm font-bold text-primary underline shrink-0">Back to Admin</Link>
-      </div>
+      )}
 
       {error && <div className="p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200">{error}</div>}
 
@@ -141,6 +144,56 @@ export default function AdminGrowth() {
           </div>
 
           <section className="bg-white rounded-2xl border border-border-subtle p-5">
+            <h2 className="text-lg font-bold text-primary">Did invites bring new users?</h2>
+            <p className="text-xs text-text-muted mb-4">Email invites are matched by address; WhatsApp and SMS by a tag inside the link.</p>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="bg-surface rounded-xl p-3">
+                <p className="text-2xl font-black text-primary">{data.conversion.emailInvited}</p>
+                <p className="text-[11px] text-text-muted font-bold">People emailed</p>
+              </div>
+              <div className="bg-surface rounded-xl p-3">
+                <p className="text-2xl font-black text-success">{data.conversion.emailRegistered}</p>
+                <p className="text-[11px] text-text-muted font-bold">Registered</p>
+              </div>
+              <div className="bg-surface rounded-xl p-3">
+                <p className="text-2xl font-black text-primary">
+                  {data.conversion.emailInvited > 0 ? Math.round(( data.conversion.emailRegistered / data.conversion.emailInvited) * 100) : 0}%
+                </p>
+                <p className="text-[11px] text-text-muted font-bold">Signed up</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-center mt-3">
+              <div className="bg-surface rounded-xl p-3">
+                <p className="text-2xl font-black text-success">{data.conversion.waRegistered}</p>
+                <p className="text-[11px] text-text-muted font-bold">Registered via WhatsApp link</p>
+              </div>
+              <div className="bg-surface rounded-xl p-3">
+                <p className="text-2xl font-black text-success">{data.conversion.smsRegistered}</p>
+                <p className="text-[11px] text-text-muted font-bold">Registered via SMS link</p>
+              </div>
+            </div>
+            <p className="text-sm text-on-surface mt-4">
+              <span className="font-bold text-primary">{data.conversion.registeredLast14}</span> new {data.conversion.registeredLast14 === 1 ? 'user' : 'users'} registered through an invite in the last 14 days.
+            </p>
+            <p className="text-sm text-on-surface mt-2">
+              <span className="font-bold text-primary">{data.conversion.inAppJoined}</span> of {data.conversion.inAppInvited} in-app invites were accepted. These go to people who already have an account, so they can't be new registrations.
+            </p>
+            <p className="text-xs font-bold text-text-muted uppercase tracking-wider mt-5 mb-2">New users via invites, per day</p>
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.dailyTrend} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis dataKey="day" fontSize={10} tick={{ fill: '#6B7280' }} tickFormatter={(d: string) => d.slice(5)} />
+                  <YAxis fontSize={10} tick={{ fill: '#6B7280' }} allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="registered" fill="#F59E0B" radius={[4, 4, 0, 0]} name="New users" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="text-[11px] text-text-muted mt-3">WhatsApp and SMS count only links shared since tracking began, and only when the person signs up on the web or in the app. Someone who installs from the Play Store after tapping the link can't be matched yet.</p>
+          </section>
+
+          <section className="bg-white rounded-2xl border border-border-subtle p-5">
             <h2 className="text-lg font-bold text-primary mb-4">Daily Trend (last 14 days)</h2>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -152,10 +205,11 @@ export default function AdminGrowth() {
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Line type="monotone" dataKey="invites" stroke="#0f4761" strokeWidth={2} dot={false} name="Invites" />
                   <Line type="monotone" dataKey="shares" stroke="#16A34A" strokeWidth={2} dot={false} name="Shares" />
+                  <Line type="monotone" dataKey="registered" stroke="#F59E0B" strokeWidth={2.5} dot={{ r: 2 }} name="New users via invites" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            {data.dailyTrend.length === 0 && <p className="text-sm text-text-muted mt-2">No invite or share activity recorded yet — tracking started when this tab shipped, so history will build up from here.</p>}
+            {data.dailyTrend.every((d) => d.invites + d.shares + d.registered === 0) && <p className="text-sm text-text-muted mt-2">No invite or share activity recorded yet — tracking started when this tab shipped, so history will build up from here.</p>}
           </section>
         </>
       )}

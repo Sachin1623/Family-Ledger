@@ -1,3 +1,4 @@
+import { rememberReferral } from './lib/referral';
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -209,6 +210,9 @@ const NavigationBridge = () => {
     StatusBar.setOverlaysWebView({ overlay: false }).catch((err) => console.error('Failed to set status bar overlay:', err));
   }, []);
 
+  // A join link opened in the browser (or app start) may say who sent it; remember that until the new account is created.
+  React.useEffect(() => { rememberReferral(window.location.search); }, []);
+
   // Android App Links (verified deep links, see AndroidManifest.xml + assetlinks.json)
   // launch the app with the tapped URL, but Capacitor doesn't automatically navigate the
   // WebView to match it — without this, a join link would open the app but land on
@@ -219,6 +223,7 @@ const NavigationBridge = () => {
       try {
         const url = new URL(data.url);
         if (url.protocol === 'file:') return; // a receipt handed to the app (see ReceiptShareBridge), not a deep link
+        rememberReferral(url.search);
         navigate(url.pathname + url.search);
       } catch (err) {
         console.error('Failed to parse deep link URL:', data.url, err);
