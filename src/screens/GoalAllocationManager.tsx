@@ -18,6 +18,9 @@ import { applyAccountChange, notifyGoalsMet } from '../lib/accountAllocations';
 // inside each account's own edit form. Every edit goes through the same applyAccountChange() used
 // everywhere else an account's allocations change, so it's logged identically (that account's own
 // History) and subject to the same reserve-on-target-met capping.
+const GOAL_COLORS = ['#F59E0B', '#0EA5E9', '#8B5CF6', '#16A34A', '#EC4899', '#EF4444', '#14B8A6', '#6366F1'];
+const goalColor = (i: number) => GOAL_COLORS[i % GOAL_COLORS.length];
+
 export default function GoalAllocationManager({ embedded = false, viewingUid }: { embedded?: boolean; viewingUid?: string } = {}) {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -150,93 +153,99 @@ export default function GoalAllocationManager({ embedded = false, viewingUid }: 
       {goals.length === 0 ? (
         <p className="text-sm text-text-muted text-center py-8" data-tour="goals-allocation-list">{t('goals.noActiveGoalsForAllocation')}</p>
       ) : (
-        <div className="space-y-3" data-tour="goals-allocation-list">
-          {goals.map((g) => {
-            const rows = rowsByGoal.get(g.id) || [];
-            const sym = getCurrencySymbol(g.currency);
-            // Same forward simulation GoalDetail's own Contributions tab and GoalFundingSetup use
-            // (goals.ts's projectGoalHorizonSchedule) — run once per goal here so every row below
-            // can show both its contribution TODAY and its projected total once the goal actually
-            // hits target, without a separate query per row.
-            const remainingMinor = g.targetAmountMinor - goalTotalMinor(g);
-            const sources = fundingSourcesForGoal(g.id, accounts);
-            const schedule = remainingMinor > 0 ? projectGoalHorizonSchedule(remainingMinor, sources) : { date: null, entries: [] };
-            const lastEntry = schedule.entries[schedule.entries.length - 1];
-            return (
-              <div key={g.id} className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-2.5">
-                <button type="button" onClick={() => navigate(`/goals/${g.id}?from=allocation`)} className="flex items-center gap-2 w-full text-left">
-                  <span className="text-xl shrink-0">{g.icon || '🎯'}</span>
-                  <span className="flex-1 text-sm font-bold text-on-surface truncate">{g.name}</span>
-                  <span className="text-xs font-bold text-text-muted shrink-0">
-                    {sym}{formatAmountCompact(fromMinorUnits(g.accountAllocatedMinor), g.currency, profile?.numberSystem)} / {sym}{formatAmountCompact(fromMinorUnits(g.targetAmountMinor), g.currency, profile?.numberSystem)}
+        <div className="space-y-4" data-tour="goals-allocation-list">
+          {/* One table for the whole picture: a row per account, a column per goal, the account's share of that goal in each cell
+              (tap to change it, + to add one). The last column says how much of the account is already spoken for. */}
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-x-auto">
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 z-10 bg-white w-24 min-w-[6rem]" />
+                  {goals.map((g, i) => (
+                    <th key={g.id} className="px-1 py-2 min-w-[62px] align-bottom">
+                      <button type="button" onClick={() => navigate(`/goals/${g.id}?from=allocation`)} className="flex flex-col items-center gap-0.5 w-full">
+                        <span className="text-xl leading-none">{g.icon || '🎯'}</span>
+                        <span className="text-[9px] font-bold text-text-muted leading-tight line-clamp-2 max-w-[60px]" style={{ color: goalColor(i) }}>{g.name}</span>
+                      </button>
+                    </th>
+                  ))}
+                  <th className="px-2 py-2 text-[10px] font-black text-text-muted uppercase tracking-wider">{t('goals.allocationUsed')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map((a) => {
+                  const totalPct = (a.goalAllocations || []).reduce((sum, e) => sum + (goals.some((g) => g.id === e.goalId) ? e.pct : 0), 0);
+                  const editable = canEditAccount(a);
+                  return (
+                    <tr key={a.id} className="border-t border-border-subtle">
+                      <td className="sticky left-0 z-10 bg-white px-2.5 py-2 align-middle">
+                        <p className="text-xs font-bold text-on-surface leading-tight line-clamp-2">{a.name}</p>
+                        <p className="text-[10px] text-text-muted font-semibold">{getCurrencySymbol(a.currency)}{formatAmountCompact(fromMinorUnits(a.currentBalanceMinor), a.currency, profile?.numberSystem)}</p>
+                      </td>
+                      {goals.map((g, i) => {
+                        const entry = (a.goalAllocations || []).find((e) => e.goalId === g.id);
+                        const color = goalColor(i);
+                        const reserved = entry?.reservedAmountMinor != null;
+                        return (
+                          <td key={g.id} className="px-1 py-1.5 text-center">
+                            {entry ? (
+                              <button
+                                type="button"
+                                disabled={!editable}
+                                onClick={() => openEdit(g.id, g.name, a.id, entry.pct)}
+                                className="relative w-full rounded-xl border-[1.5px] py-1.5 font-black text-[13px] disabled:opacity-70 active:scale-95 transition-transform"
+                                style={{ background: `${color}22`, borderColor: color, color }}
+                              >
+                                {entry.pct}%
+                                {reserved && <span className="material-symbols-outlined absolute -top-1.5 -right-1 text-[12px] bg-white rounded-full text-success" title={t('goals.reserved')}>lock</span>}
+                              </button>
+                            ) : editable ? (
+                              <button type="button" onClick={() => openEdit(g.id, g.name, a.id, 0)} className="w-full py-1.5 rounded-xl text-[#C4CDD6] hover:bg-surface active:scale-95" aria-label={t('goals.allocationAddShare')}>
+                                <span className="material-symbols-outlined text-[16px] align-middle">add</span>
+                              </button>
+                            ) : (
+                              <span className="text-[#C4CDD6]">·</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-1.5 text-center font-black text-xs" style={{ color: totalPct === 100 ? '#15803D' : totalPct === 0 ? '#9CA3AF' : '#B45309' }}>{totalPct}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-text-muted text-center">{t('goals.allocationGridHint')}</p>
+
+          {/* Each goal's own funding line, so the "is it getting enough" answer sits right under the table. */}
+          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-1">
+            <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('goals.allocationFundingStatus')}</p>
+            {goals.map((g, i) => {
+              const sym = getCurrencySymbol(g.currency);
+              const remainingMinor = g.targetAmountMinor - goalTotalMinor(g);
+              const sources = fundingSourcesForGoal(g.id, accounts);
+              const schedule = remainingMinor > 0 ? projectGoalHorizonSchedule(remainingMinor, sources) : { date: null, entries: [] };
+              const count = (rowsByGoal.get(g.id) || []).length;
+              return (
+                <button key={g.id} type="button" onClick={() => navigate(`/goals/${g.id}?from=allocation`)} className="w-full flex items-center gap-2 py-1.5 text-left">
+                  <span className="w-1.5 self-stretch rounded-full shrink-0" style={{ background: goalColor(i) }} />
+                  <span className="text-lg shrink-0">{g.icon || '🎯'}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-xs font-bold text-on-surface truncate">{g.name}</span>
+                    <span className="block text-[10px] text-text-muted font-semibold truncate">
+                      {sym}{formatAmountCompact(fromMinorUnits(g.accountAllocatedMinor), g.currency, profile?.numberSystem)} / {sym}{formatAmountCompact(fromMinorUnits(g.targetAmountMinor), g.currency, profile?.numberSystem)}
+                      {' · '}
+                      {remainingMinor <= 0 ? t('goals.metImmediatelyShort') : schedule.date ? t('goals.metByDate', { date: schedule.date }) : t('goals.projectionUnavailable')}
+                    </span>
+                  </span>
+                  <span className={clsx('text-[10px] font-black px-2 py-0.5 rounded-full shrink-0', count === 0 ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success')}>
+                    {count === 0 ? t('goals.allocationNoAccounts') : t('goals.allocationAccountsCount', { count: String(count) })}
                   </span>
                 </button>
-                {rows.length === 0 ? (
-                  <p className="text-[11px] text-text-muted">{t('goals.noAccountAllocationsYet')}</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {/* Legend once per goal card (not repeated per row, so it never grows any
-                        individual tile) — explains what each row's black-vs-green figure means. */}
-                    <p className="text-[9px] font-bold text-text-muted pl-1">
-                      <span className="text-primary">{t('goals.allocationLegendNow')}</span>
-                      {' → '}
-                      <span className="text-success">{t('goals.allocationLegendAtGoal')}</span>
-                    </p>
-                    {rows.map((r) => {
-                      const fmt = (m: number) => `${getCurrencySymbol(r.account.currency)}${formatAmountCompact(fromMinorUnits(m), r.account.currency, profile?.numberSystem)}`;
-                      // Reserved (frozen) and already-at/past-target goals never grow further — their
-                      // contribution today IS their final contribution. Otherwise, add this account's
-                      // own share of the projected forward growth (see the schedule computed above)
-                      // to get what it will have contributed by the time the goal is actually met.
-                      const sourceIdx = sources.findIndex((s) => s.id === r.account.id);
-                      const finalAmountMinor = (remainingMinor <= 0 || r.reserved || !lastEntry || sourceIdx < 0)
-                        ? r.amountMinor
-                        : r.amountMinor + lastEntry.perSourceCumulativeMinor[sourceIdx];
-                      const currentTargetPct = g.targetAmountMinor > 0 ? Math.round((r.amountMinor / g.targetAmountMinor) * 100) : 0;
-                      const finalTargetPct = g.targetAmountMinor > 0 ? Math.round((finalAmountMinor / g.targetAmountMinor) * 100) : 0;
-                      const editable = canEditAccount(r.account);
-                      return (
-                        <button
-                          key={r.account.id} type="button"
-                          onClick={() => editable && openEdit(g.id, g.name, r.account.id, r.pct)}
-                          disabled={!editable}
-                          className={clsx('w-full bg-surface rounded-xl px-3 py-2 text-left space-y-0.5 transition-colors', editable ? 'hover:bg-primary/5' : 'cursor-default opacity-80')}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span className="material-symbols-outlined text-[14px] text-primary shrink-0">account_balance</span>
-                            <span className="flex-1 min-w-0 text-xs font-bold text-on-surface truncate">{r.account.name}</span>
-                            {!editable && (
-                              <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0" title={t('goals.shareRoleView')}>visibility</span>
-                            )}
-                            {r.reserved && (
-                              <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">{t('goals.reserved')}</span>
-                            )}
-                          </div>
-                          {/* Current contribution -> projected contribution once the goal hits
-                              target, both as % of the goal target — kept to this one line so the
-                              tile's height never grows past its original two lines. */}
-                          <p className="text-[11px] font-bold pl-[20px] truncate">
-                            <span className="text-primary">{currentTargetPct}% · {fmt(r.amountMinor)}</span>
-                            <span className="text-text-muted"> → </span>
-                            <span className="text-success">{finalTargetPct}% · {fmt(finalAmountMinor)}</span>
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {rows.length > 0 && (
-                  <p className="text-[10px] font-bold text-text-muted text-right">
-                    {remainingMinor <= 0
-                      ? t('goals.metImmediatelyShort')
-                      : schedule.date
-                        ? t('goals.metByDate', { date: schedule.date })
-                        : t('goals.projectionUnavailable')}
-                  </p>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -257,6 +266,11 @@ export default function GoalAllocationManager({ embedded = false, viewingUid }: 
               />
               <span className="text-lg font-bold text-text-muted">%</span>
             </div>
+            {(() => {
+              const acc = accounts.find((x) => x.id === editing.accountId);
+              const others = (acc?.goalAllocations || []).reduce((sum, e) => sum + (e.goalId === editing.goalId ? 0 : e.pct), 0);
+              return <p className="text-[11px] text-text-muted text-center">{t('goals.allocationFreeHint', { free: String(Math.max(0, 100 - others)) })}</p>;
+            })()}
             {error && <p className="text-xs text-error font-bold text-center">{error}</p>}
             <button onClick={handleSaveEdit} disabled={saving} className={clsx('w-full py-3 text-white font-bold rounded-xl disabled:opacity-50', 'bg-primary')}>
               {saving ? t('goals.saving') : t('common.save')}
