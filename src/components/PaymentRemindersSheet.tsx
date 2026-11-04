@@ -2,61 +2,88 @@ import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import {
-  PAY_FREQ_OPTIONS, PaymentReminder, REMINDER_TYPES, canRingPaymentAlarm, deletePaymentReminder, getPaymentReminders,
-  newReminderId, nextReminderAt, reminderSummary, savePaymentReminder, syncPaymentReminders,
+  PAY_FREQ_OPTIONS, PaymentReminder, REMINDER_TYPES, canRingPaymentAlarm, deletePaymentReminder,
+  newReminderId, nextReminderAt, reminderSummary, ringPayerNow, savePaymentReminder,
 } from '../lib/paymentReminders';
+import { canPay } from './PaymentRolePicker';
 import { toLocalDateString } from '../lib/dateUtils';
 
-// Reminders to add a payment in a Payments group: what it is for, the day (and time) it is to be added, how often it comes back, and
-// whether it arrives as a notification or rings like an alarm. Sits over the bottom bar so its buttons are never behind it.
-export default function PaymentRemindersSheet({ groupId, groupName, categoryNames, groupNameOf, onClose }: {
+type Person = { userId: string; name: string; role?: string };
+
+// Reminders to add a payment in a Payments group: what it is for, the day (and time) it is to be added, how often it comes back, who it
+// is for, and whether it arrives as a notification or rings like an alarm. It rings only for the payer: the member picked here, or
+// whoever is marked Payer in the group, even if they join after the reminder is set. Sits over the bottom bar so its buttons are never behind it.
+export default function PaymentRemindersSheet({ groupId, groupName, categoryNames, reminders, members, onClose }: {
   groupId: string;
   groupName: string;
   categoryNames: string[]; // the group's own payment categories, offered after the usual types
-  groupNameOf: (groupId: string) => string;
+  reminders: PaymentReminder[];
+  members: Person[];
   onClose: () => void;
 }) {
-  const { user, profile } = useAuth();
-  const all = getPaymentReminders(profile);
-  const mine = all.filter((r) => r.groupId === groupId).sort((a, b) => (nextReminderAt(a)?.getTime() ?? Infinity) - (nextReminderAt(b)?.getTime() ?? Infinity));
+  const { user } = useAuth();
+  const mine = [...reminders].sort((a, b) => (nextReminderAt(a)?.getTime() ?? Infinity) - (nextReminderAt(b)?.getTime() ?? Infinity));
   const [editing, setEditing] = useState<PaymentReminder | null>(null);
+  const [ringMsg, setRingMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [ringing, setRinging] = useState(false);
+  const payers = members.filter((m) => canPay(m.role));
+  const youName = (m: Person) => (m.userId === user?.uid ? 'You' : m.name);
 
-  const persist = async (next: PaymentReminder[]) => { await syncPaymentReminders(next, groupNameOf); };
-
-  const toggle = async (r: PaymentReminder) => {
-    if (!user) return;
-    const next = { ...r, active: !r.active };
-    await savePaymentReminder(user.uid, next).catch((err) => console.error('Could not change the reminder:', err));
-    await persist(all.map((x) => (x.id === r.id ? next : x)));
+  // who a reminder rings for, in words
+  const ringsFor = (r: PaymentReminder) => {
+    if (r.payerUid) {
+      const m = members.find((x) => x.userId === r.payerUid);
+      return m ? { text: `Rings for ${youName(m)}`, waiting: false } : { text: 'Waiting for the payer to join', waiting: true };
+    }
+    if (payers.length === 0) return { text: 'Waiting for a payer to join', waiting: true };
+    return { text: `Rings for ${payers.map(youName).join(', ')}`, waiting: false };
   };
+
+  // the payers other than me, who a receiver can ring right now
+  const ringable = payers.filter((m) => m.userId !== user?.uid);
+  const ringNow = async (m: Person) => {
+    setRinging(true);
+    setRingMsg(null);
+    const next = mine.find((r) => r.active && (!r.payerUid || r.payerUid === m.userId));
+    const result = await ringPayerNow(groupId, m.userId, next?.label || 'the payment');
+    setRingMsg({ ok: result.ok, text: result.message });
+    setRinging(false);
+  };
+
+  const toggle = (r: PaymentReminder) => savePaymentReminder({ ...r, active: !r.active }).catch((err) => console.error('Could not change the reminder:', err));
 
   if (editing) {
     return (
       <Editor
         initial={editing}
-        exists={all.some((x) => x.id === editing.id)}
+        exists={reminders.some((x) => x.id === editing.id)}
+        members={members}
         types={Array.from(new Set([...REMINDER_TYPES.filter((t) => t !== 'Other'), ...categoryNames.filter((c) => !/^other$/i.test(c)), 'Other']))}
         onBack={() => setEditing(null)}
-        onSaved={async (saved) => {
-          if (!user) return;
-          await savePaymentReminder(user.uid, saved);
-          await persist([...all.filter((x) => x.id !== saved.id), saved]);
-          setEditing(null);
-        }}
-        onDelete={async (id) => {
-          if (!user) return;
-          await deletePaymentReminder(user.uid, id);
-          await persist(all.filter((x) => x.id !== id));
-          setEditing(null);
-        }}
+        onSaved={async (saved) => { await savePaymentReminder(saved); setEditing(null); }}
+        onDelete={async (id) => { await deletePaymentReminder(id); setEditing(null); }}
       />
     );
   }
 
-  const blank = (): PaymentReminder => ({ id: newReminderId(), groupId, label: 'Rent', amount: null, startDate: toLocalDateString(new Date()), time: '09:00', freq: 'monthly', mode: 'notification', active: true });
+  const blank = (): PaymentReminder => ({ id: newReminderId(), groupId, label: 'Rent', amount: null, startDate: toLocalDateString(new Date()), time: '09:00', freq: 'monthly', mode: 'notification', active: true, groupName, payerUid: null, createdBy: user?.uid });
 
   return (
     <Shell onClose={onClose} title="Payment reminders" subtitle={groupName}>
+      {ringable.length > 0 && (
+        <div className="rounded-2xl bg-[#eef0ff] p-3 space-y-2">
+          <p className="text-[11px] font-bold text-[#4338ca]">Waiting on a payment? Make the payer's phone ring now.</p>
+          <div className="flex flex-wrap gap-2">
+            {ringable.map((m) => (
+              <button key={m.userId} type="button" disabled={ringing} onClick={() => ringNow(m)}
+                className="flex items-center gap-1.5 rounded-xl bg-[#4338ca] text-white px-3.5 py-2 text-xs font-black active:scale-95 disabled:opacity-50">
+                <span className="material-symbols-outlined text-[16px]">notifications_active</span>Ring {m.name}
+              </button>
+            ))}
+          </div>
+          {ringMsg && <p className={clsx('text-[11px] font-bold', ringMsg.ok ? 'text-success' : 'text-error')}>{ringMsg.text}</p>}
+        </div>
+      )}
       {mine.length === 0 && (
         <p className="rounded-2xl border border-dashed border-border-subtle p-4 text-center text-sm text-text-muted">
           No reminders yet. Set one for rent or a bill and we will nudge you on the day to add the payment here.
@@ -75,6 +102,7 @@ export default function PaymentRemindersSheet({ groupId, groupName, categoryName
                 <p className="text-[11px] text-text-muted truncate">{reminderSummary(r)}</p>
                 <p className="text-[11px] font-bold text-text-muted">
                   {!r.active ? 'Paused' : next ? `Next: ${next.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}` : 'Done'}
+                  {' · '}<span className={ringsFor(r).waiting ? 'text-amber-700' : ''}>{ringsFor(r).text}</span>
                 </p>
               </button>
               <button type="button" role="switch" aria-checked={r.active} aria-label={r.active ? 'Pause reminder' : 'Turn reminder on'} onClick={() => toggle(r)}
@@ -90,8 +118,9 @@ export default function PaymentRemindersSheet({ groupId, groupName, categoryName
   );
 }
 
-function Editor({ initial, exists, types, onBack, onSaved, onDelete }: {
+function Editor({ initial, exists, members, types, onBack, onSaved, onDelete }: {
   initial: PaymentReminder;
+  members: Person[];
   exists: boolean; // already saved (so it can be deleted)
   types: string[];
   onBack: () => void;
@@ -106,6 +135,7 @@ function Editor({ initial, exists, types, onBack, onSaved, onDelete }: {
   const [time, setTime] = useState(initial.time);
   const [freq, setFreq] = useState(initial.freq);
   const [mode, setMode] = useState(initial.mode);
+  const [payerUid, setPayerUid] = useState<string>(initial.payerUid || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const label = type === 'Other' ? custom.trim() : type;
@@ -117,7 +147,7 @@ function Editor({ initial, exists, types, onBack, onSaved, onDelete }: {
     setSaving(true);
     setError('');
     try {
-      await onSaved({ ...initial, label: label.slice(0, 60), amount: Number(amount) > 0 ? Number(amount) : null, startDate, time, freq, mode, active: true });
+      await onSaved({ ...initial, label: label.slice(0, 60), amount: Number(amount) > 0 ? Number(amount) : null, startDate, time, freq, mode, payerUid: payerUid || null, active: initial.active });
     } catch (err) {
       console.error('Could not save the reminder:', err);
       setError('Could not save the reminder. Check your connection and try again.');
@@ -164,7 +194,20 @@ function Editor({ initial, exists, types, onBack, onSaved, onDelete }: {
       </div>
 
       <div className="space-y-1">
-        <label className="text-[11px] font-bold text-text-muted px-1">Remind me with</label>
+        <label className="text-[11px] font-bold text-text-muted px-1">Who should be reminded</label>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => setPayerUid('')} className={chip(!payerUid)}>The payer</button>
+          {[...members].sort((a, b) => Number(canPay(b.role)) - Number(canPay(a.role))).map((m) => (
+            <button key={m.userId} type="button" onClick={() => setPayerUid(m.userId)} className={chip(payerUid === m.userId)}>{m.name}</button>
+          ))}
+        </div>
+        <p className="text-[10px] text-text-muted px-1">
+          {payerUid ? "It rings only on this person's phone." : 'It rings on the phone of whoever is marked Payer in this group. If the payer is not added yet, it starts ringing for them as soon as they join.'}
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-[11px] font-bold text-text-muted px-1">Remind with</label>
         <div className="grid grid-cols-2 gap-2">
           {([['notification', 'notifications', 'Notification', 'A normal alert'], ['alarm', 'alarm', 'Alarm', 'Rings until you act']] as const).map(([id, icon, name, hint]) => (
             <button key={id} type="button" onClick={() => setMode(id)} className={clsx('rounded-2xl border-[1.5px] p-3 text-left', mode === id ? 'border-primary bg-primary/5' : 'border-border-subtle')}>

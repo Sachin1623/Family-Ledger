@@ -393,6 +393,22 @@ service cloud.firestore {
       }
     }
 
+    // A reminder to add a payment in a Payments group (rent, a bill). Any member can set one up; it rings only on the phone of the
+    // person it names, or of whoever is marked Payer in the group (see src/lib/paymentReminders.ts).
+    match /groupPaymentReminders/{reminderId} {
+      function isValidPayReminder(data) {
+        return data.keys().hasAll(['groupId', 'label', 'startDate', 'time', 'freq', 'mode', 'active']) &&
+               data.groupId is string && data.label is string && data.label.size() > 0 && data.label.size() <= 60 &&
+               data.startDate is string && data.time is string && data.active is bool &&
+               data.freq in ['once', 'weekly', 'biweekly', 'monthly', 'bimonthly', 'quarterly', 'yearly'] &&
+               data.mode in ['notification', 'alarm'];
+      }
+      allow read: if isSignedIn() && canModifyGroup(resource.data.groupId);
+      allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidPayReminder(incoming());
+      allow update: if isUserVerified() && canModifyGroup(existing().groupId) && isValidPayReminder(incoming()) && incoming().groupId == existing().groupId;
+      allow delete: if isUserVerified() && canModifyGroup(existing().groupId);
+    }
+
     match /settlements/{settlementId} {
       allow read: if isSignedIn() && (isSachin() || canModifyGroup(resource.data.groupId));
       allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidSettlement(incoming());

@@ -1,19 +1,24 @@
-import { doc, setDoc, deleteField } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { scheduleAlarm, cancelAlarm, ensureAlarmClockSanitized, setApprovedAlarmIds } from './alarmClock';
 import { toLocalDateString } from './dateUtils';
 
-// "Remind me to add this payment": rent, a water or electricity bill and so on, on a date, once or repeating. Personal to the
-// person who sets it (each person in a Payments group can keep their own) and kept on their own user record as the map
-// `paymentReminders`. The reminder itself is armed on the phone, as a normal notification or as an alarm that rings like a clock
-// (Android; other devices get the notification), so it fires on time with no connection and costs nothing to run.
+// "Remind the payer to add this payment": rent, a water or electricity bill and so on, on a date, once or repeating. A reminder belongs
+// to the Payments group (any member can set one up) and rings only on the phone of the person who pays: the member picked for it, or
+// else whoever is marked Payer in the group. If that person has not joined yet nothing rings; the moment they join (their Payer role
+// comes with the invite) their phone finds the reminder and arms it. Each phone arms its own reminders as a normal notification or as
+// an alarm that rings like a clock (Android; other devices get the notification), so they fire on time with no connection and cost
+// nothing to run. Stored in `groupPaymentReminders`.
 export type PayFreq = 'once' | 'weekly' | 'biweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'yearly';
 
 export interface PaymentReminder {
   id: string;
   groupId: string;
+  groupName?: string; // shown in the reminder text
+  payerUid?: string | null; // who it rings for; empty = whoever is the group's Payer
+  createdBy?: string;
   label: string; // what the payment is for: Rent, Water bill...
   amount?: number | null; // shown in the reminder when it is known
   startDate: string; // yyyy-mm-dd, the day the payment is to be added (the first one, when it repeats)
@@ -40,18 +45,16 @@ export const REMINDER_TYPES = ['Rent', 'Electricity bill', 'Water bill', 'Gas bi
 const MONTH_STEP: Partial<Record<PayFreq, number>> = { monthly: 1, bimonthly: 2, quarterly: 3, yearly: 12 };
 const DAY_STEP: Partial<Record<PayFreq, number>> = { weekly: 7, biweekly: 14 };
 
-export const getPaymentReminders = (profile: any): PaymentReminder[] =>
-  Object.entries((profile?.paymentReminders || {}) as Record<string, Omit<PaymentReminder, 'id'>>)
-    .filter(([, r]) => r && r.label && r.startDate)
-    .map(([id, r]) => ({ ...r, id }));
-
 export const newReminderId = () => `pr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
-export function savePaymentReminder(uid: string, r: PaymentReminder) {
+export function savePaymentReminder(r: PaymentReminder) {
   const { id, ...rest } = r;
-  return setDoc(doc(db, 'users', uid), { paymentReminders: { [id]: { ...rest, amount: rest.amount ?? null } } }, { merge: true });
+  return setDoc(doc(db, 'groupPaymentReminders', id), { ...rest, amount: rest.amount ?? null, payerUid: rest.payerUid || null, updatedAt: new Date().toISOString() });
 }
-export const deletePaymentReminder = (uid: string, id: string) => setDoc(doc(db, 'users', uid), { paymentReminders: { [id]: deleteField() } }, { merge: true });
+export const deletePaymentReminder = (id: string) => deleteDoc(doc(db, 'groupPaymentReminders', id));
+
+// Does this reminder ring for me? Yes if it names me, or names nobody and I am marked Payer in its group.
+export const rings = (r: PaymentReminder, uid: string, myPayerGroups: Set<string>) => (r.payerUid ? r.payerUid === uid : myPayerGroups.has(r.groupId));
 
 const parseDate = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, (m || 1) - 1, d || 1); };
 
@@ -117,14 +120,15 @@ const readArmed = (): number[] => { try { return JSON.parse(localStorage.getItem
 const AHEAD: Partial<Record<PayFreq, number>> = { biweekly: 8, monthly: 12, bimonthly: 8, quarterly: 6, yearly: 3 };
 
 const routeFor = (r: PaymentReminder) => `/groups/${r.groupId}?add=1&label=${encodeURIComponent(r.label)}`;
-const bodyFor = (r: PaymentReminder, groupName: string) =>
-  `${r.amount ? `${r.label} · ${r.amount.toLocaleString()}. ` : ''}Tap to add this payment${groupName ? ` in ${groupName}` : ''}.`;
+const bodyFor = (r: PaymentReminder) =>
+  `${r.amount ? `${r.label} · ${r.amount.toLocaleString()}. ` : ''}Tap to add this payment${r.groupName ? ` in ${r.groupName}` : ''}.`;
 
 // Several syncs can overlap (saving and the page opening), and each one is a "cancel what I armed, arm what is due" pass over shared
 // native state, so they run one at a time.
 let chain: Promise<void> = Promise.resolve();
 
-export function syncPaymentReminders(reminders: PaymentReminder[], groupNameOf: (groupId: string) => string): Promise<void> {
+// `reminders` is only the ones that ring for this person.
+export function syncPaymentReminders(reminders: PaymentReminder[]): Promise<void> {
   if (!Capacitor.isNativePlatform()) return Promise.resolve(); // web has no on-device reminders
   chain = chain.then(async () => {
     try {
@@ -155,7 +159,7 @@ export function syncPaymentReminders(reminders: PaymentReminder[], groupNameOf: 
       for (const p of plans) {
         const ringing = p.r.mode === 'alarm' && android;
         const title = `💸 ${p.r.label} is due`;
-        const body = bodyFor(p.r, groupNameOf(p.r.groupId));
+        const body = bodyFor(p.r);
         if (ringing) {
           alarmIds.push(p.id);
           armed.push(p.id);
@@ -180,7 +184,7 @@ export function syncPaymentReminders(reminders: PaymentReminder[], groupNameOf: 
         await scheduleAlarm({
           id: p.id,
           title: `💸 ${p.r.label} is due`,
-          body: bodyFor(p.r, groupNameOf(p.r.groupId)),
+          body: bodyFor(p.r),
           hour: p.at.getHours(),
           minute: p.at.getMinutes(),
           weekdays: [],
@@ -204,4 +208,38 @@ export function syncPaymentReminders(reminders: PaymentReminder[], groupNameOf: 
     }
   });
   return chain;
+}
+
+// ---------- ring the payer now ----------
+// A receiver (any member) taps a button and the payer's phone is told to ring. The server finds the payer and pushes to them.
+export async function ringPayerNow(groupId: string, payerUid: string | null, label: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) return { ok: false, message: 'You are not signed in.' };
+    const res = await fetch('/api/payment-reminder/ring', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupId, payerUid, label }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, message: data.error || 'Could not ring the payer.' };
+    return { ok: true, message: data.sent > 0 ? 'Rung. They will see it on their phone now.' : 'Sent, but their phone has no notifications on.' };
+  } catch (err) {
+    console.error('Could not ring the payer:', err);
+    return { ok: false, message: 'Could not ring the payer. Check your connection.' };
+  }
+}
+
+// On the payer's phone, when the ring arrives while the app is open: an alarm at the next minute (the phone's alarm works to the minute).
+export async function ringPaymentAlarmNow(groupId: string, label: string, body: string) {
+  if (!canRingPaymentAlarm()) return;
+  const at = new Date(Date.now() + 60_000);
+  const id = 899999;
+  const date = toLocalDateString(at);
+  await ensureAlarmClockSanitized();
+  await setApprovedAlarmIds('payment_ring', [id]);
+  await scheduleAlarm({
+    id, title: `⏰ ${label} is due`, body, hour: at.getHours(), minute: at.getMinutes(), weekdays: [],
+    intervalDays: 36500, startDate: date, endDate: date, route: `/groups/${groupId}?add=1&label=${encodeURIComponent(label)}`, feature: 'payment_ring',
+  });
 }

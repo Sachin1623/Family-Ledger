@@ -15656,6 +15656,49 @@ async function startServer() {
     }
   });
 
+  // "Ring the payer now": a member of a Payments group taps a button and the payer's phone is told to ring an alarm. Goes to the named
+  // member, or else every member marked Payer. A phone with the app open rings an alarm straight away (see pushNotifications.ts);
+  // otherwise it gets a high-priority notification. Limited to one per payer per minute so it cannot be used to pester.
+  const lastPayerRing = new Map<string, number>();
+  app.post('/api/payment-reminder/ring', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const groupId = String(req.body?.groupId || '');
+    const payerUid = req.body?.payerUid ? String(req.body.payerUid) : '';
+    const label = String(req.body?.label || 'the payment').slice(0, 60);
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(groupId)) return res.status(400).json({ error: 'groupId is required.' });
+    try {
+      const [callerSnap, groupSnap, membersSnap] = await Promise.all([
+        db.collection('members').doc(`${decoded.uid}_${groupId}`).get(),
+        db.collection('groups').doc(groupId).get(),
+        db.collection('members').where('groupId', '==', groupId).get(),
+      ]);
+      if (!callerSnap.exists || !groupSnap.exists) return res.status(403).json({ error: 'Not a member of this group.' });
+      const members = membersSnap.docs.map((d) => d.data() as any);
+      const targets = (payerUid
+        ? members.filter((m) => m.userId === payerUid)
+        : members.filter((m) => m.paymentRole === 'payer' || m.paymentRole === 'both')
+      ).map((m) => String(m.userId)).filter((uid) => uid !== decoded.uid);
+      if (targets.length === 0) return res.status(404).json({ error: 'There is no payer in this group to ring yet.' });
+
+      const now = Date.now();
+      const fresh = targets.filter((uid) => now - (lastPayerRing.get(`${groupId}_${uid}`) || 0) > 60_000);
+      if (fresh.length === 0) return res.status(429).json({ error: 'The payer was just rung. Give it a minute.' });
+      fresh.forEach((uid) => lastPayerRing.set(`${groupId}_${uid}`, now));
+
+      const groupName = groupSnap.data()?.name || 'the group';
+      const actorName = decoded.name || callerSnap.data()?.displayName || 'Someone';
+      const body = `${actorName} is waiting for ${label} in "${groupName}". Tap to add the payment.`;
+      const tokens = await collectPushTokens(db, fresh, 'notificationsEnabled');
+      const sent = await sendPush(tokens, `⏰ ${label} is due`, body, { type: 'payment_ring', groupId, label, ringAt: new Date(now).toISOString() });
+      return res.json({ rung: fresh.length, sent });
+    } catch (error) {
+      console.error('payment-reminder ring error:', error);
+      return res.status(500).json({ error: 'Unable to ring the payer.' });
+    }
+  });
+
   // Fired after a client-side member-role update (the write itself goes straight to Firestore
   // under firestore.rules, not through this endpoint) to push/log a notification to the newly
   // promoted member. Re-checks both the caller's and the target's roles server-side rather than

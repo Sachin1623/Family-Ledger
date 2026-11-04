@@ -5,6 +5,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import type { User } from 'firebase/auth';
 import { navigateTo } from './navigationRef';
 import { registerMedicineActionTypes, snoozeMedicineReminder } from './medicineReminders';
+import { ringPaymentAlarmNow } from './paymentReminders';
 
 let registered = false;
 // The most recently FCM-registered token for this device, so removeCurrentDeviceToken (called on
@@ -138,7 +139,7 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {
     navigateTo('/profile?promptDob=1');
-  } else if (data.type === 'payment_reminder' && data.groupId) {
+  } else if ((data.type === 'payment_reminder' || data.type === 'payment_ring') && data.groupId) {
     navigateTo(`/groups/${data.groupId}?add=1${data.label ? `&label=${encodeURIComponent(data.label)}` : ''}`);
   } else if (data.type === 'shopping_list' && data.listId) {
     navigateTo(`/shopping-lists/${data.listId}`);
@@ -321,6 +322,11 @@ export async function initPushNotifications(user: User) {
     // FirebaseMessaging.presentationOptions), so re-displaying it here too would double it up.
     FirebaseMessaging.addListener('notificationReceived', async (event) => {
       if (Capacitor.getPlatform() !== 'android') return;
+      // someone asked the payer to pay now: with the app open, ring an alarm as well as showing the notification
+      const pushed = event.notification.data as Record<string, string> | undefined;
+      if (pushed?.type === 'payment_ring' && pushed.groupId) {
+        void ringPaymentAlarmNow(pushed.groupId, pushed.label || 'Payment', event.notification.body || '').catch((err) => console.error('Could not ring the payment alarm:', err));
+      }
       try {
         await LocalNotifications.schedule({
           notifications: [

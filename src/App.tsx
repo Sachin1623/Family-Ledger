@@ -146,6 +146,7 @@ import GlobalReminderScheduler from './components/GlobalReminderScheduler';
 import GlobalMedicineReminderScheduler from './components/GlobalMedicineReminderScheduler';
 import GlobalVaccineReminderScheduler from './components/GlobalVaccineReminderScheduler';
 import GlobalAlarmRingingBanner from './components/GlobalAlarmRingingBanner';
+import GlobalPaymentReminderScheduler from './components/GlobalPaymentReminderScheduler';
 import FeedbackRatingPrompt from './components/FeedbackRatingPrompt';
 import AppPermissionsReminder from './components/AppPermissionsReminder';
 import AlarmPermissionsPrompt from './components/AlarmPermissionsPrompt';
@@ -344,6 +345,7 @@ export default function App() {
           <GlobalMedicineReminderScheduler />
           <GlobalVaccineReminderScheduler />
           <GlobalAlarmRingingBanner />
+          <GlobalPaymentReminderScheduler />
           <FeedbackRatingPrompt />
           <AppPermissionsReminder />
           <AlarmPermissionsPrompt />

@@ -13,7 +13,7 @@ import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
 import { notifyPaymentChange } from '../lib/paymentApi';
 import PaymentRemindersSheet from '../components/PaymentRemindersSheet';
-import { getPaymentReminders, syncPaymentReminders } from '../lib/paymentReminders';
+import type { PaymentReminder } from '../lib/paymentReminders';
 import PaymentRolePicker, { canReceive, PAYMENT_ROLE_LABEL, isPaymentRole } from '../components/PaymentRolePicker';
 import { PaymentCategory, isMaterialIcon, paymentCategoryIcon, visiblePaymentCategories } from '../lib/paymentCategories';
 
@@ -34,19 +34,13 @@ const todayLocal = () => {
 export default function GroupPayments() {
   const { groupId } = useParams<{ groupId: string }>();
   const [searchParams] = useSearchParams();
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [groupSnap] = useDocument(groupId ? doc(db, 'groups', groupId) : null);
   const group: any = groupSnap?.data();
   const [showReminders, setShowReminders] = useState(false);
-  // make sure this phone has the reminders that are saved (a new phone, a reinstall, the ones armed ahead running out), once per visit
-  const remindersSynced = useRef(false);
-  useEffect(() => {
-    if (!profile?.paymentReminders || remindersSynced.current || !group) return;
-    remindersSynced.current = true;
-    void syncPaymentReminders(getPaymentReminders(profile), (gid) => (gid === groupId ? group.name || '' : ''));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.paymentReminders, !!group]);
-  const reminderCount = getPaymentReminders(profile).filter((r) => r.groupId === groupId && r.active).length;
+  const [remindersSnap] = useCollection(groupId ? query(collection(db, 'groupPaymentReminders'), where('groupId', '==', groupId)) : null);
+  const groupReminders = useMemo(() => (remindersSnap?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []) as PaymentReminder[], [remindersSnap]);
+  const reminderCount = groupReminders.filter((r) => r.active).length;
   const [membersSnap] = useCollection(groupId ? query(collection(db, 'members'), where('groupId', '==', groupId)) : null);
   const [paymentsSnap, loading] = useCollection(groupId ? query(collection(db, 'groupPayments'), where('groupId', '==', groupId)) : null);
 
@@ -131,7 +125,8 @@ export default function GroupPayments() {
           groupId={groupId}
           groupName={group?.name || ''}
           categoryNames={visiblePaymentCategories(group).map((c) => c.name)}
-          groupNameOf={(gid) => (gid === groupId ? group?.name || '' : '')}
+          reminders={groupReminders}
+          members={members.map((m) => ({ userId: m.userId, name: nameOf(m.userId), role: m.paymentRole }))}
           onClose={() => setShowReminders(false)}
         />
       )}
