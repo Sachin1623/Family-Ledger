@@ -1,4 +1,4 @@
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, deleteField } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { db, auth } from './firebase';
@@ -52,6 +52,16 @@ export function savePaymentReminder(r: PaymentReminder) {
   return setDoc(doc(db, 'groupPaymentReminders', id), { ...rest, amount: rest.amount ?? null, payerUid: rest.payerUid || null, updatedAt: new Date().toISOString() });
 }
 export const deletePaymentReminder = (id: string) => deleteDoc(doc(db, 'groupPaymentReminders', id));
+
+// The payer's own choice for how a group's reminders reach them, alarm or notification, whatever the reminder was set up with. It
+// covers the scheduled reminders and the "ring now" taps alike. Kept on their user record as `paymentReminderModes` (by group), and
+// copied to this phone so a ring that arrives with the app open can read it without a lookup.
+export type ReminderMode = 'notification' | 'alarm';
+export const getPayerModes = (profile: any): Record<string, ReminderMode> => (profile?.paymentReminderModes || {}) as Record<string, ReminderMode>;
+export const setPayerMode = (uid: string, groupId: string, mode: ReminderMode | null) =>
+  setDoc(doc(db, 'users', uid), { paymentReminderModes: { [groupId]: mode || deleteField() } }, { merge: true });
+const MODES_KEY = 'familyledger_payment_reminder_modes';
+const readModes = (): Record<string, ReminderMode> => { try { return JSON.parse(localStorage.getItem(MODES_KEY) || '{}'); } catch { return {}; } };
 
 // Does this reminder ring for me? Yes if it names me, or names nobody and I am marked Payer in its group.
 export const rings = (r: PaymentReminder, uid: string, myPayerGroups: Set<string>) => (r.payerUid ? r.payerUid === uid : myPayerGroups.has(r.groupId));
@@ -128,7 +138,8 @@ const bodyFor = (r: PaymentReminder) =>
 let chain: Promise<void> = Promise.resolve();
 
 // `reminders` is only the ones that ring for this person.
-export function syncPaymentReminders(reminders: PaymentReminder[]): Promise<void> {
+export function syncPaymentReminders(reminders: PaymentReminder[], modes: Record<string, ReminderMode> = {}): Promise<void> {
+  try { localStorage.setItem(MODES_KEY, JSON.stringify(modes)); } catch { /* not persisted: a ring just uses the reminder's own setting */ }
   if (!Capacitor.isNativePlatform()) return Promise.resolve(); // web has no on-device reminders
   chain = chain.then(async () => {
     try {
@@ -157,7 +168,7 @@ export function syncPaymentReminders(reminders: PaymentReminder[]): Promise<void
       const armed: number[] = [];
       const notifications: any[] = [];
       for (const p of plans) {
-        const ringing = p.r.mode === 'alarm' && android;
+        const ringing = (modes[p.r.groupId] || p.r.mode) === 'alarm' && android;
         const title = `💸 ${p.r.label} is due`;
         const body = bodyFor(p.r);
         if (ringing) {
@@ -233,6 +244,7 @@ export async function ringPayerNow(groupId: string, payerUid: string | null, lab
 // On the payer's phone, when the ring arrives while the app is open: an alarm at the next minute (the phone's alarm works to the minute).
 export async function ringPaymentAlarmNow(groupId: string, label: string, body: string) {
   if (!canRingPaymentAlarm()) return;
+  if (readModes()[groupId] === 'notification') return; // the payer chose notifications only
   const at = new Date(Date.now() + 60_000);
   const id = 899999;
   const date = toLocalDateString(at);

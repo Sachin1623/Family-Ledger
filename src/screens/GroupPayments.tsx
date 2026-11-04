@@ -7,7 +7,8 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { getCurrencySymbol } from '../lib/constants';
 import { parseLocalDate } from '../lib/dateUtils';
-import { useIdentities } from '../lib/userIdentity';
+import { ownPhoto, useIdentities } from '../lib/userIdentity';
+import MemberAvatar from '../components/MemberAvatar';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
@@ -55,6 +56,11 @@ export default function GroupPayments() {
     if (uid === user?.uid) return 'You';
     const m = members.find((x) => x.userId === uid);
     return resolve(uid, m?.displayName).name || 'Member';
+  };
+
+  const photoOf = (uid: string) => {
+    const m = members.find((x) => x.userId === uid);
+    return resolve(uid, m?.displayName, m?.photoURL).photo || (uid === user?.uid ? ownPhoto(user) : '');
   };
 
   const symbol = getCurrencySymbol(group?.currency);
@@ -126,7 +132,7 @@ export default function GroupPayments() {
           groupName={group?.name || ''}
           categoryNames={visiblePaymentCategories(group).map((c) => c.name)}
           reminders={groupReminders}
-          members={members.map((m) => ({ userId: m.userId, name: nameOf(m.userId), role: m.paymentRole }))}
+          members={members.map((m) => ({ userId: m.userId, name: nameOf(m.userId), photo: photoOf(m.userId), role: m.paymentRole }))}
           onClose={() => setShowReminders(false)}
         />
       )}
@@ -153,7 +159,10 @@ export default function GroupPayments() {
                     <p className="text-sm font-black text-primary truncate">{p.label || 'Payment'}</p>
                     <p className="text-base font-black tabular-nums text-on-surface whitespace-nowrap">{money(p.amount)}</p>
                   </div>
-                  <p className="text-[12px] font-bold text-text-muted">{nameOf(p.fromUid)} → {nameOf(p.toUid)}</p>
+                  <p className="text-[12px] font-bold text-text-muted flex items-center gap-1.5 flex-wrap">
+                    <MemberAvatar name={nameOf(p.fromUid)} photo={photoOf(p.fromUid)} size={20} />{nameOf(p.fromUid)} →
+                    <MemberAvatar name={nameOf(p.toUid)} photo={photoOf(p.toUid)} size={20} />{nameOf(p.toUid)}
+                  </p>
                   <p className="text-[11px] text-text-muted">{parseLocalDate(p.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}{p.editedAt && ' · edited'}</p>
                   {p.note && <p className="text-xs text-on-surface mt-1 break-words">{p.note}</p>}
                 </div>
@@ -207,6 +216,7 @@ export default function GroupPayments() {
           initialLabel={searchParams.get('label') || ''}
           defaultTrackGroupId={myMember?.trackExpenseGroupId}
           nameOf={nameOf}
+          photoOf={photoOf}
           onClose={() => { setShowForm(false); setEditFor(null); }}
           onSaved={(saved, track) => {
             setShowForm(false);
@@ -234,8 +244,9 @@ export default function GroupPayments() {
 }
 
 function PaymentForm({
-  groupId, uid, symbol, others, editing, myRole, categories, initialLabel, defaultTrackGroupId, nameOf, onClose, onSaved,
+  groupId, uid, symbol, others, editing, myRole, categories, initialLabel, defaultTrackGroupId, nameOf, photoOf, onClose, onSaved,
 }: {
+  photoOf: (uid: string) => string;
   initialLabel?: string; // what a payment reminder was for, so the form opens on it
   groupId: string;
   uid: string;
@@ -361,7 +372,7 @@ function PaymentForm({
                 onClick={() => setToUid(m.userId)}
                 className={clsx('px-3 py-2 rounded-xl text-xs font-bold border', toUid === m.userId ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
               >
-                {nameOf(m.userId)}{isPaymentRole(m.paymentRole) && <span className="ml-1.5 opacity-75 font-semibold">· {PAYMENT_ROLE_LABEL[m.paymentRole]}</span>}
+                <MemberAvatar name={nameOf(m.userId)} photo={photoOf(m.userId)} size={22} className="mr-2 inline-flex align-middle" />{nameOf(m.userId)}{isPaymentRole(m.paymentRole) && <span className="ml-1.5 opacity-75 font-semibold">· {PAYMENT_ROLE_LABEL[m.paymentRole]}</span>}
               </button>
             ))}
           </div>

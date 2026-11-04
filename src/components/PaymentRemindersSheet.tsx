@@ -6,9 +6,11 @@ import {
   newReminderId, nextReminderAt, reminderSummary, ringPayerNow, savePaymentReminder,
 } from '../lib/paymentReminders';
 import { canPay } from './PaymentRolePicker';
+import MemberAvatar from './MemberAvatar';
+import PaymentReminderGlance from './PaymentReminderGlance';
 import { toLocalDateString } from '../lib/dateUtils';
 
-type Person = { userId: string; name: string; role?: string };
+type Person = { userId: string; name: string; photo?: string; role?: string };
 
 // Reminders to add a payment in a Payments group: what it is for, the day (and time) it is to be added, how often it comes back, who it
 // is for, and whether it arrives as a notification or rings like an alarm. It rings only for the payer: the member picked here, or
@@ -77,13 +79,14 @@ export default function PaymentRemindersSheet({ groupId, groupName, categoryName
             {ringable.map((m) => (
               <button key={m.userId} type="button" disabled={ringing} onClick={() => ringNow(m)}
                 className="flex items-center gap-1.5 rounded-xl bg-[#4338ca] text-white px-3.5 py-2 text-xs font-black active:scale-95 disabled:opacity-50">
-                <span className="material-symbols-outlined text-[16px]">notifications_active</span>Ring {m.name}
+                <MemberAvatar name={m.name} photo={m.photo} size={20} />Ring {m.name}
               </button>
             ))}
           </div>
           {ringMsg && <p className={clsx('text-[11px] font-bold', ringMsg.ok ? 'text-success' : 'text-error')}>{ringMsg.text}</p>}
         </div>
       )}
+      <PaymentReminderGlance groupId={groupId} reminders={reminders} members={members} max={0} />
       {mine.length === 0 && (
         <p className="rounded-2xl border border-dashed border-border-subtle p-4 text-center text-sm text-text-muted">
           No reminders yet. Set one for rent or a bill and we will nudge you on the day to add the payment here.
@@ -198,7 +201,7 @@ function Editor({ initial, exists, members, types, onBack, onSaved, onDelete }: 
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => setPayerUid('')} className={chip(!payerUid)}>The payer</button>
           {[...members].sort((a, b) => Number(canPay(b.role)) - Number(canPay(a.role))).map((m) => (
-            <button key={m.userId} type="button" onClick={() => setPayerUid(m.userId)} className={chip(payerUid === m.userId)}>{m.name}</button>
+            <button key={m.userId} type="button" onClick={() => setPayerUid(m.userId)} className={clsx(chip(payerUid === m.userId), 'flex items-center gap-1.5')}><MemberAvatar name={m.name} photo={m.photo} size={18} />{m.name}</button>
           ))}
         </div>
         <p className="text-[10px] text-text-muted px-1">

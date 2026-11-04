@@ -4,7 +4,7 @@ import { collection, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { PaymentReminder, rings, syncPaymentReminders } from '../lib/paymentReminders';
+import { PaymentReminder, getPayerModes, rings, syncPaymentReminders } from '../lib/paymentReminders';
 import { canPay } from './PaymentRolePicker';
 
 // Keeps this phone's payment reminders right without the person opening anything: the reminders that name them, plus those of every
@@ -12,7 +12,7 @@ import { canPay } from './PaymentRolePicker';
 // membership changes, so their phone starts ringing without anyone setting the reminder up again. Phone apps only: the web has no
 // on-device reminders, so it reads nothing.
 export default function GlobalPaymentReminderScheduler() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const native = Capacitor.isNativePlatform();
   const uid = native ? user?.uid : undefined;
 
@@ -37,13 +37,15 @@ export default function GlobalPaymentReminderScheduler() {
     () => JSON.stringify(mine.map((r) => [r.id, r.label, r.amount, r.startDate, r.time, r.freq, r.mode, r.active, r.groupName]).sort()),
     [mine],
   );
+  const modes = getPayerModes(profile);
+  const modesSig = JSON.stringify(modes);
   const loaded = !!membersSnap && !!byNameSnap && (payerGroups.length === 0 || !!byRoleSnap);
 
   useEffect(() => {
     if (!uid || !loaded) return;
-    void syncPaymentReminders(mine);
+    void syncPaymentReminders(mine, modes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid, loaded, signature]);
+  }, [uid, loaded, signature, modesSig]);
 
   return null;
 }

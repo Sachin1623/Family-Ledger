@@ -1,4 +1,5 @@
 import GroupTypePicker, { GroupKind } from '../components/GroupTypePicker';
+import MemberAvatar from '../components/MemberAvatar';
 import React, { useState, useEffect, useRef } from 'react';
 import RecurringQuickEdit from '../components/RecurringQuickEdit';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1741,7 +1742,7 @@ export default function ManageGroup() {
                   onClick={() => member.userId !== user?.uid && navigate(`/u/${member.userId}`)}
                 >
                   <div className="relative">
-                    <img src={member.photoURL || `https://ui-avatars.com/api/?name=${member.displayName}`} className="w-12 h-12 rounded-full border border-border-subtle" alt={member.displayName} />
+                    <MemberAvatar name={member.displayName} photo={member.photoURL} size={48} />
                     {member.role === 'owner' && (
                       <div className="absolute -bottom-1 -right-1 bg-primary text-white p-0.5 rounded-full border-2 border-white scale-75">
                         <span className="material-symbols-outlined text-[14px]">verified_user</span>

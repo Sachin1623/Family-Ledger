@@ -10,7 +10,11 @@ import { getCurrencySymbol } from '../lib/constants';
 import { parseLocalDate } from '../lib/dateUtils';
 import { useIdentities } from '../lib/userIdentity';
 import { KIND_STYLE } from '../lib/groupKindStyle';
-import PaymentRolePicker from './PaymentRolePicker';
+import PaymentRolePicker, { canPay } from './PaymentRolePicker';
+import MemberAvatar from './MemberAvatar';
+import PaymentReminderGlance from './PaymentReminderGlance';
+import type { PaymentReminder } from '../lib/paymentReminders';
+import { ringPayerNow } from '../lib/paymentReminders';
 import GroupQuickActionsMenu from './GroupQuickActionsMenu';
 
 // A Payments group on the Dashboard. It has no expenses, budget or month-to-month comparison, so it does not use the group
@@ -25,7 +29,20 @@ export default function PaymentsGroupCard({
   const { t } = useLanguage();
   const [showMenu, setShowMenu] = useState(false);
   const [snap] = useCollection(query(collection(db, 'groupPayments'), where('groupId', '==', groupId)));
+  const [remSnap] = useCollection(query(collection(db, 'groupPaymentReminders'), where('groupId', '==', groupId)));
+  const reminders = useMemo(() => (remSnap?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []) as PaymentReminder[], [remSnap]);
   const style = KIND_STYLE.payments;
+  // the payers other than me: anyone in the group can make their phone ring right now
+  const ringable = members.filter((m: any) => canPay(m.paymentRole) && m.userId !== user?.uid);
+  const [ringing, setRinging] = useState(false);
+  const [ringMsg, setRingMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const ring = async (m: any) => {
+    setRinging(true);
+    setRingMsg(null);
+    const result = await ringPayerNow(groupId, m.userId, 'the payment');
+    setRingMsg({ ok: result.ok, text: result.message });
+    setRinging(false);
+  };
   const symbol = getCurrencySymbol(group?.currency);
   const money = (n: number) => `${symbol}${Math.round(n).toLocaleString()}`;
 
@@ -143,6 +160,24 @@ export default function PaymentsGroupCard({
                   View payments
                 </button>
               </div>
+
+              <PaymentReminderGlance groupId={groupId} reminders={reminders} members={members.map((m: any) => ({ userId: m.userId, role: m.paymentRole, displayName: m.displayName }))} />
+
+              {ringable.length > 0 && (
+                <div className="rounded-xl px-3 py-2.5 space-y-2" style={{ background: style.tint }}>
+                  <p className="text-[11px] font-bold" style={{ color: style.dark }}>Waiting on a payment? Ring the payer's phone now.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {ringable.map((m: any) => (
+                      <button key={m.userId} type="button" disabled={ringing} onClick={() => ring(m)}
+                        className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-black active:scale-95 disabled:opacity-50" style={{ background: style.acc, color: style.onAcc }}>
+                        <MemberAvatar name={m.displayName} photo={m.photoURL} size={20} />
+                        <span className="material-symbols-outlined text-[16px]">notifications_active</span>Ring {m.displayName}
+                      </button>
+                    ))}
+                  </div>
+                  {ringMsg && <p className={`text-[11px] font-bold ${ringMsg.ok ? 'text-success' : 'text-error'}`}>{ringMsg.text}</p>}
+                </div>
+              )}
             </div>
           )}
         </div>
