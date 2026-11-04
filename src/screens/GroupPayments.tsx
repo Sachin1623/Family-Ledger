@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteDoc, deleteField, doc, query, updateDoc, where } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
@@ -12,6 +12,8 @@ import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
 import { notifyPaymentChange } from '../lib/paymentApi';
+import PaymentRemindersSheet from '../components/PaymentRemindersSheet';
+import { getPaymentReminders, syncPaymentReminders } from '../lib/paymentReminders';
 import PaymentRolePicker, { canReceive, PAYMENT_ROLE_LABEL, isPaymentRole } from '../components/PaymentRolePicker';
 import { PaymentCategory, isMaterialIcon, paymentCategoryIcon, visiblePaymentCategories } from '../lib/paymentCategories';
 
@@ -32,9 +34,19 @@ const todayLocal = () => {
 export default function GroupPayments() {
   const { groupId } = useParams<{ groupId: string }>();
   const [searchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [groupSnap] = useDocument(groupId ? doc(db, 'groups', groupId) : null);
   const group: any = groupSnap?.data();
+  const [showReminders, setShowReminders] = useState(false);
+  // make sure this phone has the reminders that are saved (a new phone, a reinstall, the ones armed ahead running out), once per visit
+  const remindersSynced = useRef(false);
+  useEffect(() => {
+    if (!profile?.paymentReminders || remindersSynced.current || !group) return;
+    remindersSynced.current = true;
+    void syncPaymentReminders(getPaymentReminders(profile), (gid) => (gid === groupId ? group.name || '' : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.paymentReminders, !!group]);
+  const reminderCount = getPaymentReminders(profile).filter((r) => r.groupId === groupId && r.active).length;
   const [membersSnap] = useCollection(groupId ? query(collection(db, 'members'), where('groupId', '==', groupId)) : null);
   const [paymentsSnap, loading] = useCollection(groupId ? query(collection(db, 'groupPayments'), where('groupId', '==', groupId)) : null);
 
@@ -55,6 +67,15 @@ export default function GroupPayments() {
   const money = (n: number) => `${symbol}${Math.round(n).toLocaleString()}`;
 
   const [showForm, setShowForm] = useState(searchParams.get('add') === '1'); // the Dashboard card's "Add a payment" lands here with the form open
+  // a payment reminder tapped while this screen is already open (the same route is reused, so the line above does not run again)
+  const addParam = searchParams.get('add') + (searchParams.get('label') || '');
+  const firstAddParam = useRef(addParam);
+  useEffect(() => {
+    if (addParam === firstAddParam.current) return;
+    firstAddParam.current = addParam;
+    if (searchParams.get('add') === '1') setShowForm(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addParam]);
   const [receiptFor, setReceiptFor] = useState<any | null>(null); // the entry the receipt prompt / "add receipt" is about
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [editFor, setEditFor] = useState<any | null>(null); // the payment its payer is editing
@@ -95,7 +116,25 @@ export default function GroupPayments() {
           ＋ Add a payment
         </button>
         {others.length === 0 && <p className="mt-2 text-[11px] font-bold text-white/85">Invite the person you pay (or who pays you) to this group first.</p>}
+        <button
+          type="button"
+          onClick={() => setShowReminders(true)}
+          className="mt-2 w-full rounded-xl bg-white/15 text-white py-2.5 text-sm font-black active:scale-95 flex items-center justify-center gap-1.5"
+        >
+          <span className="material-symbols-outlined text-[18px]">alarm_add</span>
+          Payment reminders{reminderCount > 0 ? ` · ${reminderCount} on` : ''}
+        </button>
       </div>
+
+      {showReminders && groupId && (
+        <PaymentRemindersSheet
+          groupId={groupId}
+          groupName={group?.name || ''}
+          categoryNames={visiblePaymentCategories(group).map((c) => c.name)}
+          groupNameOf={(gid) => (gid === groupId ? group?.name || '' : '')}
+          onClose={() => setShowReminders(false)}
+        />
+      )}
 
       {loading && <p className="text-center text-sm text-text-muted py-6">Loading payments…</p>}
       {!loading && payments.length === 0 && (
@@ -170,6 +209,7 @@ export default function GroupPayments() {
           others={others}
           myRole={myRole}
           categories={visiblePaymentCategories(group)}
+          initialLabel={searchParams.get('label') || ''}
           defaultTrackGroupId={myMember?.trackExpenseGroupId}
           nameOf={nameOf}
           onClose={() => { setShowForm(false); setEditFor(null); }}
@@ -199,8 +239,9 @@ export default function GroupPayments() {
 }
 
 function PaymentForm({
-  groupId, uid, symbol, others, editing, myRole, categories, defaultTrackGroupId, nameOf, onClose, onSaved,
+  groupId, uid, symbol, others, editing, myRole, categories, initialLabel, defaultTrackGroupId, nameOf, onClose, onSaved,
 }: {
+  initialLabel?: string; // what a payment reminder was for, so the form opens on it
   groupId: string;
   uid: string;
   symbol: string;
@@ -220,8 +261,15 @@ function PaymentForm({
   const [toUid, setToUid] = useState<string>(editing ? editing.toUid : others.length === 1 ? others[0].userId : receivers.length === 1 ? receivers[0].userId : '');
   const [amount, setAmount] = useState(editing ? String(editing.amount) : '');
   const [date, setDate] = useState(editing?.date || todayLocal());
-  const [label, setLabel] = useState(editing ? (knownLabel ? editing.label : (categories.find((c) => c.id === 'other')?.name || editing.label)) : (categories[0]?.name || 'Payment'));
-  const [customLabel, setCustomLabel] = useState(editing && !knownLabel ? editing.label : '');
+  // opened from a reminder: its label if the group has that category, otherwise under "Other" with the label filled in
+  const hintKnown = !editing && !!initialLabel && categories.some((c) => c.name.toLowerCase() === initialLabel.toLowerCase());
+  const hintOther = !editing && !!initialLabel && !hintKnown && categories.some((c) => c.id === 'other');
+  const [label, setLabel] = useState(editing
+    ? (knownLabel ? editing.label : (categories.find((c) => c.id === 'other')?.name || editing.label))
+    : hintKnown ? categories.find((c) => c.name.toLowerCase() === initialLabel.toLowerCase())!.name
+    : hintOther ? categories.find((c) => c.id === 'other')!.name
+    : (categories[0]?.name || 'Payment'));
+  const [customLabel, setCustomLabel] = useState(editing && !knownLabel ? editing.label : hintOther ? initialLabel : '');
   const [note, setNote] = useState(editing?.note || '');
   const [images, setImages] = useState<string[]>(editing?.images || []);
   // switched on from the start when this person has chosen a group to track their payments in

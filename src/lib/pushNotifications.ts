@@ -138,6 +138,8 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo('/profile');
   } else if (data.type === 'dob_reminder') {
     navigateTo('/profile?promptDob=1');
+  } else if (data.type === 'payment_reminder' && data.groupId) {
+    navigateTo(`/groups/${data.groupId}?add=1${data.label ? `&label=${encodeURIComponent(data.label)}` : ''}`);
   } else if (data.type === 'shopping_list' && data.listId) {
     navigateTo(`/shopping-lists/${data.listId}`);
   } else if (data.type === 'shopping_list') {
