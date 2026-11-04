@@ -5,7 +5,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import type { User } from 'firebase/auth';
 import { navigateTo } from './navigationRef';
 import { registerMedicineActionTypes, snoozeMedicineReminder } from './medicineReminders';
-import { ringPaymentAlarmNow } from './paymentReminders';
+import { registerPaymentActionTypes, ringPaymentAlarmNow, snoozePaymentReminder } from './paymentReminders';
 
 let registered = false;
 // The most recently FCM-registered token for this device, so removeCurrentDeviceToken (called on
@@ -278,6 +278,7 @@ export async function initPushNotifications(user: User) {
     // iOS-only (no-ops on Android, where medicine reminders bypass this plugin entirely) — lets
     // the scheduled reminder show Dismiss/Snooze buttons directly on the lock-screen notification.
     registerMedicineActionTypes();
+    void registerPaymentActionTypes();
 
     let permStatus = await FirebaseMessaging.checkPermissions();
     if (permStatus.receive === 'prompt') {
@@ -359,6 +360,10 @@ export async function initPushNotifications(user: User) {
       const extra = action.notification.extra as Record<string, any> | undefined;
       if (extra?.type === 'medicine_reminder' && action.actionId === 'snooze') {
         snoozeMedicineReminder(action.notification.id, action.notification.title || 'Medicine reminder', action.notification.body || '');
+        return;
+      }
+      if (extra?.type === 'payment_reminder' && action.actionId === 'snooze') {
+        void snoozePaymentReminder(action.notification.title || 'Payment reminder', action.notification.body || '', extra);
         return;
       }
       routeNotificationTap(extra as Record<string, string> | undefined);

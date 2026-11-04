@@ -11,10 +11,9 @@ import { parseLocalDate } from '../lib/dateUtils';
 import { useIdentities } from '../lib/userIdentity';
 import { KIND_STYLE } from '../lib/groupKindStyle';
 import PaymentRolePicker, { canPay } from './PaymentRolePicker';
-import MemberAvatar from './MemberAvatar';
+import RingPayerButtons from './RingPayerButtons';
 import PaymentReminderGlance from './PaymentReminderGlance';
 import type { PaymentReminder } from '../lib/paymentReminders';
-import { ringPayerNow } from '../lib/paymentReminders';
 import GroupQuickActionsMenu from './GroupQuickActionsMenu';
 
 // A Payments group on the Dashboard. It has no expenses, budget or month-to-month comparison, so it does not use the group
@@ -34,15 +33,6 @@ export default function PaymentsGroupCard({
   const style = KIND_STYLE.payments;
   // the payers other than me: anyone in the group can make their phone ring right now
   const ringable = members.filter((m: any) => canPay(m.paymentRole) && m.userId !== user?.uid);
-  const [ringing, setRinging] = useState(false);
-  const [ringMsg, setRingMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const ring = async (m: any) => {
-    setRinging(true);
-    setRingMsg(null);
-    const result = await ringPayerNow(groupId, m.userId, 'the payment');
-    setRingMsg({ ok: result.ok, text: result.message });
-    setRinging(false);
-  };
   const symbol = getCurrencySymbol(group?.currency);
   const money = (n: number) => `${symbol}${Math.round(n).toLocaleString()}`;
 
@@ -161,23 +151,25 @@ export default function PaymentsGroupCard({
                 </button>
               </div>
 
-              <PaymentReminderGlance groupId={groupId} reminders={reminders} members={members.map((m: any) => ({ userId: m.userId, role: m.paymentRole, displayName: m.displayName }))} />
-
-              {ringable.length > 0 && (
-                <div className="rounded-xl px-3 py-2.5 space-y-2" style={{ background: style.tint }}>
-                  <p className="text-[11px] font-bold" style={{ color: style.dark }}>Waiting on a payment? Ring the payer's phone now.</p>
-                  <div className="flex flex-wrap gap-2">
-                    {ringable.map((m: any) => (
-                      <button key={m.userId} type="button" disabled={ringing} onClick={() => ring(m)}
-                        className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-black active:scale-95 disabled:opacity-50" style={{ background: style.acc, color: style.onAcc }}>
-                        <MemberAvatar name={m.displayName} photo={m.photoURL} size={20} />
-                        <span className="material-symbols-outlined text-[16px]">notifications_active</span>Ring {m.displayName}
-                      </button>
-                    ))}
+              <PaymentReminderGlance
+                groupId={groupId}
+                reminders={reminders}
+                members={members.map((m: any) => ({ userId: m.userId, role: m.paymentRole, displayName: m.displayName, photo: m.photoURL }))}
+                onManage={() => navigate(`/groups/${groupId}?reminders=1`)}
+              >
+                {ringable.length > 0 && (
+                  <div className="rounded-xl px-3 py-2.5 space-y-2" style={{ background: style.tint }}>
+                    <p className="text-xs font-bold" style={{ color: style.dark }}>Waiting on a payment? Ring the payer's phone now.</p>
+                    <RingPayerButtons
+                      groupId={groupId}
+                      payers={ringable.map((m: any) => ({ userId: m.userId, name: m.displayName, photo: m.photoURL }))}
+                      labelFor={(uid) => reminders.find((r) => r.active && (!r.payerUid || r.payerUid === uid))?.label || 'the payment'}
+                      accent={style.acc}
+                      onAccent={style.onAcc}
+                    />
                   </div>
-                  {ringMsg && <p className={`text-[11px] font-bold ${ringMsg.ok ? 'text-success' : 'text-error'}`}>{ringMsg.text}</p>}
-                </div>
-              )}
+                )}
+              </PaymentReminderGlance>
             </div>
           )}
         </div>

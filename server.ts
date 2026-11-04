@@ -15682,8 +15682,17 @@ async function startServer() {
       ).map((m) => String(m.userId)).filter((uid) => uid !== decoded.uid);
       if (targets.length === 0) return res.status(404).json({ error: 'There is no payer in this group to ring yet.' });
 
+      // a payer who chose "Off for me" for this group is not rung
+      const optedOut = new Set<string>();
+      await Promise.all(targets.map(async (uid) => {
+        const modes = (await db.collection('users').doc(uid).get()).data()?.paymentReminderModes;
+        if (modes && modes[groupId] === 'off') optedOut.add(uid);
+      }));
+      const reachable = targets.filter((uid) => !optedOut.has(uid));
+      if (reachable.length === 0) return res.json({ rung: 0, sent: 0, off: true });
+
       const now = Date.now();
-      const fresh = targets.filter((uid) => now - (lastPayerRing.get(`${groupId}_${uid}`) || 0) > 60_000);
+      const fresh = reachable.filter((uid) => now - (lastPayerRing.get(`${groupId}_${uid}`) || 0) > 60_000);
       if (fresh.length === 0) return res.status(429).json({ error: 'The payer was just rung. Give it a minute.' });
       fresh.forEach((uid) => lastPayerRing.set(`${groupId}_${uid}`, now));
 

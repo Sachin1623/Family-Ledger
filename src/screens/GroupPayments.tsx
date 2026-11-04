@@ -14,7 +14,8 @@ import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
 import { notifyPaymentChange } from '../lib/paymentApi';
 import PaymentRemindersSheet from '../components/PaymentRemindersSheet';
-import type { PaymentReminder } from '../lib/paymentReminders';
+import { PaymentReminder, REMINDER_TYPES, REMINDER_TYPE_ICON, skipPaidOccurrences } from '../lib/paymentReminders';
+import { BackClose, useModalBack } from '../lib/useModalBack';
 import PaymentRolePicker, { canReceive, PAYMENT_ROLE_LABEL, isPaymentRole } from '../components/PaymentRolePicker';
 import { PaymentCategory, isMaterialIcon, paymentCategoryIcon, visiblePaymentCategories } from '../lib/paymentCategories';
 
@@ -38,7 +39,7 @@ export default function GroupPayments() {
   const { user } = useAuth();
   const [groupSnap] = useDocument(groupId ? doc(db, 'groups', groupId) : null);
   const group: any = groupSnap?.data();
-  const [showReminders, setShowReminders] = useState(false);
+  const [showReminders, setShowReminders] = useState(searchParams.get('reminders') === '1'); // the Dashboard card's "Manage" lands here
   const [remindersSnap] = useCollection(groupId ? query(collection(db, 'groupPaymentReminders'), where('groupId', '==', groupId)) : null);
   const groupReminders = useMemo(() => (remindersSnap?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []) as PaymentReminder[], [remindersSnap]);
   const reminderCount = groupReminders.filter((r) => r.active).length;
@@ -76,6 +77,14 @@ export default function GroupPayments() {
     if (searchParams.get('add') === '1') setShowForm(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addParam]);
+  // the same for "Manage" on the Dashboard card while this screen is already open
+  const remParam = searchParams.get('reminders') || '';
+  const firstRemParam = useRef(remParam);
+  useEffect(() => {
+    if (remParam === firstRemParam.current) return;
+    firstRemParam.current = remParam;
+    if (remParam === '1') setShowReminders(true);
+  }, [remParam]);
   const [receiptFor, setReceiptFor] = useState<any | null>(null); // the entry the receipt prompt / "add receipt" is about
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [editFor, setEditFor] = useState<any | null>(null); // the payment its payer is editing
@@ -94,6 +103,16 @@ export default function GroupPayments() {
   const others = members.filter((m) => m.userId !== user?.uid).sort((a, b) => Number(canReceive(b.paymentRole)) - Number(canReceive(a.paymentRole)));
   const myMember = members.find((m) => m.userId === user?.uid);
   const myRole = myMember?.paymentRole;
+
+  // the usual reminder types, then the group's own payment categories, then Other
+  const ownCategories = visiblePaymentCategories(group).filter((c) => !/^other$/i.test(c.name));
+  const baseTypes = REMINDER_TYPES.filter((t) => t !== 'Other').map((name) => ({ name, icon: ownCategories.find((c) => c.name.toLowerCase() === name.toLowerCase())?.icon || REMINDER_TYPE_ICON[name] }));
+  const typeOptions = [
+    ...baseTypes,
+    ...ownCategories.filter((c) => !baseTypes.some((b) => b.name.toLowerCase() === c.name.toLowerCase())).map((c) => ({ name: c.name, icon: c.icon })),
+    { name: 'Other', icon: 'payments' },
+  ];
+  const isAdmin = !!user && (group?.createdBy === user.uid || myMember?.role === 'admin');
 
   const removePayment = async (p: any) => {
     if (!window.confirm(`Delete this ${money(p.amount)} payment?`)) return;
@@ -130,7 +149,9 @@ export default function GroupPayments() {
         <PaymentRemindersSheet
           groupId={groupId}
           groupName={group?.name || ''}
-          categoryNames={visiblePaymentCategories(group).map((c) => c.name)}
+          symbol={symbol}
+          typeOptions={typeOptions}
+          isAdmin={isAdmin}
           reminders={groupReminders}
           members={members.map((m) => ({ userId: m.userId, name: nameOf(m.userId), photo: photoOf(m.userId), role: m.paymentRole }))}
           onClose={() => setShowReminders(false)}
@@ -204,7 +225,8 @@ export default function GroupPayments() {
         })}
       </div>
 
-      {(showForm || editFor) && user && groupId && (
+      {/* a reminder can open the form before there is anyone to pay: the "Invite the person you pay" note above says what to do first */}
+      {((showForm && others.length > 0) || editFor) && user && groupId && (
         <PaymentForm
           editing={editFor}
           groupId={groupId}
@@ -220,6 +242,8 @@ export default function GroupPayments() {
           onClose={() => { setShowForm(false); setEditFor(null); }}
           onSaved={(saved, track) => {
             setShowForm(false);
+            // paid ahead of a reminder: that one should not ring as well
+            void skipPaidOccurrences(groupReminders, saved.label, saved.date);
             // saved without a receipt: ask for it straight away, since a payment with no proof is the usual dispute
             if (!saved.images?.length) setReceiptFor(saved);
             if (track) setTrackFor(saved);
@@ -235,7 +259,10 @@ export default function GroupPayments() {
       )}
 
       {trackFor && !receiptFor && user && (
-        <TrackPaymentSheet payment={trackFor} role={trackFor.fromUid === user.uid ? 'payer' : 'receiver'} defaultGroupId={trackFor.fromUid === user.uid ? myMember?.trackExpenseGroupId : myMember?.trackIncomeGroupId} onClose={() => setTrackFor(null)} />
+        <>
+          <BackClose onBack={() => setTrackFor(null)} />
+          <TrackPaymentSheet payment={trackFor} role={trackFor.fromUid === user.uid ? 'payer' : 'receiver'} defaultGroupId={trackFor.fromUid === user.uid ? myMember?.trackExpenseGroupId : myMember?.trackIncomeGroupId} onClose={() => setTrackFor(null)} />
+        </>
       )}
 
       {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
@@ -286,6 +313,7 @@ function PaymentForm({
   const finalLabel = isOtherCategory ? (customLabel.trim() || 'Payment') : label;
   // "Also track it in my group": the group, category and split choices appear here once the switch is on
   const track = useTrackInGroup({ amount: Number(amount) || 0, label: finalLabel, note: note.trim(), date, images, groupId }, 'payer', trackIt, defaultTrackGroupId);
+  useModalBack(onClose); // Back closes the form, not the screen behind it
 
   const save = async () => {
     const value = Number(amount);
@@ -448,6 +476,7 @@ function ReceiptSheet({ payment, onClose }: { payment: any; onClose: () => void 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const existing: string[] = payment.images || [];
+  useModalBack(onClose);
 
   const save = async () => {
     if (images.length === 0) return onClose();

@@ -266,7 +266,7 @@ const NavigationBridge = () => {
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
-  const location = window.location.pathname;
+  const location = window.location.pathname + window.location.search; // keep ?add=1&label=... so a tapped reminder still opens its form after sign-in
   if (loading && hasAuthHint()) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
   return <>{children}</>;
@@ -274,7 +274,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
 const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading, admin } = useAuth();
-  const location = window.location.pathname;
+  const location = window.location.pathname + window.location.search; // keep ?add=1&label=... so a tapped reminder still opens its form after sign-in
   if (loading && hasAuthHint()) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
   if (!admin.isAdmin) return <Navigate to="/" replace />;
@@ -311,7 +311,7 @@ const AuthenticatedLayout = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
 
   if (loading && hasAuthHint()) return <LoadingScreen />;
-  if (!user) return <Navigate to="/login" state={{ from: window.location.pathname }} />;
+  if (!user) return <Navigate to="/login" state={{ from: window.location.pathname + window.location.search }} />;
 
   return (
     <ProtectedRoute>

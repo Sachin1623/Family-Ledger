@@ -406,7 +406,9 @@ service cloud.firestore {
       allow read: if isSignedIn() && canModifyGroup(resource.data.groupId);
       allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidPayReminder(incoming());
       allow update: if isUserVerified() && canModifyGroup(existing().groupId) && isValidPayReminder(incoming()) && incoming().groupId == existing().groupId;
-      allow delete: if isUserVerified() && canModifyGroup(existing().groupId);
+      // anyone in the group can pause or edit a reminder, but removing it is for whoever made it or an admin
+      allow delete: if isUserVerified() && canModifyGroup(existing().groupId) &&
+                       (existing().get('createdBy', '') == request.auth.uid || isAdmin(existing().groupId));
     }
 
     match /settlements/{settlementId} {

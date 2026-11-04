@@ -1,4 +1,4 @@
-import { doc, setDoc, deleteDoc, deleteField } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, deleteField, updateDoc, arrayUnion } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { db, auth } from './firebase';
@@ -26,6 +26,7 @@ export interface PaymentReminder {
   freq: PayFreq;
   mode: 'notification' | 'alarm';
   active: boolean;
+  skipped?: string[]; // yyyy-mm-dd of occurrences already paid ahead of time, which do not ring
 }
 
 export const PAY_FREQ_OPTIONS: { id: PayFreq; label: string }[] = [
@@ -41,6 +42,18 @@ export const PAY_FREQ_LABEL: Record<PayFreq, string> = Object.fromEntries(PAY_FR
 
 // the usual things people pay on a schedule, offered before anything a group has added of its own
 export const REMINDER_TYPES = ['Rent', 'Electricity bill', 'Water bill', 'Gas bill', 'Internet bill', 'Maintenance', 'EMI', 'Salary', 'Fees', 'Other'];
+export const REMINDER_TYPE_ICON: Record<string, string> = {
+  Rent: 'home', 'Electricity bill': 'bolt', 'Water bill': 'water_drop', 'Gas bill': 'local_fire_department', 'Internet bill': 'wifi',
+  Maintenance: 'build', EMI: 'account_balance', Salary: 'badge', Fees: 'school', Other: 'payments',
+};
+
+// one-tap starting points offered when a group has no reminders yet
+export const REMINDER_PRESETS: { label: string; freq: PayFreq; day: number }[] = [
+  { label: 'Rent', freq: 'monthly', day: 1 },
+  { label: 'Electricity bill', freq: 'monthly', day: 10 },
+  { label: 'Water bill', freq: 'bimonthly', day: 10 },
+  { label: 'Maintenance', freq: 'quarterly', day: 1 },
+];
 
 const MONTH_STEP: Partial<Record<PayFreq, number>> = { monthly: 1, bimonthly: 2, quarterly: 3, yearly: 12 };
 const DAY_STEP: Partial<Record<PayFreq, number>> = { weekly: 7, biweekly: 14 };
@@ -49,19 +62,21 @@ export const newReminderId = () => `pr_${Date.now().toString(36)}${Math.random()
 
 export function savePaymentReminder(r: PaymentReminder) {
   const { id, ...rest } = r;
-  return setDoc(doc(db, 'groupPaymentReminders', id), { ...rest, amount: rest.amount ?? null, payerUid: rest.payerUid || null, updatedAt: new Date().toISOString() });
+  return setDoc(doc(db, 'groupPaymentReminders', id), { ...rest, amount: rest.amount ?? null, payerUid: rest.payerUid || null, skipped: rest.skipped || [], updatedAt: new Date().toISOString() });
 }
 export const deletePaymentReminder = (id: string) => deleteDoc(doc(db, 'groupPaymentReminders', id));
 
 // The payer's own choice for how a group's reminders reach them, alarm or notification, whatever the reminder was set up with. It
 // covers the scheduled reminders and the "ring now" taps alike. Kept on their user record as `paymentReminderModes` (by group), and
 // copied to this phone so a ring that arrives with the app open can read it without a lookup.
+// 'off' silences them for this person (the group's other members keep theirs).
 export type ReminderMode = 'notification' | 'alarm';
-export const getPayerModes = (profile: any): Record<string, ReminderMode> => (profile?.paymentReminderModes || {}) as Record<string, ReminderMode>;
-export const setPayerMode = (uid: string, groupId: string, mode: ReminderMode | null) =>
+export type PayerMode = ReminderMode | 'off';
+export const getPayerModes = (profile: any): Record<string, PayerMode> => (profile?.paymentReminderModes || {}) as Record<string, PayerMode>;
+export const setPayerMode = (uid: string, groupId: string, mode: PayerMode | null) =>
   setDoc(doc(db, 'users', uid), { paymentReminderModes: { [groupId]: mode || deleteField() } }, { merge: true });
 const MODES_KEY = 'familyledger_payment_reminder_modes';
-const readModes = (): Record<string, ReminderMode> => { try { return JSON.parse(localStorage.getItem(MODES_KEY) || '{}'); } catch { return {}; } };
+const readModes = (): Record<string, PayerMode> => { try { return JSON.parse(localStorage.getItem(MODES_KEY) || '{}'); } catch { return {}; } };
 
 // Does this reminder ring for me? Yes if it names me, or names nobody and I am marked Payer in its group.
 export const rings = (r: PaymentReminder, uid: string, myPayerGroups: Set<string>) => (r.payerUid ? r.payerUid === uid : myPayerGroups.has(r.groupId));
@@ -93,28 +108,58 @@ function occurrence(r: PaymentReminder, i: number): Date {
 export function upcoming(r: PaymentReminder, count: number): Date[] {
   const out: Date[] = [];
   const now = Date.now();
+  const skipped = new Set(r.skipped || []);
   const max = r.freq === 'once' ? 1 : 400;
   for (let i = 0; i < max && out.length < (r.freq === 'once' ? 1 : count); i++) {
     const at = occurrence(r, i);
-    if (at.getTime() > now) out.push(at);
+    if (at.getTime() > now && !skipped.has(toLocalDateString(at))) out.push(at);
     else if (r.freq === 'once') break;
   }
   return out;
 }
+
+// A payment was just added: the next occurrence of a matching reminder (within a week) is already taken care of, so it should not ring.
+// A weekly reminder repeats on the phone itself and cannot skip one.
+export async function skipPaidOccurrences(reminders: PaymentReminder[], label: string, paidOn: string) {
+  const paid = parseDate(paidOn).getTime();
+  const week = 7 * 24 * 3600 * 1000;
+  for (const r of reminders) {
+    if (!r.active || r.freq === 'weekly' || r.label.trim().toLowerCase() !== label.trim().toLowerCase()) continue;
+    const next = nextReminderAt(r);
+    if (!next) continue;
+    const day = parseDate(toLocalDateString(next)).getTime();
+    if (day < paid || day - paid > week) continue;
+    await updateDoc(doc(db, 'groupPaymentReminders', r.id), { skipped: arrayUnion(toLocalDateString(next)) }).catch((err) => console.error('Could not skip the paid reminder:', err));
+  }
+}
+
+// "Today", "Tomorrow", "in 5 days", or the date once it is further away
+export function relativeDay(d: Date): string {
+  const days = Math.round((parseDate(toLocalDateString(d)).getTime() - parseDate(toLocalDateString(new Date())).getTime()) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days <= 14) return `in ${days} days`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+export const timeLabel = (hhmm: string) => {
+  const [h, m] = (hhmm || '09:00').split(':').map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+};
 
 export const nextReminderAt = (r: PaymentReminder): Date | null => upcoming(r, 1)[0] || null;
 
 export function reminderSummary(r: PaymentReminder): string {
   const when = parseDate(r.startDate);
   const day = when.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-  const [h, m] = (r.time || '09:00').split(':').map(Number);
-  const time = `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+  const time = timeLabel(r.time);
   const freq = r.freq === 'once' ? `${day}, ${when.getFullYear()}` : `${PAY_FREQ_LABEL[r.freq]} from ${day}`;
   return `${freq} · ${time}`;
 }
 
 // ---------- arming the reminders on this phone ----------
 const ARMED_KEY = 'familyledger_payment_reminder_ids';
+const PAYMENT_ACTIONS = 'PAYMENT_REMINDER';
 export const canRingPaymentAlarm = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
 // each reminder owns a block of 20 ids, so setting it again replaces what it had before
@@ -138,7 +183,7 @@ const bodyFor = (r: PaymentReminder) =>
 let chain: Promise<void> = Promise.resolve();
 
 // `reminders` is only the ones that ring for this person.
-export function syncPaymentReminders(reminders: PaymentReminder[], modes: Record<string, ReminderMode> = {}): Promise<void> {
+export function syncPaymentReminders(reminders: PaymentReminder[], modes: Record<string, PayerMode> = {}): Promise<void> {
   try { localStorage.setItem(MODES_KEY, JSON.stringify(modes)); } catch { /* not persisted: a ring just uses the reminder's own setting */ }
   if (!Capacitor.isNativePlatform()) return Promise.resolve(); // web has no on-device reminders
   chain = chain.then(async () => {
@@ -153,7 +198,7 @@ export function syncPaymentReminders(reminders: PaymentReminder[], modes: Record
 
       const plans: { id: number; r: PaymentReminder; at: Date; repeatEvery?: number }[] = [];
       for (const r of reminders) {
-        if (!r.active) continue;
+        if (!r.active || modes[r.groupId] === 'off') continue;
         const base = idBase(r.id);
         // a weekly reminder repeats on its own; the rest are armed date by date
         if (r.freq === 'weekly') {
@@ -184,6 +229,7 @@ export function syncPaymentReminders(reminders: PaymentReminder[], modes: Record
               ? { on: { weekday: p.at.getDay() + 1, hour: p.at.getHours(), minute: p.at.getMinutes() }, allowWhileIdle: true } // Capacitor weekdays run 1 (Sunday) to 7
               : { at: p.at, allowWhileIdle: true },
             extra: { type: 'payment_reminder', groupId: p.r.groupId, label: p.r.label, reminderId: p.r.id },
+            ...(android ? { actionTypeId: PAYMENT_ACTIONS } : {}),
           });
         }
       }
@@ -223,7 +269,7 @@ export function syncPaymentReminders(reminders: PaymentReminder[], modes: Record
 
 // ---------- ring the payer now ----------
 // A receiver (any member) taps a button and the payer's phone is told to ring. The server finds the payer and pushes to them.
-export async function ringPayerNow(groupId: string, payerUid: string | null, label: string): Promise<{ ok: boolean; message: string }> {
+export async function ringPayerNow(groupId: string, payerUid: string | null, label: string, name = 'the payer'): Promise<{ ok: boolean; message: string; cooldown?: boolean }> {
   try {
     const idToken = await auth.currentUser?.getIdToken();
     if (!idToken) return { ok: false, message: 'You are not signed in.' };
@@ -233,8 +279,10 @@ export async function ringPayerNow(groupId: string, payerUid: string | null, lab
       body: JSON.stringify({ groupId, payerUid, label }),
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 429) return { ok: false, cooldown: true, message: `${name} was just rung. Give it a minute.` };
     if (!res.ok) return { ok: false, message: data.error || 'Could not ring the payer.' };
-    return { ok: true, message: data.sent > 0 ? 'Rung. They will see it on their phone now.' : 'Sent, but their phone has no notifications on.' };
+    if (data.off) return { ok: false, message: `${name} has turned payment reminders off for this group.` };
+    return { ok: true, message: data.sent > 0 ? `Sent to ${name}'s phone.` : `Sent, but ${name}'s phone has notifications off.` };
   } catch (err) {
     console.error('Could not ring the payer:', err);
     return { ok: false, message: 'Could not ring the payer. Check your connection.' };
@@ -244,7 +292,8 @@ export async function ringPayerNow(groupId: string, payerUid: string | null, lab
 // On the payer's phone, when the ring arrives while the app is open: an alarm at the next minute (the phone's alarm works to the minute).
 export async function ringPaymentAlarmNow(groupId: string, label: string, body: string) {
   if (!canRingPaymentAlarm()) return;
-  if (readModes()[groupId] === 'notification') return; // the payer chose notifications only
+  const chosen = readModes()[groupId];
+  if (chosen === 'notification' || chosen === 'off') return; // the payer chose notifications only, or nothing
   const at = new Date(Date.now() + 60_000);
   const id = 899999;
   const date = toLocalDateString(at);
@@ -254,4 +303,51 @@ export async function ringPaymentAlarmNow(groupId: string, label: string, body: 
     id, title: `⏰ ${label} is due`, body, hour: at.getHours(), minute: at.getMinutes(), weekdays: [],
     intervalDays: 36500, startDate: date, endDate: date, route: `/groups/${groupId}?add=1&label=${encodeURIComponent(label)}`, feature: 'payment_ring',
   });
+}
+
+
+// ---------- is this phone able to deliver them? ----------
+export type ReminderPermissions = { native: boolean; notifications: boolean; exact: boolean };
+
+export async function checkReminderPermissions(): Promise<ReminderPermissions> {
+  if (!Capacitor.isNativePlatform()) return { native: false, notifications: true, exact: true };
+  try {
+    const perm = await LocalNotifications.checkPermissions();
+    let exact = true;
+    if (Capacitor.getPlatform() === 'android') exact = (await LocalNotifications.checkExactNotificationSetting()).exact_alarm === 'granted';
+    return { native: true, notifications: perm.display === 'granted', exact };
+  } catch {
+    return { native: true, notifications: true, exact: true }; // cannot tell: do not nag
+  }
+}
+
+// asks for whatever is missing; a refused notification permission can only be changed in the phone's own settings
+export async function fixReminderPermissions(p: ReminderPermissions) {
+  try {
+    if (!p.notifications) await LocalNotifications.requestPermissions();
+    if (!p.exact && Capacitor.getPlatform() === 'android') await LocalNotifications.changeExactNotificationSetting();
+  } catch (err) {
+    console.error('Could not ask for the reminder permissions:', err);
+  }
+}
+
+// ---------- snooze on the notification ----------
+// Android only (the alarm has its own snooze, and iOS categories are shared with the medicine reminders).
+export async function registerPaymentActionTypes() {
+  if (Capacitor.getPlatform() !== 'android') return;
+  try {
+    await LocalNotifications.registerActionTypes({ types: [{ id: PAYMENT_ACTIONS, actions: [{ id: 'snooze', title: 'Snooze 1 hour' }] }] });
+  } catch (err) {
+    console.error('Could not register the payment reminder actions:', err);
+  }
+}
+
+export async function snoozePaymentReminder(title: string, body: string, extra: Record<string, any>) {
+  try {
+    await LocalNotifications.schedule({
+      notifications: [{ id: 899998, title, body, schedule: { at: new Date(Date.now() + 3600_000), allowWhileIdle: true }, extra, actionTypeId: PAYMENT_ACTIONS }],
+    });
+  } catch (err) {
+    console.error('Could not snooze the payment reminder:', err);
+  }
 }
