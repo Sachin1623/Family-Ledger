@@ -25,7 +25,8 @@ import PayerPicker from '../components/PayerPicker';
 
 import ReceiptBanner, { type ReceiptInfo } from '../components/ReceiptBanner';
 import { getCurrencySymbol, EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryClassification, getGroupCategories, getCategoryNameOverride } from '../lib/constants';
-import { buildRoster } from '../lib/groupParticipants';
+import { buildRoster, placeholderRows } from '../lib/groupParticipants';
+import InviteSplitNudge, { nudgeIsDue, type SplitNudge } from '../components/InviteSplitNudge';
 import { useLanguage } from '../context/LanguageContext';
 import VoiceExpenseSheet from '../components/VoiceExpenseSheet';
 import { speechAvailableHere } from '../lib/speech';
@@ -79,6 +80,7 @@ export default function AddExpense() {
   // trigger it again, since that field is long since set for them).
   const [invitePromptGroupId, setInvitePromptGroupId] = useState<string | null>(null);
   const [closeAfterInvitePrompt, setCloseAfterInvitePrompt] = useState(false);
+  const [splitNudge, setSplitNudge] = useState<SplitNudge | null>(null);
   const [showKeypad, setShowKeypad] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [voiceHeard, setVoiceHeard] = useState<string | null>(null);
@@ -712,8 +714,23 @@ export default function AddExpense() {
 
       setTimeout(() => setShowSuccess(false), 3000);
 
+      // A split that includes someone who only has a name in the group (no account yet): offer to send them the link right now.
+      const nudge = (() => {
+        if (isIncome || !selectedGroup?.splitEnabled) return null;
+        const pending = placeholderRows(selectedGroup).filter((p) => splitMembers.includes(p.userId) && nudgeIsDue(groupId, p.displayName));
+        if (pending.length === 0) return null;
+        const share = (uid: string) => splitType === 'equally' ? evaluatedAmount / splitMembers.length : splitType === 'percentage' ? (evaluatedAmount * (memberSplits[uid] || 0)) / 100 : (memberSplits[uid] || 0);
+        return {
+          groupId, groupName: selectedGroup.name, names: pending.map((p) => p.displayName), description: description.trim(),
+          shareText: pending.length === 1 ? `${pending[0].displayName}'s share is ${currencySymbol}${share(pending[0].userId).toFixed(2)}` : '',
+        };
+      })();
+
       if (isFirstExpenseEver) {
         setInvitePromptGroupId(groupId);
+        setCloseAfterInvitePrompt(!keepOpen);
+      } else if (nudge) {
+        setSplitNudge(nudge);
         setCloseAfterInvitePrompt(!keepOpen);
       } else if (!keepOpen) {
         handleClose();
@@ -1462,6 +1479,16 @@ export default function AddExpense() {
         />
       )}
       </div>
+
+      {splitNudge && (
+        <InviteSplitNudge
+          nudge={splitNudge}
+          onDismiss={() => {
+            setSplitNudge(null);
+            if (closeAfterInvitePrompt) handleClose();
+          }}
+        />
+      )}
 
       {invitePromptGroupId && (
         <AddFamilyMemberPrompt

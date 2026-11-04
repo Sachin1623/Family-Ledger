@@ -27,6 +27,7 @@ const ACTION_META: Record<string, { icon: string; labelKey: string }> = {
   budget_met: { icon: 'savings', labelKey: 'progress.actionBudgetMet' },
   feature_explorer: { icon: 'explore', labelKey: 'progress.actionFeatureExplorer' },
   group_milestone: { icon: 'groups', labelKey: 'progress.actionGroupMilestone' },
+  referral_joined: { icon: 'person_add', labelKey: 'progress.actionReferralJoined' },
   habit_resumed: { icon: 'restart_alt', labelKey: 'progress.actionHabitResumed' },
   game_played: { icon: 'sports_esports', labelKey: 'progress.actionGamePlayed' },
   game_won: { icon: 'emoji_events', labelKey: 'progress.actionGameWon' },

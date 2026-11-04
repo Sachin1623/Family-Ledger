@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -10,8 +10,10 @@ import { groupIconEmoji } from '../lib/groupIcons';
 import { claimPoints } from '../lib/pointsApi';
 import { linkGroupParticipant } from '../lib/inviteApi';
 import { placeholderRows } from '../lib/groupParticipants';
+import { pendingReferral } from '../lib/referral';
 
-const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+const JOIN_AFTER_LOGIN_KEY = 'fl_join_after_login';
+const PLAY_STORE_URL ='https://play.google.com/store/apps/details?id=com.familyledger.app';
 
 // Android App Links (see AndroidManifest.xml's autoVerify intent-filter) already open this exact
 // URL directly in the installed app — this banner only ever renders in the fallback case: the
@@ -54,6 +56,18 @@ export default function JoinGroup() {
   // ("are you Priya?") — links this account to that name and inherits its debts/credits.
   const [claimCandidates, setClaimCandidates] = useState<{ userId: string; displayName: string }[]>([]);
   const [claimingId, setClaimingId] = useState<string | null>(null);
+  // Who sent this link ("Ravi invited you"), looked up from the ?ref= in the link or the one remembered on this phone.
+  const [inviterName, setInviterName] = useState('');
+
+  useEffect(() => {
+    const gid = groupId || new URLSearchParams(window.location.search).get('groupId');
+    const ref = new URLSearchParams(window.location.search).get('ref') || pendingReferral()?.ref;
+    if (!gid || !ref) return;
+    fetch(`/api/invite/preview?groupId=${encodeURIComponent(gid)}&ref=${encodeURIComponent(ref)}`)
+      .then((r) => r.json())
+      .then((d) => setInviterName(String(d?.inviterName || '')))
+      .catch(() => {});
+  }, [groupId]);
 
   useEffect(() => {
     const fetchGroup = async () => {
@@ -165,6 +179,11 @@ export default function JoinGroup() {
 
       claimPoints('group_milestone', { groupId: resolvedGroupId });
 
+      // A brand-new account joining through someone's invite: the server thanks the sender with coins (it ignores anyone who is not new).
+      user.getIdToken().then((token) =>
+        fetch('/api/referral/joined', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: resolvedGroupId }) }),
+      ).catch((err) => console.error('referral joined failed:', err));
+
       // If this group has name-only placeholder participants awaiting an account, let the joiner
       // claim one instead of dropping them straight into the group.
       const candidates = placeholderRows(group);
@@ -185,6 +204,19 @@ export default function JoinGroup() {
       setJoining(false);
     }
   };
+
+  // Someone who tapped "Sign in to Join" comes back here signed in: join straight away instead of asking them to tap again.
+  const autoJoinTried = useRef(false);
+  useEffect(() => {
+    if (!user || !group || !resolvedGroupId || autoJoinTried.current) return;
+    try {
+      if (sessionStorage.getItem(JOIN_AFTER_LOGIN_KEY) !== resolvedGroupId) return;
+      sessionStorage.removeItem(JOIN_AFTER_LOGIN_KEY);
+    } catch { return; }
+    autoJoinTried.current = true;
+    handleJoin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, group, resolvedGroupId]);
 
   const handleClaim = async (participantId: string) => {
     if (!user || !resolvedGroupId || claimingId) return;
@@ -279,7 +311,9 @@ export default function JoinGroup() {
           </div>
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-primary">Join "{group.name}"</h1>
-            <p className="text-sm text-text-muted">You've been invited to track expenses together</p>
+            <p className="text-sm text-text-muted">
+              {inviterName ? <><b className="text-on-surface">{inviterName}</b> invited you to track expenses together</> : "You've been invited to track expenses together"}
+            </p>
           </div>
         </div>
 
@@ -297,7 +331,10 @@ export default function JoinGroup() {
         <div className="space-y-3 pt-4">
           {!user ? (
             <button 
-              onClick={() => navigate('/login', { state: { from: resolvedGroupId ? `/join/${resolvedGroupId}` : '/join' } })}
+              onClick={() => {
+                try { if (resolvedGroupId) sessionStorage.setItem(JOIN_AFTER_LOGIN_KEY, resolvedGroupId); } catch { /* they just tap Join after signing in */ }
+                navigate('/login', { state: { from: resolvedGroupId ? `/join/${resolvedGroupId}` : '/join' } });
+              }}
               className="w-full bg-primary text-white h-14 rounded-2xl font-bold shadow-lg shadow-primary/20 active:scale-95 transition-all text-lg"
             >
               Sign in to Join

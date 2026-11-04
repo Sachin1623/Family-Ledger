@@ -226,6 +226,7 @@ export default function ShoppingListDetail() {
   const [showFinish, setShowFinish] = useState(false);
   const [completeAmount, setCompleteAmount] = useState('');
   const [carryOver, setCarryOver] = useState(true);
+  const [carryNotAvailable, setCarryNotAvailable] = useState(true);
   const [completing, setCompleting] = useState(false);
   const [viewingItem, setViewingItem] = useState<any | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
@@ -310,10 +311,14 @@ export default function ShoppingListDetail() {
     }
   };
 
-  // What was not bought can move to a fresh list (same group, category and icon) so it is not forgotten.
+  // What was not bought, and optionally what was not available, can move to a fresh list (same group, category and icon)
+  // so it is not forgotten. Both go into one list when both are chosen.
   const carryUnboughtToNewList = async () => {
     if (!user || !list) return;
-    const left = items.filter((i: any) => getItemStatus(i) === 'pending');
+    const left = items.filter((i: any) => {
+      const s = getItemStatus(i);
+      return (carryOver && s === 'pending') || (carryNotAvailable && s === 'unavailable');
+    });
     if (left.length === 0) return;
     const newRef = await addDoc(collection(db, 'shoppingLists'), {
       userId: user.uid,
@@ -347,7 +352,7 @@ export default function ShoppingListDetail() {
         completedAt: new Date().toISOString(),
         completedBy: user?.uid,
       });
-      if (carryOver) await carryUnboughtToNewList();
+      if (carryOver || carryNotAvailable) await carryUnboughtToNewList();
       setShowFinish(false);
     } catch (err) {
       console.error('Failed to mark list completed:', err);
@@ -429,7 +434,7 @@ export default function ShoppingListDetail() {
       });
 
       // the expense is already saved; moving the leftovers is a bonus that must not make the finish look failed
-      if (carryOver) await carryUnboughtToNewList().catch((err) => console.error('carry over failed:', err));
+      if (carryOver || carryNotAvailable) await carryUnboughtToNewList().catch((err) => console.error('carry over failed:', err));
       setShowFinish(false);
       setCompleteAmount('');
     } catch (err) {
@@ -718,7 +723,7 @@ export default function ShoppingListDetail() {
             </button>
           </div>
           {carriedListId && (
-            <button onClick={() => navigate(`/shopping-lists/${carriedListId}`)} className="mt-2 w-full rounded-xl bg-white/15 py-2 text-xs font-black">Items you did not buy moved to a new list · Open it</button>
+            <button onClick={() => navigate(`/shopping-lists/${carriedListId}`)} className="mt-2 w-full rounded-xl bg-white/15 py-2 text-xs font-black">Items you did not get moved to a new list · Open it</button>
           )}
         </div>
 
@@ -1001,6 +1006,14 @@ export default function ShoppingListDetail() {
                     {carryOver && <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'wght' 700" }}>check</span>}
                   </span>
                   <span className="text-xs font-bold text-slate-600">Move the {toBuy.length} item{toBuy.length === 1 ? '' : 's'} not bought to a new list</span>
+                </button>
+              )}
+              {notAvailable.length > 0 && (
+                <button type="button" onClick={() => setCarryNotAvailable((v) => !v)} className="mt-3 w-full flex items-center gap-2.5 text-left">
+                  <span className={clsx('w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0', carryNotAvailable ? 'bg-[#0f7a8f] border-[#0f7a8f] text-white' : 'border-slate-300')}>
+                    {carryNotAvailable && <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'wght' 700" }}>check</span>}
+                  </span>
+                  <span className="text-xs font-bold text-slate-600">Add the {notAvailable.length} not-available item{notAvailable.length === 1 ? '' : 's'} to a new list to buy later</span>
                 </button>
               )}
 

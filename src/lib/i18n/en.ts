@@ -1242,6 +1242,7 @@ const en = {
   'progress.actionBudgetMet': 'Stayed under budget',
   'progress.actionFeatureExplorer': 'Tried a new feature',
   'progress.actionGroupMilestone': 'Group milestone reached',
+  'progress.actionReferralJoined': 'Someone joined through your invite',
   'progress.actionHabitResumed': 'Resumed a habit',
   'progress.actionGamePlayed': 'Played a game',
   'progress.actionGameWon': 'Won a game',

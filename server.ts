@@ -5605,6 +5605,73 @@ async function startServer() {
     }
   });
 
+  // Who sent this join link? Shown on the invite page ("Ravi invited you") before the visitor has signed in, so it takes no login. Only the
+  // first name comes back, and only when that person really is a member of the group, so the endpoint cannot be used to look people up.
+  app.get('/api/invite/preview', async (req, res) => {
+    const groupId = String(req.query.groupId || '');
+    const ref = String(req.query.ref || '');
+    if (!adminDb || !/^[A-Za-z0-9_-]{6,64}$/.test(groupId) || !/^[A-Za-z0-9]{10,64}$/.test(ref)) return res.json({});
+    try {
+      const member = await adminDb.collection('members').doc(`${ref}_${groupId}`).get();
+      if (!member.exists) return res.json({});
+      const name = String(member.data()?.displayName || '').trim().split(/\s+/)[0] || '';
+      return res.json({ inviterName: name.slice(0, 30) });
+    } catch (error) {
+      console.error('invite/preview error:', error);
+      return res.json({});
+    }
+  });
+
+  // A brand-new account has just joined a group through an invite: thank whoever sent it. The sender is the person named in a tagged WhatsApp/SMS link
+  // (users/{uid}.referredBy, see /api/referral/claim) or, for an email invite, whoever sent a pending invite to this address before the account existed.
+  // Rewarded once per new account, only when the sender is in the same group, and never for yourself.
+  app.post('/api/referral/joined', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb || !adminAuth) return res.status(401).json({ error: 'Unauthorized.' });
+    const groupId = String(req.body?.groupId || '');
+    if (!groupId) return res.json({ ok: false });
+    const db = adminDb;
+    try {
+      const record = await adminAuth.getUser(decoded.uid);
+      const createdMs = new Date(record.metadata.creationTime).getTime();
+      if (!Number.isFinite(createdMs) || Date.now() - createdMs > 3 * 24 * 60 * 60 * 1000) return res.json({ ok: false });
+      const [myMember, userSnap] = await Promise.all([
+        db.collection('members').doc(`${decoded.uid}_${groupId}`).get(),
+        db.collection('users').doc(decoded.uid).get(),
+      ]);
+      if (!myMember.exists || userSnap.data()?.referralRewardedAt) return res.json({ ok: false });
+
+      let inviter: string | null = userSnap.data()?.referredBy || null;
+      if (!inviter && record.email) {
+        const invites = await db.collection('groups').doc(groupId).collection('invites').where('email', '==', normalizeEmail(record.email)).get();
+        const before = invites.docs
+          .map((d) => d.data() as any)
+          .filter((x) => x.invitedBy && new Date(x.createdAt).getTime() <= createdMs + 60_000)
+          .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+        inviter = before[0]?.invitedBy || null;
+      }
+      if (!inviter || inviter === decoded.uid) return res.json({ ok: false });
+      if (!(await db.collection('members').doc(`${inviter}_${groupId}`).get()).exists) return res.json({ ok: false });
+
+      await db.collection('users').doc(decoded.uid).set({ referralRewardedAt: new Date().toISOString() }, { merge: true });
+      await awardPointsStandalone(db, inviter, {
+        actionType: 'referral_joined', ledgerKey: `${inviter}_referral_${decoded.uid}`, xp: 50, coins: 50,
+        sourceCollection: 'groups', sourceDocId: groupId, meta: { groupId },
+      });
+      try {
+        const first = String(record.displayName || '').trim().split(/\s+/)[0] || 'Someone';
+        const tokens = await collectPushTokens(db, [inviter], 'notificationsEnabled');
+        await sendPush(tokens, `${first} joined FamilyLedger`, `${first} joined through your invite. You earned 50 coins.`, { type: 'referral_joined', groupId });
+      } catch (pushErr) {
+        console.error('referral/joined push failed:', pushErr);
+      }
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('referral/joined error:', error);
+      return res.status(500).json({ error: 'Could not record the referral.' });
+    }
+  });
+
   app.get('/api/admin/analytics/growth', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
