@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
+import { useEdgeDock } from '../lib/useEdgeDock';
 
 // A floating icon, always there above the quest trophy, that opens the To-Do list and looks different for each situation:
 //   overdue            red ring, red count of what is due today or late
@@ -27,6 +28,7 @@ export default function TodoFab() {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [today, setToday] = useState(() => toDateOnly(new Date()));
+  const dock = useEdgeDock(52);
 
   useEffect(() => {
     if (!user) {
@@ -79,8 +81,9 @@ export default function TodoFab() {
       onClick={() => navigate('/todo')}
       aria-label={look.label}
       title={look.label}
-      className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-      style={{ bottom: `calc(4rem + env(safe-area-inset-bottom) + 12px + ${lift}px)`, border: `3px ${state === 'empty' ? 'dashed' : 'solid'} ${look.border}` }}
+      {...dock.handlers}
+      className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center"
+      style={{ ...dock.style, bottom: `calc(4rem + env(safe-area-inset-bottom) + 12px + ${lift}px)`, border: `3px ${state === 'empty' ? 'dashed' : 'solid'} ${look.border}` }}
     >
       <span className="material-symbols-outlined text-[26px]" style={{ color: look.color, fontVariationSettings: `'FILL' ${state === 'empty' ? 0 : 1}` }}>{look.icon}</span>
       {look.count > 0 && (

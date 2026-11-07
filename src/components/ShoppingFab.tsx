@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
+import { useEdgeDock } from '../lib/useEdgeDock';
 
 // The shopping-list icon on the home page, above the to-do icon (which is above the quest trophy). It shows how many items are still left to buy across
 // your active lists, turns green when everything on them is bought, and is a quiet dashed "+" when you have no list yet. It opens the lists.
@@ -19,6 +20,7 @@ export default function ShoppingFab() {
   const [mine, setMine] = useState<ListLite[]>([]);
   const [shared, setShared] = useState<ListLite[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const dock = useEdgeDock(52);
 
   useEffect(() => {
     if (!user || !onHome) return;
@@ -68,8 +70,9 @@ export default function ShoppingFab() {
       onClick={() => navigate(state === 'none' ? '/shopping-lists?new=1' : '/shopping-lists')}
       aria-label={look.label}
       title={look.label}
-      className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-      style={{ bottom: `calc(4rem + env(safe-area-inset-bottom) + 12px + ${lift}px)`, border: `3px ${state === 'none' ? 'dashed' : 'solid'} ${look.border}` }}
+      {...dock.handlers}
+      className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center"
+      style={{ ...dock.style, bottom: `calc(4rem + env(safe-area-inset-bottom) + 12px + ${lift}px)`, border: `3px ${state === 'none' ? 'dashed' : 'solid'} ${look.border}` }}
     >
       <span className="material-symbols-outlined text-[26px]" style={{ color: look.color, fontVariationSettings: `'FILL' ${look.fill}` }}>{look.icon}</span>
       {state === 'left' && (

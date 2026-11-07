@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { Capacitor } from '@capacitor/core';
 import { claimQuest, fetchCheerPeople, fetchQuestBoard, questEvent, sendCheer, type CheerPerson, type Quest, type QuestBoard } from '../lib/questsApi';
 import Fireworks from './Fireworks';
+import { useEdgeDock } from '../lib/useEdgeDock';
 
 // The floating quest icon and the quest board it opens. A ring around the icon fills as today's quests get done, a red dot counts rewards waiting
 // to be collected, and the board is laid out like a game: progress bars that fill, rewards to collect, a daily sweep bonus, weekly and monthly goals
@@ -134,6 +135,7 @@ export default function QuestFab() {
   const [error, setError] = useState<string | null>(null);
   const loadedAt = useRef(0);
   const tabChosen = useRef(false);
+  const dock = useEdgeDock(60);
 
   const enabled = !!user && profile?.questsEnabled !== false;
   const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname) || location.pathname.startsWith('/shopping-lists/'); // a shopping list has its own add-item bar
@@ -259,8 +261,9 @@ export default function QuestFab() {
         type="button"
         onClick={() => { setOpen(true); refresh(); }}
         aria-label="Open quests"
-        className="fixed left-4 z-40 active:scale-95 transition-transform"
-        style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)', width: size, height: size }}
+        {...dock.handlers}
+        className="fixed left-4 z-40"
+        style={{ ...dock.style, bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)', width: size, height: size }}
       >
         <svg width={size} height={size} className="absolute inset-0 -rotate-90">
           <circle cx={size / 2} cy={size / 2} r={rg.r} fill="white" stroke="#e2e8f0" strokeWidth={5} />
