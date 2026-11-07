@@ -515,6 +515,68 @@ export default function AdminMetrics() {
 
       {m && derived && tab === 'growth' && (
         <div className="space-y-5">
+          <Section title="Ads readiness">
+            {(() => {
+              const total = m.users.total;
+              const d30 = m.retention.d30;
+              const d30Pct = d30.cohort >= 30 ? pct(d30.returned, d30.cohort) : null; // too few people to say yet below this
+              const retentionOk = d30Pct !== null && d30Pct >= 20;
+              const costOk = derived.forecastVsLast === null ? null : derived.forecastVsLast < GOALS.costVsLastMonth;
+              const stages = [
+                { name: 'Prepare the ads', at: 5000, what: 'Add the ad code, consent screen and store privacy forms, but show nothing yet.', needs: [] as boolean[] },
+                { name: 'Rewarded ads only', at: 10000, what: 'A "watch an ad to earn coins or a streak freeze" button. Nobody is forced to see an ad.', needs: [retentionOk, costOk === true] },
+                { name: 'One ad a day', at: 25000, what: 'One interstitial per daily user, at a natural break such as after saving an expense.', needs: [retentionOk, costOk === true] },
+              ];
+              const current = [...stages].reverse().find((s) => total >= s.at && s.needs.every(Boolean));
+              const next = stages.find((s) => !current || s.at > current.at);
+              const perDay = derived.avg30;
+              const eta = next && total < next.at && perDay > 0 ? Math.ceil((next.at - total) / perDay) : null;
+              const etaText = eta === null ? null : eta > 730 ? 'over 2 years at the last 30 days\' pace' : eta > 60 ? `about ${Math.round(eta / 30)} months at the last 30 days' pace` : `about ${eta} days at the last 30 days' pace`;
+              const chip = (ok: boolean | null) => (
+                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-black ${ok === null ? 'bg-slate-100 text-slate-600' : ok ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>{ok === null ? 'not enough data' : ok ? 'met' : 'not yet'}</span>
+              );
+              return (
+                <div className="space-y-3">
+                  <div className="rounded-2xl bg-[#0d3b4e] text-white px-4 py-3">
+                    <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Where you are</p>
+                    <p className="text-lg font-black leading-tight">{current ? current.name : 'Not yet, keep growing'}</p>
+                    {next && <p className="text-xs opacity-80 mt-0.5">Next: {next.name} at {num(next.at)} registered users{etaText ? `, ${etaText}` : ''}.</p>}
+                    {!next && <p className="text-xs opacity-80 mt-0.5">All three stages are open. Watch retention and cost as you scale.</p>}
+                  </div>
+                  <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle text-sm">
+                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                      <span><span className="font-black text-primary">Registered users</span><span className="block text-[11px] text-text-muted">{num(total)} now · 10,000 for rewarded ads · 25,000 for one ad a day</span></span>
+                      {chip(total >= 10000)}
+                    </div>
+                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                      <span><span className="font-black text-primary">Still around after 30 days</span><span className="block text-[11px] text-text-muted">{d30Pct === null ? `Only ${d30.cohort} people are old enough to judge (needs 30)` : `${fmtPct(d30Pct)} of ${num(d30.cohort)} · goal 20% or more`}</span></span>
+                      {chip(d30Pct === null ? null : retentionOk)}
+                    </div>
+                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                      <span><span className="font-black text-primary">Cloud cost steady</span><span className="block text-[11px] text-text-muted">{derived.forecastVsLast === null ? 'Cost data is not available yet' : `This month is on track for ${derived.forecastVsLast > 0 ? '+' : ''}${derived.forecastVsLast}% against last month · goal under +${GOALS.costVsLastMonth}%`}</span></span>
+                      {chip(costOk)}
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-2xl border border-border-subtle divide-y divide-border-subtle text-sm">
+                    {stages.map((s) => {
+                      const open = !!current && s.at <= current.at;
+                      return (
+                        <div key={s.name} className="px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-black text-primary">{s.name}</span>
+                            <span className={`shrink-0 text-[11px] font-black ${open ? 'text-green-700' : 'text-text-muted'}`}>{open ? 'ready' : `from ${num(s.at)} users`}</span>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-0.5">{s.what}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-text-muted px-1">Ads are not in the app yet. This card only tells you when to start. At 10,000 users rewarded ads should roughly pay the cloud bill. Retention is "back after day 30" below, so the number moves slowly.</p>
+                </div>
+              );
+            })()}
+          </Section>
+
           <Section title="Sign-in funnels · last 7 days (anonymous counters, Android and web)">
             {(() => {
               const tapsOf = (f: Record<string, number>) => (f.google_tap || 0) + (f.email_tap || 0) + (f.apple_tap || 0);
