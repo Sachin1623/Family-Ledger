@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
-import { useLiveCollection } from '../lib/liveCache';
+import { useLiveCollection, useLiveGroupDocs } from '../lib/liveCache';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { getCurrencySymbol, currencyForCountry, guessLocationCurrency, EXPENSE_CATEGORIES, formatAmountCompact } from '../lib/constants';
@@ -79,10 +79,7 @@ export default function Settlements() {
   // of the group's setting today. Gating this fetch by splitEnabled meant flipping a group's
   // splitting off silently dropped ALL of that group's real, already-split (and possibly still
   // unsettled) expenses from every balance calculation — the bug this fixes.
-  const [expensesValue, expensesLoading, expensesError] = useLiveCollection(
-    groupIds.length > 0 ? `expenses:in:${groupIds.join(',')}` : null,
-    () => query(collection(db, 'expenses'), where('groupId', 'in', groupIds)),
-  );
+  const [expensesValue, expensesLoading, expensesError] = useLiveGroupDocs('expenses', groupIds);
   // A transient read failure (e.g. a momentary quota/network error) makes expensesValue
   // undefined again after an earlier successful snapshot — without this cache, balances
   // would flash correct then silently drop to zero. Keep the last good snapshot instead.
@@ -93,10 +90,7 @@ export default function Settlements() {
   const expenses = lastGoodExpensesRef.current;
 
   // Payments between members (the `settlements` collection): not spending, they only move the balances below.
-  const [paymentsValue] = useLiveCollection(
-    groupIds.length > 0 ? `settlements:in:${groupIds.join(',')}` : null,
-    () => query(collection(db, 'settlements'), where('groupId', 'in', groupIds)),
-  );
+  const [paymentsValue] = useLiveGroupDocs('settlements', groupIds);
   const lastGoodPaymentsRef = useRef<any[]>([]);
   if (paymentsValue) {
     lastGoodPaymentsRef.current = paymentsValue.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -118,10 +112,7 @@ export default function Settlements() {
   }, [splitEnabledGroups]);
 
   // Fetch all members for all groups the user is in to get names/photos
-  const [allMembersValue, , allMembersError] = useLiveCollection(
-    groupIds.length > 0 ? `members:in:${groupIds.join(',')}` : null,
-    () => query(collection(db, 'members'), where('groupId', 'in', groupIds)),
-  );
+  const [allMembersValue, , allMembersError] = useLiveGroupDocs('members', groupIds);
   const lastGoodMembersRef = useRef<any>({});
   if (allMembersValue) {
     lastGoodMembersRef.current = allMembersValue.docs.reduce((acc: any, doc) => {

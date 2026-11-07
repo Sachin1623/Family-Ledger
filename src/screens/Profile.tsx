@@ -1,4 +1,5 @@
 import { isIosApp } from '../lib/platform';
+import { AdminProfileTiles } from '../components/admin/AdminTiles';
 import ProfileTabs from '../components/ProfileTabs';
 import { clearPerAccountDeviceCaches } from '../lib/deviceUserCache';
 import React, { useEffect, useState, useRef } from 'react';
@@ -1051,6 +1052,7 @@ export default function Profile() {
             <span className="absolute right-2 top-1/2 -translate-y-1/2"><FavoriteButton itemKey="admin-panel" className="!text-white/70" /></span>
           </div>
         )}
+        {admin.isAdmin && <AdminProfileTiles />}
 
         {/* Prioritized per explicit request — placed right under the header, ahead of every
             settings section, with a tinted/bordered card (instead of the plain white cards every

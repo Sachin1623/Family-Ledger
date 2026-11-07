@@ -2,9 +2,9 @@
 // every time a screen mounts, so coming back to Home showed "Loading…" cards. Here the last result of each listener is kept in
 // memory and shown at once, and the listener keeps running for a short while after the screen is left, so a quick trip to another
 // screen and back reloads nothing. Only data that actually changes re-renders.
-import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot, queryEqual, DocumentReference, DocumentSnapshot, Query, QuerySnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, queryEqual, where, DocumentReference, DocumentSnapshot, Query, QueryDocumentSnapshot, QuerySnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 type State = { value: any; loading: boolean; error: Error | undefined };
@@ -84,6 +84,45 @@ export function useLiveCollection(key: string | null, build: () => Query): [Quer
 export function useLiveDocument(path: string | null): [DocumentSnapshot | undefined, boolean, Error | undefined] {
   const s = useLive(path ? `doc:${path}` : null, () => doc(db, path as string));
   return [s.value, s.loading, s.error];
+}
+
+// One listener per group for the whole app. Home, Settlements, Analysis, Goals and Chat all need the same group's expenses, payments or members;
+// asking for them through one query per group (instead of each screen running its own "all my groups" query) means each document is read once,
+// and every screen shares it. `collectionName` is the collection holding a `groupId` field.
+export type GroupDocs = { docs: QueryDocumentSnapshot[] };
+export function useLiveGroupDocs(collectionName: string, groupIds: string[]): [GroupDocs | undefined, boolean, Error | undefined] {
+  const ids = Array.from(new Set(groupIds)).sort();
+  const keys = ids.map((id) => `${collectionName}:group:${id}`);
+  const joined = keys.join('|');
+  const subscribe = useCallback((onChange: () => void) => {
+    const releases = ids.map((id, i) => {
+      const e = entryFor(keys[i]);
+      e.listeners.add(onChange);
+      const release = acquire(keys[i], e, () => listen(e, query(collection(db, collectionName), where('groupId', '==', id))));
+      return () => { e.listeners.delete(onChange); release(); };
+    });
+    return () => releases.forEach((r) => r());
+    // the ids are exactly what `joined` names
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined]);
+  // the combined result is rebuilt only when one of the per-group results actually changed, so it is stable between renders
+  const last = useRef<{ joined: string; states: State[]; result: [GroupDocs | undefined, boolean, Error | undefined] } | null>(null);
+  const getSnapshot = useCallback(() => {
+    const states = keys.map((k) => entryFor(k).state);
+    const prev = last.current;
+    if (prev && prev.joined === joined && prev.states.length === states.length && prev.states.every((st, i) => st === states[i])) return prev.result;
+    // a group that cannot be read (removed, no access) counts as empty instead of holding every screen back
+    const pending = states.some((st) => st.value === undefined && st.loading);
+    const error = states.find((st) => st.error && st.value === undefined)?.error;
+    const result: [GroupDocs | undefined, boolean, Error | undefined] = ids.length === 0
+      ? [undefined, false, undefined]
+      : pending ? [undefined, true, undefined]
+      : [{ docs: states.flatMap((st) => (st.value ? (st.value as QuerySnapshot).docs : [])) }, false, error];
+    last.current = { joined, states, result };
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 function keyForQuery(q: Query): string {

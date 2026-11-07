@@ -7,7 +7,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, doc } from 'firebase/firestore';
-import { useLiveQuery, useLiveRef } from '../lib/liveCache';
+import { useLiveQuery, useLiveRef, useLiveGroupDocs } from '../lib/liveCache';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -499,9 +499,7 @@ export default function GroupAnalysisSummary() {
   };
 
   // Fetch ALL members for relevant groups to have a full map of displays
-  const [allRelevantMembersValue] = useLiveQuery(
-    groupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', groupIds)) : null
-  );
+  const [allRelevantMembersValue] = useLiveGroupDocs('members', groupIds);
   const allRelevantMembers = allRelevantMembersValue?.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)) || [];
 
   const currencySymbol = useMemo(() => {
@@ -534,19 +532,11 @@ export default function GroupAnalysisSummary() {
 
   const selectedMember = groupMembers.find(m => m.userId === selectedMemberId);
 
-  const [expensesValue] = useLiveQuery(
-    selectedGroupId === 'all' 
-      ? (groupIds.length > 0 ? query(collection(db, 'expenses'), where('groupId', 'in', groupIds)) : null)
-      : (selectedGroupId ? query(collection(db, 'expenses'), where('groupId', '==', selectedGroupId)) : null)
-  );
+  const [expensesValue] = useLiveGroupDocs('expenses', selectedGroupId === 'all' ? groupIds : selectedGroupId ? [selectedGroupId] : []);
   
   // Payments between members ("Ravi paid Anita 500"): not spending, so they are not in any chart, but the member card shows what each person paid and
   // received through them next to what they paid at the bills.
-  const [paymentsValue] = useLiveQuery(
-    selectedGroupId === 'all'
-      ? (groupIds.length > 0 ? query(collection(db, 'settlements'), where('groupId', 'in', groupIds)) : null)
-      : (selectedGroupId ? query(collection(db, 'settlements'), where('groupId', '==', selectedGroupId)) : null)
-  );
+  const [paymentsValue] = useLiveGroupDocs('settlements', selectedGroupId === 'all' ? groupIds : selectedGroupId ? [selectedGroupId] : []);
 
   const allExpenses = useMemo(() => {
     const exps = expensesValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];

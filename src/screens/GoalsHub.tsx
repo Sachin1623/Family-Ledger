@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { collection, doc, getDoc, setDoc, updateDoc, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
-import { useLiveQuery, useLiveRef, useRememberedState } from '../lib/liveCache';
+import { useLiveQuery, useLiveRef, useLiveGroupDocs, useRememberedState } from '../lib/liveCache';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -180,9 +180,7 @@ export default function GoalsHub() {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
 
   const thisMonthKey = currentLocalMonthKey();
-  const [thisMonthExpensesValue] = useLiveQuery(
-    activeGroupIds.length > 0 ? query(collection(db, 'expenses'), where('groupId', 'in', activeGroupIds)) : null,
-  );
+  const [thisMonthExpensesValue] = useLiveGroupDocs('expenses', activeGroupIds);
 
   // Net savings is bucketed by each contributing group's OWN currency (see netSavings.ts) rather
   // than blindly summed as one raw number — a user's groups aren't necessarily all one currency,

@@ -4685,7 +4685,24 @@ async function startServer() {
     }
   }
 
-  app.get('/api/admin/cloud-cost', async (req, res) => {
+  // The admin summary pages read whole collections (every user, group and expense), so each open costs thousands of Firestore reads. The answer is kept for a few
+  // minutes and handed to every admin who asks in that window; `?refresh=1` forces a fresh one. The admin check still runs on every request.
+  const adminResponseCache = new Map<string, { at: number; body: any }>();
+  const adminCache = (ttlMs: number) => async (req: any, res: any, next: any) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded) return;
+    const key = `${req.path}?${Object.entries(req.query).filter(([k]) => k !== 'refresh').map(([k, v]) => `${k}=${v}`).sort().join('&')}`;
+    const hit = adminResponseCache.get(key);
+    if (hit && Date.now() - hit.at < ttlMs && req.query.refresh !== '1') return res.json(hit.body);
+    const send = res.json.bind(res);
+    res.json = (body: any) => {
+      if (res.statusCode === 200 && body && !body.error) adminResponseCache.set(key, { at: Date.now(), body });
+      return send(body);
+    };
+    next();
+  };
+
+  app.get('/api/admin/cloud-cost', adminCache(15 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded) return;
 
@@ -4736,7 +4753,7 @@ async function startServer() {
   });
 
   // Breakdown of this month's Google Cloud cost by service (Cloud Run, Firestore, Vertex AI ...) and a daily series, from the billing export.
-  app.get('/api/admin/cloud-cost/breakdown', async (req, res) => {
+  app.get('/api/admin/cloud-cost/breakdown', adminCache(15 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded) return;
     try {
@@ -4767,7 +4784,7 @@ async function startServer() {
   // One bundle for the admin health dashboard (Today / Growth / Health tabs): user counts, retention, activation, the sign-in funnel, server
   // health, and what needs attention. Computed from fields already stored, cached for 3 minutes.
   let metricsCache: { at: number; data: any } | null = null;
-  app.get('/api/admin/metrics', async (req, res) => {
+  app.get('/api/admin/metrics', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -4950,7 +4967,7 @@ async function startServer() {
     return (await accountRecords()).map((r) => new Date(r.ms).toISOString());
   }
 
-  app.get('/api/admin/overview', async (req, res) => {
+  app.get('/api/admin/overview', adminCache(5 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -5560,7 +5577,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/analytics/top', async (req, res) => {
+  app.get('/api/admin/analytics/top', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -5613,7 +5630,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/analytics/usage-trend', async (req, res) => {
+  app.get('/api/admin/analytics/usage-trend', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -5740,7 +5757,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/analytics/growth', async (req, res) => {
+  app.get('/api/admin/analytics/growth', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -5897,7 +5914,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/analytics/inactive', async (req, res) => {
+  app.get('/api/admin/analytics/inactive', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -5932,7 +5949,7 @@ async function startServer() {
   // `GAME_COLLECTIONS` itself now lives at the top of this file (also used by
   // computeUserWeeklyStats for /api/cron/send-weekly-summary) — see its definition there.
 
-  app.get('/api/admin/analytics/games', async (req, res) => {
+  app.get('/api/admin/analytics/games', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -6197,7 +6214,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/analytics/funnel', async (req, res) => {
+  app.get('/api/admin/analytics/funnel', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     try {
@@ -6230,7 +6247,7 @@ async function startServer() {
   ];
   let gameTrendCache: { at: number; data: any } | null = null;
 
-  app.get('/api/admin/analytics/games-trend', async (req, res) => {
+  app.get('/api/admin/analytics/games-trend', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;
@@ -6310,7 +6327,7 @@ async function startServer() {
   // reads whole collections. Days are Indian (IST) calendar days; "week" = a rolling 7 days, not Mon-Sun.
   let productStatsCache: { at: number; data: any } | null = null;
 
-  app.get('/api/admin/analytics/product', async (req, res) => {
+  app.get('/api/admin/analytics/product', adminCache(10 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
     const db = adminDb;

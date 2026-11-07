@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { collection, query, where, documentId } from 'firebase/firestore';
-import { useLiveQuery } from './liveCache';
+import { useLiveQuery, useLiveGroupDocs } from './liveCache';
 import { db } from './firebase';
 import { isPresenceOnline } from './presence';
 
@@ -11,9 +11,7 @@ import { isPresenceOnline } from './presence';
 // user's first 30 groups / first 30 distinct co-members — plenty for a family-ledger app, but
 // noted here in case that ever needs revisiting.
 export function useAllGroupMembers(myGroupIds: string[], excludeUid: string | undefined) {
-  const [allMembersValue] = useLiveQuery(
-    myGroupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', myGroupIds.slice(0, 30))) : null,
-  );
+  const [allMembersValue] = useLiveGroupDocs('members', myGroupIds.slice(0, 30));
   const distinctMembers = useMemo(() => {
     const byUid = new Map<string, any>();
     for (const d of allMembersValue?.docs || []) {
