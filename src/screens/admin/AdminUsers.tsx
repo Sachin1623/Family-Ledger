@@ -224,7 +224,7 @@ export default function AdminUsers() {
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 pb-24 md:pb-24">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-black text-primary">Users</h1>
-        <Link to="/admin" className="text-sm font-bold text-primary underline">Back to Admin</Link>
+        <Link to="/admin?tab=users" className="text-sm font-bold text-primary underline">Back to Admin</Link>
       </div>
       <p className="text-xs text-text-muted -mt-4">
         To grant or revoke admin access, use <Link to="/admin/manage-admins" className="font-bold text-primary underline">Manage Admins</Link>.

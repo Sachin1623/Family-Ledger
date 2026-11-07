@@ -143,7 +143,7 @@ export default function AdminVaccineMapping() {
     <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-4 pb-28 md:pb-28">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-black text-primary">Vaccine Mapping</h1>
-        <Link to="/admin" className="text-sm font-bold text-primary underline">Back to Admin</Link>
+        <Link to="/admin?tab=support" className="text-sm font-bold text-primary underline">Back to Admin</Link>
       </div>
       <p className="text-xs text-text-muted">Each shot (a product like Easysix) and the vaccines it covers. When a parent picks the shot while logging a visit, these vaccines are ticked off together.</p>
 

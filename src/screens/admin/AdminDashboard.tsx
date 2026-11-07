@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import { adminGet } from '../../lib/adminApi';
 import { useAuth } from '../../context/AuthContext';
@@ -26,6 +26,8 @@ interface Overview {
   activeUsersThisWeek: number;
   newUsersToday: number;
   countryBreakdown: CountryStats[];
+  trend?: { days: string[]; users: number[]; groups: number[]; expenses: number[]; spend: number[]; active: (number | null)[]; activeWeek: (number | null)[] };
+  newUsers?: { invite: number[]; organic: number[] };
   changes?: {
     users: { today: number; week: number };
     groups: { today: number; week: number };
@@ -52,28 +54,128 @@ interface Tile {
   description: string;
 }
 
-// One small "+14" pill with what it is measured against. Green when up, red when down, grey when unchanged, a dash when there is nothing to compare with yet.
-function Delta({ value, label, format }: { value: number | null | undefined; label: string; format?: (n: number) => string }) {
-  const text = value == null ? '–' : `${value > 0 ? '+' : value < 0 ? '−' : ''}${(format || ((n: number) => n.toLocaleString()))(Math.abs(value))}`;
-  const tone = value == null || value === 0 ? 'bg-surface text-text-muted' : value > 0 ? 'bg-success/15 text-success' : 'bg-error/10 text-error';
+const sumOf = (a: number[]) => a.reduce((x, y) => x + y, 0);
+
+// "▲ 40%" / "▼ 12%" / "—" for a figure against the one before it; "new" when there was nothing before.
+function Arrow({ now, before }: { now: number; before: number }) {
+  if (before === 0) return now > 0 ? <span className="font-black text-primary">new</span> : <span className="text-text-muted">—</span>;
+  const pct = Math.round(((now - before) / before) * 100);
+  if (pct === 0) return <span className="text-text-muted">— steady</span>;
+  return <span className={clsx('font-black', pct > 0 ? 'text-success' : 'text-error')}>{pct > 0 ? '▲' : '▼'} {Math.abs(pct)}%</span>;
+}
+
+// The last 14 days as a small line; days with no figure (null) are skipped.
+function Spark({ values }: { values: (number | null)[] }) {
+  const w = 64, h = 22;
+  const nums = values.filter((v): v is number => v != null);
+  if (nums.length < 2) return <span className="text-[10px] text-text-muted">no trend yet</span>;
+  const max = Math.max(...nums), min = Math.min(...nums);
+  const span = Math.max(1, max - min);
+  const pts = values
+    .map((v, i) => (v == null ? null : `${(i / (values.length - 1)) * w},${h - 3 - ((v - min) / span) * (h - 6)}`))
+    .filter(Boolean)
+    .join(' ');
   return (
-    <span className={clsx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-black whitespace-nowrap', tone)}>
-      {text} <span className="font-bold opacity-80">{label}</span>
-    </span>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      <polyline points={pts} fill="none" stroke="#0f4761" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
   );
 }
 
-function StatCard({ label, value, today, week, todayLabel = 'today', weekLabel = 'this week', format }: { label: string; value: string | number; today?: number | null; week?: number | null; todayLabel?: string; weekLabel?: string; format?: (n: number) => string }) {
+// A tile: the big number, the 14-day line, then today against yesterday and this week against last week.
+// - default: `series` is what was added each day, so "this week" is the sum of 7 days.
+// - `level`: a count at a moment (people active today), so only today against yesterday, never summed.
+// - `weekSeries`: a rolling 7-day count saved each day, compared with the one from 7 days ago.
+function StatCard({ label, value, series, level, weekSeries, format }: {
+  label: string;
+  value: string | number;
+  series?: (number | null)[];
+  level?: boolean;
+  weekSeries?: (number | null)[];
+  format?: (n: number) => string;
+}) {
+  const f = format || ((n: number) => n.toLocaleString());
+  const signed = (n: number) => (level || weekSeries ? f(n) : `${n > 0 ? '+' : ''}${f(n)}`);
+  const shown = weekSeries || series;
+  const n = shown?.length || 0;
+  const at = (i: number) => shown?.[n - 1 - i] ?? null;
+  const num = (v: number | null) => (v == null ? '–' : signed(v));
+  const flowSum = (from: number, to: number) => sumOf((series || []).slice(n - to, n - from).map((v) => v || 0));
+  const pair = (a: number | null, b: number | null) => a != null && b != null && <Arrow now={a} before={b} />;
+
   return (
-    <div className="bg-white rounded-2xl border border-border-subtle p-5 shadow-sm">
-      <p className="text-xs font-bold text-text-muted uppercase tracking-wider">{label}</p>
-      <p className="text-3xl font-black text-primary mt-1">{value}</p>
-      {(today !== undefined || week !== undefined) && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {today !== undefined && <Delta value={today} label={todayLabel} format={format} />}
-          {week !== undefined && <Delta value={week} label={weekLabel} format={format} />}
+    <div className="bg-white rounded-2xl border border-border-subtle p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider">{label}</p>
+          <p className="text-3xl font-black text-primary mt-1 truncate">{value}</p>
+        </div>
+        {shown && <div className="pt-1 shrink-0"><Spark values={shown} /></div>}
+      </div>
+      {shown && (
+        <div className="mt-2 space-y-1 text-[11px] text-text-muted">
+          {weekSeries ? (
+            <p className="flex items-center justify-between gap-2">
+              <span>Now <b className="text-on-surface">{num(at(0))}</b> · 7 days ago <b className="text-on-surface">{num(at(7))}</b></span>
+              {pair(at(0), at(7))}
+            </p>
+          ) : (
+            <>
+              <p className="flex items-center justify-between gap-2">
+                <span>Today <b className="text-on-surface">{num(at(0))}</b> · Yesterday <b className="text-on-surface">{num(at(1))}</b></span>
+                {pair(at(0), at(1))}
+              </p>
+              {!level && (
+                <p className="flex items-center justify-between gap-2">
+                  <span>This week <b className="text-on-surface">{signed(flowSum(0, 7))}</b> · Last week <b className="text-on-surface">{signed(flowSum(7, 14))}</b></span>
+                  <Arrow now={flowSum(0, 7)} before={flowSum(7, 14)} />
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Today's new people against yesterday's, split by how they arrived. Google Ads is not recorded in the app yet, so its row says so instead of showing a made-up zero.
+function NewUsersCard({ invite, organic }: { invite: number[]; organic: number[] }) {
+  const n = invite.length;
+  const total = invite.map((v, i) => v + organic[i]);
+  const win = (a: number[]) => ({ today: a[n - 1], yesterday: a[n - 2], week: sumOf(a.slice(n - 7)), lastWeek: sumOf(a.slice(n - 14, n - 7)) });
+  const rows = [
+    { label: 'All new users', w: win(total), strong: true },
+    { label: 'Through an invite', hint: 'WhatsApp / SMS join link, or an email invite', w: win(invite) },
+    { label: 'Organic', hint: 'Found the app and signed up on their own', w: win(organic) },
+  ];
+  const cell = (v: number, strong?: boolean) => <span className={clsx('text-center tabular-nums', strong ? 'text-xl font-black text-primary' : 'text-sm font-bold text-on-surface', v === 0 && 'opacity-40')}>{v}</span>;
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle p-5 shadow-sm">
+      <h2 className="text-lg font-bold text-primary">New users</h2>
+      <p className="text-xs text-text-muted">Who joined today compared with yesterday, and how they arrived. Indian time.</p>
+      <div className="grid grid-cols-4 gap-1 mt-4 mb-1 text-[10px] font-bold uppercase tracking-wide text-text-muted text-center">
+        <span>Today</span><span>Yesterday</span><span>This week</span><span>Last week</span>
+      </div>
+      <div className="divide-y divide-border-subtle">
+        {rows.map((r) => (
+          <div key={r.label} className={clsx('py-2.5', r.strong && 'bg-surface rounded-xl px-3 -mx-1 mb-1 divide-y-0')}>
+            <div className="flex items-center justify-between mb-1">
+              <span className={clsx('text-sm', r.strong ? 'font-black text-primary' : 'text-on-surface')}>{r.label}</span>
+              <span className="text-[11px]"><Arrow now={r.w.today} before={r.w.yesterday} /></span>
+            </div>
+            {r.hint && <p className="text-[10px] text-text-muted -mt-0.5 mb-1">{r.hint}</p>}
+            <div className="grid grid-cols-4 gap-1">{cell(r.w.today, r.strong)}{cell(r.w.yesterday, r.strong)}{cell(r.w.week, r.strong)}{cell(r.w.lastWeek, r.strong)}</div>
+          </div>
+        ))}
+        <div className="py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-on-surface">From Google Ads</span>
+            <span className="text-[11px] font-bold text-text-muted">not tracked yet</span>
+          </div>
+          <p className="text-[10px] text-text-muted mt-0.5">The app does not record which ad a person came from, so these people are counted under Organic for now.</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -107,7 +209,13 @@ export default function AdminDashboard() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [cloudCost, setCloudCost] = useState<CloudCost | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'support' | 'announcements' | 'growth'>('overview');
+  // the tab lives in the URL (?tab=support) so Back from a sub-page returns to the same tab, not Overview
+  const [searchParams, setSearchParams] = useSearchParams();
+  type Tab = 'overview' | 'users' | 'support' | 'announcements' | 'growth';
+  const TAB_KEYS: Tab[] = ['overview', 'users', 'support', 'announcements', 'growth'];
+  const tabParam = searchParams.get('tab') as Tab | null;
+  const activeTab: Tab = tabParam && TAB_KEYS.includes(tabParam) ? tabParam : 'overview';
+  const setActiveTab = (t: Tab) => setSearchParams(t === 'overview' ? {} : { tab: t }, { replace: true });
 
   useEffect(() => {
     adminGet('/api/admin/overview')
@@ -245,22 +353,29 @@ export default function AdminDashboard() {
           </div>
 
           {overview && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatCard label="Total Users" value={overview.totalUsers} today={overview.changes?.users.today} week={overview.changes?.users.week} />
-              <StatCard label="Total Groups" value={overview.totalGroups} today={overview.changes?.groups.today} week={overview.changes?.groups.week} />
-              <StatCard label="Total Expenses" value={overview.totalExpenses} today={overview.changes?.expenses.today} week={overview.changes?.expenses.week} />
-              <StatCard label="Lifetime Spend Logged" value={overview.totalSpendAllTime.toLocaleString(undefined, { maximumFractionDigits: 0 })} today={overview.changes?.spend.today} week={overview.changes?.spend.week} format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
-              <StatCard label="Active Today" value={overview.activeUsersToday} today={overview.changes?.active.today} todayLabel="vs yesterday" />
-              <StatCard label="Active This Week" value={overview.activeUsersThisWeek} week={overview.changes?.active.week} weekLabel="vs last week" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              <StatCard label="Total Users" value={overview.totalUsers} series={overview.trend?.users} />
+              <StatCard label="Total Groups" value={overview.totalGroups} series={overview.trend?.groups} />
+              <StatCard label="Total Expenses" value={overview.totalExpenses} series={overview.trend?.expenses} />
+              <StatCard label="Lifetime Spend Logged" value={overview.totalSpendAllTime.toLocaleString(undefined, { maximumFractionDigits: 0 })} series={overview.trend?.spend} format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+              <StatCard label="Active Today" value={overview.activeUsersToday} series={overview.trend?.active} level />
+              <StatCard label="Active This Week" value={overview.activeUsersThisWeek} weekSeries={overview.trend?.activeWeek} />
             </div>
           )}
 
+          {overview?.newUsers && <NewUsersCard invite={overview.newUsers.invite} organic={overview.newUsers.organic} />}
+
+          <TileGrid tiles={[{ to: '/admin/analytics', icon: 'analytics', label: 'Full Analytics', description: 'Top groups/individuals, usage trends, inactivity, game stats' }]} />
+
           {overview && overview.countryBreakdown.length > 0 && (
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-border-subtle">
-                <h2 className="text-lg font-bold text-primary">By Country</h2>
-                <p className="text-xs text-text-muted">Sorted by user count, descending. Country is approximated from device timezone.</p>
-              </div>
+            <details className="group bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden">
+              <summary className="px-5 py-4 cursor-pointer list-none flex items-center justify-between gap-3 group-open:border-b group-open:border-border-subtle">
+                <span>
+                  <span className="block text-lg font-bold text-primary">By Country</span>
+                  <span className="block text-xs text-text-muted">Sorted by user count. Country is approximated from device timezone. Tap to open.</span>
+                </span>
+                <span className="material-symbols-outlined text-text-muted transition-transform group-open:rotate-180">expand_more</span>
+              </summary>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm min-w-[600px]">
                   <thead>
@@ -287,10 +402,8 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </details>
           )}
-
-          <TileGrid tiles={[{ to: '/admin/analytics', icon: 'analytics', label: 'Full Analytics', description: 'Top groups/individuals, usage trends, inactivity, game stats' }]} />
         </div>
       )}
 

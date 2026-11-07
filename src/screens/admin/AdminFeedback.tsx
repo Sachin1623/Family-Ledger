@@ -85,7 +85,7 @@ export default function AdminFeedback() {
     <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6 pb-24 md:pb-24">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-black text-primary">Feedback &amp; Support</h1>
-        <Link to="/admin" className="text-sm font-bold text-primary underline">Back to Admin</Link>
+        <Link to="/admin?tab=support" className="text-sm font-bold text-primary underline">Back to Admin</Link>
       </div>
 
       <label className="flex items-center gap-2 text-sm font-bold text-text-muted">

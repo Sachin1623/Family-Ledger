@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { collection, doc, getDoc, setDoc, updateDoc, query, where, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
-import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
+import { useLiveQuery, useLiveRef, useRememberedState } from '../lib/liveCache';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -72,10 +72,10 @@ export default function GoalsHub() {
   const isOwnView = viewingUid === user?.uid;
   const viewingSharer = sharedWithMe.find((s) => s.uid === viewingUid);
 
-  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const [membershipsValue] = useLiveQuery(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const groupIds = useMemo(() => membershipsValue?.docs.map((d) => d.data().groupId) || [], [membershipsValue]);
   const cappedGroupIds = groupIds.slice(0, 30); // Firestore 'in' query cap, same as elsewhere in this app
-  const [groupsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', cappedGroupIds)) : null);
+  const [groupsValue] = useLiveQuery(cappedGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', cappedGroupIds)) : null);
   const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
   // "Across all N of your groups" (and the net savings figure itself) must only count groups the
   // user is still actively part of — `groupIds`/`cappedGroupIds` above come straight from
@@ -138,11 +138,11 @@ export default function GoalsHub() {
     return map;
   }, [groups]);
 
-  const [ownGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
-  const [groupSharedGoalsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [ownGoalsValue] = useLiveQuery(user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null);
+  const [groupSharedGoalsValue] = useLiveQuery(cappedGroupIds.length > 0 ? query(collection(db, 'goals'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedGoalsValue] = useLiveQuery(user ? query(collection(db, 'goals'), where('friendUids', 'array-contains', user.uid)) : null);
 
-  const [ownGoals, setOwnGoals] = useState<Goal[]>([]);
+  const [ownGoals, setOwnGoals] = useRememberedState<Goal[]>(user ? `goalsHub:own:${user.uid}` : null, []);
   useEffect(() => {
     let cancelled = false;
     const raw = ownGoalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
@@ -151,7 +151,7 @@ export default function GoalsHub() {
     return () => { cancelled = true; };
   }, [ownGoalsValue]);
 
-  const [sharedWithMeGoals, setSharedWithMeGoals] = useState<Goal[]>([]);
+  const [sharedWithMeGoals, setSharedWithMeGoals] = useRememberedState<Goal[]>(user ? `goalsHub:shared:${user.uid}` : null, []);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();
@@ -180,7 +180,7 @@ export default function GoalsHub() {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
 
   const thisMonthKey = currentLocalMonthKey();
-  const [thisMonthExpensesValue] = useCollection(
+  const [thisMonthExpensesValue] = useLiveQuery(
     activeGroupIds.length > 0 ? query(collection(db, 'expenses'), where('groupId', 'in', activeGroupIds)) : null,
   );
 
@@ -222,10 +222,10 @@ export default function GoalsHub() {
   const netSavingsCreditMinor = Math.round(creditConversion.convertedMajor * 100);
 
   const monthDocId = user ? `${user.uid}_${thisMonthKey}` : '';
-  const [monthDocValue] = useDocument(user ? doc(db, 'userGoalMonths', monthDocId) : null);
+  const [monthDocValue] = useLiveRef(user ? doc(db, 'userGoalMonths', monthDocId) : null);
   const alreadyPosted = monthDocValue?.exists();
 
-  const [ledgersByGoal, setLedgersByGoal] = useState<Map<string, GoalLedgerEntry[]>>(new Map());
+  const [ledgersByGoal, setLedgersByGoal] = useRememberedState<Map<string, GoalLedgerEntry[]>>(user ? `goalsHub:ledgers:${user.uid}` : null, new Map());
   useEffect(() => {
     if (visibleOwnGoals.length === 0) { setLedgersByGoal(new Map()); return; }
     let cancelled = false;
@@ -248,10 +248,10 @@ export default function GoalsHub() {
   // the two renderGoalCard() call sites below), so an own-only query here silently produced no/
   // wrong projections for a shared goal funded by an account the viewer doesn't own themselves —
   // same bug class already fixed in GoalAllocationManager.tsx, see its own matching comment.
-  const [ownAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
-  const [groupSharedAccountsForHorizonValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedAccountsForHorizonValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [allAccounts, setAllAccounts] = useState<FinancialAccount[]>([]);
+  const [ownAccountsValue] = useLiveQuery(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [groupSharedAccountsForHorizonValue] = useLiveQuery(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsForHorizonValue] = useLiveQuery(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [allAccounts, setAllAccounts] = useRememberedState<FinancialAccount[]>(user ? `goalsHub:accounts:${user.uid}` : null, []);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();

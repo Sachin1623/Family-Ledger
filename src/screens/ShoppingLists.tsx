@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, addDoc, writeBatch, doc, setDoc } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery } from '../lib/liveCache';
 import { clsx } from 'clsx';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { EXPENSE_CATEGORIES, getGroupCategories, getCategoryIcon, getCurrencySymbol } from '../lib/constants';
@@ -75,25 +75,25 @@ export default function ShoppingLists() {
   const [pickedItems, setPickedItems] = useState<Record<string, { name: string; qty: number | null; unit: string | null; store: string | null }>>({});
   const [saving, setSaving] = useState(false);
 
-  const [membershipsValue] = useCollection(
+  const [membershipsValue] = useLiveQuery(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
   );
   const groupIds = membershipsValue?.docs.map((d) => d.data().groupId) || [];
-  const [groupsValue] = useCollection(
+  const [groupsValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null,
   );
   const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [];
   const selectedGroup = groups.find((g: any) => g.id === groupId);
 
-  const [allMembersValue] = useCollection(
+  const [allMembersValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', groupIds)) : null,
   );
   const allMembers = allMembersValue?.docs.map((d) => d.data() as any) || [];
 
-  const [myListsValue, myLoading, myError] = useCollection(
+  const [myListsValue, myLoading, myError] = useLiveQuery(
     user ? query(collection(db, 'shoppingLists'), where('userId', '==', user.uid)) : null,
   );
-  const [sharedListsValue] = useCollection(
+  const [sharedListsValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'shoppingLists'), where('groupId', 'in', groupIds)) : null,
   );
   const listsById = new Map<string, any>();
@@ -376,9 +376,9 @@ export default function ShoppingLists() {
         </button>
 
         <section className="space-y-4">
-          {myLoading && <p className="text-sm text-text-muted px-1">{t('common.loading')}</p>}
+          {myLoading && <div className="space-y-3" aria-hidden><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /></div>}
           {myError && (
-            <p className="text-sm text-error px-1">{t('shoppingLists.couldntLoad', { error: myError.code || myError.message })}</p>
+            <p className="text-sm text-error px-1">{t('shoppingLists.couldntLoad', { error: (myError as any).code || myError.message })}</p>
           )}
           {!myLoading && !myError && lists.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-center shadow-[0_2px_8px_rgba(30,58,95,0.09)]">

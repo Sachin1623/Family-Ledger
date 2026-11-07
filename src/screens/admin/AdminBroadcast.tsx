@@ -302,7 +302,7 @@ export default function AdminBroadcast() {
     <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-6 pb-24 md:pb-24">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-black text-primary">Broadcast Message</h1>
-        <Link to="/admin" className="text-sm font-bold text-primary underline">Back to Admin</Link>
+        <Link to="/admin?tab=announcements" className="text-sm font-bold text-primary underline">Back to Admin</Link>
       </div>
       <p className="text-sm text-text-muted">
         Sends a push notification to every user and shows an in-app announcement the next time

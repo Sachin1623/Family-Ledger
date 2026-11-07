@@ -3,7 +3,7 @@ import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
-import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
+import { useLiveCollection, useLiveDocument } from '../lib/liveCache';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, Reorder, useDragControls } from 'motion/react';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact, getCategoryClassification } from '../lib/constants';
@@ -117,8 +117,9 @@ export default function Dashboard() {
   }, [searchParams, setSearchParams]);
 
   // Fetch memberships for current user
-  const [membershipsValue, membershipsLoading] = useCollection(
-    user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null
+  const [membershipsValue, membershipsLoading] = useLiveCollection(
+    user ? `members:user:${user.uid}` : null,
+    () => query(collection(db, 'members'), where('userId', '==', user!.uid)),
   );
 
   // Motivation banner — shown only for a user with genuinely nothing set up yet (no financial
@@ -127,11 +128,13 @@ export default function Dashboard() {
   // done client-side here since Dashboard already has a live profile/auth context to key off of.
   // Dismissal is per-session only (plain state, not persisted) — the whole point is this keeps
   // coming back until the user actually sets something up, rather than being silenceable forever.
-  const [financialAccountsValue] = useCollection(
-    user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null,
+  const [financialAccountsValue] = useLiveCollection(
+    user ? `financialAccounts:user:${user.uid}` : null,
+    () => query(collection(db, 'financialAccounts'), where('userId', '==', user!.uid)),
   );
-  const [goalsForBannerValue] = useCollection(
-    user ? query(collection(db, 'goals'), where('userId', '==', user.uid)) : null,
+  const [goalsForBannerValue] = useLiveCollection(
+    user ? `goals:user:${user.uid}` : null,
+    () => query(collection(db, 'goals'), where('userId', '==', user!.uid)),
   );
   const hasAnyAccount = (financialAccountsValue?.docs || []).some((d) => !d.data().archived);
   const hasAnyRealGoal = (goalsForBannerValue?.docs || []).some((d) => {
@@ -168,8 +171,9 @@ export default function Dashboard() {
   // cap (30) already accepted elsewhere in this codebase for the same "one query per dashboard
   // load" shape.
   const membershipGroupIds = useMemo(() => (memberships as any[]).map((m) => m.groupId), [memberships]);
-  const [groupsMetaValue] = useCollection(
-    membershipGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', membershipGroupIds.slice(0, 30))) : null
+  const [groupsMetaValue] = useLiveCollection(
+    membershipGroupIds.length > 0 ? `groups:in:${membershipGroupIds.slice(0, 30).join(',')}` : null,
+    () => query(collection(db, 'groups'), where('__name__', 'in', membershipGroupIds.slice(0, 30))),
   );
   // This is a SEPARATE, chained listener (only starts once membershipGroupIds is known), so it
   // resolves a moment AFTER membershipsLoading already flips false — during that gap,
@@ -190,7 +194,7 @@ export default function Dashboard() {
   // time, same single-panel pattern as group chat.
   const activeDmChatId = user && activeDmUid ? dmChatId(user.uid, activeDmUid) : undefined;
   const { messages: dmMessages, loading: dmLoading } = useGameChat('directChats', activeDmChatId);
-  const [activeDmUserValue] = useDocument(activeDmUid ? doc(db, 'users', activeDmUid) : null);
+  const [activeDmUserValue] = useLiveDocument(activeDmUid ? `users/${activeDmUid}` : null);
   const activeDmUserName = activeDmUserValue?.data()?.displayName;
 
   // Favorites are stored as bare keys (see lib/favorites.ts) — resolved against the shared
@@ -234,7 +238,7 @@ export default function Dashboard() {
   );
 
   // Sets: a saved list of groups. Choosing one narrows this page to those groups, with a summary on top. The choice is remembered on this device.
-  const { sets, loaded: setsLoaded, saveSets } = useGroupSets();
+  const { sets, loaded: setsLoaded, confirmed: setsConfirmed, saveSets } = useGroupSets();
   const homeScopeKey = user ? `familyledger_home_set_${user.uid}` : '';
   const [homeScope, setHomeScope] = useState<string>('all');
   useEffect(() => {
@@ -471,7 +475,7 @@ export default function Dashboard() {
             <button type="button" onClick={() => setEditingSet('new')} title="Make a new set of groups" className="shrink-0 rounded-full px-3 py-1.5 text-xs font-black border border-dashed border-slate-300 text-[#0f7a8f] active:scale-95">{sets.length < 2 ? '＋ New set' : '＋'}</button>
           </div>
           {/* until there is a set, say what it is for */}
-          {sets.length === 0 && <p className="mt-1.5 px-0.5 text-[11px] leading-snug text-text-muted">A set groups some of your groups, like Everyday or Festivals, so you can see their spending together here and in Analysis.</p>}
+          {setsConfirmed && sets.length === 0 && <p className="mt-1.5 px-0.5 text-[11px] leading-snug text-text-muted">A set groups some of your groups, like Everyday or Festivals, so you can see their spending together here and in Analysis.</p>}
           </div>
         )}
         {activeHomeSet && (
@@ -504,7 +508,11 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {membershipsLoading || !groupsMetaReady ? (
-          <div className="col-span-full py-20 text-center text-text-muted">{t('dashboard.loading')}</div>
+          // placeholder cards instead of a "Loading…" line, so nothing appears and disappears and the real cards replace them in the same space
+          <>
+            <div aria-hidden className="h-[150px] rounded-2xl bg-border-subtle/50 animate-pulse" />
+            <div aria-hidden className="h-[150px] rounded-2xl bg-border-subtle/50 animate-pulse" />
+          </>
         ) : activeMemberships.length === 0 && archivedMemberships.length === 0 ? (
           // Invite-flow spec's first step: a user with literally no group yet can't do anything
           // else in the app (no expenses to log, nobody to invite), so this replaces the empty
@@ -624,7 +632,7 @@ export default function Dashboard() {
 // GroupCard (just enough to identify the group while dragging), so there's no ambiguity between
 // "start a drag" and "tap a button" the way there would be if the full card were made draggable.
 const ReorderRow: React.FC<{ groupId: string }> = ({ groupId }) => {
-  const [groupValue] = useDocument(doc(db, 'groups', groupId));
+  const [groupValue] = useLiveDocument(`groups/${groupId}`);
   const group = groupValue?.data();
   // Only the grip starts a drag. If the whole row did, a finger swipe on the list would drag a row instead of scrolling, and the last groups could not be reached.
   const controls = useDragControls();
@@ -653,9 +661,9 @@ const ReorderRow: React.FC<{ groupId: string }> = ({ groupId }) => {
 // the full spending-chart/budget/expense-list treatment, which would mean fetching and rendering
 // all of that for groups the user has specifically said they're done actively using.
 function ArchivedGroupRow({ groupId }: any) {
-  const [groupDoc] = useDocument(doc(db, 'groups', groupId));
+  const [groupDoc] = useLiveDocument(`groups/${groupId}`);
   const group = groupDoc?.data() as any;
-  const [membersValue] = useCollection(query(collection(db, 'members'), where('groupId', '==', groupId)));
+  const [membersValue] = useLiveCollection(`members:group:${groupId}`, () => query(collection(db, 'members'), where('groupId', '==', groupId)));
   const memberCount = membersValue?.docs.length || 0;
   const [resuming, setResuming] = useState(false);
 
@@ -753,11 +761,12 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
     }
   };
 
-  const [groupValue, groupLoading] = useDocument(doc(db, 'groups', groupId));
+  const [groupValue, groupLoading] = useLiveDocument(`groups/${groupId}`);
   const group = groupValue?.data();
 
-  const [membersValue] = useCollection(
-    query(collection(db, 'members'), where('groupId', '==', groupId))
+  const [membersValue] = useLiveCollection(
+    `members:group:${groupId}`,
+    () => query(collection(db, 'members'), where('groupId', '==', groupId)),
   );
   // `id: d.id` matters here, not just the field data — GroupQuickActionsMenu's Leave/Delete Group
   // flows both do `deleteDoc(doc(db, 'members', currentMember.id))`, and without the doc id spread
@@ -772,8 +781,9 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, user?.uid]);
 
-  const [expensesValue] = useCollection(
-    groupId ? query(collection(db, 'expenses'), where('groupId', '==', groupId)) : null
+  const [expensesValue] = useLiveCollection(
+    groupId ? `expenses:group:${groupId}` : null,
+    () => query(collection(db, 'expenses'), where('groupId', '==', groupId)),
   );
 
   const expenses = useMemo(() => {
@@ -782,8 +792,9 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   }, [expensesValue]);
 
   // Payments between members: not spending, they only move this group's balances (see settleMath.ts).
-  const [paymentsValue] = useCollection(
-    groupId ? query(collection(db, 'settlements'), where('groupId', '==', groupId)) : null
+  const [paymentsValue] = useLiveCollection(
+    groupId ? `settlements:group:${groupId}` : null,
+    () => query(collection(db, 'settlements'), where('groupId', '==', groupId)),
   );
   const payments = useMemo(() => (paymentsValue?.docs.map(d => d.data()) || []) as any[], [paymentsValue]);
 
@@ -850,7 +861,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
     const d = new Date(y, m - 2, 1); // m is 1-indexed; m-2 goes back one month from month index m-1
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }, [monthKey]);
-  const [budgetValue] = useDocument(doc(db, 'groupBudgets', `${groupId}_${monthKey}`));
+  const [budgetValue] = useLiveDocument(`groupBudgets/${groupId}_${monthKey}`);
   const budget = budgetValue?.data();
   // Income entries offset spend (informational only otherwise — never split/settled, see
   // AddExpense.tsx), so both of these net them out rather than summing every entry's amount.

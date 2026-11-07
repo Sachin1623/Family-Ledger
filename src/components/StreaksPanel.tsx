@@ -8,12 +8,34 @@ import StreakFlame from './StreakFlame';
 // friend streaks are running and whether an invite is waiting). Tap it to open the full flame card and the friend streaks, and "Show less" to fold them away.
 // Both cards stay mounted while closed, so the summary is always current, a milestone celebration still plays, and nothing has to reload on opening.
 
+// The slim line must not pop in after the page has drawn (everything below it would jump down), so the last numbers are remembered and shown at once,
+// and a placeholder of the same height holds the spot until the first real ones arrive. Remembered numbers are only used on the day they were saved.
+const BAR_HEIGHT = 46;
+type Remembered = { day: string; mine: StreakSummary | null; friends: FriendSummary | null };
+const memory = new Map<string, Remembered>();
+const today = () => new Date().toLocaleDateString('en-CA');
+function recall(uid: string): Remembered | null {
+  let r = memory.get(uid) || null;
+  if (!r) {
+    try { r = JSON.parse(localStorage.getItem(`fl_streak_summary_${uid}`) || 'null'); } catch { r = null; }
+  }
+  return r && r.day === today() ? r : null;
+}
+function remember(uid: string, patch: Partial<Remembered>) {
+  const next: Remembered = { ...(recall(uid) || { day: today(), mine: null, friends: null }), ...patch, day: today() };
+  memory.set(uid, next);
+  try { localStorage.setItem(`fl_streak_summary_${uid}`, JSON.stringify(next)); } catch { /* storage unavailable */ }
+}
+
 export default function StreaksPanel() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  const [mine, setMine] = useState<StreakSummary | null>(null);
-  const [friends, setFriends] = useState<FriendSummary | null>(null);
+  const saved = user ? recall(user.uid) : null;
+  const [mine, setMineState] = useState<StreakSummary | null>(saved?.mine ?? null);
+  const [friends, setFriendsState] = useState<FriendSummary | null>(saved?.friends ?? null);
   if (!user) return null;
+  const setMine = (s: StreakSummary) => { setMineState(s); remember(user.uid, { mine: s }); };
+  const setFriends = (s: FriendSummary) => { setFriendsState(s); remember(user.uid, { friends: s }); };
 
   const state = mine?.state ?? 'none';
   const hot = state === 'lit' || state === 'risk';
@@ -27,6 +49,7 @@ export default function StreaksPanel() {
 
   return (
     <div className="space-y-2">
+      {!open && !mine && <div aria-hidden className="w-full rounded-2xl bg-border-subtle/60 animate-pulse" style={{ height: BAR_HEIGHT }} />}
       {!open && mine && (
         <button
           type="button"
@@ -34,7 +57,7 @@ export default function StreaksPanel() {
           aria-expanded={false}
           aria-label="Open streaks"
           className={`w-full flex items-center gap-2 rounded-2xl px-3 py-2 text-left text-white shadow-sm active:scale-[0.99] transition-transform ${state === 'risk' ? 'ring-2 ring-orange-400' : ''}`}
-          style={{ background: hot ? 'linear-gradient(135deg,#3a1208 0%,#7c2d12 55%,#9a3412 100%)' : state === 'frozen' ? 'linear-gradient(135deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}
+          style={{ minHeight: BAR_HEIGHT, background: hot ? 'linear-gradient(135deg,#3a1208 0%,#7c2d12 55%,#9a3412 100%)' : state === 'frozen' ? 'linear-gradient(135deg,#0c4a6e 0%,#0284c7 100%)' : 'linear-gradient(135deg,#0d3b4e 0%,#1E3A8A 100%)' }}
         >
           <span className="shrink-0 overflow-visible" style={{ width: 24, height: 30 }}><StreakFlame state={state} size={24} flame={mine.flame} /></span>
           <span className="text-2xl font-black leading-none tabular-nums">{state === 'out' ? 0 : mine.shown}</span>

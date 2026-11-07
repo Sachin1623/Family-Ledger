@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { collection, query, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery } from './liveCache';
 import { db } from './firebase';
 
 export interface DmChat {
@@ -17,7 +17,7 @@ export interface DmChat {
 // MembersChat.tsx (ordering + per-member unread badges) and Navigation.tsx (the nav bar's
 // unread-chat-count badge) so both stay in sync off the same live listener shape.
 export function useDmChats(myUid: string | undefined) {
-  const [value, loading] = useCollection(
+  const [value, loading] = useLiveQuery(
     myUid ? query(collection(db, 'directChats'), where('participants', 'array-contains', myUid)) : null,
   );
   const chats = useMemo(

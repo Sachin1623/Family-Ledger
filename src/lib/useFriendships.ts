@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, documentId, getDocs, query, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery, useRememberedState } from './liveCache';
 import { db } from './firebase';
 
 export interface FriendUser {
@@ -14,7 +14,7 @@ export interface FriendUser {
 // possible at all — Firestore can't query "is my uid one of the two halves of the document id"
 // directly, only `array-contains`. See friendsApi.ts's friendshipId() for the id convention.
 export function useFriendships(myUid: string | undefined) {
-  const [friendshipsValue, loading, friendshipsError] = useCollection(
+  const [friendshipsValue, loading, friendshipsError] = useLiveQuery(
     myUid ? query(collection(db, 'friendships'), where('participants', 'array-contains', myUid)) : null,
   );
   if (friendshipsError) console.error('useFriendships query failed:', friendshipsError);
@@ -45,7 +45,7 @@ export function useFriendships(myUid: string | undefined) {
   // number of underlying queries). Trades away live-updating on the OTHER person's profile
   // changing mid-session for correctness at any friend-list size — an acceptable trade for a
   // name/photo snapshot.
-  const [usersByUid, setUsersByUid] = useState<Map<string, FriendUser>>(new Map());
+  const [usersByUid, setUsersByUid] = useRememberedState<Map<string, FriendUser>>(myUid ? `friendUsers:${myUid}` : null, new Map());
   useEffect(() => {
     if (allOtherUids.length === 0) { setUsersByUid(new Map()); return; }
     let cancelled = false;

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { collection, doc, query, setDoc, updateDoc, deleteDoc, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery, useRememberedState } from '../lib/liveCache';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -68,18 +68,18 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   // accounts query (this block used to sit much further down, only feeding its own "Shared With
   // Me" section) because `allAccounts` below now needs sharedWithMeAccounts too, to build a
   // specific shared-owner's filtered view instead of a broad userId==viewingUid query.
-  const [membershipsValue] = useCollection(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
+  const [membershipsValue] = useLiveQuery(user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null);
   const groupIds = membershipsValue?.docs.map((d) => d.data().groupId) || [];
   const cappedGroupIds = groupIds.slice(0, 30); // Firestore 'in' query cap, same as elsewhere in this app
-  const [groupsValue] = useCollection(groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds.slice(0, 30))) : null);
+  const [groupsValue] = useLiveQuery(groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds.slice(0, 30))) : null);
   const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
   const { accepted: acceptedFriends, usersByUid: friendUsersByUid } = useFriendships(user?.uid);
   const { families: myFamilies, membersByFamilyId } = useFamilies(user?.uid);
 
   // --- Accounts shared with me (owned by someone else, visible to me via group or friend share) ---
-  const [groupSharedAccountsValue] = useCollection(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
-  const [friendSharedAccountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
-  const [sharedWithMeAccounts, setSharedWithMeAccounts] = useState<FinancialAccount[]>([]);
+  const [groupSharedAccountsValue] = useLiveQuery(cappedGroupIds.length > 0 ? query(collection(db, 'financialAccounts'), where('groupId', 'in', cappedGroupIds)) : null);
+  const [friendSharedAccountsValue] = useLiveQuery(user ? query(collection(db, 'financialAccounts'), where('friendUids', 'array-contains', user.uid)) : null);
+  const [sharedWithMeAccounts, setSharedWithMeAccounts] = useRememberedState<FinancialAccount[]>(user ? `accountsHub:shared:${user.uid}` : null, []);
   useEffect(() => {
     let cancelled = false;
     const byId = new Map<string, any>();
@@ -90,8 +90,8 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
     return () => { cancelled = true; };
   }, [groupSharedAccountsValue, friendSharedAccountsValue, user?.uid]);
 
-  const [accountsValue] = useCollection(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
-  const [ownAccounts, setOwnAccounts] = useState<FinancialAccount[]>([]);
+  const [accountsValue] = useLiveQuery(user ? query(collection(db, 'financialAccounts'), where('userId', '==', user.uid)) : null);
+  const [ownAccounts, setOwnAccounts] = useRememberedState<FinancialAccount[]>(user ? `accountsHub:own:${user.uid}` : null, []);
   useEffect(() => {
     let cancelled = false;
     const raw = accountsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || [];
@@ -196,7 +196,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
   // Goals an account can allocate to — the user's own active real goals, never Cash Savings
   // itself (Accounts no longer interact with Cash Savings at all) and never someone else's shared
   // goal. Amount fields aren't decrypted here since only id/name/icon are needed for the picker.
-  const [linkableGoalsValue] = useCollection(user ? query(collection(db, 'goals'), where('userId', '==', user.uid), where('status', '==', 'active')) : null);
+  const [linkableGoalsValue] = useLiveQuery(user ? query(collection(db, 'goals'), where('userId', '==', user.uid), where('status', '==', 'active')) : null);
   const linkableGoals = (linkableGoalsValue?.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) || []).filter((g: any) => !g.isCashHolding);
 
   // --- Add/edit account form ---
@@ -695,7 +695,7 @@ export default function AccountsHub({ embedded = false, onShowGoalsHelp, viewing
       setUndoBusy(false);
     }
   };
-  const [logValue] = useCollection(historyAccount ? collection(db, 'financialAccounts', historyAccount.id, 'log') : null);
+  const [logValue] = useLiveQuery(historyAccount ? collection(db, 'financialAccounts', historyAccount.id, 'log') : null);
   const [logEntries, setLogEntries] = useState<any[]>([]);
   useEffect(() => {
     let cancelled = false;

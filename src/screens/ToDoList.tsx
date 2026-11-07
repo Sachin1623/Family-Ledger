@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, setDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery } from '../lib/liveCache';
 import { clsx } from 'clsx';
 import { scheduleLocalTodoReminder, cancelLocalTodoReminder, syncTodoAlarms, canRingTodoAlarm } from '../lib/localReminders';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
@@ -136,18 +136,18 @@ export default function ToDoList() {
   const [showPickDate, setShowPickDate] = useState(false);
   const [showCustomRemind, setShowCustomRemind] = useState(false);
 
-  const [membershipsValue] = useCollection(
+  const [membershipsValue] = useLiveQuery(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
   );
   const groupIds = membershipsValue?.docs.map((d) => d.data().groupId) || [];
-  const [groupsValue] = useCollection(
+  const [groupsValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null,
   );
   const groups = groupsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [];
 
-  const [habitStreaksValue] = useCollection(user ? collection(db, 'userPoints', user.uid, 'habitStreaks') : null);
+  const [habitStreaksValue] = useLiveQuery(user ? collection(db, 'userPoints', user.uid, 'habitStreaks') : null);
 
-  const [allMembersValue] = useCollection(
+  const [allMembersValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', groupIds)) : null,
   );
   const allMembers = allMembersValue?.docs.map((d) => d.data() as any) || [];
@@ -155,10 +155,10 @@ export default function ToDoList() {
   // Personal todos (mine, whether shared or not) and todos shared to any of my groups (by
   // anyone) are two different query shapes — merged client-side to dedupe overlap (my own
   // shared items show up in both). See recurringExpenses for why this can't be one query.
-  const [myTodosValue, myLoading, myError] = useCollection(
+  const [myTodosValue, myLoading, myError] = useLiveQuery(
     user ? query(collection(db, 'todos'), where('userId', '==', user.uid)) : null,
   );
-  const [sharedTodosValue] = useCollection(
+  const [sharedTodosValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'todos'), where('groupId', 'in', groupIds)) : null,
   );
   const todosById = new Map<string, any>();
@@ -932,8 +932,8 @@ export default function ToDoList() {
         )}
 
         <div className="space-y-4">
-          {myLoading && <p className="text-sm text-text-muted px-1">{t('common.loading')}</p>}
-          {myError && <p className="text-sm text-error px-1">{t('todo.couldntLoad', { error: myError.code || myError.message })}</p>}
+          {myLoading && <div className="space-y-3" aria-hidden><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /></div>}
+          {myError && <p className="text-sm text-error px-1">{t('todo.couldntLoad', { error: (myError as any).code || myError.message })}</p>}
           {!myLoading && !myError && plain.length === 0 && habitsToday.length === 0 && (
             <p className="text-sm text-text-muted italic px-1">
               {searchTerm.trim() ? t('todo.noSearchResults') : selectedDate ? t('todo.noToDosDueDay') : t('todo.noToDosYet')}

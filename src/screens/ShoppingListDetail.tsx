@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { doc, collection, query, where, addDoc, updateDoc, deleteDoc, getDocs, writeBatch, setDoc, runTransaction, arrayUnion, deleteField } from 'firebase/firestore';
-import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery, useLiveRef } from '../lib/liveCache';
 import { clsx } from 'clsx';
 import { EXPENSE_CATEGORIES, getCurrencySymbol, getCategoryIcon, getGroupCategories } from '../lib/constants';
 import { updateGlobalStats } from '../services/statsService';
@@ -58,10 +58,10 @@ export default function ShoppingListDetail() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
 
-  const [listValue, listLoading] = useDocument(doc(db, 'shoppingLists', listId!));
+  const [listValue, listLoading] = useLiveRef(doc(db, 'shoppingLists', listId!));
   const list = listValue?.data();
 
-  const [membersValue] = useCollection(
+  const [membersValue] = useLiveQuery(
     list?.groupId ? query(collection(db, 'members'), where('groupId', '==', list.groupId)) : null,
   );
   const members = membersValue?.docs.map((d) => d.data() as any) || [];
@@ -72,20 +72,20 @@ export default function ShoppingListDetail() {
   const isOwner = !!user && list?.userId === user.uid;
   const [showEdit, setShowEdit] = useState(false);
   const [showShare, setShowShare] = useState(false);
-  const [myMembershipsValue] = useCollection(
+  const [myMembershipsValue] = useLiveQuery(
     showShare && isOwner && user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
   );
   const myGroupIds: string[] = myMembershipsValue?.docs.map((d) => d.data().groupId) || [];
-  const [myGroupsValue] = useCollection(
+  const [myGroupsValue] = useLiveQuery(
     myGroupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', myGroupIds.slice(0, 30))) : null,
   );
   const myGroups = myGroupsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || [];
 
-  const [groupValue] = useDocument(list?.groupId ? doc(db, 'groups', list.groupId) : null);
+  const [groupValue] = useLiveRef(list?.groupId ? doc(db, 'groups', list.groupId) : null);
   const group = groupValue?.data() as any;
   const currencySymbol = getCurrencySymbol(group?.currency);
 
-  const [itemsValue, itemsLoading] = useCollection(collection(db, 'shoppingLists', listId!, 'items'));
+  const [itemsValue, itemsLoading] = useLiveQuery(collection(db, 'shoppingLists', listId!, 'items'));
   const items = (itemsValue?.docs.map((d) => ({ id: d.id, ...d.data() } as any)) || []).sort((a: any, b: any) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   const toBuy = items.filter((i: any) => getItemStatus(i) === 'pending');
   const inCart = items.filter((i: any) => getItemStatus(i) === 'bought');
@@ -728,7 +728,7 @@ export default function ShoppingListDetail() {
         </div>
 
         <section className="space-y-4">
-          {itemsLoading && <p className="text-sm text-text-muted px-1">{t('shoppingLists.loadingItems')}</p>}
+          {itemsLoading && <div className="space-y-3" aria-hidden><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /></div>}
           {!itemsLoading && items.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-center shadow-[0_2px_8px_rgba(30,58,95,0.09)]">
               <p className="text-4xl">🧺</p>

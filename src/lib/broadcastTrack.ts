@@ -13,7 +13,7 @@ export function targetOf(url: string): BroadcastTarget {
   return 'other';
 }
 
-export async function trackBroadcast(id: string, event: 'view' | 'close' | 'click', extra: { target?: BroadcastTarget; via?: BroadcastVia } = {}): Promise<void> {
+export async function trackBroadcast(id: string, event: 'view' | 'close' | 'click' | 'replay', extra: { target?: BroadcastTarget; via?: BroadcastVia } = {}): Promise<void> {
   try {
     const token = await auth.currentUser?.getIdToken();
     if (!token) return;

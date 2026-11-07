@@ -1,8 +1,8 @@
 import React from 'react';
 import AnimatedIcon from './AnimatedIcon';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { collection, limit, orderBy, query, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { collection, doc, limit, orderBy, query, where } from 'firebase/firestore';
+import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { db } from '../lib/firebase';
@@ -22,6 +22,7 @@ import { startTour } from '../lib/tourRef';
 import { checkAppPermissions, PermissionKey, PermissionStatus, PERMISSION_ORDER } from '../lib/appPermissions';
 import MissingPermissionsList from './MissingPermissionsList';
 import { usePendingActions } from '../lib/usePendingActions';
+import BroadcastReplay from './BroadcastReplay';
 
 export default function Header() {
   const navigate = useNavigate();
@@ -143,6 +144,24 @@ export default function Header() {
     if (!menuOpen) setGuidesMenuOpen(false);
   }, [menuOpen]);
   const [feedGroupId, setFeedGroupId] = React.useState<string | undefined>(undefined);
+
+  // "Watch again": the last 10 broadcasts. The button is in the bar on Home only (the bar is full once the back arrow shows),
+  // and as the first menu entry everywhere. Its ring and red dot show until the person has opened the window since the newest broadcast.
+  const [replayOpen, setReplayOpen] = React.useState(false);
+  const [broadcastDoc] = useDocument(user ? doc(db, 'app_config', 'broadcast') : null);
+  const latestBroadcastId: string | undefined = broadcastDoc?.data()?.id;
+  const REPLAY_SEEN_KEY = 'fl_replay_seen_id';
+  const [replaySeenId, setReplaySeenId] = React.useState<string | null>(() => {
+    try { return localStorage.getItem(REPLAY_SEEN_KEY); } catch { return null; }
+  });
+  const replayIsNew = !!latestBroadcastId && replaySeenId !== latestBroadcastId;
+  const openReplay = () => {
+    setReplayOpen(true);
+    if (latestBroadcastId) {
+      setReplaySeenId(latestBroadcastId);
+      try { localStorage.setItem(REPLAY_SEEN_KEY, latestBroadcastId); } catch { /* storage unavailable: the dot just returns next time */ }
+    }
+  };
 
   // "Recurring Expense Confirmation" menu entry + its red dot — same collection/filter
   // RecurringApprovals.tsx itself queries (client-side status filter to avoid a composite index
@@ -285,6 +304,20 @@ export default function Header() {
             <span className="material-symbols-outlined">search</span>
           </button>
         )}
+        {user && !shopMode && isHome && (
+          <button
+            onClick={openReplay}
+            className={clsx(
+              'relative w-9 h-9 rounded-full flex items-center justify-center transition-colors',
+              replayIsNew ? 'bg-primary text-white animate-pulse' : 'hover:bg-surface text-text-muted',
+            )}
+            title="Watch again"
+            aria-label="Watch the latest updates again"
+          >
+            <span className="material-symbols-outlined">play_circle</span>
+            {replayIsNew && <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-error border-2 border-white" />}
+          </button>
+        )}
         {user && (
           <button
             onClick={() => {
@@ -346,6 +379,21 @@ export default function Header() {
                           )}
                         </span>
                         App Permissions
+                      </button>
+                      <div className="border-t border-border-subtle my-1" />
+                    </>
+                  )}
+                  {user && !shopMode && (
+                    <>
+                      <button
+                        onClick={() => { setMenuOpen(false); openReplay(); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-bold text-on-surface hover:bg-surface transition-colors text-left"
+                      >
+                        <span className="relative material-symbols-outlined text-[20px] text-text-muted">
+                          play_circle
+                          {replayIsNew && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-error border border-white" />}
+                        </span>
+                        Watch again
                       </button>
                       <div className="border-t border-border-subtle my-1" />
                     </>
@@ -466,6 +514,7 @@ export default function Header() {
           </button>
         )}
       </div>
+      <BroadcastReplay open={replayOpen} onClose={() => setReplayOpen(false)} />
       <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
       <FeedPanel open={feedOpen} onClose={() => setFeedOpen(false)} initialGroupId={feedGroupId} />
       {permissionsModalOpen && (

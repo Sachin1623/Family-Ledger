@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveCollection } from '../lib/liveCache';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { getCurrencySymbol, currencyForCountry, guessLocationCurrency, EXPENSE_CATEGORIES, formatAmountCompact } from '../lib/constants';
@@ -60,14 +60,16 @@ export default function Settlements() {
   const [spendScope, setSpendScope] = useState<'all' | 'mine' | 'paid'>('all');
 
   // Fetch groups
-  const [membershipsValue] = useCollection(
-    user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null
+  const [membershipsValue] = useLiveCollection(
+    user ? `members:user:${user.uid}` : null,
+    () => query(collection(db, 'members'), where('userId', '==', user!.uid)),
   );
   const memberships = membershipsValue?.docs.map(doc => doc.data()) || [];
   const groupIds = memberships.map((m: any) => m.groupId);
 
-  const [groupsValue] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'groups'), where('__name__', 'in', groupIds)) : null
+  const [groupsValue] = useLiveCollection(
+    groupIds.length > 0 ? `groups:in:${groupIds.join(',')}` : null,
+    () => query(collection(db, 'groups'), where('__name__', 'in', groupIds)),
   );
   const groups = groupsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [] as any[];
 
@@ -77,8 +79,9 @@ export default function Settlements() {
   // of the group's setting today. Gating this fetch by splitEnabled meant flipping a group's
   // splitting off silently dropped ALL of that group's real, already-split (and possibly still
   // unsettled) expenses from every balance calculation — the bug this fixes.
-  const [expensesValue, expensesLoading, expensesError] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'expenses'), where('groupId', 'in', groupIds)) : null
+  const [expensesValue, expensesLoading, expensesError] = useLiveCollection(
+    groupIds.length > 0 ? `expenses:in:${groupIds.join(',')}` : null,
+    () => query(collection(db, 'expenses'), where('groupId', 'in', groupIds)),
   );
   // A transient read failure (e.g. a momentary quota/network error) makes expensesValue
   // undefined again after an earlier successful snapshot — without this cache, balances
@@ -90,8 +93,9 @@ export default function Settlements() {
   const expenses = lastGoodExpensesRef.current;
 
   // Payments between members (the `settlements` collection): not spending, they only move the balances below.
-  const [paymentsValue] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'settlements'), where('groupId', 'in', groupIds)) : null
+  const [paymentsValue] = useLiveCollection(
+    groupIds.length > 0 ? `settlements:in:${groupIds.join(',')}` : null,
+    () => query(collection(db, 'settlements'), where('groupId', 'in', groupIds)),
   );
   const lastGoodPaymentsRef = useRef<any[]>([]);
   if (paymentsValue) {
@@ -114,8 +118,9 @@ export default function Settlements() {
   }, [splitEnabledGroups]);
 
   // Fetch all members for all groups the user is in to get names/photos
-  const [allMembersValue, , allMembersError] = useCollection(
-    groupIds.length > 0 ? query(collection(db, 'members'), where('groupId', 'in', groupIds)) : null
+  const [allMembersValue, , allMembersError] = useLiveCollection(
+    groupIds.length > 0 ? `members:in:${groupIds.join(',')}` : null,
+    () => query(collection(db, 'members'), where('groupId', 'in', groupIds)),
   );
   const lastGoodMembersRef = useRef<any>({});
   if (allMembersValue) {

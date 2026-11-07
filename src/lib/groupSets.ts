@@ -1,6 +1,6 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
-import { useDocument } from 'react-firebase-hooks/firestore';
+import { useLiveRef } from './liveCache';
 import { db } from './firebase';
 import { useAuth } from '../context/AuthContext';
 
@@ -36,15 +36,25 @@ function normalize(raw: unknown): GroupSet[] {
 
 export function useGroupSets() {
   const { user } = useAuth();
-  const [snap, loading] = useDocument(user ? doc(db, 'users', user.uid, 'private', 'info') : null);
-  const sets = useMemo(() => normalize(snap?.data()?.groupSets), [snap]);
+  const [snap, loading] = useLiveRef(user ? doc(db, 'users', user.uid, 'private', 'info') : null);
+  // The last sets are kept on this phone, so the row on the home page is complete from its first draw instead of the chips arriving a moment later.
+  const storeKey = user ? `fl_group_sets_${user.uid}` : '';
+  const sets = useMemo(() => {
+    if (snap) return normalize(snap.data()?.groupSets);
+    try { return normalize(JSON.parse(localStorage.getItem(storeKey) || 'null')); } catch { return []; }
+  }, [snap, storeKey]);
+  useEffect(() => {
+    if (!snap || !storeKey) return;
+    try { localStorage.setItem(storeKey, JSON.stringify(normalize(snap.data()?.groupSets))); } catch { /* storage unavailable */ }
+  }, [snap, storeKey]);
 
   const saveSets = useCallback(async (next: GroupSet[]) => {
     if (!user) return;
     await setDoc(doc(db, 'users', user.uid, 'private', 'info'), { groupSets: next }, { merge: true });
   }, [user?.uid]);
 
-  return { sets, loaded: !loading, saveSets };
+  // `confirmed`: the answer came from the server, so "you have no sets" is a fact and not just an empty cache
+  return { sets, loaded: !loading, confirmed: !!snap && !snap.metadata.fromCache, saveSets };
 }
 
 // Add or replace one set. Only one set may open Analysis by default, so choosing it on this one clears it from the others.

@@ -4933,18 +4933,21 @@ async function startServer() {
   });
 
   // When every sign-in account was created (ISO strings), kept for five minutes so opening the dashboard repeatedly does not re-read the whole list.
-  let creationCache: { at: number; times: string[] } | null = null;
-  async function accountCreationTimes(): Promise<string[]> {
-    if (creationCache && Date.now() - creationCache.at < 5 * 60_000) return creationCache.times;
-    const times: string[] = [];
+  let creationCache: { at: number; recs: { uid: string; email: string; ms: number }[] } | null = null;
+  async function accountRecords(): Promise<{ uid: string; email: string; ms: number }[]> {
+    if (creationCache && Date.now() - creationCache.at < 5 * 60_000) return creationCache.recs;
+    const recs: { uid: string; email: string; ms: number }[] = [];
     let page = await admin.auth().listUsers(1000);
     for (;;) {
-      page.users.forEach((u) => times.push(new Date(u.metadata.creationTime).toISOString()));
+      page.users.forEach((u) => recs.push({ uid: u.uid, email: normalizeEmail(u.email || ''), ms: new Date(u.metadata.creationTime).getTime() }));
       if (!page.pageToken) break;
       page = await admin.auth().listUsers(1000, page.pageToken);
     }
-    creationCache = { at: Date.now(), times };
-    return times;
+    creationCache = { at: Date.now(), recs };
+    return recs;
+  }
+  async function accountCreationTimes(): Promise<string[]> {
+    return (await accountRecords()).map((r) => new Date(r.ms).toISOString());
   }
 
   app.get('/api/admin/overview', async (req, res) => {
@@ -4961,7 +4964,7 @@ async function startServer() {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
       const [usersSnap, groupsSnap, expensesSnap] = await Promise.all([
-        db.collection('users').select('approxCountry', 'lastActiveAt', 'joinedAt').get(),
+        db.collection('users').select('approxCountry', 'lastActiveAt', 'joinedAt', 'referredBy').get(),
         db.collection('groups').select('createdBy', 'createdAt').get(),
         db.collection('expenses').select('addedBy', 'amount', 'createdAt').get(),
       ]);
@@ -4975,7 +4978,21 @@ async function startServer() {
         if (at >= todayStart) bucket.today += amount;
       };
 
+      // Daily figures for the last 14 Indian days (oldest first, last = today), so each tile can show Today / Yesterday / This week / Last week and a trend line.
+      const DAY = 86_400_000;
+      const TREND_DAYS = 14;
+      const todayIdx = Math.floor((Date.now() + IST_MS) / DAY);
+      const trendPos = (at: unknown) => {
+        const ms = typeof at === 'string' ? Date.parse(at) : typeof at === 'number' ? at : NaN;
+        if (!Number.isFinite(ms)) return -1;
+        const p = Math.floor((ms + IST_MS) / DAY) - (todayIdx - TREND_DAYS + 1);
+        return p >= 0 && p < TREND_DAYS ? p : -1;
+      };
+      const zeros = () => new Array(TREND_DAYS).fill(0) as number[];
+      const trend = { users: zeros(), groups: zeros(), expenses: zeros(), spend: zeros() };
+
       const uidToCountry = new Map<string, string>();
+      const referredUids = new Set<string>();
       let activeUsersToday = 0;
       let activeUsersThisWeek = 0;
       let newUsersToday = 0;
@@ -4993,6 +5010,7 @@ async function startServer() {
         const data = d.data();
         const country = data.approxCountry || 'Unknown';
         uidToCountry.set(d.id, country);
+        if (data.referredBy) referredUids.add(d.id);
         const bucket = getBucket(country);
         bucket.users += 1;
 
@@ -5008,7 +5026,7 @@ async function startServer() {
       // counting that field under-reports new users.
       try {
         const created = await accountCreationTimes();
-        created.forEach((iso) => bump(grew.users, iso));
+        created.forEach((iso) => { bump(grew.users, iso); const p = trendPos(iso); if (p >= 0) trend.users[p] += 1; });
       } catch (err) {
         console.error('overview: could not read account creation times:', err);
       }
@@ -5017,6 +5035,8 @@ async function startServer() {
         const country = uidToCountry.get(d.data().createdBy) || 'Unknown';
         getBucket(country).groups += 1;
         bump(grew.groups, d.data().createdAt);
+        const p = trendPos(d.data().createdAt);
+        if (p >= 0) trend.groups[p] += 1;
       });
 
       let totalSpend = 0;
@@ -5030,7 +5050,38 @@ async function startServer() {
         bucket.totalSpend += amount;
         bump(grew.expenses, data.createdAt);
         bump(grew.spend, data.createdAt, amount);
+        const p = trendPos(data.createdAt);
+        if (p >= 0) { trend.expenses[p] += 1; trend.spend[p] += amount; }
       });
+
+      // Who signed up, and how: through an invite (a WhatsApp/SMS join link that was claimed, or an email invite sent to that address before the account existed)
+      // or on their own ("organic"). Google Ads is not recorded anywhere yet, so it cannot be separated out.
+      const newUsers = { invite: zeros(), organic: zeros() };
+      try {
+        const recs = (await accountRecords()).filter((r) => trendPos(r.ms) >= 0);
+        const firstInviteByEmail = new Map<string, number>();
+        try {
+          const inviteSnap = await db.collectionGroup('invites').select('email', 'createdAt', 'targetUid').get();
+          inviteSnap.docs.forEach((d) => {
+            const x = d.data() as any;
+            if (x.targetUid) return; // an in-app invite goes to someone who already has an account
+            const email = normalizeEmail(String(x.email || ''));
+            const at = Date.parse(x.createdAt);
+            if (!email || !Number.isFinite(at)) return;
+            const prev = firstInviteByEmail.get(email);
+            if (prev === undefined || at < prev) firstInviteByEmail.set(email, at);
+          });
+        } catch (invErr) {
+          console.error('overview: invite lookup failed:', invErr);
+        }
+        recs.forEach((r) => {
+          const invitedAt = r.email ? firstInviteByEmail.get(r.email) : undefined;
+          const viaInvite = referredUids.has(r.uid) || (invitedAt !== undefined && invitedAt <= r.ms);
+          newUsers[viaInvite ? 'invite' : 'organic'][trendPos(r.ms)] += 1;
+        });
+      } catch (nuErr) {
+        console.error('overview: new user split failed:', nuErr);
+      }
 
       const countryBreakdown = Array.from(countryStats.values()).sort((a, b) => b.users - a.users);
 
@@ -5039,7 +5090,22 @@ async function startServer() {
       // 7 days ago. It shows nothing until a snapshot to compare with exists.
       const dayKey = (offset: number) => new Date(Date.now() + IST_MS - offset * 86_400_000).toISOString().slice(0, 10); // the IST date
       const snapRef = (offset: number) => db.collection('adminSnapshots').doc(dayKey(offset));
-      const [yesterdaySnap, lastWeekSnap, todaySnap] = await Promise.all([snapRef(1).get(), snapRef(7).get(), snapRef(0).get()]);
+      const snaps = await db.getAll(...Array.from({ length: TREND_DAYS }, (_, i) => snapRef(i)));
+      const [todaySnap, yesterdaySnap] = [snaps[0], snaps[1]];
+      const lastWeekSnap = snaps[7];
+      // the active count per day from the saved snapshots (null for a day nobody opened this page); today uses the live figure
+      const activeSeries: (number | null)[] = Array.from({ length: TREND_DAYS }, (_, i) => {
+        const offset = TREND_DAYS - 1 - i;
+        if (offset === 0) return Math.max(todaySnap.data()?.activeToday || 0, activeUsersToday);
+        const sn = snaps[offset];
+        return sn.exists ? (sn.data()?.activeToday ?? null) : null;
+      });
+      const activeWeekSeries: (number | null)[] = Array.from({ length: TREND_DAYS }, (_, i) => {
+        const offset = TREND_DAYS - 1 - i;
+        if (offset === 0) return activeUsersThisWeek;
+        const sn = snaps[offset];
+        return sn.exists ? (sn.data()?.activeWeek ?? null) : null;
+      });
       await snapRef(0).set({ date: dayKey(0), activeToday: Math.max(todaySnap.data()?.activeToday || 0, activeUsersToday), activeWeek: activeUsersThisWeek, updatedAt: new Date().toISOString() }, { merge: true });
       const activeChange = {
         today: yesterdaySnap.exists ? activeUsersToday - (yesterdaySnap.data()?.activeToday || 0) : null,
@@ -5048,6 +5114,8 @@ async function startServer() {
 
       return res.json({
         changes: { ...grew, active: activeChange },
+        trend: { users: trend.users, groups: trend.groups, expenses: trend.expenses, spend: trend.spend, active: activeSeries, activeWeek: activeWeekSeries, days: Array.from({ length: TREND_DAYS }, (_, i) => new Date((todayIdx - TREND_DAYS + 1 + i) * DAY).toISOString().slice(0, 10)) },
+        newUsers,
         totalUsers: usersSnap.size,
         totalGroups: groupsSnap.size,
         totalExpenses: expensesSnap.size,
@@ -5685,7 +5753,15 @@ async function startServer() {
       const DAY_MS = 24 * 60 * 60 * 1000;
       const thisWeekStart = now - 7 * DAY_MS;
       const previousWeekStart = now - 14 * DAY_MS;
-      const since = new Date(previousWeekStart).toISOString();
+      // Daily counts for the last 56 days in Indian time (the same day buckets as the rest of the admin panel), per channel. The page
+      // works out Today / Yesterday / This week / Last week and the 8-week trend from these.
+      const IST_MS = 5.5 * 60 * 60 * 1000;
+      const SERIES_DAYS = 56;
+      const todayIdx = Math.floor((now + IST_MS) / DAY_MS);
+      const seriesPos = (ms: number) => { const p = Math.floor((ms + IST_MS) / DAY_MS) - (todayIdx - SERIES_DAYS + 1); return p >= 0 && p < SERIES_DAYS ? p : -1; };
+      const seriesData: Record<string, number[]> = {};
+      [...INVITE_TYPES, ...SHARE_TYPES, 'invites', 'shares', 'registered', 'reg_email', 'reg_wa', 'reg_sms'].forEach((k) => { seriesData[k] = new Array(SERIES_DAYS).fill(0); });
+      const since = new Date(now - SERIES_DAYS * DAY_MS).toISOString();
 
       const snap = await db.collection('growthEvents').where('createdAt', '>=', since).get();
 
@@ -5706,6 +5782,12 @@ async function startServer() {
         const isInvite = (INVITE_TYPES as readonly string[]).includes(type);
         const isShare = (SHARE_TYPES as readonly string[]).includes(type);
         if (!isInvite && !isShare) return;
+
+        const sp = seriesPos(createdAtMs);
+        if (sp >= 0) {
+          seriesData[type][sp] += 1;
+          seriesData[isInvite ? 'invites' : 'shares'][sp] += 1;
+        }
 
         const window = createdAtMs >= thisWeekStart ? 'thisWeek' : createdAtMs >= previousWeekStart ? 'previousWeek' : null;
         if (window) {
@@ -5729,7 +5811,7 @@ async function startServer() {
       // matched by email (the account was created after the first invite sent to that address). An in-app invite goes to someone who is
       // already registered, so for those we count how many accepted and joined the group instead. WhatsApp and SMS invites are just a link
       // shared outside the app, with nothing in it that says who sent it, so they cannot be matched to a registration.
-      const registrations: { day: string; email: string }[] = [];
+      const registrations: { day: string; email: string; ms: number; via: 'email' | 'wa' | 'sms' }[] = [];
       let emailInvited = 0;
       let emailRegistered = 0;
       let emailJoined = 0;
@@ -5765,7 +5847,7 @@ async function startServer() {
               const createdMs = new Date(u.metadata.creationTime).getTime();
               if (invitedAt === undefined || !Number.isFinite(createdMs) || createdMs < invitedAt) return; // had an account before being invited
               emailRegistered += 1;
-              registrations.push({ day: new Date(createdMs).toISOString().slice(0, 10), email });
+              registrations.push({ day: new Date(createdMs).toISOString().slice(0, 10), email, ms: createdMs, via: 'email' });
             });
           }
         }
@@ -5782,7 +5864,7 @@ async function startServer() {
           if (x.referralChannel === 'wa') waRegistered += 1;
           else if (x.referralChannel === 'sms') smsRegistered += 1;
           else return;
-          registrations.push({ day: String(x.referredAt).slice(0, 10), email: '' });
+          registrations.push({ day: String(x.referredAt).slice(0, 10), email: '', ms: new Date(x.referredAt).getTime(), via: x.referralChannel === 'wa' ? 'wa' : 'sms' });
         });
       } catch (refErr) {
         console.error('admin/analytics/growth: referral lookup failed:', refErr);
@@ -5796,9 +5878,17 @@ async function startServer() {
       const fullTrend = days.map((day) => ({ day, invites: trendByDay.get(day)?.invites || 0, shares: trendByDay.get(day)?.shares || 0, registered: regPerDay.get(day) || 0 }));
       const last14 = new Set(days);
       const registeredLast14 = registrations.filter((r) => last14.has(r.day)).length;
+      registrations.forEach((r) => {
+        const sp = Number.isFinite(r.ms) ? seriesPos(r.ms) : -1;
+        if (sp < 0) return;
+        seriesData.registered[sp] += 1;
+        seriesData[`reg_${r.via}`][sp] += 1;
+      });
+      const seriesDays = Array.from({ length: SERIES_DAYS }, (_, i) => new Date((todayIdx - SERIES_DAYS + 1 + i) * DAY_MS).toISOString().slice(0, 10));
 
       return res.json({
         invites, shares, dailyTrend: fullTrend,
+        series: { days: seriesDays, data: seriesData },
         conversion: { emailInvited, emailRegistered, emailJoined, registeredLast14, inAppInvited, inAppJoined, waRegistered, smsRegistered },
       });
     } catch (error) {
@@ -6976,7 +7066,7 @@ async function startServer() {
   // ---- Broadcast results: who saw each broadcast, closed it, and tapped what. The app reports it as it happens (one tiny call per view, close or tap).
   // broadcastStats/{id} holds the totals; broadcastStats/{id}/people/{uid} remembers what each person already did so views, closes and
   // "people who tapped" count each person once while total taps still count every tap.
-  const BROADCAST_EVENTS = new Set(['view', 'close', 'click']);
+  const BROADCAST_EVENTS = new Set(['view', 'close', 'click', 'replay']);
   const BROADCAST_TARGETS = new Set(['instagram', 'facebook', 'play', 'feedback', 'other']);
   const BROADCAST_VIA = new Set(['link', 'button', 'image']);
   const broadcastTrackHits = new Map<string, { n: number; resetAt: number }>();
@@ -7021,6 +7111,11 @@ async function startServer() {
             stats.clickers = inc(1);
             mine.clickedAny = true;
           }
+        } else if (event === 'replay') {
+          // every watch-again open counts; "replayers" is how many different people came back
+          stats.replays = inc(1);
+          if (!person.replayedAt) stats.replayers = inc(1);
+          mine.replayedAt = new Date().toISOString();
         } else {
           return; // already counted for this person
         }
@@ -7031,6 +7126,43 @@ async function startServer() {
     } catch (error) {
       console.error('broadcast track error:', error);
       return res.status(204).end();
+    }
+  });
+
+  // The last 10 sent broadcasts, for the "watch again" window in the app. The pictures (large data
+  // addresses) are left out of the list and fetched one at a time below, so opening the window stays light.
+  // No composite index: newest 30 by date, then the sent ones are kept in memory (scheduled/canceled are skipped).
+  app.get('/api/broadcasts/recent', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      const snap = await adminDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(30).select('title', 'message', 'status', 'createdAt', 'sentAt', 'videoId', 'videoShort').get();
+      const list = snap.docs
+        .filter((d) => d.data().status === 'sent')
+        .slice(0, 10)
+        .map((d) => {
+          const x = d.data();
+          return { id: d.id, title: x.title || 'FamilyLedger', message: x.message || '', videoId: x.videoId || null, videoShort: !!x.videoShort, sentAt: x.sentAt || x.createdAt || '' };
+        });
+      return res.json({ broadcasts: list });
+    } catch (error) {
+      console.error('broadcasts/recent error:', error);
+      return res.status(500).json({ error: 'Unable to load broadcasts.' });
+    }
+  });
+
+  // One past broadcast in full (with its pictures) for the "watch again" window.
+  app.get('/api/broadcasts/:id', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      const snap = await adminDb.collection('broadcasts').doc(req.params.id).get();
+      const x = snap.data();
+      if (!snap.exists || !x || x.status !== 'sent') return res.status(404).json({ error: 'Not found.' });
+      return res.json({ id: snap.id, title: x.title || 'FamilyLedger', message: x.message || '', images: x.images || [], imageLinks: x.imageLinks || [], videoId: x.videoId || null, videoShort: !!x.videoShort });
+    } catch (error) {
+      console.error('broadcasts/:id error:', error);
+      return res.status(500).json({ error: 'Unable to load broadcast.' });
     }
   });
 

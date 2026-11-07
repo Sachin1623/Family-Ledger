@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { collection, documentId, query, where } from 'firebase/firestore';
-import { useCollection } from 'react-firebase-hooks/firestore';
+import { useLiveQuery } from '../lib/liveCache';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useAllGroupMembers } from '../lib/useAllGroupMembers';
@@ -20,13 +20,13 @@ export default function MembersChat() {
   const { user } = useAuth();
   const { t } = useLanguage();
 
-  const [membershipsValue] = useCollection(
+  const [membershipsValue] = useLiveQuery(
     user ? query(collection(db, 'members'), where('userId', '==', user.uid)) : null,
   );
   const myGroupIds = useMemo(() => membershipsValue?.docs.map((d) => d.data().groupId) || [], [membershipsValue]);
   const { sortedMembers, presenceByUid } = useAllGroupMembers(myGroupIds, user?.uid);
   // The groups themselves, for the Groups tab (each opens that group's chat).
-  const [groupsValue] = useCollection(myGroupIds.length > 0 ? query(collection(db, 'groups'), where(documentId(), 'in', myGroupIds.slice(0, 30))) : null);
+  const [groupsValue] = useLiveQuery(myGroupIds.length > 0 ? query(collection(db, 'groups'), where(documentId(), 'in', myGroupIds.slice(0, 30))) : null);
   const myGroups = useMemo(() => (groupsValue?.docs || []).map((d) => ({ id: d.id, ...(d.data() as any) })).filter((g: any) => !g.archived), [groupsValue]);
   const [tab, setTab] = useState<'all' | 'groups' | 'people'>('all');
   const { accepted: acceptedFriends, usersByUid: friendsByUid } = useFriendships(user?.uid);
