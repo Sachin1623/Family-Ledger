@@ -19,6 +19,7 @@ export default function ShoppingFab() {
   const onHome = location.pathname === '/';
   const [mine, setMine] = useState<ListLite[]>([]);
   const [shared, setShared] = useState<ListLite[]>([]);
+  const [fromFriends, setFromFriends] = useState<ListLite[]>([]);
   const [loaded, setLoaded] = useState(false);
   const dock = useEdgeDock(52);
 
@@ -30,6 +31,8 @@ export default function ShoppingFab() {
     };
     const unsubs: (() => void)[] = [];
     unsubs.push(onSnapshot(query(collection(db, 'shoppingLists'), where('userId', '==', user.uid)), (snap) => { setMine(snap.docs.map(lite)); setLoaded(true); }, () => setLoaded(true)));
+    // lists friends shared with me directly
+    unsubs.push(onSnapshot(query(collection(db, 'shoppingLists'), where('sharedWith', 'array-contains', user.uid)), (snap) => setFromFriends(snap.docs.map(lite)), () => setFromFriends([])));
     // lists shared into my groups
     unsubs.push(onSnapshot(query(collection(db, 'members'), where('userId', '==', user.uid)), (snap) => {
       const groupIds = snap.docs.map((d) => d.data().groupId).filter(Boolean).slice(0, 30);
@@ -44,7 +47,7 @@ export default function ShoppingFab() {
   if (!user || !onHome || !loaded) return null;
 
   const byId = new Map<string, ListLite>();
-  [...mine, ...shared].forEach((l) => byId.set(l.id, l));
+  [...mine, ...shared, ...fromFriends].forEach((l) => byId.set(l.id, l));
   const active = Array.from(byId.values()).filter((l) => !l.completed);
   const itemsLeft = active.reduce((sum, l) => sum + (l.itemCount === null ? 0 : Math.max(0, l.itemCount - l.doneCount)), 0);
 

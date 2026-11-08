@@ -19,6 +19,7 @@ import StoreChip from '../components/StoreChip';
 import RenameStoreSheet from '../components/RenameStoreSheet';
 import { storeFieldKey } from '../lib/shoppingStores';
 import { historyKey, recordPurchase, suggestFromHistory } from '../lib/shoppingHistory';
+import { useFriendships } from '../lib/useFriendships';
 import { FREQ_OPTIONS, FREQ_SHORT, Freq, getRoutines, recurringKey, routineKeyOf, saveRecurring, todayLocalDate } from '../lib/shoppingRoutine';
 
 const toDatetimeLocalValue = (iso: string) => {
@@ -65,7 +66,11 @@ export default function ShoppingListDetail() {
     list?.groupId ? query(collection(db, 'members'), where('groupId', '==', list.groupId)) : null,
   );
   const members = membersValue?.docs.map((d) => d.data() as any) || [];
-  const creator = members.find((m: any) => m.userId === list?.userId);
+  const { acceptedUids, usersByUid } = useFriendships(user?.uid);
+  const creator = members.find((m: any) => m.userId === list?.userId) || (list?.userId && usersByUid.get(list.userId) ? { displayName: usersByUid.get(list.userId)!.displayName } : undefined);
+  const sharedFriendUids: string[] = Array.isArray(list?.sharedWith) ? list.sharedWith : [];
+  // a friend the list was shared with directly (not through a group) can use the list but not delete it
+  const friendOnly = !!user && !!list && list.userId !== user.uid && sharedFriendUids.includes(user.uid) && !members.some((m: any) => m.userId === user.uid);
   const categoryInfo = EXPENSE_CATEGORIES.find((c) => c.id === list?.category);
 
   // The groups the owner can share this list with (only fetched while the share sheet is open)
@@ -238,6 +243,7 @@ export default function ShoppingListDetail() {
   const [newStoreText, setNewStoreText] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [carriedListId, setCarriedListId] = useState<string | null>(null);
+  const [shareFriendUids, setShareFriendUids] = useState<string[]>([]);
 
   const openEdit = () => {
     if (!list) return;
@@ -249,6 +255,7 @@ export default function ShoppingListDetail() {
   const openShare = () => {
     if (!list) return;
     setShareGroupId(list.groupId || '');
+    setShareFriendUids(sharedFriendUids);
     setShowShare(true);
   };
 
@@ -256,7 +263,7 @@ export default function ShoppingListDetail() {
     if (!listId) return;
     setSavingShare(true);
     try {
-      await updateDoc(doc(db, 'shoppingLists', listId), { groupId: shareGroupId || null });
+      await updateDoc(doc(db, 'shoppingLists', listId), { groupId: shareGroupId || null, sharedWith: shareFriendUids });
       setShowShare(false);
     } catch (err) {
       console.error('Failed to share shopping list:', err);
@@ -677,7 +684,7 @@ export default function ShoppingListDetail() {
               <p className="text-[12px] text-white/85 mt-0.5 flex items-center gap-1.5 flex-wrap">
                 {list.groupId ? (
                   <span className="inline-flex items-center gap-1">{group?.photoURL ? <img src={group.photoURL} alt="" className="w-3.5 h-3.5 rounded-sm object-cover" referrerPolicy="no-referrer" /> : <span>{groupIconEmoji(group?.icon)}</span>}{group?.name || t('shoppingLists.theGroup')}</span>
-                ) : <span>🔒 {t('shoppingLists.personalList')}</span>}
+                ) : sharedFriendUids.length > 0 ? <span>👥 {list.userId === user?.uid ? `Shared with ${sharedFriendUids.length} friend${sharedFriendUids.length === 1 ? '' : 's'}` : 'Shared with you'}</span> : <span>🔒 {t('shoppingLists.personalList')}</span>}
                 {creator && <span>· {t('shoppingLists.createdBy', { name: list.userId === user?.uid ? t('shoppingLists.you') : creator.displayName })}</span>}
               </p>
               {list.scheduledAt && (
@@ -718,9 +725,9 @@ export default function ShoppingListDetail() {
             <button onClick={openEdit} title={t('shoppingLists.editList')} className="shrink-0 w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center active:scale-95">
               <span className="material-symbols-outlined text-[20px]">edit</span>
             </button>
-            <button onClick={handleDeleteList} title={t('common.delete')} className="shrink-0 w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center active:scale-95">
+            {!friendOnly && <button onClick={handleDeleteList} title={t('common.delete')} className="shrink-0 w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center active:scale-95">
               <span className="material-symbols-outlined text-[20px]">delete</span>
-            </button>
+            </button>}
           </div>
           {carriedListId && (
             <button onClick={() => navigate(`/shopping-lists/${carriedListId}`)} className="mt-2 w-full rounded-xl bg-white/15 py-2 text-xs font-black">Items you did not get moved to a new list · Open it</button>
@@ -870,12 +877,31 @@ export default function ShoppingListDetail() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-[11px] text-text-muted px-1">{shareGroupId ? 'Everyone in this group can see the list, add items and tick them off.' : 'Only you can see this list.'}</p>
+                  <p className="text-[11px] text-text-muted px-1">{shareGroupId ? 'Everyone in this group can see the list, add items and tick them off.' : shareFriendUids.length === 0 ? 'Only you can see this list.' : ''}</p>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider px-1 pt-2">Friends (along with the group, or on their own)</label>
+                  {acceptedUids.size === 0 ? (
+                    <p className="text-[11px] text-text-muted px-1">Add friends from the Friends page to share lists with them.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {(Array.from(acceptedUids) as string[]).map((uid) => {
+                        const on = shareFriendUids.includes(uid);
+                        const f = usersByUid.get(uid);
+                        return (
+                          <button key={uid} type="button" onClick={() => setShareFriendUids(on ? shareFriendUids.filter((x) => x !== uid) : [...shareFriendUids, uid])} className={clsx('pl-1.5 pr-3 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 max-w-full', on ? 'bg-[#0f7a8f] text-white border-[#0f7a8f]' : 'bg-white text-slate-600 border-slate-200')}>
+                            {f?.photoURL ? <img src={f.photoURL} alt="" className="w-5 h-5 rounded-full object-cover" referrerPolicy="no-referrer" /> : <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 text-[10px] flex items-center justify-center">{(f?.displayName || '?').slice(0, 1).toUpperCase()}</span>}
+                            <span className="truncate">{f?.displayName || 'Friend'}</span>
+                            {on && <span className="material-symbols-outlined text-[16px]">check</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {shareFriendUids.length > 0 && <p className="text-[11px] text-text-muted px-1">The friends you pick can see the list, add items and tick them off. They cannot delete it or change who it is shared with.</p>}
                 </div>
               )}
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => setShowShare(false)} className="flex-1 py-3 rounded-2xl font-black text-slate-500 border border-slate-200">{t('common.cancel')}</button>
-                <button type="button" onClick={handleSaveShare} disabled={savingShare || shareGroupId === (list.groupId || '')} className="flex-1 py-3 rounded-2xl font-black text-white bg-gradient-to-r from-orange-500 to-rose-500 shadow-lg shadow-rose-500/30 disabled:opacity-50">{savingShare ? t('common.saving') : 'Save'}</button>
+                <button type="button" onClick={handleSaveShare} disabled={savingShare || (shareGroupId === (list.groupId || '') && shareFriendUids.length === sharedFriendUids.length && shareFriendUids.every((u) => sharedFriendUids.includes(u)))} className="flex-1 py-3 rounded-2xl font-black text-white bg-gradient-to-r from-orange-500 to-rose-500 shadow-lg shadow-rose-500/30 disabled:opacity-50">{savingShare ? t('common.saving') : 'Save'}</button>
               </div>
             </div>
           </div>

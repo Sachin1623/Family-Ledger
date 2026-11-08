@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, addDoc, writeBatch, doc, setDoc } from 'firebase/firestore';
 import { useLiveQuery } from '../lib/liveCache';
+import { useFriendships } from '../lib/useFriendships';
 import { clsx } from 'clsx';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { EXPENSE_CATEGORIES, getGroupCategories, getCategoryIcon, getCurrencySymbol } from '../lib/constants';
@@ -96,7 +97,12 @@ export default function ShoppingLists() {
   const [sharedListsValue] = useLiveQuery(
     groupIds.length > 0 ? query(collection(db, 'shoppingLists'), where('groupId', 'in', groupIds)) : null,
   );
+  const [friendListsValue] = useLiveQuery(
+    user ? query(collection(db, 'shoppingLists'), where('sharedWith', 'array-contains', user.uid)) : null,
+  );
+  const { usersByUid } = useFriendships(user?.uid);
   const listsById = new Map<string, any>();
+  friendListsValue?.docs.forEach((d) => listsById.set(d.id, { id: d.id, ...d.data() }));
   myListsValue?.docs.forEach((d) => listsById.set(d.id, { id: d.id, ...d.data() }));
   sharedListsValue?.docs.forEach((d) => listsById.set(d.id, { id: d.id, ...d.data() }));
   const lists = Array.from(listsById.values()).sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -169,7 +175,8 @@ export default function ShoppingLists() {
 
   const renderList = (list: any) => {
     const group = groups.find((g: any) => g.id === list.groupId);
-    const creator = allMembers.find((m: any) => m.userId === list.userId);
+    const creator = allMembers.find((m: any) => m.userId === list.userId) || (usersByUid.get(list.userId) ? { displayName: usersByUid.get(list.userId)!.displayName } : undefined);
+    const friendCount = Array.isArray(list.sharedWith) ? list.sharedWith.length : 0;
     const when = whenPill(list);
     const total = hasCounts(list) ? list.itemCount : null;
     const done = list.doneCount || 0;
@@ -191,7 +198,7 @@ export default function ShoppingLists() {
                 <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 text-sky-800 px-1.5 py-px text-[10px] font-bold shrink-0">
                   {group.photoURL ? <img src={group.photoURL} alt="" className="w-3.5 h-3.5 rounded-sm object-cover" referrerPolicy="no-referrer" /> : <span>{groupIconEmoji(group.icon)}</span>}{group.name}
                 </span>
-              ) : <span>🔒 {t('shoppingLists.personal')}</span>}
+              ) : friendCount > 0 ? <span>👥 {list.userId === user?.uid ? `${friendCount} friend${friendCount === 1 ? '' : 's'}` : `Shared by ${creator?.displayName || 'a friend'}`}</span> : <span>🔒 {t('shoppingLists.personal')}</span>}
               {group && list.userId !== user?.uid && <span className="truncate">· {creator?.displayName || t('todo.aMember')}</span>}
             </p>
           </div>

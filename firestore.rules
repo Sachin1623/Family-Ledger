@@ -1328,25 +1328,36 @@ service cloud.firestore {
                data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
                data.createdAt is string &&
                (!data.keys().hasAll(['groupId']) || data.groupId == null || (data.groupId is string && data.groupId.size() > 0)) &&
-               (!data.keys().hasAll(['scheduledAt']) || data.scheduledAt == null || data.scheduledAt is string);
+               (!data.keys().hasAll(['scheduledAt']) || data.scheduledAt == null || data.scheduledAt is string) &&
+               (!data.keys().hasAll(['sharedWith']) || (data.sharedWith is list && data.sharedWith.size() <= 50));
+      }
+
+      // Friends the owner shared the list with directly (`sharedWith`, a list of uids), with or without a group.
+      function sharedWithMe(data) {
+        return request.auth.uid in data.get('sharedWith', []);
       }
 
       function canAccessList(data) {
-        return data.userId == request.auth.uid || (data.groupId != null && canModifyGroup(data.groupId));
+        return data.userId == request.auth.uid || (data.groupId != null && canModifyGroup(data.groupId)) || sharedWithMe(data);
       }
 
       // Self-referential `userId` disjunct required for the creator's own `where('userId','==')`
       // list query to be provable — same reasoning as recurringExpenses/todos above.
       allow read: if isSignedIn() && (
         resource.data.userId == request.auth.uid ||
-        (resource.data.groupId != null && canModifyGroup(resource.data.groupId))
+        (resource.data.groupId != null && canModifyGroup(resource.data.groupId)) ||
+        sharedWithMe(resource.data)
       );
       allow create: if isSignedIn() && isValidShoppingList(incoming()) && incoming().userId == request.auth.uid &&
         (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
+      // A friend the list was shared with can edit it and its items, but cannot change who it is shared with.
       allow update: if isSignedIn() && isValidShoppingList(incoming()) && incoming().userId == existing().userId &&
         canAccessList(existing()) &&
-        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || canModifyGroup(incoming().groupId));
-      allow delete: if isSignedIn() && canAccessList(existing());
+        (incoming().groupId == null || !incoming().keys().hasAll(['groupId']) || incoming().get('groupId', null) == existing().get('groupId', null) || canModifyGroup(incoming().groupId)) &&
+        (existing().userId == request.auth.uid || (existing().groupId != null && canModifyGroup(existing().groupId)) ||
+          (incoming().get('sharedWith', []) == existing().get('sharedWith', []) && incoming().get('groupId', null) == existing().get('groupId', null)));
+      // Only the owner or a member of the group it is shared with can delete the whole list, not a friend.
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || (existing().groupId != null && canModifyGroup(existing().groupId)));
 
       match /items/{itemId} {
         function parentList() {
@@ -1354,7 +1365,8 @@ service cloud.firestore {
         }
         function canAccessParentList() {
           return parentList().userId == request.auth.uid ||
-            (parentList().groupId != null && canModifyGroup(parentList().groupId));
+            (parentList().groupId != null && canModifyGroup(parentList().groupId)) ||
+            request.auth.uid in parentList().get('sharedWith', []);
         }
         // `status` replaced the original boolean `checked` field with a tri-state model
         // (pending/bought/unavailable) — `checked` is still tolerated (not required) so items
