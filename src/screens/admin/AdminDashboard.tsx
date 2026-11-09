@@ -5,6 +5,7 @@ import { adminGet } from '../../lib/adminApi';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate, getAdminTz, setAdminTzMode } from '../../lib/adminTime';
 import { Arrow, CloudCostCard, StatCard, formatMoney, sumOf, type CloudCost } from '../../components/admin/AdminTiles';
+import { inNum } from '../../lib/adminNumbers';
 
 // the Growth tab shows the full report itself (charts included), loaded only when that tab is opened
 const AdminGrowth = React.lazy(() => import('./AdminGrowth'));
@@ -216,7 +217,7 @@ export default function AdminDashboard() {
               <StatCard label="Total Users" value={overview.totalUsers} series={overview.trend?.users} />
               <StatCard label="Total Groups" value={overview.totalGroups} series={overview.trend?.groups} />
               <StatCard label="Total Expenses" value={overview.totalExpenses} series={overview.trend?.expenses} />
-              <StatCard label="Lifetime Spend Logged" value={overview.totalSpendAllTime.toLocaleString(undefined, { maximumFractionDigits: 0 })} series={overview.trend?.spend} format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+              <StatCard label="Lifetime Spend Logged" value={inNum(overview.totalSpendAllTime)} series={overview.trend?.spend} format={(n) => inNum(n)} />
               <StatCard label="Active Today" value={overview.activeUsersToday} series={overview.trend?.active} level />
               <StatCard label="Active This Week" value={overview.activeUsersThisWeek} weekSeries={overview.trend?.activeWeek} />
             </div>
@@ -255,7 +256,7 @@ export default function AdminDashboard() {
                         <td className="p-3">{c.activeToday}</td>
                         <td className="p-3">{c.groups}</td>
                         <td className="p-3">{c.expenses}</td>
-                        <td className="p-3 font-bold">{c.totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                        <td className="p-3 font-bold">{inNum(c.totalSpend)}</td>
                       </tr>
                     ))}
                   </tbody>

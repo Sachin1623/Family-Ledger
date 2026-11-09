@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { adminGet } from '../../lib/adminApi';
 import { fmtDateTime, fmtTime, adminNowParts } from '../../lib/adminTime';
+import { inNum } from '../../lib/adminNumbers';
 
 // The admin health dashboard: Today / Growth / Health / Cost / Product. Every number comes from data the app already keeps (users, expenses,
 // the sign-in counters, the server's own request counters and the Google Cloud billing export). Things only Google Play knows (installs,
@@ -50,7 +51,7 @@ interface Breakdown { tableReady: boolean; currency?: string; byService?: { serv
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
 const fmtPct = (v: number | null) => (v === null ? '—' : `${v}%`);
-const num = (v: number) => v.toLocaleString();
+const num = (v: number) => inNum(v);
 
 type Level = 'ok' | 'warn' | 'bad' | 'none';
 const levelLow = (v: number | null, g: { good: number; bad: number }): Level => (v === null ? 'none' : v <= g.good ? 'ok' : v >= g.bad ? 'bad' : 'warn'); // lower is better
@@ -87,14 +88,14 @@ function TrendCard({ title, totalLabel, data, totals, color }: { title: string; 
       <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{title}</p>
       <div className="flex items-end justify-between gap-2 flex-wrap mt-1 mb-1">
         <div>
-          <p className="text-3xl font-black text-primary leading-none">{totals.current.toLocaleString()}</p>
+          <p className="text-3xl font-black text-primary leading-none">{inNum(totals.current)}</p>
           <p className="text-[11px] font-bold text-text-muted mt-1">{totalLabel}</p>
         </div>
         <div className="text-right">
           <p className={`text-sm font-black ${change === null ? 'text-text-muted' : up ? 'text-green-600' : 'text-red-600'}`}>
             {change === null ? 'new' : `${up ? '▲' : '▼'} ${Math.abs(change)}%`}
           </p>
-          <p className="text-[11px] text-text-muted">vs previous 30 days ({totals.previous.toLocaleString()})</p>
+          <p className="text-[11px] text-text-muted">vs previous 30 days ({inNum(totals.previous)})</p>
         </div>
       </div>
       <Bars color={color} data={data.map((d) => ({ label: shortDate(d.date), value: d.count, full: d.date }))} />
@@ -122,7 +123,7 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
                     <span className="w-5 h-5 shrink-0 rounded-full bg-primary/10 text-primary text-[11px] font-black flex items-center justify-center">{i + 1}</span>
                     {s.label}
                   </p>
-                  <p className="text-xl font-black text-primary leading-none">{s.v.toLocaleString()}</p>
+                  <p className="text-xl font-black text-primary leading-none">{inNum(s.v)}</p>
                 </div>
                 <div className="h-3 rounded-full bg-surface overflow-hidden">
                   <div className="h-full rounded-full" style={{ width: `${Math.max(2, (s.v / top) * 100)}%`, background: 'linear-gradient(90deg,#4ade80,#3b82f6)' }} />
@@ -130,7 +131,7 @@ function FunnelCard({ title, note, steps, empty }: { title: string; note?: strin
                 {i > 0 && (
                   <p className="text-[11px] font-bold text-text-muted">
                     <span className="text-primary">{fmtPct(share)}</span> {s.ofPrev !== false ? 'of the step above' : 'of those who saw the login screen'}
-                    {s.ofPrev !== false && base > s.v ? <span className="text-red-600"> · {(base - s.v).toLocaleString()} dropped off</span> : null}
+                    {s.ofPrev !== false && base > s.v ? <span className="text-red-600"> · {inNum(base - s.v)} dropped off</span> : null}
                   </p>
                 )}
               </div>
@@ -356,7 +357,7 @@ function Bars({ data, color = '#0f766e', money }: { data: { label: string; value
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
           <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={Math.max(0, Math.ceil(data.length / 7) - 1)} />
           <YAxis allowDecimals={!!money} tick={{ fontSize: 10 }} />
-          <Tooltip formatter={(v: number) => [money ? `${money}${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : v, '']} labelFormatter={(_l, p) => (p && p[0] ? (p[0].payload as any).full || (p[0].payload as any).label : '')} cursor={{ fill: 'rgba(15,118,110,0.08)' }} />
+          <Tooltip formatter={(v: number) => [money ? `${money}${inNum(v)}` : v, '']} labelFormatter={(_l, p) => (p && p[0] ? (p[0].payload as any).full || (p[0].payload as any).label : '')} cursor={{ fill: 'rgba(15,118,110,0.08)' }} />
           <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -441,7 +442,7 @@ export default function AdminMetrics() {
     return out;
   }, [m, derived]);
 
-  const money = (v: number | null | undefined, cur?: string) => (v === null || v === undefined ? '—' : `${cur === 'INR' || !cur ? '₹' : `${cur} `}${Math.round(v).toLocaleString()}`);
+  const money = (v: number | null | undefined, cur?: string) => (v === null || v === undefined ? '—' : `${cur === 'INR' || !cur ? '₹' : `${cur} `}${inNum(Math.round(v))}`);
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-5 pb-44 md:pb-44">

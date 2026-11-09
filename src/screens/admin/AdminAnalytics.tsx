@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 import { adminGet } from '../../lib/adminApi';
 import { fmtTime } from '../../lib/adminTime';
+import { inNum } from '../../lib/adminNumbers';
 
 interface TopEntry { groupId?: string; uid?: string; name: string; totalSpend: number; entryCount: number }
 interface TrendPoint { day: string; logins: number; activeUsers: number }
@@ -74,7 +75,7 @@ interface ProductStats {
   };
 }
 
-const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+const fmt = (n: number) => inNum(n);
 
 // Change vs the previous period, as a small coloured badge.
 function Delta({ cur, prev }: { cur: number; prev: number }) {
@@ -528,7 +529,7 @@ export default function AdminAnalytics() {
             {topGroups.map((g) => (
               <div key={g.groupId} className="flex justify-between text-sm border-b border-border-subtle last:border-0 py-2">
                 <span className="truncate">{g.name}</span>
-                <span className="font-bold shrink-0 ml-2">{g.totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({g.entryCount})</span>
+                <span className="font-bold shrink-0 ml-2">{inNum(g.totalSpend)} ({g.entryCount})</span>
               </div>
             ))}
             {topGroups.length === 0 && <p className="text-sm text-text-muted">No data yet.</p>}
@@ -541,7 +542,7 @@ export default function AdminAnalytics() {
             {topUsers.map((u) => (
               <div key={u.uid} className="flex justify-between text-sm border-b border-border-subtle last:border-0 py-2">
                 <span className="truncate">{u.name}</span>
-                <span className="font-bold shrink-0 ml-2">{u.totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({u.entryCount})</span>
+                <span className="font-bold shrink-0 ml-2">{inNum(u.totalSpend)} ({u.entryCount})</span>
               </div>
             ))}
             {topUsers.length === 0 && <p className="text-sm text-text-muted">No data yet.</p>}
@@ -589,7 +590,7 @@ export default function AdminAnalytics() {
             </div>
             <div className="bg-surface rounded-xl p-3">
               <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Hours Played</p>
-              <p className="text-2xl font-black text-primary mt-0.5">{gameStatsSummary.totalHours.toLocaleString()}</p>
+              <p className="text-2xl font-black text-primary mt-0.5">{inNum(gameStatsSummary.totalHours, 1)}</p>
             </div>
           </div>
         )}
@@ -613,7 +614,7 @@ export default function AdminAnalytics() {
                   <td className="p-2">{g.finishedGames}</td>
                   <td className="p-2">{g.inProgressGames}</td>
                   <td className="p-2">{g.uniquePlayers}</td>
-                  <td className="p-2 font-bold">{g.totalHours.toLocaleString()}</td>
+                  <td className="p-2 font-bold">{inNum(g.totalHours, 1)}</td>
                 </tr>
               ))}
               {gameStats.length === 0 && (
@@ -647,7 +648,7 @@ const GAME_METRICS = {
 } as const;
 type GameMetricKey = keyof typeof GAME_METRICS;
 
-const fmtVal = (key: GameMetricKey, n: number) => (key === 'hours' ? (Math.round(n * 10) / 10).toLocaleString() : fmt(n));
+const fmtVal = (key: GameMetricKey, n: number) => (key === 'hours' ? inNum(Math.round(n * 10) / 10, 1) : fmt(n));
 
 // Each metric on its own row: today vs yesterday, last 7 days vs the 7 before.
 function CompareRow({ label, cur, prev, kind, curLabel, prevLabel }: { label: string; cur: number; prev: number; kind: GameMetricKey; curLabel: string; prevLabel: string }) {

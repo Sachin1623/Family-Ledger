@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { adminGet, adminPost } from '../../lib/adminApi';
 import { fmtDateTime, fmtDate } from '../../lib/adminTime';
+import { inNum } from '../../lib/adminNumbers';
 
 interface AdminUser {
   uid: string;
@@ -298,7 +299,7 @@ export default function AdminUsers() {
                 <td className="p-3 text-xs text-text-muted">{u.lastActiveAt ? fmtDateTime(u.lastActiveAt) : '—'}</td>
                 <td className="p-3">{u.groupCount}</td>
                 <td className="p-3">{u.expenseCount}</td>
-                <td className="p-3 font-bold">{u.totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                <td className="p-3 font-bold">{inNum(u.totalSpend)}</td>
                 <td className="p-3">
                   {u.isPrimaryAdmin ? (
                     <span className="text-xs font-bold text-primary">Primary</span>

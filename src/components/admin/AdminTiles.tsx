@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { fmtDate } from '../../lib/adminTime';
 import { adminGet } from '../../lib/adminApi';
 import { useRememberedState } from '../../lib/liveCache';
+import { inNum } from '../../lib/adminNumbers';
 
 // The admin summary tiles (a figure with its trend, and the Google Cloud cost card), shared by the Admin Overview tab and the admin's own Profile page.
 
@@ -17,7 +18,7 @@ export interface CloudCost {
 }
 
 export function formatMoney(n: number, currency?: string) {
-  return n.toLocaleString(undefined, { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 2 });
+  return n.toLocaleString(currency === 'INR' ? 'en-IN' : undefined, { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 2 });
 }
 
 export const sumOf = (a: number[]) => a.reduce((x, y) => x + y, 0);
@@ -60,7 +61,7 @@ export function StatCard({ label, value, series, level, weekSeries, format }: {
   weekSeries?: (number | null)[];
   format?: (n: number) => string;
 }) {
-  const f = format || ((n: number) => n.toLocaleString());
+  const f = format || ((n: number) => inNum(n));
   const signed = (n: number) => (level || weekSeries ? f(n) : `${n > 0 ? '+' : ''}${f(n)}`);
   const shown = weekSeries || series;
   const n = shown?.length || 0;

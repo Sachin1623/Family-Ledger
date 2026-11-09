@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { adminGet, adminDelete } from '../../lib/adminApi';
 import { fmtDateTime, fmtDate } from '../../lib/adminTime';
+import { inExact } from '../../lib/adminNumbers';
 
 interface Detail {
   profile: any;
@@ -99,7 +100,7 @@ export default function AdminUserDetail() {
                 <p className="font-medium">{e.description}</p>
                 <p className="text-xs text-text-muted">{e.category} · {fmtDate(e.createdAt)}</p>
               </div>
-              <span className="font-bold">{e.amount.toLocaleString()}</span>
+              <span className="font-bold">{inExact(e.amount, 2)}</span>
             </div>
           ))}
         </div>
