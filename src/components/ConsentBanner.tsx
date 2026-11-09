@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
-import { getStoredAnalyticsConsent, setAnalyticsConsent, isAndroidApp, looksLikeEurope } from '../lib/firebase';
-import { isIosApp } from '../lib/platform';
+import { getStoredAnalyticsConsent, setAnalyticsConsent, isNativeAnalyticsApp, looksLikeEurope } from '../lib/firebase';
 import { trackFunnel } from '../lib/funnel';
 
 // A genuine opt-in choice (Accept / Decline), not a dismissible toast — GDPR/ePrivacy require an
@@ -18,8 +17,7 @@ export default function ConsentBanner() {
   const [decided, setDecided] = useState(() => getStoredAnalyticsConsent() !== null);
   // The installed Android app (outside Europe) counts anonymous usage by default, so here this is a notice with a Turn off,
   // not a request. Everywhere else it stays a real opt-in.
-  const asNotice = isAndroidApp() && !looksLikeEurope();
-  if (isIosApp()) return null; // no analytics / cookie prompt inside the iOS app
+  const asNotice = isNativeAnalyticsApp() && !looksLikeEurope();
 
   const choose = (consent: 'granted' | 'denied') => {
     setAnalyticsConsent(consent);

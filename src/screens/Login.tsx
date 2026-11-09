@@ -1088,7 +1088,7 @@ export default function Login() {
             </div>
           )}
 
-          {mode === "google" && !isIosApp() && (
+          {mode === "google" && (
             <label className="flex items-start gap-2 text-left text-[11px] text-text-muted leading-snug cursor-pointer">
               <input
                 type="checkbox"

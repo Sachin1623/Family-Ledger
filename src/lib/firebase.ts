@@ -94,12 +94,17 @@ export const appleProvider = new OAuthProvider('apple.com');
 const ANALYTICS_CONSENT_KEY = 'familyledger_analytics_consent';
 let analyticsInstance: Analytics | null = null;
 
-// The iPhone/iPad app never runs web analytics or shows the cookie prompt (App Store guideline 5.1.2:
-// no tracking, so nothing to ask permission for). Analytics stays a web / Android choice.
+// The installed apps (Android and iPhone/iPad) use Firebase's NATIVE analytics instead of the web analytics. The iPhone app collects no advertising ID and
+// never asks for tracking permission (App Store guideline 5.1.2): the counts are first-party and anonymous, and the App Store privacy answers say so.
 // The installed Android app sends its events through Firebase's NATIVE analytics (the Android data stream, which is what Google Play and
 // Google Ads tie installs and sign-ups to). The web analytics below then stays out of the installed app, so nothing is counted twice.
 export function isAndroidApp(): boolean {
   return Capacitor.getPlatform() === 'android';
+}
+// The installed iPhone app now counts anonymous usage through the same native Firebase analytics as Android (its own iOS data stream, which is what
+// Google Ads ties iPhone sign-ups to). It collects no advertising ID (see capacitor.config.ts) and shows no tracking prompt.
+export function isNativeAnalyticsApp(): boolean {
+  return isAndroidApp() || isIosApp();
 }
 
 // A rough "is this phone in Europe" check (time zone), so analytics there stays off until the person agrees. Wrong guesses only ever
@@ -114,7 +119,7 @@ export function looksLikeEurope(): boolean {
 }
 
 function initAnalyticsSdk() {
-  if (isIosApp() || isAndroidApp()) return;
+  if (isNativeAnalyticsApp()) return;
   isSupported()
     .then((supported) => {
       if (supported) analyticsInstance = getAnalytics(app);
@@ -135,7 +140,6 @@ export function getStoredAnalyticsConsent(): 'granted' | 'denied' | null {
 // What analytics should do right now. In the installed Android app, outside Europe, anonymous usage counts are ON until the person
 // turns them off (the first-run notice says so); everywhere else (web, Europe) they stay off until the person says yes.
 export function getAnalyticsConsent(): 'granted' | 'denied' | null {
-  if (isIosApp()) return 'denied';
   const stored = getStoredAnalyticsConsent();
   if (stored) return stored;
   // Anonymous counts are on by default (a ticked box on the login page lets people turn them off); where the phone looks to be in Europe
@@ -145,21 +149,20 @@ export function getAnalyticsConsent(): 'granted' | 'denied' | null {
 }
 
 export function setAnalyticsConsent(consent: 'granted' | 'denied') {
-  if (isIosApp()) return;
   try {
     localStorage.setItem(ANALYTICS_CONSENT_KEY, consent);
   } catch {
     // Unable to persist — the banner will just ask again next visit, which is the safe direction
     // to fail in (never tracking without a fresh "yes" beats accidentally tracking without one).
   }
-  if (isAndroidApp()) {
+  if (isNativeAnalyticsApp()) {
     FirebaseAnalytics.setEnabled({ enabled: consent === 'granted' }).catch(() => {});
     return;
   }
   if (consent === 'granted') initAnalyticsSdk();
 }
 
-if (isAndroidApp()) {
+if (isNativeAnalyticsApp()) {
   // Native analytics: collect only while consent is granted (on by default outside Europe, see getAnalyticsConsent).
   FirebaseAnalytics.setEnabled({ enabled: getAnalyticsConsent() === 'granted' }).catch(() => {});
 } else if (getAnalyticsConsent() === 'granted') {
@@ -167,7 +170,7 @@ if (isAndroidApp()) {
 }
 
 export function trackEvent(name: string, params?: Record<string, unknown>) {
-  if (isAndroidApp()) {
+  if (isNativeAnalyticsApp()) {
     if (getAnalyticsConsent() === 'granted') FirebaseAnalytics.logEvent({ name, params: (params || {}) as any }).catch(() => {});
     return;
   }

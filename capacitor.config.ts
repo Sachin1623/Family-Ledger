@@ -4,7 +4,17 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // live site, so changes can be tried on a real phone without deploying. Never set for a release build.
 const devUrl = process.env.CAP_DEV_URL;
 
-const config: CapacitorConfig = {
+const config: CapacitorConfig & { experimental?: unknown } = {
+  // iPhone analytics without the advertising ID (IDFA): installs and in-app events still reach Google Ads through Apple's privacy-safe attribution,
+  // and the app never needs the tracking-permission prompt. Needs Xcode 16.3+ (Swift 6.1) and Capacitor CLI 8.3+.
+  experimental: {
+    ios: {
+      spm: {
+        swiftToolsVersion: '6.1',
+        packageTraits: { '@capacitor-firebase/analytics': ['AnalyticsWithoutAdIdSupport'] },
+      },
+    },
+  },
   appId: 'com.familyledger.app',
   appName: 'FamilyLedger',
   webDir: 'dist',

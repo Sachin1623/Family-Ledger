@@ -1590,7 +1590,7 @@ export default function Profile() {
           <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">{t('profile.security')}</h3>
           <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
             {Capacitor.isNativePlatform() && <AppLockSettings />}
-            {!isIosApp() && <AnalyticsConsentToggle />}
+            <AnalyticsConsentToggle />
             {isPasswordUser && (
               <div className="p-4 space-y-4">
                 <div
