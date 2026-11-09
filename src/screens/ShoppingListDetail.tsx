@@ -20,6 +20,8 @@ import RenameStoreSheet from '../components/RenameStoreSheet';
 import { storeFieldKey } from '../lib/shoppingStores';
 import { historyKey, recordPurchase, suggestFromHistory } from '../lib/shoppingHistory';
 import { useFriendships } from '../lib/useFriendships';
+import { eventKeyOf, eventNameFromTitle, revokeShareLink, sendListCopy, shareLinkFor } from '../lib/shoppingEvents';
+import { shareText } from '../lib/fileShare';
 import { FREQ_OPTIONS, FREQ_SHORT, Freq, getRoutines, recurringKey, routineKeyOf, saveRecurring, todayLocalDate } from '../lib/shoppingRoutine';
 
 const toDatetimeLocalValue = (iso: string) => {
@@ -271,6 +273,83 @@ export default function ShoppingListDetail() {
     } finally {
       setSavingShare(false);
     }
+  };
+
+  // ---- yearly Event: the list comes back every year (Diwali, Holi...) ----
+  const [showEvent, setShowEvent] = useState(false);
+  const [eventNameDraft, setEventNameDraft] = useState('');
+  const [savingEvent, setSavingEvent] = useState(false);
+  const openEvent = () => { if (!list) return; setEventNameDraft(list.eventName || eventNameFromTitle(list.title)); setShowEvent(true); };
+  const handleSaveEvent = async () => {
+    const name = eventNameDraft.trim().slice(0, 60);
+    if (!name || !listId || !list) return;
+    setSavingEvent(true);
+    try {
+      await updateDoc(doc(db, 'shoppingLists', listId), { isEvent: true, eventName: name, eventKey: eventKeyOf(name), eventYear: list.eventYear || Number((list.createdAt || '').slice(0, 4)) || new Date().getFullYear() });
+      setShowEvent(false);
+    } catch (err) {
+      console.error('Failed to make the list an event:', err);
+      alert('Could not save. Try again.');
+    } finally {
+      setSavingEvent(false);
+    }
+  };
+  const handleRemoveEvent = async () => {
+    if (!listId) return;
+    setSavingEvent(true);
+    try {
+      await updateDoc(doc(db, 'shoppingLists', listId), { isEvent: deleteField(), eventName: deleteField(), eventKey: deleteField(), eventYear: deleteField() });
+      setShowEvent(false);
+    } catch (err) {
+      console.error('Failed to remove the event:', err);
+    } finally {
+      setSavingEvent(false);
+    }
+  };
+
+  // ---- send a copy: to friends, or as a link anyone can open ----
+  const [showSend, setShowSend] = useState(false);
+  const [sendUids, setSendUids] = useState<string[]>([]);
+  const [sending, setSending] = useState(false);
+  const [sendNote, setSendNote] = useState('');
+  const [sentLink, setSentLink] = useState<{ id: string; url: string } | null>(null);
+  const openSend = () => { setSendUids([]); setSendNote(''); setSentLink(null); setShowSend(true); };
+  const handleSendToFriends = async () => {
+    if (!listId || sendUids.length === 0) return;
+    setSending(true);
+    setSendNote('');
+    try {
+      const r = await sendListCopy(listId, { toUids: sendUids });
+      setSendNote(`Sent to ${r.sentTo} friend${r.sentTo === 1 ? '' : 's'}. They can save their own copy.`);
+      setSendUids([]);
+    } catch (err: any) {
+      setSendNote(err?.message || 'Could not send. Try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+  const handleGetLink = async () => {
+    if (!listId) return;
+    setSending(true);
+    setSendNote('');
+    try {
+      const r = await sendListCopy(listId, { link: true });
+      const url = shareLinkFor(r.id);
+      setSentLink({ id: r.id, url });
+      const text = `${list?.title}: ${r.itemCount} items. Save your own copy in FamilyLedger 👉 ${url}`;
+      const out = await shareText(list?.title || 'Shopping list', text);
+      if (out === 'copied') setSendNote('Link copied. Paste it wherever you like.');
+    } catch (err: any) {
+      setSendNote(err?.message || 'Could not make the link. Try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+  const handleTurnOffLink = async () => {
+    if (!sentLink) return;
+    await revokeShareLink(sentLink.id).catch(() => {});
+    setSentLink(null);
+    setSendNote('That link no longer works.');
   };
 
   const openItem = (item: any) => {
@@ -717,6 +796,14 @@ export default function ShoppingListDetail() {
                 {t('shoppingLists.markCompleted')}
               </button>
             )}
+            {isOwner && (
+              <button onClick={openEvent} title={list.isEvent ? 'Yearly event' : 'Make this a yearly event'} className={clsx('shrink-0 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95', list.isEvent ? 'bg-amber-400 text-[#7c2d12]' : 'bg-white/15')}>
+                <span className="material-symbols-outlined text-[20px]">event_repeat</span>
+              </button>
+            )}
+            <button onClick={openSend} title="Send a copy to a friend" className="shrink-0 w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center active:scale-95">
+              <span className="material-symbols-outlined text-[20px]">forward_to_inbox</span>
+            </button>
             {isOwner && !list.completed && (
               <button onClick={openShare} title="Share this list with a group" className="shrink-0 w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center active:scale-95">
                 <span className="material-symbols-outlined text-[20px]">group_add</span>
@@ -835,6 +922,74 @@ export default function ShoppingListDetail() {
             <span className="material-symbols-outlined text-[20px]">add</span>
           </button>
         </form>
+      )}
+
+      {showEvent && (
+        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom) + 0.75rem)' }} onClick={() => setShowEvent(false)}>
+          <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-3xl shadow-2xl px-4 pt-3 space-y-3" style={{ paddingBottom: '1.25rem', maxHeight: 'calc(100dvh - 4rem - env(safe-area-inset-bottom) - 3rem)', overflowY: 'auto' }}>
+              <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-1" />
+              <h2 className="text-base font-black text-primary">{list.isEvent ? 'Yearly event' : 'Make this a yearly event'}</h2>
+              <p className="text-xs text-text-muted">A list that comes back every year, like Diwali or Holi. It stays under <b>My events</b> on the shopping page, and next year you can start a fresh copy of it in one tap. This year's list stays as it is.</p>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider px-1">Event name</label>
+                <input type="text" value={eventNameDraft} onChange={(e) => setEventNameDraft(e.target.value)} maxLength={60} placeholder="Diwali" autoFocus className="w-full bg-slate-50 p-3 rounded-xl border border-slate-200 text-sm font-bold outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setShowEvent(false)} className="flex-1 py-3 rounded-2xl bg-slate-100 text-slate-600 text-sm font-black">Cancel</button>
+                <button type="button" onClick={handleSaveEvent} disabled={savingEvent || !eventNameDraft.trim()} className="flex-1 py-3 rounded-2xl text-white text-sm font-black bg-gradient-to-r from-orange-500 to-rose-500 disabled:opacity-50">{savingEvent ? 'Saving…' : list.isEvent ? 'Save' : 'Make it an event'}</button>
+              </div>
+              {list.isEvent && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { setShowEvent(false); navigate(`/shopping-events/${list.eventKey}`); }} className="flex-1 py-2 text-xs font-black text-[#0f7a8f]">See all years</button>
+                  <button type="button" onClick={handleRemoveEvent} disabled={savingEvent} className="flex-1 py-2 text-xs font-black text-rose-600">Not an event anymore</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSend && (
+        <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom) + 0.75rem)' }} onClick={() => setShowSend(false)}>
+          <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-3xl shadow-2xl px-4 pt-3 space-y-3" style={{ paddingBottom: '1.25rem', maxHeight: 'calc(100dvh - 4rem - env(safe-area-inset-bottom) - 3rem)', overflowY: 'auto' }}>
+              <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-1" />
+              <h2 className="text-base font-black text-primary">Send a copy of this list</h2>
+              <p className="text-xs text-text-muted">They get their own list to keep and change. Only the items go (names, amounts, stores, notes), never what you spent, your ticks or who you share with. Your list is not touched.</p>
+              {acceptedUids.size === 0 ? (
+                <p className="text-[11px] text-text-muted px-1">Add friends from the Friends page to send lists to them, or use the link below.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {(Array.from(acceptedUids) as string[]).filter((uid) => uid !== user?.uid).map((uid) => {
+                    const on = sendUids.includes(uid);
+                    const f = usersByUid.get(uid);
+                    return (
+                      <button key={uid} type="button" onClick={() => setSendUids(on ? sendUids.filter((x) => x !== uid) : [...sendUids, uid])} className={clsx('pl-1.5 pr-3 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 max-w-full', on ? 'bg-[#0f7a8f] text-white border-[#0f7a8f]' : 'bg-white text-slate-600 border-slate-200')}>
+                        {f?.photoURL ? <img src={f.photoURL} alt="" className="w-5 h-5 rounded-full object-cover" referrerPolicy="no-referrer" /> : <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 text-[10px] flex items-center justify-center">{(f?.displayName || '?').slice(0, 1).toUpperCase()}</span>}
+                        <span className="truncate">{f?.displayName || 'Friend'}</span>
+                        {on && <span className="material-symbols-outlined text-[16px]">check</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <button type="button" onClick={handleSendToFriends} disabled={sending || sendUids.length === 0} className="w-full py-3 rounded-2xl text-white text-sm font-black bg-gradient-to-r from-orange-500 to-rose-500 disabled:opacity-50">
+                {sending ? 'Sending…' : sendUids.length > 0 ? `Send to ${sendUids.length} friend${sendUids.length === 1 ? '' : 's'}` : 'Choose a friend to send to'}
+              </button>
+              <div className="border-t border-slate-100 pt-3 space-y-2">
+                <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider px-1">Or share a link (WhatsApp, anyone)</p>
+                <button type="button" onClick={handleGetLink} disabled={sending} className="w-full py-3 rounded-2xl bg-[#0f7a8f] text-white text-sm font-black disabled:opacity-50 flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">link</span>{sentLink ? 'Share the link again' : 'Get a link to share'}
+                </button>
+                {sentLink && <button type="button" onClick={handleTurnOffLink} className="w-full py-1.5 text-xs font-black text-rose-600">Turn this link off</button>}
+                <p className="text-[10.5px] text-text-muted px-1">Anyone with the link can see the items and save their own copy. You can turn the link off.</p>
+              </div>
+              {sendNote && <p className="text-xs font-black text-[#0f7a8f] px-1">{sendNote}</p>}
+              <button type="button" onClick={() => setShowSend(false)} className="w-full py-2 text-xs font-black text-slate-500">Close</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showEdit && (

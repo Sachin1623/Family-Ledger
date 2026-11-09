@@ -44,6 +44,8 @@ function routeNotificationTap(data: Record<string, string> | undefined) {
     navigateTo(`/groups/${data.groupId}`);
   } else if (data.type === 'group_chat' && data.groupId) {
     openChatPopup({ kind: 'group', groupId: data.groupId });
+  } else if (data.type === 'shopping_share' && data.shareId) {
+    navigateTo(`/shopping-share/${data.shareId}`);
   } else if (data.type === 'weekly_summary') {
     navigateTo('/weekly-summary');
   } else if (data.type === 'friend_streak_invite' || data.type === 'friend_streak_started' || data.type === 'friend_streak_nudge') {

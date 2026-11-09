@@ -7184,6 +7184,188 @@ async function startServer() {
     for (const k of REACTION_KEYS) { counts[k] = Math.max(0, Number(st?.reactions?.[k]) || 0); total += counts[k]; }
     return { counts, total };
   };
+  // ---------- Shopping: sending a copy of a list to a friend, or by link ----------
+  // The copy is built here from the real list, so only the item names, amounts, stores and notes can leave it:
+  // never spend, budgets, who bought what, ticks, dates, or who the list is shared with. It is stored in `shoppingShares`
+  // (no client rule opens it; every read goes through these routes) and becomes a separate list when someone saves it.
+  const eventKeyOf = (name: string) => name.toLowerCase().replace(/\b(19|20)\d{2}\b/g, '').replace(/[^a-z0-9ऀ-ॿ]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'event';
+  const shareView = (id: string, s: any, uid: string, withItems: boolean) => ({
+    id,
+    title: s.title,
+    icon: s.icon || null,
+    category: s.category || 'misc',
+    eventName: s.eventName || null,
+    fromName: s.fromName || 'A friend',
+    fromMe: s.fromUid === uid,
+    linkOn: !!s.linkEnabled,
+    itemCount: Array.isArray(s.items) ? s.items.length : 0,
+    createdAt: s.createdAt,
+    ...(withItems ? { items: s.items || [] } : {}),
+  });
+  const canSeeShare = (s: any, uid: string) => s.fromUid === uid || (Array.isArray(s.toUids) && s.toUids.includes(uid)) || !!s.linkEnabled;
+
+  app.post('/api/shopping-share', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const uid = decoded.uid;
+    const listId = String(req.body?.listId || '').slice(0, 60);
+    if (!listId) return res.status(400).json({ error: 'Bad request.' });
+    try {
+      const listSnap = await db.collection('shoppingLists').doc(listId).get();
+      const list = listSnap.data();
+      if (!list) return res.status(404).json({ error: 'List not found.' });
+      let allowed = list.userId === uid || (Array.isArray(list.sharedWith) && list.sharedWith.includes(uid));
+      if (!allowed && list.groupId) allowed = !(await db.collection('members').where('groupId', '==', list.groupId).where('userId', '==', uid).limit(1).get()).empty;
+      if (!allowed) return res.status(403).json({ error: 'You cannot send this list.' });
+
+      // only accepted friends can be sent a copy directly
+      let toUids: string[] = [];
+      const wanted: string[] = Array.isArray(req.body?.toUids) ? req.body.toUids.map((u: any) => String(u)).slice(0, 20) : [];
+      if (wanted.length > 0) {
+        const friendsSnap = await db.collection('friendships').where('participants', 'array-contains', uid).where('status', '==', 'accepted').get();
+        const friendSet = new Set<string>(friendsSnap.docs.map((d) => (d.data().participants || []).find((u: string) => u !== uid)).filter(Boolean));
+        toUids = wanted.filter((u) => friendSet.has(u));
+      }
+      const wantsLink = !!req.body?.link;
+      if (toUids.length === 0 && !wantsLink) return res.status(400).json({ error: 'Choose a friend or ask for a link.' });
+
+      const itemsSnap = await db.collection('shoppingLists').doc(listId).collection('items').get();
+      const items = itemsSnap.docs
+        .map((d) => d.data())
+        .filter((i) => typeof i.text === 'string' && i.text.trim())
+        .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
+        .slice(0, 300)
+        .map((i) => ({
+          text: String(i.text).trim().slice(0, 200),
+          ...(typeof i.qty === 'number' ? { qty: i.qty } : {}),
+          ...(i.unit ? { unit: String(i.unit).slice(0, 12) } : {}),
+          ...(i.store ? { store: String(i.store).slice(0, 40) } : {}),
+          ...(i.notes ? { notes: String(i.notes).slice(0, 500) } : {}),
+        }));
+
+      const fromName = String((await db.collection('users').doc(uid).get()).data()?.displayName || decoded.name || 'A friend').slice(0, 60);
+      const ref = db.collection('shoppingShares').doc();
+      await ref.set({
+        fromUid: uid,
+        fromName,
+        title: String(list.title || 'Shopping list').slice(0, 150),
+        category: list.category || 'misc',
+        ...(list.icon ? { icon: list.icon } : {}),
+        ...(list.isEvent && list.eventName ? { eventName: String(list.eventName).slice(0, 60) } : {}),
+        items,
+        toUids,
+        linkEnabled: wantsLink,
+        doneBy: [],
+        saves: 0,
+        createdAt: new Date().toISOString(),
+      });
+
+      if (toUids.length > 0) {
+        collectPushTokens(db, toUids, 'notificationsEnabled')
+          .then((tokens) => sendPush(tokens, `${fromName} sent you a shopping list`, `${list.title} · ${items.length} item${items.length === 1 ? '' : 's'}. Tap to save your own copy.`, { type: 'shopping_share', shareId: ref.id }))
+          .catch((err) => console.error('shopping share push failed:', err));
+      }
+      return res.json({ id: ref.id, itemCount: items.length, sentTo: toUids.length });
+    } catch (error) {
+      console.error('shopping-share create error:', error);
+      return res.status(500).json({ error: 'Could not send the list.' });
+    }
+  });
+
+  app.get('/api/shopping-shares/inbox', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      const snap = await adminDb.collection('shoppingShares').where('toUids', 'array-contains', decoded.uid).limit(30).get();
+      const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString();
+      const shares = snap.docs
+        .filter((d) => !(d.data().doneBy || []).includes(decoded.uid) && String(d.data().createdAt || '') > cutoff)
+        .sort((a, b) => String(b.data().createdAt).localeCompare(String(a.data().createdAt)))
+        .map((d) => shareView(d.id, d.data(), decoded.uid, false));
+      return res.json({ shares });
+    } catch (error) {
+      console.error('shopping-share inbox error:', error);
+      return res.status(500).json({ error: 'Could not load.' });
+    }
+  });
+
+  app.get('/api/shopping-share/:id', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      const s = (await adminDb.collection('shoppingShares').doc(String(req.params.id).slice(0, 60)).get()).data();
+      if (!s || !canSeeShare(s, decoded.uid)) return res.status(404).json({ error: 'This list is no longer shared.' });
+      return res.json(shareView(String(req.params.id), s, decoded.uid, true));
+    } catch (error) {
+      console.error('shopping-share read error:', error);
+      return res.status(500).json({ error: 'Could not load.' });
+    }
+  });
+
+  // Save: a new, separate list for the caller. `asEvent` makes it one of their Events too.
+  app.post('/api/shopping-share/:id/save', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    try {
+      const shareRef = db.collection('shoppingShares').doc(String(req.params.id).slice(0, 60));
+      const s = (await shareRef.get()).data();
+      if (!s || !canSeeShare(s, decoded.uid)) return res.status(404).json({ error: 'This list is no longer shared.' });
+      const items: any[] = Array.isArray(s.items) ? s.items : [];
+      const year = new Date().getFullYear();
+      const eventName = s.eventName || (req.body?.asEvent ? String(s.title || 'Event').replace(/\b(19|20)\d{2}\b/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Event' : null);
+      const now = new Date().toISOString();
+      const listRef = db.collection('shoppingLists').doc();
+      const batch = db.batch();
+      batch.set(listRef, {
+        userId: decoded.uid,
+        title: eventName ? `${eventName} ${year}` : s.title,
+        description: eventName ? `${eventName} ${year}` : s.title,
+        category: s.category || 'misc',
+        ...(s.icon ? { icon: s.icon } : {}),
+        groupId: null,
+        scheduledAt: null,
+        completed: false,
+        itemCount: items.length,
+        doneCount: 0,
+        createdAt: now,
+        ...(eventName ? { isEvent: true, eventName, eventKey: eventKeyOf(eventName), eventYear: year } : {}),
+      });
+      const base = Date.now();
+      items.forEach((it, i) => {
+        batch.set(listRef.collection('items').doc(), { ...it, status: 'pending', addedBy: decoded.uid, createdAt: new Date(base + i).toISOString() });
+      });
+      batch.update(shareRef, { doneBy: admin.firestore.FieldValue.arrayUnion(decoded.uid), saves: admin.firestore.FieldValue.increment(1) });
+      await batch.commit();
+      return res.json({ listId: listRef.id });
+    } catch (error) {
+      console.error('shopping-share save error:', error);
+      return res.status(500).json({ error: 'Could not save the list.' });
+    }
+  });
+
+  // "Not now": takes it out of the person's inbox without saving. Sender: turn the link off.
+  app.post('/api/shopping-share/:id/dismiss', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      await adminDb.collection('shoppingShares').doc(String(req.params.id).slice(0, 60)).update({ doneBy: admin.firestore.FieldValue.arrayUnion(decoded.uid) });
+      return res.json({ ok: true });
+    } catch { return res.status(404).json({ error: 'Not found.' }); }
+  });
+  app.post('/api/shopping-share/:id/revoke', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      const ref = adminDb.collection('shoppingShares').doc(String(req.params.id).slice(0, 60));
+      const s = (await ref.get()).data();
+      if (!s || s.fromUid !== decoded.uid) return res.status(403).json({ error: 'Not yours.' });
+      await ref.update({ linkEnabled: false });
+      return res.json({ ok: true });
+    } catch { return res.status(500).json({ error: 'Could not turn the link off.' }); }
+  });
+
   app.get('/api/broadcast-reactions/:id', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });

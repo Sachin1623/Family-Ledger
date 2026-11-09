@@ -92,6 +92,8 @@ const PublicProfile = lazyScreen(() => import('./screens/PublicProfile'));
 const ProfileVisibility = lazyScreen(() => import('./screens/ProfileVisibility'));
 const ShoppingLists = lazyScreen(() => import('./screens/ShoppingLists'));
 const ShoppingListDetail = lazyScreen(() => import('./screens/ShoppingListDetail'));
+const ShoppingEventDetail = lazyScreen(() => import('./screens/ShoppingEventDetail'));
+const ShoppingShareImport = lazyScreen(() => import('./screens/ShoppingShareImport'));
 const ExpenseReminders = lazyScreen(() => import('./screens/ExpenseReminders'));
 const GoalsHub = lazyScreen(() => import('./screens/GoalsHub'));
 const GoalDetail = lazyScreen(() => import('./screens/GoalDetail'));
@@ -457,6 +459,8 @@ export default function App() {
               <Route path="/tools" element={<AuthenticatedLayout><Tools /></AuthenticatedLayout>} />
               <Route path="/shopping-lists" element={<AuthenticatedLayout><ShoppingLists /></AuthenticatedLayout>} />
               <Route path="/shopping-lists/:listId" element={<AuthenticatedLayout><ShoppingListDetail /></AuthenticatedLayout>} />
+              <Route path="/shopping-events/:eventKey" element={<AuthenticatedLayout><ShoppingEventDetail /></AuthenticatedLayout>} />
+              <Route path="/shopping-share/:shareId" element={<AuthenticatedLayout><ShoppingShareImport /></AuthenticatedLayout>} />
               <Route path="/expense-reminders" element={<AuthenticatedLayout><ExpenseReminders /></AuthenticatedLayout>} />
               <Route path="/reminders" element={<Navigate to="/tools?category=productivity" replace />} />
               <Route path="/goals" element={<AuthenticatedLayout><GoalsHub /></AuthenticatedLayout>} />

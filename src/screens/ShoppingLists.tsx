@@ -15,6 +15,7 @@ import { usePageFabAction } from '../context/FabActionContext';
 import { backfillHistory, historyKey, suggestFromHistory } from '../lib/shoppingHistory';
 import ShoppingRoutineSheet from '../components/ShoppingRoutineSheet';
 import { getRoutines, migrateLegacyShopping, syncShoppingReminders } from '../lib/shoppingRoutine';
+import { dismissShare, getShareInbox, groupEvents, type ShareSummary } from '../lib/shoppingEvents';
 
 // Local YYYY-MM-DD, and a day offset from it (same helpers the to-do sheet uses)
 const toDateOnly = (d: Date) => {
@@ -106,6 +107,16 @@ export default function ShoppingLists() {
   myListsValue?.docs.forEach((d) => listsById.set(d.id, { id: d.id, ...d.data() }));
   sharedListsValue?.docs.forEach((d) => listsById.set(d.id, { id: d.id, ...d.data() }));
   const lists = Array.from(listsById.values()).sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const events = useMemo(() => groupEvents(lists), [lists]);
+  // lists friends sent as a copy, read once per visit
+  const [inbox, setInbox] = useState<ShareSummary[]>([]);
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    getShareInbox().then((r) => { if (!cancelled) setInbox(r.shares); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.uid]);
 
   // A new list starts shared with the group the person chose last time ("Just me" if they chose that), once their groups are loaded.
   useEffect(() => {
@@ -200,6 +211,7 @@ export default function ShoppingLists() {
                 </span>
               ) : friendCount > 0 ? <span>👥 {list.userId === user?.uid ? `${friendCount} friend${friendCount === 1 ? '' : 's'}` : `Shared by ${creator?.displayName || 'a friend'}`}</span> : <span>🔒 {t('shoppingLists.personal')}</span>}
               {group && list.userId !== user?.uid && <span className="truncate">· {creator?.displayName || t('todo.aMember')}</span>}
+              {list.isEvent && <span className="inline-flex items-center rounded-md bg-orange-100 text-orange-800 px-1.5 py-px text-[10px] font-black shrink-0">🔁 Event</span>}
             </p>
           </div>
           <span className="material-symbols-outlined text-slate-300">chevron_right</span>
@@ -382,8 +394,49 @@ export default function ShoppingLists() {
           <span className="material-symbols-outlined text-slate-300">chevron_right</span>
         </button>
 
+        {/* lists friends sent as a copy: open one to see what is inside and save it as your own */}
+        {inbox.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="px-1 text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">Sent to you</h2>
+            {inbox.map((s) => (
+              <div key={s.id} className="rounded-2xl bg-white shadow-[0_2px_8px_rgba(30,58,95,0.09)] p-3 flex items-center gap-3">
+                <button type="button" onClick={() => navigate(`/shopping-share/${s.id}`)} className="flex items-center gap-3 min-w-0 flex-1 text-left active:opacity-70">
+                  <span className="w-11 h-11 rounded-xl bg-sky-50 flex items-center justify-center text-[22px] shrink-0">{s.icon || listIconGuess(s.title) || '🛒'}</span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-black text-primary truncate">{s.title}</span>
+                    <span className="block text-[11px] text-text-muted truncate">From {s.fromName} · {s.itemCount} item{s.itemCount === 1 ? '' : 's'}</span>
+                  </span>
+                </button>
+                <button type="button" onClick={() => { setInbox((cur) => cur.filter((x) => x.id !== s.id)); dismissShare(s.id).catch(() => {}); }} className="shrink-0 text-[11px] font-black text-slate-500 px-2 py-1 active:opacity-60">Not now</button>
+                <button type="button" onClick={() => navigate(`/shopping-share/${s.id}`)} className="shrink-0 rounded-xl bg-[#0f7a8f] text-white text-xs font-black px-3 py-2 active:scale-95">View</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* yearly events (Diwali, Holi...): kept here, never lost among the finished lists */}
+        {events.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="px-1 text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">My events</h2>
+            <div className="flex gap-2.5 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+              {events.map((e) => {
+                const l = e.latest;
+                const thisYearDone = e.lists.some((x: any) => (Number(x.eventYear) || Number((x.createdAt || '').slice(0, 4))) === new Date().getFullYear());
+                return (
+                  <button key={e.key} type="button" onClick={() => navigate(`/shopping-events/${e.key}`)} className="shrink-0 w-40 rounded-2xl p-3 text-left text-white shadow-md active:scale-[0.98]" style={{ background: 'linear-gradient(140deg,#9a3412,#ea580c 60%,#f59e0b)' }}>
+                    <span className="text-[26px] leading-none">{e.icon || listIconGuess(e.name) || '🛍️'}</span>
+                    <span className="block text-sm font-black mt-1.5 truncate">{e.name}</span>
+                    <span className="block text-[10.5px] text-white/90">{e.lists.length} {e.lists.length === 1 ? 'year' : 'years'} · {l.itemCount ?? 0} items</span>
+                    <span className="mt-1.5 inline-block rounded-md bg-white/25 px-1.5 py-px text-[10px] font-black">{thisYearDone ? 'This year: started' : 'Start this year'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <section className="space-y-4">
-          {myLoading && <div className="space-y-3" aria-hidden><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /></div>}
+          {myLoading &&<div className="space-y-3" aria-hidden><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /><div className="h-16 rounded-2xl bg-border-subtle/50 animate-pulse" /></div>}
           {myError && (
             <p className="text-sm text-error px-1">{t('shoppingLists.couldntLoad', { error: (myError as any).code || myError.message })}</p>
           )}
