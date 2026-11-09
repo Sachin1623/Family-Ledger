@@ -2,6 +2,8 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { ShareBrandBadge } from './ShareBrandBadge';
 import BroadcastVideo from './BroadcastVideo';
+import BroadcastReactions from './BroadcastReactions';
+import BroadcastShare from './BroadcastShare';
 import type { BroadcastVia } from '../lib/broadcastTrack';
 
 // The broadcast window itself (title, message, video, pictures, follow buttons, Close). Shared by
@@ -29,14 +31,21 @@ function friendlyLabel(url: string): string {
   return url.replace(/^https?:\/\/(www\.)?/, '');
 }
 
-export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel = 'Close', navigation }: {
+export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel = 'Close', navigation, test = false, reactAfterClose = false }: {
   broadcast: BroadcastContent;
   onClose: () => void;
   openLink: (url: string, via?: BroadcastVia) => void;
   closeLabel?: string;
   /** Previous / Next row, shown above the Close button (the watch-again window uses it). */
   navigation?: React.ReactNode;
+  /** A test send: marked as such, and reactions are not counted. */
+  test?: boolean;
+  /** The popup: pressing Close first asks how the person feels about this update, and the card closes once they have reacted (or skipped). */
+  reactAfterClose?: boolean;
 }) {
+  const [step, setStep] = React.useState<'read' | 'react'>('read');
+  const askFirst = reactAfterClose && !!broadcast.id;
+  const handleCloseButton = () => (askFirst ? setStep('react') : onClose());
   // The message with its links turned into tappable text.
   const renderMessage = (text: string) =>
     text.split(URL_PATTERN).map((part, i) => {
@@ -58,6 +67,30 @@ export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel
   const instagramUrl = messageUrls.find((u) => u.includes('instagram.com'));
   const facebookUrl = messageUrls.find((u) => u.includes('facebook.com'));
 
+  // Step two of the popup: the same title, quoted, so it is plain that the reaction is to this message.
+  if (askFirst && step === 'react') {
+    const gist = (broadcast.message || '').replace(URL_PATTERN, '').replace(/\s+/g, ' ').trim();
+    return (
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+      >
+        <div className="p-5 space-y-4">
+          <div className="text-center space-y-1">
+            <p className="text-[11px] font-black uppercase tracking-wider text-text-muted">You just read this update</p>
+            <h2 className="text-lg font-black text-primary break-words">{broadcast.title || 'FamilyLedger'}</h2>
+            {gist && <p className="text-xs text-text-muted line-clamp-2 break-words">{gist}</p>}
+          </div>
+          <p className="text-center text-base font-black text-on-surface">How do you feel about this update?</p>
+          <BroadcastReactions broadcastId={broadcast.id!} preview={test} large onPicked={onClose} />
+          <button type="button" onClick={onClose} className="w-full py-2 text-sm font-bold text-text-muted underline underline-offset-2 active:opacity-60">Skip</button>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -70,6 +103,7 @@ export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel
           <span className="material-symbols-outlined">campaign</span>
         </div>
         <h2 className="text-base font-black text-primary min-w-0 break-words">{broadcast.title || 'FamilyLedger'}</h2>
+        {test && <span className="shrink-0 ml-auto rounded-full bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-wider px-2 py-1">Test</span>}
       </div>
 
       <div className="overflow-y-auto flex-1 px-5 space-y-4">
@@ -119,9 +153,11 @@ export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel
       </div>
 
       <div className="p-5 pt-4 shrink-0 space-y-3">
+        {broadcast.id && !askFirst && <BroadcastReactions broadcastId={broadcast.id} preview={test} />}
+        <BroadcastShare broadcast={broadcast} />
         {navigation}
         <button
-          onClick={onClose}
+          onClick={handleCloseButton}
           className="w-full py-3.5 bg-primary text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
         >
           {closeLabel}

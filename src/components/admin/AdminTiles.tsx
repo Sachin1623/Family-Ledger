@@ -105,6 +105,117 @@ export function StatCard({ label, value, series, level, weekSeries, format }: {
   );
 }
 
+// ---- Cost trend: the cost of each finished day (or week) as bars. Finished days are kept on the phone and never fetched again; once an Indian day
+// ends, only the days from two before the newest saved one are asked for (the latest days can still be adjusted by billing), and merged in.
+type CostDay = { date: string; net: number };
+const TREND_KEY = 'fl_admin_cost_trend';
+const istDay = (ms: number) => new Date(ms + 5.5 * 3600_000).toISOString().slice(0, 10);
+const shiftDay = (d: string, by: number) => new Date(Date.parse(`${d}T00:00:00Z`) + by * 86_400_000).toISOString().slice(0, 10);
+const mondayOf = (d: string) => shiftDay(d, -((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7));
+
+function readTrendCache(): CostDay[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TREND_KEY) || '[]');
+    return Array.isArray(raw) ? raw.filter((x) => x && typeof x.date === 'string' && typeof x.net === 'number') : [];
+  } catch { return []; }
+}
+
+function useCostTrend(enabled: boolean) {
+  const [days, setDays] = useRememberedState<CostDay[]>('adminTiles:costTrend', readTrendCache());
+  const [loading, setLoading] = React.useState(false);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const refresh = () => {
+      const have = readTrendCache();
+      const last = have.length ? have[have.length - 1].date : null;
+      const yesterday = istDay(Date.now() - 86_400_000);
+      if (last && last >= yesterday) return; // everything up to yesterday is already on the phone
+      setLoading(true);
+      adminGet(`/api/admin/cloud-cost/trend${last ? `?since=${shiftDay(last, -2)}` : ''}`)
+        .then((r) => {
+          if (cancelled || !Array.isArray(r?.days)) return;
+          const byDate = new Map(have.map((d) => [d.date, d.net]));
+          r.days.forEach((d: CostDay) => byDate.set(d.date, d.net));
+          const merged = Array.from(byDate, ([date, net]) => ({ date, net })).sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-400);
+          try { localStorage.setItem(TREND_KEY, JSON.stringify(merged)); } catch { /* storage may be blocked: the chart still shows */ }
+          setDays(merged);
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false); });
+    };
+    refresh();
+    // the app can stay open past midnight: check again when it comes back to the front
+    const onVisible = () => document.visibilityState === 'visible' && refresh();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
+    // the setter is stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+  return { days, loading };
+}
+
+function CostTrend({ currency }: { currency?: string }) {
+  const [mode, setMode] = React.useState<'daily' | 'weekly'>('daily');
+  const [picked, setPicked] = React.useState<number | null>(null);
+  const { days, loading } = useCostTrend(true);
+
+  // a bar for every day (a day with no cost is a zero bar), or for every week from Monday
+  const bars = React.useMemo(() => {
+    if (days.length === 0) return [] as { label: string; short: string; net: number }[];
+    const byDate = new Map(days.map((d) => [d.date, d.net]));
+    const last = days[days.length - 1].date;
+    const out: { label: string; short: string; net: number }[] = [];
+    if (mode === 'daily') {
+      for (let i = 29; i >= 0; i--) {
+        const d = shiftDay(last, -i);
+        out.push({ label: new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }), short: d.slice(8), net: byDate.get(d) || 0 });
+      }
+    } else {
+      const weeks = new Map<string, number>();
+      for (let i = 0; i < 84; i++) { const d = shiftDay(last, -i); weeks.set(mondayOf(d), (weeks.get(mondayOf(d)) || 0) + (byDate.get(d) || 0)); }
+      Array.from(weeks.keys()).sort().slice(-12).forEach((m) => {
+        out.push({ label: `Week of ${new Date(`${m}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })}${m === mondayOf(last) ? ' (so far)' : ''}`, short: m.slice(8), net: weeks.get(m) || 0 });
+      });
+    }
+    return out;
+  }, [days, mode]);
+
+  if (days.length === 0) return <p className="text-[11px] text-text-muted">{loading ? 'Loading the cost trend…' : 'No daily costs recorded yet.'}</p>;
+  const w = 300, h = 96, pad = 4;
+  const max = Math.max(...bars.map((b) => b.net), 0.01);
+  const avg = bars.reduce((s, b) => s + b.net, 0) / Math.max(1, bars.length);
+  const sel = picked ?? bars.length - 1;
+  const slot = (w - pad * 2) / bars.length;
+  const y = (v: number) => h - 14 - (v / max) * (h - 26);
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-text-muted min-w-0 truncate"><b className="text-primary">{bars[sel]?.label}</b> · <b className="text-primary">{formatMoney(bars[sel]?.net || 0, currency)}</b></p>
+        <div className="shrink-0 flex rounded-lg bg-surface p-0.5 text-[11px] font-black">
+          {(['daily', 'weekly'] as const).map((m) => (
+            <button key={m} type="button" onClick={() => { setMode(m); setPicked(null); }} className={clsx('px-2.5 py-1 rounded-md', mode === m ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}>{m === 'daily' ? 'Daily' : 'Weekly'}</button>
+          ))}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-24" role="img" aria-label={`${mode} cloud cost`}>
+        {[0, 0.5, 1].map((f) => <line key={f} x1={pad} x2={w - pad} y1={y(max * f)} y2={y(max * f)} stroke="#e2e8f0" strokeWidth="0.6" />)}
+        <line x1={pad} x2={w - pad} y1={y(avg)} y2={y(avg)} stroke="#f59e0b" strokeWidth="0.8" strokeDasharray="3 2" />
+        {bars.map((b, i) => (
+          <g key={i} onClick={() => setPicked(i)} className="cursor-pointer">
+            <rect x={pad + i * slot} y={0} width={slot} height={h} fill="transparent" />
+            <rect x={pad + i * slot + slot * 0.15} y={y(b.net)} width={slot * 0.7} height={Math.max(1, h - 14 - y(b.net))} rx={1.5} fill={i === sel ? '#0f4761' : '#7fb3c8'} />
+          </g>
+        ))}
+        <text x={pad} y={h - 2} fontSize="7" fill="#64748b">{bars[0]?.short}</text>
+        <text x={w - pad} y={h - 2} fontSize="7" fill="#64748b" textAnchor="end">{bars[bars.length - 1]?.short}</text>
+        <text x={w - pad} y={y(avg) - 2} fontSize="6.5" fill="#b45309" textAnchor="end">avg {formatMoney(avg, currency)}</text>
+      </svg>
+      <p className="text-[10px] text-text-muted">Finished days only, up to yesterday. Tap a bar for its figure. New days are added after midnight (Indian time).</p>
+    </div>
+  );
+}
+
 // Real spend, read from the BigQuery Billing Export dataset (see server.ts's /api/admin/cloud-cost). `tableReady`/`hasData` gate a "still setting up" state
 // instead of showing a blank or fake number; the Billing Console link stays as a fallback for the full itemized report.
 export function CloudCostCard({ cloudCost }: { cloudCost: CloudCost | null }) {
@@ -152,6 +263,7 @@ export function CloudCostCard({ cloudCost }: { cloudCost: CloudCost | null }) {
                   </div>
                 </div>
               )}
+              {cloudCost?.tableReady && cloudCost.hasData && <CostTrend currency={cloudCost.currency} />}
             </div>
   );
 }

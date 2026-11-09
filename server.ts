@@ -4752,6 +4752,31 @@ async function startServer() {
     }
   });
 
+  // Cost per finished Indian day, for the trend chart on the admin cost card. `since` (YYYY-MM-DD) asks only for the days from then on, so the app keeps
+  // the older days on the phone and fetches just what is new once a day ends. Today is never included: it is still filling up.
+  app.get('/api/admin/cloud-cost/trend', adminCache(15 * 60_000), async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded) return;
+    try {
+      const tableName = await findBillingExportTable();
+      if (!tableName) return res.json({ tableReady: false });
+      const since = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.since || '')) ? String(req.query.since) : null;
+      const net = `cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) AS c), 0)`;
+      const [rows] = await bigquery.query({
+        query: `SELECT CAST(DATE(usage_start_time, 'Asia/Kolkata') AS STRING) AS day, currency, SUM(${net}) AS net
+                FROM \`familyledgerta.billing_export.${tableName}\`
+                WHERE DATE(usage_start_time, 'Asia/Kolkata') < CURRENT_DATE('Asia/Kolkata')
+                  AND DATE(usage_start_time, 'Asia/Kolkata') >= ${since ? 'DATE(@since)' : `DATE_SUB(CURRENT_DATE('Asia/Kolkata'), INTERVAL 120 DAY)`}
+                GROUP BY day, currency ORDER BY day`,
+        ...(since ? { params: { since } } : {}),
+      });
+      return res.json({ tableReady: true, currency: rows[0]?.currency || 'INR', days: rows.map((r: any) => ({ date: String(r.day), net: Number(r.net) || 0 })) });
+    } catch (error) {
+      console.error('admin/cloud-cost/trend error:', error);
+      return res.status(500).json({ error: 'Unable to load the cost trend.' });
+    }
+  });
+
   // Breakdown of this month's Google Cloud cost by service (Cloud Run, Firestore, Vertex AI ...) and a daily series, from the billing export.
   app.get('/api/admin/cloud-cost/breakdown', adminCache(15 * 60_000), async (req, res) => {
     const decoded = await requireAdmin(req, res);
@@ -7146,6 +7171,75 @@ async function startServer() {
     }
   });
 
+  // ---- Reactions on a broadcast: one of four (like, love, party, think) per person, which they can change later. broadcastStats/{id}.reactions
+  // holds the totals, broadcastStats/{id}/people/{uid}.reaction what each person picked. The totals are served from a one-minute memory
+  // cache, so thousands of people opening the same broadcast read it once a minute, not once each.
+  const REACTION_KEYS = ['like', 'love', 'party', 'think'] as const;
+  const reactionHits = new Map<string, { n: number; resetAt: number }>();
+  const reactionCounts = new Map<string, { at: number; counts: Record<string, number>; total: number }>();
+  const reactionSentOk = new Map<string, number>(); // broadcast ids already confirmed as sent broadcasts
+  const countsFrom = (st: any) => {
+    const counts: Record<string, number> = {};
+    let total = 0;
+    for (const k of REACTION_KEYS) { counts[k] = Math.max(0, Number(st?.reactions?.[k]) || 0); total += counts[k]; }
+    return { counts, total };
+  };
+  app.get('/api/broadcast-reactions/:id', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const id = String(req.params.id || '').slice(0, 60);
+    if (!id) return res.status(400).json({ error: 'Bad request.' });
+    try {
+      let cached = reactionCounts.get(id);
+      const statsRef = adminDb.collection('broadcastStats').doc(id);
+      if (!cached || Date.now() - cached.at > 60_000) {
+        cached = { at: Date.now(), ...countsFrom((await statsRef.get()).data()) };
+        reactionCounts.set(id, cached);
+      }
+      const mine = (await statsRef.collection('people').doc(decoded.uid).get()).data()?.reaction;
+      return res.json({ counts: cached.counts, total: cached.total, mine: REACTION_KEYS.includes(mine) ? mine : null });
+    } catch (error) {
+      console.error('broadcast reactions get error:', error);
+      return res.status(500).json({ error: 'Unable to load reactions.' });
+    }
+  });
+  app.post('/api/broadcast-reactions/:id', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const id = String(req.params.id || '').slice(0, 60);
+    const reaction = String(req.body?.reaction || '');
+    if (!id || !(REACTION_KEYS as readonly string[]).includes(reaction)) return res.status(400).json({ error: 'Bad request.' });
+    const now = Date.now();
+    const hit = reactionHits.get(decoded.uid);
+    if (!hit || hit.resetAt < now) reactionHits.set(decoded.uid, { n: 1, resetAt: now + 60_000 });
+    else if (++hit.n > 20) return res.status(429).json({ error: 'Slow down a little.' });
+    const db = adminDb;
+    try {
+      if (!reactionSentOk.has(id)) {
+        const b = (await db.collection('broadcasts').doc(id).get()).data();
+        if (!b || b.status !== 'sent') return res.status(404).json({ error: 'Not found.' });
+        reactionSentOk.set(id, now);
+      }
+      const statsRef = db.collection('broadcastStats').doc(id);
+      const personRef = statsRef.collection('people').doc(decoded.uid);
+      await db.runTransaction(async (tx) => {
+        const before = (await tx.get(personRef)).data()?.reaction;
+        if (before === reaction) return;
+        const inc = admin.firestore.FieldValue.increment;
+        const reactions: Record<string, any> = { [reaction]: inc(1) };
+        if ((REACTION_KEYS as readonly string[]).includes(before)) reactions[before] = inc(-1);
+        tx.set(statsRef, { reactions, ...(before ? {} : { reactors: inc(1) }), updatedAt: new Date().toISOString() }, { merge: true });
+        tx.set(personRef, { reaction, reactedAt: new Date().toISOString() }, { merge: true });
+      });
+      const fresh = { at: Date.now(), ...countsFrom((await statsRef.get()).data()) };
+      reactionCounts.set(id, fresh);
+      return res.json({ counts: fresh.counts, total: fresh.total, mine: reaction });
+    } catch (error) {
+      console.error('broadcast reactions post error:', error);
+      return res.status(500).json({ error: 'Unable to save your reaction.' });
+    }
+  });
+
   // The last 10 sent broadcasts, for the "watch again" window in the app. The pictures (large data
   // addresses) are left out of the list and fetched one at a time below, so opening the window stays light.
   // No composite index: newest 30 by date, then the sent ones are kept in memory (scheduled/canceled are skipped).
@@ -7165,6 +7259,21 @@ async function startServer() {
     } catch (error) {
       console.error('broadcasts/recent error:', error);
       return res.status(500).json({ error: 'Unable to load broadcasts.' });
+    }
+  });
+
+  // A test broadcast, for the person it was sent to (their user doc carries its id; the broadcast lists them in testUids).
+  app.get('/api/broadcasts/test/:id', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    try {
+      const snap = await adminDb.collection('broadcasts').doc(req.params.id).get();
+      const x = snap.data();
+      if (!snap.exists || !x || x.status !== 'test' || !Array.isArray(x.testUids) || !x.testUids.includes(decoded.uid)) return res.status(404).json({ error: 'Not found.' });
+      return res.json({ id: snap.id, title: x.title || 'FamilyLedger', message: x.message || '', images: x.images || [], imageLinks: x.imageLinks || [], videoId: x.videoId || null, videoShort: !!x.videoShort });
+    } catch (error) {
+      console.error('broadcasts/test error:', error);
+      return res.status(500).json({ error: 'Unable to load broadcast.' });
     }
   });
 
@@ -7205,6 +7314,8 @@ async function startServer() {
           closes: st.closes || 0,
           clicks: st.clicks || 0,
           clickers: st.clickers || 0,
+          reactors: st.reactors || 0,
+          reactions: countsFrom(st).counts,
           byTarget: st.byTarget || {},
           byVia: st.byVia || {},
         };
@@ -7293,6 +7404,28 @@ async function startServer() {
     try {
       const createdBy = decoded.email || decoded.uid;
       const broadcastId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // A test send: shown only to the chosen people (the admin and/or their accepted friends), never written to app_config/broadcast, and kept
+      // out of "watch again" and the results because its status is 'test', not 'sent'. The chosen person's own user doc carries the id, which
+      // BroadcastBanner picks up (see /api/broadcasts/test/:id).
+      const testUidsRaw: string[] = Array.isArray(req.body?.testUids) ? Array.from(new Set<string>(req.body.testUids.filter((u: unknown): u is string => typeof u === 'string' && u.length > 0 && u.length < 140))).slice(0, 20) : [];
+      if (testUidsRaw.length > 0) {
+        const friendSnap = await db.collection('friendships').where('participants', 'array-contains', decoded.uid).get();
+        const allowed = new Set<string>([decoded.uid]);
+        friendSnap.docs.forEach((d) => { const x = d.data(); if (x.status === 'accepted') (x.participants || []).forEach((u: string) => allowed.add(u)); });
+        const testUids = testUidsRaw.filter((u) => allowed.has(u));
+        if (testUids.length === 0) return res.status(400).json({ error: 'Pick yourself or one of your friends.' });
+        await db.collection('broadcasts').doc(broadcastId).set({
+          title, message, images, imageLinks, ...videoFields,
+          status: 'test', testUids, createdAt: new Date().toISOString(), createdBy,
+        });
+        let shown = 0;
+        // update(), not set(merge): a missing user doc must not be created with only this field
+        await Promise.all(testUids.map((u) => db.collection('users').doc(u).update({ testBroadcastId: broadcastId }).then(() => { shown += 1; }).catch(() => {})));
+        const tokens = await collectPushTokens(db, testUids, 'notificationsEnabled');
+        const pushSent = await sendPush(tokens, `[Test] ${title}`, message, { type: 'broadcast', broadcastId });
+        return res.json({ ok: true, broadcastId, test: true, recipientCount: shown, pushSent });
+      }
 
       if (scheduledFor && new Date(scheduledFor).getTime() > Date.now()) {
         await db.collection('broadcasts').doc(broadcastId).set({

@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { BROADCAST_TEMPLATES } from '../../lib/broadcastTemplates';
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost, adminDelete } from '../../lib/adminApi';
+import { useAuth } from '../../context/AuthContext';
+import { useFriendships } from '../../lib/useFriendships';
 import { fmtDateTime, isoToLocalInput, localInputToIso, adminTzLabel } from '../../lib/adminTime';
 
 const MAX_IMAGES = 5;
@@ -15,7 +17,8 @@ interface BroadcastRecord {
   imageLinks?: string[];
   videoId?: string;
   videoShort?: boolean;
-  status: 'sent' | 'scheduled' | 'canceled';
+  status: 'sent' | 'scheduled' | 'canceled' | 'test';
+  testUids?: string[];
   createdAt: string;
   createdBy?: string;
   scheduledFor?: string | null;
@@ -75,9 +78,15 @@ const STATUS_BADGE: Record<BroadcastRecord['status'], string> = {
   sent: 'bg-success/10 text-success',
   scheduled: 'bg-primary/10 text-primary',
   canceled: 'bg-error/10 text-error',
+  test: 'bg-amber-100 text-amber-800',
 };
 
 export default function AdminBroadcast() {
+  const { user } = useAuth();
+  const { acceptedUids, usersByUid } = useFriendships(user?.uid);
+  // A test send goes only to the people picked here (you and/or your friends), is not counted, and stays out of "watch again".
+  const [testMode, setTestMode] = useState(false);
+  const [testUids, setTestUids] = useState<string[]>([]);
   const [title, setTitle] = useState('FamilyLedger');
   const [message, setMessage] = useState('');
   const [images, setImages] = useState<string[]>([]);
@@ -251,13 +260,17 @@ export default function AdminBroadcast() {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
-    const scheduledFor = scheduleEnabled && scheduledForLocal ? localInputToIso(scheduledForLocal) : null;
-    if (scheduleEnabled && (!scheduledFor || new Date(scheduledFor).getTime() <= Date.now())) {
+    const testing = testMode && !editingId;
+    if (testing && testUids.length === 0) { setError('Pick yourself or a friend to send the test to.'); return; }
+    const scheduledFor = !testing && scheduleEnabled && scheduledForLocal ? localInputToIso(scheduledForLocal) : null;
+    if (!testing && scheduleEnabled && (!scheduledFor || new Date(scheduledFor).getTime() <= Date.now())) {
       setError('Pick a future date/time to schedule for.');
       return;
     }
 
-    const confirmText = editingId
+    const confirmText = testing
+      ? `Send this as a test to ${testUids.length} ${testUids.length === 1 ? 'person' : 'people'}? Nobody else will see it.`
+      : editingId
       ? `Update this scheduled broadcast for ${fmtDateTime(scheduledFor!)}?`
       : scheduleEnabled
       ? `Schedule this message to send to every user at ${fmtDateTime(scheduledFor!)}?`
@@ -271,8 +284,10 @@ export default function AdminBroadcast() {
       if (editingId) {
         await adminPost(`/api/admin/broadcast/${editingId}`, { title, message: message.trim(), images, imageLinks, videoUrl: videoUrl.trim(), scheduledFor });
       } else {
-        const data = await adminPost('/api/admin/broadcast', { title, message: message.trim(), images, imageLinks, videoUrl: videoUrl.trim(), scheduledFor });
-        if (!scheduledFor) {
+        const data = await adminPost('/api/admin/broadcast', { title, message: message.trim(), images, imageLinks, videoUrl: videoUrl.trim(), scheduledFor, ...(testing ? { testUids } : {}) });
+        if (testing) {
+          setResult({ recipientCount: data.recipientCount, pushSent: data.pushSent, test: true } as any);
+        } else if (!scheduledFor) {
           setResult({ recipientCount: data.recipientCount, pushSent: data.pushSent });
           setCurrent({ id: data.broadcastId, title, message: message.trim(), images, createdAt: new Date().toISOString() });
         }
@@ -286,7 +301,9 @@ export default function AdminBroadcast() {
     }
   };
 
-  const submitLabel = sending
+  const submitLabel = testMode && !editingId
+    ? sending ? 'Sending test…' : `Send test to ${testUids.length || 'selected'} ${testUids.length === 1 ? 'person' : 'people'}`
+    : sending
     ? editingId
       ? 'Updating…'
       : scheduleEnabled
@@ -455,7 +472,35 @@ export default function AdminBroadcast() {
               <p className="text-[10px] text-text-muted px-1">It plays right inside the message. People tap play; it needs an internet connection.</p>
             </div>
 
-            <div className="space-y-2 border-t border-border-subtle pt-4">
+            {!editingId && (
+              <div className="space-y-2 border-t border-border-subtle pt-4">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" checked={testMode} onChange={(e) => { setTestMode(e.target.checked); if (e.target.checked && testUids.length === 0 && user) setTestUids([user.uid]); }} className="w-4 h-4 accent-primary" />
+                  <span className="text-sm font-bold text-on-surface">Send a test first (only the people I pick)</span>
+                </label>
+                {testMode && (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {[user?.uid, ...Array.from(acceptedUids as Set<string>)].filter((u): u is string => !!u).map((uid) => {
+                        const on = testUids.includes(uid);
+                        const me = uid === user?.uid;
+                        const f = usersByUid.get(uid);
+                        return (
+                          <button key={uid} type="button" onClick={() => setTestUids(on ? testUids.filter((x) => x !== uid) : [...testUids, uid])} className={`pl-1.5 pr-3 py-1.5 rounded-xl text-xs font-black border flex items-center gap-1.5 max-w-full ${on ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`}>
+                            {!me && f?.photoURL ? <img src={f.photoURL} alt="" className="w-5 h-5 rounded-full object-cover" referrerPolicy="no-referrer" /> : <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center">{me ? '★' : (f?.displayName || '?').slice(0, 1).toUpperCase()}</span>}
+                            <span className="truncate">{me ? 'Me' : f?.displayName || 'Friend'}</span>
+                            {on && <span className="material-symbols-outlined text-[16px]">check</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-text-muted">They get a push and see the message once with a "Test" label. It is not counted in results, not in "Watch again", and nobody else sees it. Reactions on it do not count.</p>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className={`space-y-2 border-t border-border-subtle pt-4 ${testMode && !editingId ? 'hidden' : ''}`}>
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -483,7 +528,7 @@ export default function AdminBroadcast() {
             {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200">{error}</div>}
             {result && (
               <div className="p-3 bg-success/10 text-success text-sm rounded-xl border border-success/20">
-                Sent to {result.recipientCount} users ({result.pushSent} push notifications delivered).
+                {(result as any).test ? `Test sent to ${result.recipientCount} ${result.recipientCount === 1 ? 'person' : 'people'} (${result.pushSent} push notifications delivered).` : `Sent to ${result.recipientCount} users (${result.pushSent} push notifications delivered).`}
               </div>
             )}
             <button
@@ -519,6 +564,7 @@ export default function AdminBroadcast() {
                 <p className="text-[11px] text-text-muted">
                   {b.status === 'scheduled' && b.scheduledFor && <>Scheduled for {fmtDateTime(b.scheduledFor)}</>}
                   {b.status === 'sent' && b.sentAt && <>Sent {fmtDateTime(b.sentAt)} · {b.recipientCount ?? 0} recipients</>}
+                  {b.status === 'test' && <>Test sent {fmtDateTime(b.createdAt)} · {b.testUids?.length ?? 0} {(b.testUids?.length ?? 0) === 1 ? 'person' : 'people'}</>}
                   {b.status === 'canceled' && b.canceledAt && <>Canceled {fmtDateTime(b.canceledAt)}</>}
                 </p>
                 <div className="flex gap-2 pt-1">

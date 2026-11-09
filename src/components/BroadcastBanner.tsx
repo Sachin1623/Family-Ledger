@@ -1,10 +1,11 @@
 import React from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
+import { deleteField, doc, updateDoc } from 'firebase/firestore';
 import { useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
+import { auth } from '../lib/firebase';
 import BroadcastCard, { OWN_HOST } from './BroadcastCard';
 import { targetOf, trackBroadcast, type BroadcastVia } from '../lib/broadcastTrack';
 
@@ -27,8 +28,26 @@ export default function BroadcastBanner() {
   const [broadcastDoc] = useDocument(doc(db, 'app_config', 'broadcast'));
   const broadcast = broadcastDoc?.data() as { id?: string; title?: string; message?: string; images?: string[]; imageLinks?: string[]; videoId?: string; videoShort?: boolean } | undefined;
 
+  // A test send addressed to this person: the id sits on their user doc, the content is fetched once. It shows ahead of any real broadcast, is
+  // never counted, and closing it only clears that id (it must not touch lastSeenBroadcastId, or the real broadcast would show again).
+  const testId: string | undefined = (profile as any)?.testBroadcastId;
+  const [testBroadcast, setTestBroadcast] = React.useState<any | null>(null);
+  React.useEffect(() => {
+    if (!testId || !user) { setTestBroadcast(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch(`/api/broadcasts/test/${encodeURIComponent(testId)}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok && !cancelled) setTestBroadcast(await res.json());
+      } catch { /* shown next time the app opens */ }
+    })();
+    return () => { cancelled = true; };
+  }, [testId, user?.uid]);
+
   const shouldShow =
     !!broadcast?.id && !!profile && profile.lastSeenBroadcastId !== broadcast.id && !dismissed;
+  const showTest = !!testBroadcast && testBroadcast.id === testId;
 
   // reported once per broadcast and phone: it was shown
   const viewedRef = React.useRef<string | null>(null);
@@ -38,6 +57,11 @@ export default function BroadcastBanner() {
       trackBroadcast(broadcast.id, 'view');
     }
   }, [shouldShow, broadcast?.id]);
+
+  const closeTest = () => {
+    setTestBroadcast(null);
+    if (user) updateDoc(doc(db, 'users', user.uid), { testBroadcastId: deleteField() }).catch((err) => console.error('Failed to clear the test broadcast:', err));
+  };
 
   const handleClose = () => {
     if (broadcast?.id) trackBroadcast(broadcast.id, 'close');
@@ -77,14 +101,18 @@ export default function BroadcastBanner() {
 
   return (
     <AnimatePresence>
-      {shouldShow && (
+      {showTest ? (
+        <motion.div key="test" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[280] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <BroadcastCard broadcast={testBroadcast} test reactAfterClose onClose={closeTest} openLink={(url) => { try { window.open(url, '_blank'); } catch { /* ignore */ } }} />
+        </motion.div>
+      ) : shouldShow && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[280] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
         >
-          <BroadcastCard broadcast={broadcast || {}} onClose={handleClose} openLink={openLink} />
+          <BroadcastCard broadcast={broadcast || {}} reactAfterClose onClose={handleClose} openLink={openLink} />
         </motion.div>
       )}
     </AnimatePresence>

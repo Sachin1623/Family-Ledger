@@ -759,6 +759,14 @@ export default function AdminMetrics() {
                   <Tile label="People who tapped" value={num(b.clickers)} sub={`${fmtPct(tapPct)} of seen`} level={levelHigh(tapPct, { good: 15, bad: 3 })} />
                   <Tile label="Total taps" value={num(b.clicks)} sub={`links ${num(b.byVia?.link || 0)} · buttons ${num(b.byVia?.button || 0)} · pictures ${num(b.byVia?.image || 0)}`} />
                 </div>
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2">
+                  <span className="text-[11px] font-black text-text-muted shrink-0">Reactions · {num(b.reactors || 0)} people ({fmtPct(pct(b.reactors || 0, b.views))} of seen)</span>
+                  <span className="flex items-center gap-2.5 text-sm font-black text-primary tabular-nums">
+                    {([['like', '👍'], ['love', '❤️'], ['party', '🎉'], ['think', '🤔']] as const).map(([k, e]) => (
+                      <span key={k} className={(b.reactions?.[k] || 0) === Math.max(...Object.values<number>(b.reactions || { x: 0 })) && (b.reactions?.[k] || 0) > 0 ? '' : 'opacity-60'}>{e} {num(b.reactions?.[k] || 0)}</span>
+                    ))}
+                  </span>
+                </div>
                 <div className="space-y-1.5">
                   {targets.map((t) => {
                     const v = b.byTarget?.[t.key] || { clicks: 0, people: 0 };

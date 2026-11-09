@@ -24,7 +24,7 @@
     <!-- Fonts load without blocking the first paint (media=print swaps to all once downloaded). Icons are names written as text until the icon
          font arrives, so they stay invisible until then (or 3 s at most) rather than flashing as words. -->
     <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700;800;900&amp;display=swap" />
-    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&amp;display=swap" />
+    <link rel="stylesheet" media="print" onload="this.media='all'; window.flIconSheet=true; if (window.flIconGo) window.flIconGo();" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&amp;display=swap" />
     <style>
       html:not(.fl-icons-ready) .material-symbols-outlined { visibility: hidden; }
       body { margin: 0; background: #F6F8FA; }
@@ -66,10 +66,14 @@
       (function () {
         var root = document.documentElement;
         function ready() { root.classList.add('fl-icons-ready'); }
-        setTimeout(ready, 3000);
-        if (document.fonts && document.fonts.load) {
-          document.fonts.load('24px "Material Symbols Outlined"', 'home').then(ready, ready);
-        }
+        setTimeout(ready, 4000);
+        // document.fonts.load answers at once, with nothing, when the icon font has not been declared yet (its stylesheet is still downloading),
+        // which showed the icon names as words. So the font is only asked for once its stylesheet has arrived.
+        window.flIconGo = function () {
+          if (document.fonts && document.fonts.load) document.fonts.load('24px "Material Symbols Outlined"', 'home').then(ready, ready);
+          else ready();
+        };
+        if (window.flIconSheet) window.flIconGo();
       })();
     </script>
     <script>
