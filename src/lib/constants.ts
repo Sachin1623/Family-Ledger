@@ -80,7 +80,8 @@ export const NUMBER_SYSTEMS: { id: NumberSystem; label: string; example: string 
 // misleading.
 const COMPACT_AMOUNT_THRESHOLD = 100000; // 1 lakh
 export const formatAmountCompact = (amount: number, currencyCode?: string, numberSystem?: NumberSystem) => {
-  if (Math.abs(amount) < COMPACT_AMOUNT_THRESHOLD) return amount.toLocaleString();
+  // Two decimals at most: a bare toLocaleString() allows three, so an uneven split showed as ₹30,716.667.
+  if (Math.abs(amount) < COMPACT_AMOUNT_THRESHOLD) return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
   const locale = numberSystem
     ? (numberSystem === 'south_asian' ? 'en-IN' : 'en-US')
     : (currencyCode === 'INR' ? 'en-IN' : 'en-US');
