@@ -275,6 +275,21 @@ export default function ShoppingListDetail() {
     }
   };
 
+  // A finished (or skipped) list can be opened again to add, tick or change items. An expense it already added to the group stays as it is.
+  const handleReopen = async () => {
+    if (!listId || !list) return;
+    const msg = list.expenseId
+      ? 'Reopen this list? The expense already added to the group stays. If you finish it again, a second expense is added.'
+      : 'Reopen this list so you can change it and shop again?';
+    if (!window.confirm(msg)) return;
+    try {
+      await updateDoc(doc(db, 'shoppingLists', listId), { completed: false, completedAt: deleteField(), completedBy: deleteField(), skipped: deleteField() });
+    } catch (err) {
+      console.error('Failed to reopen the list:', err);
+      alert('Could not reopen the list. Try again.');
+    }
+  };
+
   // ---- yearly Event: the list comes back every year (Diwali, Holi...) ----
   const [showEvent, setShowEvent] = useState(false);
   const [eventNameDraft, setEventNameDraft] = useState('');
@@ -792,6 +807,7 @@ export default function ShoppingListDetail() {
                     {typeof list.totalExpense === 'number' && t('shoppingLists.totalAmountSuffix', { amount: `${currencySymbol}${list.totalExpense.toFixed(2)}` })}
                   </p>
                 </div>
+                <button type="button" onClick={handleReopen} className="ml-auto shrink-0 rounded-lg bg-green-700 text-white text-[11px] font-black px-2.5 py-1.5 active:scale-95">Reopen</button>
               </div>
             ) : (
               <button onClick={() => { setCarryOver(toBuy.length > 0 && inCart.length > 0); setCompleteAmount(storeSpendTotal > 0 ? String(storeSpendTotal) : ''); setShowFinish(true); }} className="flex-1 rounded-xl bg-white text-[#0b3b57] py-2.5 text-sm font-black active:scale-95">
