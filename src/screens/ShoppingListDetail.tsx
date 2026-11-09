@@ -437,6 +437,8 @@ export default function ShoppingListDetail() {
         completed: true,
         completedAt: new Date().toISOString(),
         completedBy: user?.uid,
+        // nothing was bought: the list is closed as "did not shop" (no expense, no amount)
+        ...(inCart.length === 0 ? { skipped: true } : {}),
       });
       if (carryOver || carryNotAvailable) await carryUnboughtToNewList();
       setShowFinish(false);
@@ -784,7 +786,7 @@ export default function ShoppingListDetail() {
               <div className="flex-1 rounded-xl bg-white/95 text-green-800 px-3 py-2 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[20px]">task_alt</span>
                 <div className="min-w-0">
-                  <p className="text-xs font-black">{t('shoppingLists.completed')}</p>
+                  <p className="text-xs font-black">{list.skipped ? 'Closed: did not shop' : t('shoppingLists.completed')}</p>
                   <p className="text-[10px] text-green-900/70">
                     {new Date(list.completedAt).toLocaleString()}
                     {typeof list.totalExpense === 'number' && t('shoppingLists.totalAmountSuffix', { amount: `${currencySymbol}${list.totalExpense.toFixed(2)}` })}
@@ -792,7 +794,7 @@ export default function ShoppingListDetail() {
                 </div>
               </div>
             ) : (
-              <button onClick={() => { setCarryOver(toBuy.length > 0); setCompleteAmount(storeSpendTotal > 0 ? String(storeSpendTotal) : ''); setShowFinish(true); }} className="flex-1 rounded-xl bg-white text-[#0b3b57] py-2.5 text-sm font-black active:scale-95">
+              <button onClick={() => { setCarryOver(toBuy.length > 0 && inCart.length > 0); setCompleteAmount(storeSpendTotal > 0 ? String(storeSpendTotal) : ''); setShowFinish(true); }} className="flex-1 rounded-xl bg-white text-[#0b3b57] py-2.5 text-sm font-black active:scale-95">
                 {t('shoppingLists.markCompleted')}
               </button>
             )}
@@ -1149,7 +1151,7 @@ export default function ShoppingListDetail() {
       {showFinish && (
         <div className="fixed inset-0 bg-black/45 z-[120] flex items-end justify-center" style={{ paddingBottom: 'calc(4rem + env(safe-area-inset-bottom) + 0.75rem)' }} onClick={() => setShowFinish(false)}>
           <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
-            <form onSubmit={list.groupId ? handleCompleteWithExpense : (e) => { e.preventDefault(); handleCompletePersonal(); }} className="bg-white rounded-3xl shadow-2xl px-4 pt-3" style={{ paddingBottom: '1.25rem', maxHeight: 'calc(100dvh - 4rem - env(safe-area-inset-bottom) - 3rem)', overflowY: 'auto' }}>
+            <form onSubmit={list.groupId && inCart.length > 0 ? handleCompleteWithExpense : (e) => { e.preventDefault(); handleCompletePersonal(); }} className="bg-white rounded-3xl shadow-2xl px-4 pt-3" style={{ paddingBottom: '1.25rem', maxHeight: 'calc(100dvh - 4rem - env(safe-area-inset-bottom) - 3rem)', overflowY: 'auto' }}>
               <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3" />
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-base font-black text-primary">{t('shoppingLists.markCompleted')}</h2>
@@ -1163,7 +1165,12 @@ export default function ShoppingListDetail() {
                 </div>
               </div>
 
-              {list.groupId && (
+              {list.groupId && inCart.length === 0 && (
+                <p className="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2.5 text-[12px] text-slate-700 font-medium">
+                  Nothing was bought, so there is no amount to enter and no expense is added to <b>{group?.name || t('shoppingLists.theGroup')}</b>. The list is closed as <b>Did not shop</b>.
+                </p>
+              )}
+              {list.groupId && inCart.length > 0 && (
                 <>
                   <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500 mb-1.5 px-0.5">{t('shoppingLists.totalSpentLabel', { group: group?.name || t('shoppingLists.theGroup') })}</p>
                   <div className="flex items-center gap-1.5 rounded-2xl bg-slate-50 border-2 border-[#22c1a5] px-3 py-2">
@@ -1202,8 +1209,8 @@ export default function ShoppingListDetail() {
                 </button>
               )}
 
-              <button type="submit" disabled={completing || (!!list.groupId && !evaluateAmountSum(completeAmount))} className="w-full mt-4 py-3.5 rounded-2xl text-white text-sm font-black bg-gradient-to-r from-orange-500 to-rose-500 shadow-lg shadow-rose-500/30 disabled:opacity-50 active:scale-[0.99]">
-                {completing ? t('common.saving') : list.groupId ? 'Finish and add expense' : 'Finish shopping'}
+              <button type="submit" disabled={completing || (!!list.groupId && inCart.length > 0 && !evaluateAmountSum(completeAmount))} className="w-full mt-4 py-3.5 rounded-2xl text-white text-sm font-black bg-gradient-to-r from-orange-500 to-rose-500 shadow-lg shadow-rose-500/30 disabled:opacity-50 active:scale-[0.99]">
+                {completing ? t('common.saving') : inCart.length === 0 ? 'Close as did not shop' : list.groupId ? 'Finish and add expense' : 'Finish shopping'}
               </button>
             </form>
           </div>

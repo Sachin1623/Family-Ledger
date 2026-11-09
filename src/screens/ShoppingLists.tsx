@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { collection, query, where, addDoc, writeBatch, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, addDoc, writeBatch, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { useLiveQuery } from '../lib/liveCache';
 import { useFriendships } from '../lib/useFriendships';
 import { clsx } from 'clsx';
@@ -184,6 +184,17 @@ export default function ShoppingLists() {
     return list.icon || listIconGuess(list.title) || getCategoryIcon(catGroup, list.category, 'expense') || '🛒';
   };
 
+  // Closes the list as "did not shop": nothing bought, no expense, no amount. The items stay in it for the record.
+  const skipList = async (list: any) => {
+    if (!user || !window.confirm(`Skip "${list.title}"? It is closed as "Did not shop" and no expense is added.`)) return;
+    try {
+      await updateDoc(doc(db, 'shoppingLists', list.id), { completed: true, completedAt: new Date().toISOString(), completedBy: user.uid, skipped: true });
+    } catch (err) {
+      console.error('Failed to skip the list:', err);
+      alert('Could not skip this list. Try again.');
+    }
+  };
+
   const renderList = (list: any) => {
     const group = groups.find((g: any) => g.id === list.groupId);
     const creator = allMembers.find((m: any) => m.userId === list.userId) || (usersByUid.get(list.userId) ? { displayName: usersByUid.get(list.userId)!.displayName } : undefined);
@@ -228,8 +239,19 @@ export default function ShoppingLists() {
               Spent {getCurrencySymbol(group?.currency)}{list.totalExpense.toLocaleString()}{group ? ` · added to ${group.name}` : ''}
             </span>
           )}
+          {list.completed && list.skipped && <span className="rounded-lg bg-amber-100 text-amber-800 px-2 py-0.5 text-[10px] font-black">Did not shop</span>}
           {list.completed && list.completedAt && <span className="rounded-lg bg-slate-100 text-slate-600 px-2 py-0.5 text-[10px] font-black">{new Date(list.completedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>}
           {when && <span className={clsx('rounded-lg px-2 py-0.5 text-[10px] font-black', when.cls)}>{when.text}</span>}
+          {/* a scheduled list (a weekly one) you are not going to shop for: close it without an expense */}
+          {!list.completed && list.scheduledAt && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); skipList(list); }}
+              className="ml-auto rounded-lg border border-slate-200 bg-white text-slate-600 px-2 py-0.5 text-[10px] font-black active:scale-95"
+            >
+              Skip this week
+            </button>
+          )}
         </div>
       </div>
     );
