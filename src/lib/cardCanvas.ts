@@ -21,6 +21,7 @@ export const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 export const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 
 export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+export const APP_STORE_URL = 'https://apps.apple.com/in/app/familyledger-family-finance/id6804777430';
 export const WEB_URL = 'https://familyledger.thirteenapps.com';
 // FamilyLedger's own social pages. Instagram/Facebook share links cannot pre-tag a page, so the handles travel in the caption
 // text and are printed on the pictures instead.
@@ -329,12 +330,40 @@ export function drawPlayBadge(ctx: CanvasRenderingContext2D, cx: number, y: numb
   ctx.restore();
 }
 
-export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: string, opts: { playBadge?: boolean } = {}) {
+// The familiar black "Download on the App Store" badge, drawn with the Apple logo.
+export function drawAppStoreBadge(ctx: CanvasRenderingContext2D, cx: number, y: number, h: number) {
+  const w = h * 3.4;
+  const x = cx - w / 2;
+  ctx.save();
+  roundRectPath(ctx, x, y, w, h, h * 0.2);
+  ctx.fillStyle = '#000000';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#A6A6A6';
+  ctx.stroke();
+  const s = (h * 0.62) / 24;
+  ctx.translate(x + h * 0.2, y + h * 0.19);
+  ctx.scale(s, s);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fill(new Path2D('M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701'));
+  ctx.restore();
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#FFFFFF';
+  const tx = x + h * 0.2 + h * 0.62 + h * 0.2;
+  ctx.font = `600 ${Math.round(h * 0.2)}px ${FONT}`;
+  ctx.fillText('Download on the', tx, y + h * 0.34);
+  ctx.font = `600 ${Math.round(h * 0.4)}px ${FONT}`;
+  ctx.fillText('App Store', tx, y + h * 0.74);
+  ctx.restore();
+}
+
+export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: string, _opts: { playBadge?: boolean } = {}) {
   const qrSize = 210;
   const qrX = W - 70 - qrSize;
   const qrY = H - 40 - qrSize - 28;
   const ios = isIosApp();
-  drawQr(ctx, ios ? WEB_URL : PLAY_STORE_URL, qrX, qrY, qrSize);
+  drawQr(ctx, ios ? APP_STORE_URL : PLAY_STORE_URL, qrX, qrY, qrSize);
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
   ctx.font = `700 22px ${FONT}`;
@@ -355,8 +384,17 @@ export function paintInstallFooter(ctx: CanvasRenderingContext2D, ctaText: strin
   ctx.fillText(fitText(ctx, ctaText, leftW - 50, 34, '800', 24), leftX + leftW / 2, pillY + 55);
 
   ctx.fillStyle = '#FFFFFF';
-  if (!ios && opts.playBadge) drawPlayBadge(ctx, leftX + leftW / 2, pillY + pillH + 4, 56);
-  else ctx.fillText(fitText(ctx, ios ? 'Free for the whole family' : 'Get it free on Google Play', leftW, 34, '800', 24), leftX + leftW / 2, pillY + pillH + 52);
+  // Store badges: the iPhone version shows only the App Store one (no Android wording); the Android version shows both side by side.
+  const bh = 56;
+  const rowY = pillY + pillH + 4;
+  if (ios) drawAppStoreBadge(ctx, leftX + leftW / 2, rowY, bh);
+  else {
+    const gap = 16;
+    const pw = bh * 3.7, aw = bh * 3.4;
+    const startX = leftX + (leftW - (pw + gap + aw)) / 2;
+    drawPlayBadge(ctx, startX + pw / 2, rowY, bh);
+    drawAppStoreBadge(ctx, startX + pw + gap + aw / 2, rowY, bh);
+  }
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.fillText(fitText(ctx, 'familyledger.thirteenapps.com', leftW, 28, '600', 20), leftX + leftW / 2, pillY + pillH + 92);
   paintSocialPills(ctx, leftX, pillY + pillH + 106, leftW);

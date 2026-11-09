@@ -27,6 +27,7 @@ function friendlyLabel(url: string): string {
   if (url.includes('instagram.com')) return 'Instagram: @family.ledger';
   if (url.includes('facebook.com')) return 'Facebook: Family Ledger';
   if (url.includes('play.google.com')) return 'Rate us on Google Play';
+  if (url.includes('apps.apple.com')) return 'Get FamilyLedger on the App Store';
   if (url.includes(OWN_HOST) && url.includes('/feedback')) return 'Send us your feedback';
   return url.replace(/^https?:\/\/(www\.)?/, '');
 }

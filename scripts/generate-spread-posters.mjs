@@ -13,7 +13,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'vite';
 
-const POSTER_VERSION = 1;
+const POSTER_VERSION = 2;
 const OUT = path.resolve('public/spread-posters');
 const EXPECTED = 120; // 2 phones x 5 posters x 12 weekly editions (keep in step with SPREAD_EDITIONS)
 const VITE_PORT = 47188;

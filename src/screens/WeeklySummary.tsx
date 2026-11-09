@@ -527,7 +527,7 @@ export default function WeeklySummary() {
                   <div className="text-center space-y-1">
                     <p className="text-sm font-black text-primary">Be proud of this. Inspire another family.</p>
                     <p className="text-xs text-text-muted leading-snug">
-                      All your pictures are ready and selected below. Untick any you do not want, then share in one tap. Each has your achievements, the app link, a QR code, the Google Play badge, and our Instagram and Facebook pages, and the caption carries the links too.
+                      All your pictures are ready and selected below. Untick any you do not want, then share in one tap. Each has your achievements, the app link, a QR code, the app store badges, and our Instagram and Facebook pages, and the caption carries the links too.
                     </p>
                   </div>
                   <ShareAppButtons

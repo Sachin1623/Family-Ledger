@@ -12,7 +12,7 @@ export interface SpreadPosterSet {
 }
 
 // Bump when the posters are regenerated, so phones fetch the new files instead of an old cached copy.
-export const SPREAD_POSTER_VERSION = 1;
+export const SPREAD_POSTER_VERSION = 2;
 
 // The same edition for everyone in the same week (Monday to Sunday, Indian time).
 export function currentSpreadEdition(now = Date.now()): number {

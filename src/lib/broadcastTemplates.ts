@@ -5,6 +5,7 @@
 export const INSTAGRAM_URL = 'https://www.instagram.com/family.ledger/';
 export const FACEBOOK_URL = 'https://www.facebook.com/profile.php?id=61594046441653';
 export const PLAY_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
+export const APP_STORE_URL = 'https://apps.apple.com/in/app/familyledger-family-finance/id6804777430';
 export const FEEDBACK_URL = 'https://familyledger.thirteenapps.com/feedback'; // opens the Feedback screen inside the app
 
 export interface BroadcastTemplate {
@@ -19,6 +20,24 @@ export interface BroadcastTemplate {
 }
 
 export const BROADCAST_TEMPLATES: BroadcastTemplate[] = [
+  {
+    id: 'iphone',
+    label: 'Now on iPhone',
+    emoji: '🍎',
+    hint: 'Announces the iPhone app with the App Store and Google Play badges. One square picture; tapping it opens the App Store.',
+    title: 'FamilyLedger is now on iPhone! 🍎',
+    message: `Big news: FamilyLedger is now on the Apple App Store. 🎉
+
+Anyone in your family with an iPhone can now join you for shared expenses, shopping lists, medicine reminders, chats and family games.
+
+🍎 iPhone: ${APP_STORE_URL}
+🤖 Android: ${PLAY_URL}
+
+Please tell your iPhone friends and relatives. Every share helps another family get organised. 💚
+Team FamilyLedger`,
+    images: ['store-banner-square.jpg'],
+    imageLinks: [APP_STORE_URL],
+  },
   {
     id: 'join',
     label: 'Join our community',
@@ -89,14 +108,16 @@ Team FamilyLedger`,
 📸 ${INSTAGRAM_URL}
 👍 ${FACEBOOK_URL}
 
-Or send them the app: ${PLAY_URL}
+Or send them the app:
+🍎 iPhone: ${APP_STORE_URL}
+🤖 Android: ${PLAY_URL}
 
 You can also share your weekly recap from inside the app: one tap to WhatsApp, Instagram or Facebook.
 
 Every share helps another family get organised. Thank you! 💚
 Team FamilyLedger`,
     images: ['join-community.jpg'],
-    imageLinks: [PLAY_URL],
+    imageLinks: [APP_STORE_URL],
   },
   {
     id: 'feedback',

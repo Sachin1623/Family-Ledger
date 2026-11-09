@@ -8,8 +8,8 @@ import { isIosApp } from './platform';
 import { ownDisplayName } from './userIdentity';
 
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
-// iPhone app: the website link instead of Google Play (see platform.ts).
-const appInstallLink = () => (isIosApp() ? 'https://familyledger.thirteenapps.com' : PLAY_STORE_URL);
+// iPhone app: the App Store link instead of Google Play (see platform.ts).
+const appInstallLink = () => (isIosApp() ? 'https://apps.apple.com/in/app/familyledger-family-finance/id6804777430' : PLAY_STORE_URL);
 
 export type ShopActivityType =
   | 'sale_created' | 'sale_updated' | 'cost_set' | 'customer_created'
