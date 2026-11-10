@@ -11,28 +11,6 @@
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
         <string>FamilyLedger</string>
-	<!-- Lets payment receipts shared from other apps (PhonePe, Google Pay, Paytm …) be handed to FamilyLedger:
-	     it shows up as "Copy to FamilyLedger" in the share sheet when the receipt is shared as an image or PDF
-	     file. "Alternate" rank keeps FamilyLedger from competing with apps that are meant to open these files. -->
-	<!-- A shared receipt is copied into the app ("Copy to FamilyLedger"), read once and then deleted, never edited in place. Apple asks every app that declares document types to say so (ITMS-90737). -->
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<false/>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Payment receipt</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>public.image</string>
-				<string>com.adobe.pdf</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
