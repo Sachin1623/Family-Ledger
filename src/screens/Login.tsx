@@ -26,6 +26,7 @@ import { useAuth } from "../context/AuthContext";
 import { hasAuthHint } from "../lib/authHint";
 import { getAnalyticsConsent, setAnalyticsConsent, looksLikeEurope } from "../lib/firebase";
 import { isIosApp } from "../lib/platform";
+import { getAppVersion } from "../lib/appVersion";
 import { useLanguage, LANGUAGES, ENABLED_LANGUAGES } from "../context/LanguageContext";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx } from "clsx";
@@ -52,6 +53,11 @@ export default function Login() {
     trackFunnel(on ? 'consent_accept' : 'consent_decline');
   };
   const [mode, setMode] = React.useState<LoginMode>("google");
+  // Installed app's release and build number, shown small at the bottom right (app only; null on the web) so a tester can say which build they run.
+  const [appVersion, setAppVersion] = React.useState<{ versionName: string; build: string } | null>(null);
+  React.useEffect(() => {
+    getAppVersion().then(setAppVersion);
+  }, []);
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
@@ -1421,6 +1427,12 @@ export default function Login() {
           </p>
         </div>
       </motion.div>
+
+      {appVersion && (
+        <p className="fixed bottom-2 right-3 z-10 text-[10px] text-text-muted/70 pointer-events-none select-none" style={{ marginBottom: 'env(safe-area-inset-bottom)' }}>
+          v{appVersion.versionName} ({appVersion.build})
+        </p>
+      )}
     </div>
   );
 }
