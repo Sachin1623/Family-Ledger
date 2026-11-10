@@ -5,16 +5,9 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const devUrl = process.env.CAP_DEV_URL;
 
 const config: CapacitorConfig & { experimental?: unknown } = {
-  // iPhone analytics without the advertising ID (IDFA): installs and in-app events still reach Google Ads through Apple's privacy-safe attribution,
-  // and the app never needs the tracking-permission prompt. Needs Xcode 16.3+ (Swift 6.1) and Capacitor CLI 8.3+.
-  experimental: {
-    ios: {
-      spm: {
-        swiftToolsVersion: '6.1',
-        packageTraits: { '@capacitor-firebase/analytics': ['AnalyticsWithoutAdIdSupport'] },
-      },
-    },
-  },
+  // The no-advertising-ID analytics option (swiftToolsVersion 6.1 + packageTraits AnalyticsWithoutAdIdSupport) was REMOVED after TestFlight
+  // 1.0.2 (29) could not finish Google sign-in on iPhone while App Store build 23 could. It is the only native change between them.
+  // Put it back only after proving it is not the cause.
   appId: 'com.familyledger.app',
   appName: 'FamilyLedger',
   webDir: 'dist',
