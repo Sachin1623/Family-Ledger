@@ -26,3 +26,5 @@ cd "$CI_PRIMARY_REPOSITORY_PATH"
 npm install
 npm run build
 npx cap sync ios
+
+# One-off test build of the pre-October iPhone code (build23-baseline-test). Do not merge into main.
