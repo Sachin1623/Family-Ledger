@@ -369,18 +369,32 @@ service cloud.firestore {
     }
 
     // A payment from one member to another inside a "Payments" group (rent, maintenance, salary, EMI...). It is a record,
-    // not a split: no balances come from it. The payer creates it, so `fromUid` must be the caller; the payer (or a group
-    // admin) can edit it later, which is how a receipt gets added after saving.
+    // not a split: no balances come from it. ANY member can record one between any two members of the group (`addedBy` must be
+    // the caller; the payer is often the caller, but a receiver can record "Ravi paid me" and a third member can record too).
+    // The recorder (or a group admin) can edit it later. Two narrower rights: the PAYER, when someone else recorded it, may add the
+    // receipt (only `images` may change), and the RECEIVER of a security deposit (`kind == 'deposit'`) may record what is returned
+    // or kept for damage and repairs (only `depositSettlements` may change).
     match /groupPayments/{paymentId} {
       allow read: if isSignedIn() && (isSachin() || canModifyGroup(resource.data.groupId));
       allow create: if isUserVerified() && canModifyGroup(incoming().groupId) && isValidGroupPayment(incoming()) &&
-        incoming().fromUid == request.auth.uid && incoming().addedBy == request.auth.uid;
-      allow update: if isUserVerified() && canModifyGroup(existing().groupId) &&
-        (request.auth.uid == existing().addedBy || isAdmin(existing().groupId)) && isValidGroupPayment(incoming()) &&
-        incoming().groupId == existing().groupId && incoming().fromUid == existing().fromUid && incoming().addedBy == existing().addedBy;
+        incoming().addedBy == request.auth.uid &&
+        isGroupPerson(incoming().fromUid, incoming().groupId) && isGroupPerson(incoming().toUid, incoming().groupId);
+      allow update: if isUserVerified() && canModifyGroup(existing().groupId) && isValidGroupPayment(incoming()) &&
+        incoming().groupId == existing().groupId && incoming().fromUid == existing().fromUid && incoming().addedBy == existing().addedBy && (
+          request.auth.uid == existing().addedBy || isAdmin(existing().groupId) ||
+          (request.auth.uid == existing().fromUid && incoming().diff(existing()).affectedKeys().hasOnly(['images'])) ||
+          (request.auth.uid == existing().toUid && existing().get('kind', '') == 'deposit' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['depositSettlements']))
+        );
       allow delete: if isUserVerified() && canModifyGroup(existing().groupId) && (
         request.auth.uid == existing().addedBy || isAdmin(existing().groupId)
       );
+
+      // a member of the group (has a membership record), or its creator
+      function isGroupPerson(uid, groupId) {
+        return exists(/databases/$(database)/documents/members/$(uid + '_' + groupId)) ||
+               get(/databases/$(database)/documents/groups/$(groupId)).data.createdBy == uid;
+      }
 
       function isValidGroupPayment(data) {
         return data.keys().hasAll(['groupId', 'fromUid', 'toUid', 'amount', 'date', 'addedBy', 'createdAt']) &&
@@ -389,7 +403,9 @@ service cloud.firestore {
                data.date is string && data.createdAt is string &&
                (!('label' in data) || (data.label is string && data.label.size() <= 60)) &&
                (!('note' in data) || (data.note is string && data.note.size() <= 300)) &&
-               (!('images' in data) || (data.images is list && data.images.size() <= 3));
+               (!('images' in data) || (data.images is list && data.images.size() <= 3)) &&
+               (!('kind' in data) || data.kind == 'deposit') &&
+               (!('depositSettlements' in data) || (data.depositSettlements is list && data.depositSettlements.size() <= 20));
       }
     }
 

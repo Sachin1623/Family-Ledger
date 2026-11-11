@@ -16035,7 +16035,9 @@ async function startServer() {
   // to Firestore under firestore.rules). Each person's own tracked copy of the payment (an expense for the payer, income for the
   // receiver, each in their OWN group, listed in `paymentLinks`) is brought in line here with the Admin SDK, because the receiver's
   // copy lives in a group the payer is not a member of; the receiver is told about a new payment or a change.
-  //   created: tell the receiver.  edited: update every tracked copy and tell the receiver.  receipt: update the copies quietly.
+  //   created: tell the other people in it.  edited: update every tracked copy and tell them.  receipt: update the copies quietly.
+  //   deposit_settled: the receiver of a security deposit recorded a refund / deduction; tell the payer.
+  // Any member can record a payment between any two members, so "the other people" are the payer and the receiver, minus whoever did this.
   app.post('/api/group-payment-updated', async (req, res) => {
     const decoded = await verifyAuthHeader(req);
     if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
@@ -16043,15 +16045,25 @@ async function startServer() {
     const paymentId = String(req.body?.paymentId || '');
     const event = String(req.body?.event || 'edited');
     const oldAmount = Number(req.body?.oldAmount);
-    if (!paymentId || !['created', 'edited', 'receipt'].includes(event)) return res.status(400).json({ error: 'paymentId and a valid event are required.' });
+    if (!paymentId || !['created', 'edited', 'receipt', 'deposit_settled'].includes(event)) return res.status(400).json({ error: 'paymentId and a valid event are required.' });
 
     try {
       const paySnap = await db.collection('groupPayments').doc(paymentId).get();
       if (!paySnap.exists) return res.status(404).json({ error: 'Payment not found.' });
       const p: any = paySnap.data();
-      if (p.addedBy !== decoded.uid) return res.status(403).json({ error: 'Only the person who recorded the payment can do this.' });
 
       const groupSnap = await db.collection('groups').doc(p.groupId).get();
+      // who may report what: the recorder reports created/edited; the recorder or the payer reports a receipt; the receiver (or a group admin) a deposit settlement
+      if (event === 'receipt') {
+        if (decoded.uid !== p.addedBy && decoded.uid !== p.fromUid) return res.status(403).json({ error: 'Only the person who recorded or made the payment can do this.' });
+      } else if (event === 'deposit_settled') {
+        const callerMember = await db.collection('members').doc(`${decoded.uid}_${p.groupId}`).get();
+        const isGroupAdmin = groupSnap.exists && (groupSnap.data()?.createdBy === decoded.uid || (callerMember.exists && callerMember.data()?.role === 'admin'));
+        if (p.kind !== 'deposit' || (decoded.uid !== p.toUid && !isGroupAdmin)) return res.status(403).json({ error: 'Only the receiver of a security deposit can settle it.' });
+      } else if (p.addedBy !== decoded.uid) {
+        return res.status(403).json({ error: 'Only the person who recorded the payment can do this.' });
+      }
+
       const groupName = groupSnap.exists ? groupSnap.data()?.name || 'the group' : 'the group';
       const actorName = decoded.name || 'Someone';
       const label = p.label || 'Payment';
@@ -16062,7 +16074,7 @@ async function startServer() {
       // 1. bring every tracked copy in line
       let updated = 0;
       const touchedUids = new Set<string>();
-      if (event !== 'created') {
+      if (event === 'edited' || event === 'receipt') {
         const linksSnap = await db.collection('paymentLinks').where('paymentId', '==', paymentId).get();
         for (const linkDoc of linksSnap.docs) {
           const link: any = linkDoc.data();
@@ -16116,27 +16128,101 @@ async function startServer() {
         }
       }
 
-      // 2. tell the receiver
+      // 2. tell the other people in the payment (the payer and the receiver, minus whoever just did this)
       let sent = 0;
-      if (event !== 'receipt' && p.toUid && p.toUid !== decoded.uid) {
-        const changedAmount = Number.isFinite(oldAmount) && oldAmount !== p.amount;
-        let body = event === 'created'
-          ? `${actorName} recorded a payment of ${money(p.amount)} to you for ${label} in "${groupName}".`
-          : changedAmount
-            ? `${actorName} changed the "${label}" payment from ${money(oldAmount)} to ${money(p.amount)} in "${groupName}".`
-            : `${actorName} updated the "${label}" payment in "${groupName}".`;
-        if (event === 'edited' && touchedUids.has(String(p.toUid))) body += ' Your tracked entry was updated too.';
-        const tokens = await collectPushTokens(db, [p.toUid], 'notificationsEnabled');
-        sent = await sendPush(tokens, event === 'created' ? `${actorName} recorded a payment` : `${actorName} updated a payment`, body, { type: 'group_activity', groupId: p.groupId });
+      const notify = async (uid: string, title: string, body: string, evt: string) => {
+        const tokens = await collectPushTokens(db, [uid], 'notificationsEnabled');
+        sent += await sendPush(tokens, title, body, { type: 'group_activity', groupId: p.groupId });
         await logFeedActivity(db, {
-          userId: p.toUid, type: 'payment_updated', description: body, userName: actorName,
-          data: { groupId: p.groupId, paymentId, event },
+          userId: uid, type: 'payment_updated', description: body, userName: actorName,
+          data: { groupId: p.groupId, paymentId, event: evt },
         });
+      };
+      if (event === 'deposit_settled') {
+        // the newest settlement is the one just recorded; the payer is told how much came back and what was kept
+        const list: any[] = Array.isArray(p.depositSettlements) ? p.depositSettlements : [];
+        const last = list[list.length - 1];
+        if (last && p.fromUid && p.fromUid !== decoded.uid) {
+          const returned = Number(last.returned) || 0;
+          const kept = Number(last.kept) || 0;
+          const why = String(last.reason || 'damage or repairs').slice(0, 80);
+          const body = `${actorName} settled your ${money(p.amount)} security deposit in "${groupName}": ${money(returned)} returned${kept > 0 ? `, ${money(kept)} kept for ${why}` : ''}.`;
+          await notify(p.fromUid, 'Security deposit update', body, event);
+        }
+      } else if (event !== 'receipt') {
+        const changedAmount = Number.isFinite(oldAmount) && oldAmount !== p.amount;
+        const noReceipt = !(Array.isArray(p.images) && p.images.length > 0);
+        for (const uid of [p.fromUid, p.toUid]) {
+          if (!uid || uid === decoded.uid) continue;
+          const toPayer = uid === p.fromUid;
+          let body: string;
+          if (event === 'created') {
+            body = toPayer
+              ? `${actorName} recorded a payment of ${money(p.amount)} that you made for ${label} in "${groupName}".${noReceipt ? ' Please add the receipt.' : ''}`
+              : `${actorName} recorded a payment of ${money(p.amount)} to you for ${label} in "${groupName}".`;
+          } else if (changedAmount) {
+            body = `${actorName} changed the "${label}" payment from ${money(oldAmount)} to ${money(p.amount)} in "${groupName}".`;
+          } else {
+            body = `${actorName} updated the "${label}" payment in "${groupName}".`;
+          }
+          if (event === 'edited' && touchedUids.has(String(uid))) body += ' Your tracked entry was updated too.';
+          await notify(uid, event === 'created' ? `${actorName} recorded a payment` : `${actorName} updated a payment`, body, event);
+        }
       }
       return res.json({ updated, sent });
     } catch (error) {
       console.error('group-payment-updated error:', error);
       return res.status(500).json({ error: 'Unable to update the payment copies.' });
+    }
+  });
+
+  // "Nudge for the receipt": any member of a Payments group (other than the payer) taps a button on a payment that has no receipt and the
+  // payer gets a push and a feed note asking for it. Limited to once per payment every 6 hours (kept on the payment as `receiptNudgedAt`,
+  // so everyone sees "Nudged 2h ago" and nobody can pester).
+  app.post('/api/group-payment/receipt-nudge', async (req, res) => {
+    const decoded = await verifyAuthHeader(req);
+    if (!decoded || !adminDb) return res.status(401).json({ error: 'Unauthorized.' });
+    const db = adminDb;
+    const paymentId = String(req.body?.paymentId || '');
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(paymentId)) return res.status(400).json({ error: 'paymentId is required.' });
+    try {
+      const paySnap = await db.collection('groupPayments').doc(paymentId).get();
+      if (!paySnap.exists) return res.status(404).json({ error: 'Payment not found.' });
+      const p: any = paySnap.data();
+      const [groupSnap, callerMember] = await Promise.all([
+        db.collection('groups').doc(p.groupId).get(),
+        db.collection('members').doc(`${decoded.uid}_${p.groupId}`).get(),
+      ]);
+      const isInGroup = callerMember.exists || (groupSnap.exists && groupSnap.data()?.createdBy === decoded.uid);
+      if (!isInGroup) return res.status(403).json({ error: 'You are not in this group.' });
+      if (p.fromUid === decoded.uid) return res.status(400).json({ error: 'You made this payment, so you can add the receipt yourself.' });
+      if (Array.isArray(p.images) && p.images.length > 0) return res.json({ ok: true, alreadyHasReceipt: true });
+
+      const COOLDOWN_MS = 6 * 60 * 60 * 1000;
+      const last = Date.parse(String(p.receiptNudgedAt || ''));
+      if (Number.isFinite(last) && Date.now() - last < COOLDOWN_MS) {
+        return res.status(429).json({ error: 'The payer was reminded recently. Try again later.', nudgedAt: p.receiptNudgedAt });
+      }
+
+      const actorName = decoded.name || 'Someone';
+      const groupName = groupSnap.exists ? groupSnap.data()?.name || 'the group' : 'the group';
+      const label = p.label || 'payment';
+      const money = (n: number) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+      const body = `${actorName} asked you to add the receipt for your ${money(p.amount)} ${label} payment in "${groupName}".`;
+      const tokens = await collectPushTokens(db, [p.fromUid], 'notificationsEnabled');
+      const sent = await sendPush(tokens, 'Please add the receipt', body, { type: 'group_activity', groupId: p.groupId });
+      const nowIso = new Date().toISOString();
+      await Promise.all([
+        paySnap.ref.update({ receiptNudgedAt: nowIso, receiptNudgedBy: decoded.uid }),
+        logFeedActivity(db, {
+          userId: p.fromUid, type: 'payment_updated', description: body, userName: actorName,
+          data: { groupId: p.groupId, paymentId, event: 'receipt_nudge' },
+        }),
+      ]);
+      return res.json({ ok: true, sent, nudgedAt: nowIso });
+    } catch (error) {
+      console.error('group-payment/receipt-nudge error:', error);
+      return res.status(500).json({ error: 'Unable to send the reminder.' });
     }
   });
 

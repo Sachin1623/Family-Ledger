@@ -46,21 +46,28 @@ export default function PaymentsGroupCard({
     return resolve(uid, members.find((m: any) => m.userId === uid)?.displayName).name || 'Member';
   };
 
-  const { paid, received, count, missing } = useMemo(() => {
+  const { paid, received, count, missing, depositHeld } = useMemo(() => {
     const now = new Date();
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     let paidSum = 0;
     let receivedSum = 0;
     let n = 0;
     let noReceipt = 0;
+    let held = 0;
     payments.forEach((p) => {
       if (p.fromUid === user?.uid && !(p.images?.length)) noReceipt++;
+      // a security deposit is refundable money, not spending or income: it is kept out of the month's totals and shown as "held" until it is settled
+      if (p.kind === 'deposit') {
+        const settled = (Array.isArray(p.depositSettlements) ? p.depositSettlements : []).reduce((s: number, x: any) => s + (Number(x.returned) || 0) + (Number(x.kept) || 0), 0);
+        held += Math.max(0, (Number(p.amount) || 0) - settled);
+        return;
+      }
       if (!(p.date || '').startsWith(monthKey)) return;
       n++;
       if (p.fromUid === user?.uid) paidSum += p.amount || 0;
       if (p.toUid === user?.uid) receivedSum += p.amount || 0;
     });
-    return { paid: paidSum, received: receivedSum, count: n, missing: noReceipt };
+    return { paid: paidSum, received: receivedSum, count: n, missing: noReceipt, depositHeld: held };
   }, [payments, user?.uid]);
 
   const open = (add = false) => navigate(`/groups/${groupId}${add ? '?add=1' : ''}`);
@@ -124,6 +131,7 @@ export default function PaymentsGroupCard({
               <p className="text-xs text-text-muted font-bold">
                 {count} payment{count === 1 ? '' : 's'} this month
                 {missing > 0 && <span className="ml-2 rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">{missing} receipt{missing === 1 ? '' : 's'} missing</span>}
+                {depositHeld > 0 && <span className="ml-2 rounded-full bg-[#eef0ff] text-[#4338ca] px-2 py-0.5">{money(depositHeld)} deposit held</span>}
               </p>
 
               {tileState === 3 && (
@@ -133,7 +141,7 @@ export default function PaymentsGroupCard({
                   {payments.slice(0, 3).map((p) => (
                     <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl border border-border-subtle px-3 py-2">
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-primary truncate">{p.label || 'Payment'}</p>
+                        <p className="text-sm font-bold text-primary truncate">{p.kind === 'deposit' ? 'Security deposit' : p.label || 'Payment'}</p>
                         <p className="text-[11px] text-text-muted truncate">{nameOf(p.fromUid)} → {nameOf(p.toUid)} · {parseLocalDate(p.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</p>
                       </div>
                       <p className="text-sm font-black tabular-nums shrink-0">{money(p.amount)}</p>
