@@ -4,6 +4,7 @@ import { fmtDate } from '../../lib/adminTime';
 import { adminGet } from '../../lib/adminApi';
 import { useRememberedState } from '../../lib/liveCache';
 import { inNum } from '../../lib/adminNumbers';
+import { PlatformLogo } from './PlatformLogo';
 
 // The admin summary tiles (a figure with its trend, and the Google Cloud cost card), shared by the Admin Overview tab and the admin's own Profile page.
 
@@ -101,6 +102,120 @@ export function StatCard({ label, value, series, level, weekSeries, format }: {
             </>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Total users, split into three parts: everyone, Android, iPhone. A total banner (number, 14-day bars, split bar, today/yesterday, this week/last week with
+// the % change), then a green Android tile and a black Apple tile that each repeat all of those figures, so the split loses nothing.
+export interface UsersOverview {
+  total: number;
+  series?: number[];
+  platforms?: { android: { total: number; trend: number[] }; ios: { total: number; trend: number[] }; web: number; unknown: number };
+}
+
+// today / yesterday / this week / last week from a per-day series of new users (oldest first, last = today)
+function periodsOf(series?: number[]) {
+  const a = series || [];
+  const n = a.length;
+  return { today: a[n - 1] ?? 0, yest: a[n - 2] ?? 0, week: sumOf(a.slice(Math.max(0, n - 7))), last: sumOf(a.slice(Math.max(0, n - 14), Math.max(0, n - 7))) };
+}
+const signedNum = (n: number) => `${n > 0 ? '+' : ''}${inNum(n)}`;
+
+// the % change as a small coloured pill; `onColour` for use on the green / black tiles
+function ChangePill({ now, before, onColour, small }: { now: number; before: number; onColour?: boolean; small?: boolean }) {
+  const base: React.CSSProperties = { borderRadius: 999, padding: small ? '1px 6px' : '2px 8px', fontSize: small ? 10 : 11, fontWeight: 800, whiteSpace: 'nowrap', display: 'inline-block', lineHeight: 1.35 };
+  const neutral = { background: onColour ? 'rgba(255,255,255,.18)' : '#f1f5f9', color: onColour ? '#fff' : '#64748b' };
+  if (before === 0) return <span style={{ ...base, ...(now > 0 ? { background: onColour ? 'rgba(255,255,255,.2)' : '#e0f2fe', color: onColour ? '#fff' : '#0369a1' } : neutral) }}>{now > 0 ? 'new' : '—'}</span>;
+  const pct = Math.round(((now - before) / before) * 100);
+  if (pct === 0) return <span style={{ ...base, ...neutral }}>steady</span>;
+  const up = pct > 0;
+  const colours = up ? { background: onColour ? 'rgba(255,255,255,.22)' : '#dcfce7', color: onColour ? '#fff' : '#15803d' } : { background: onColour ? 'rgba(0,0,0,.28)' : '#fee2e2', color: onColour ? '#fecaca' : '#b91c1c' };
+  return <span style={{ ...base, ...colours }}>{up ? '▲' : '▼'} {Math.abs(pct)}%</span>;
+}
+
+// the last 14 days as small bars; the newest day is full strength
+function MiniBars({ values, color, w = 96, h = 28 }: { values: number[]; color: string; w?: number; h?: number }) {
+  const max = Math.max(...values, 1);
+  const bw = w / Math.max(1, values.length);
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      {values.map((v, i) => {
+        const bh = Math.max(2, (v / max) * (h - 2));
+        return <rect key={i} x={i * bw + 1} y={h - bh} width={Math.max(1, bw - 2)} height={bh} rx={1.5} fill={color} opacity={i === values.length - 1 ? 1 : 0.5} />;
+      })}
+    </svg>
+  );
+}
+
+function PlatformTile({ kind, total, share, series }: { kind: 'android' | 'ios'; total: number; share: number; series?: number[] }) {
+  const s = periodsOf(series);
+  const android = kind === 'android';
+  const row = (name: string, value: string, pill?: React.ReactNode) => (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 48px', alignItems: 'center', columnGap: 4, fontSize: 11 }}>
+      <span style={{ opacity: 0.8 }}>{name}</span>
+      <b style={{ textAlign: 'right' }}>{value}</b>
+      <span style={{ textAlign: 'right' }}>{pill}</span>
+    </div>
+  );
+  return (
+    <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16, padding: 12, color: '#fff', background: android ? 'linear-gradient(150deg,#3DDC84,#0b9d57)' : 'linear-gradient(150deg,#3a3a3f,#0b0b0d)' }}>
+      <div style={{ position: 'absolute', right: -14, top: -14, opacity: 0.14 }}><PlatformLogo kind={kind} size={92} color="#fff" /></div>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontWeight: 800, fontSize: 13 }}><PlatformLogo kind={kind} size={17} color="#fff" />{android ? 'Android' : 'iPhone'}</span>
+        <span style={{ fontSize: 10.5, opacity: 0.85 }}>{share}%</span>
+      </div>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 6, margin: '6px 0 8px' }}>
+        <span style={{ fontSize: 28, fontWeight: 900, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{inNum(total)}</span>
+        {series && <MiniBars values={series} color="#fff" w={56} h={22} />}
+      </div>
+      <div style={{ position: 'relative', display: 'grid', gap: 3 }}>
+        {row('Today', signedNum(s.today))}
+        {row('Yesterday', signedNum(s.yest), <ChangePill now={s.today} before={s.yest} onColour small />)}
+        {row('This week', signedNum(s.week))}
+        {row('Last week', signedNum(s.last), <ChangePill now={s.week} before={s.last} onColour small />)}
+      </div>
+    </div>
+  );
+}
+
+export function UsersSplitCard({ users }: { users: UsersOverview }) {
+  const p = users.platforms;
+  const s = periodsOf(users.series);
+  const other = (p?.web || 0) + (p?.unknown || 0);
+  const share = (v: number) => (users.total > 0 ? Math.round((v / users.total) * 100) : 0);
+  const seg = p ? ([[p.android.total, '#3DDC84'], [p.ios.total, '#111827'], [other, '#cbd5e1']] as const) : null;
+  return (
+    <div className="bg-white rounded-2xl border border-border-subtle p-4 shadow-sm">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider">Total Users</p>
+          <p className="text-4xl font-black text-primary leading-none mt-1.5 tabular-nums">{inNum(users.total)}</p>
+        </div>
+        {users.series && <MiniBars values={users.series} color="#0f4761" w={104} h={32} />}
+      </div>
+      {seg && (
+        <div className="flex h-2.5 rounded-full overflow-hidden bg-surface mt-3" title="Android, iPhone, web / not recorded">
+          {seg.map(([v, c], i) => <div key={i} style={{ width: `${(v / Math.max(1, users.total)) * 100}%`, background: c, minWidth: v > 0 ? 4 : 0, marginRight: i < 2 ? 2 : 0 }} />)}
+        </div>
+      )}
+      {users.series && (
+        <div className="mt-2.5 space-y-1.5 text-[11.5px] text-text-muted">
+          <div className="flex items-center justify-between gap-2"><span>Today <b className="text-on-surface">{signedNum(s.today)}</b> · Yesterday <b className="text-on-surface">{signedNum(s.yest)}</b></span><ChangePill now={s.today} before={s.yest} /></div>
+          <div className="flex items-center justify-between gap-2"><span>This week <b className="text-on-surface">{signedNum(s.week)}</b> · Last week <b className="text-on-surface">{signedNum(s.last)}</b></span><ChangePill now={s.week} before={s.last} /></div>
+        </div>
+      )}
+      {p && (
+        <div className="grid grid-cols-2 gap-2.5 mt-3">
+          <PlatformTile kind="android" total={p.android.total} share={share(p.android.total)} series={p.android.trend} />
+          <PlatformTile kind="ios" total={p.ios.total} share={share(p.ios.total)} series={p.ios.trend} />
+        </div>
+      )}
+      {p && other > 0 && (
+        <p className="mt-2.5 text-[10px] text-text-muted" title="Everyone not in the Android or iPhone tile. Platform is saved the next time a person opens the updated app.">
+          Web {inNum(p.web)} · not recorded yet {inNum(p.unknown)} · fills in as people open the app
+        </p>
       )}
     </div>
   );
@@ -272,11 +387,11 @@ export function CloudCostCard({ cloudCost }: { cloudCost: CloudCost | null }) {
 // What the admin sees on their own Profile page: the cloud cost card and the total users tile. The last figures are kept, so they are there at once on return.
 export function AdminProfileTiles() {
   const [cloudCost, setCloudCost] = useRememberedState<CloudCost | null>('adminTiles:cost', null);
-  const [users, setUsers] = useRememberedState<{ total: number; series?: number[] } | null>('adminTiles:users', null);
+  const [users, setUsers] = useRememberedState<UsersOverview | null>('adminTiles:users2', null);
   useEffect(() => {
     let cancelled = false;
     adminGet('/api/admin/cloud-cost').then((c) => { if (!cancelled) setCloudCost(c); }).catch(() => {});
-    adminGet('/api/admin/overview').then((o) => { if (!cancelled) setUsers({ total: o.totalUsers, series: o.trend?.users }); }).catch(() => {});
+    adminGet('/api/admin/overview').then((o) => { if (!cancelled) setUsers({ total: o.totalUsers, series: o.trend?.users, platforms: o.platforms }); }).catch(() => {});
     return () => { cancelled = true; };
     // the setters are stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -284,7 +399,7 @@ export function AdminProfileTiles() {
   return (
     <div className="space-y-4">
       <CloudCostCard cloudCost={cloudCost} />
-      {users && <StatCard label="Total Users" value={users.total} series={users.series} />}
+      {users && <UsersSplitCard users={users} />}
     </div>
   );
 }

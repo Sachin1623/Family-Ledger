@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { adminGet } from '../../lib/adminApi';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate, getAdminTz, setAdminTzMode } from '../../lib/adminTime';
-import { Arrow, CloudCostCard, StatCard, formatMoney, sumOf, type CloudCost } from '../../components/admin/AdminTiles';
+import { Arrow, CloudCostCard, StatCard, UsersSplitCard, formatMoney, sumOf, type CloudCost, type UsersOverview } from '../../components/admin/AdminTiles';
 import { inNum } from '../../lib/adminNumbers';
 
 // the Growth tab shows the full report itself (charts included), loaded only when that tab is opened
@@ -21,6 +21,7 @@ interface CountryStats {
 
 interface Overview {
   totalUsers: number;
+  platforms?: UsersOverview['platforms'];
   totalGroups: number;
   totalExpenses: number;
   totalSpendAllTime: number;
@@ -214,7 +215,10 @@ export default function AdminDashboard() {
 
           {overview && (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              <StatCard label="Total Users" value={overview.totalUsers} series={overview.trend?.users} />
+              {/* Total users split into everyone / Android / iPhone: two columns wide (the Total Groups tile sits beside it on a wide screen) */}
+              <div className="sm:col-span-2">
+                <UsersSplitCard users={{ total: overview.totalUsers, series: overview.trend?.users, platforms: overview.platforms }} />
+              </div>
               <StatCard label="Total Groups" value={overview.totalGroups} series={overview.trend?.groups} />
               <StatCard label="Total Expenses" value={overview.totalExpenses} series={overview.trend?.expenses} />
               <StatCard label="Lifetime Spend Logged" value={inNum(overview.totalSpendAllTime)} series={overview.trend?.spend} format={(n) => inNum(n)} />

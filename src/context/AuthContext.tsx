@@ -318,7 +318,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // updateDoc can only ever touch an EXISTING doc, never create one, which removes that race
         // entirely — on a genuinely brand-new account this simply fails harmlessly (caught below)
         // until syncProfile's own create has landed, then a later login fills these fields in fine.
-        updateDoc(userDocRef, { lastLoginAt: nowIso, lastActiveAt: nowIso, approxCountry: getApproxCountry() }).catch((err) =>
+        // `platform` ('android' | 'ios' | 'web') is the device this person last used; the admin Total Users tile splits the count by it.
+        updateDoc(userDocRef, { lastLoginAt: nowIso, lastActiveAt: nowIso, approxCountry: getApproxCountry(), platform: Capacitor.isNativePlatform() ? Capacitor.getPlatform() : 'web' }).catch((err) =>
           console.error('lastLoginAt update failed:', err),
         );
       } else {
@@ -366,6 +367,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           lastActiveAt: new Date().toISOString(),
           appForegroundAt: new Date().toISOString(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          // Rides on the same write: which device this person last used (admin Total Users tile). Existing users fill in the next time they open the app.
+          platform: Capacitor.isNativePlatform() ? Capacitor.getPlatform() : 'web',
         },
         { merge: true },
       ).catch((err) => console.error('presence heartbeat failed:', err));

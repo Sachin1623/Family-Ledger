@@ -5006,7 +5006,7 @@ async function startServer() {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
       const [usersSnap, groupsSnap, expensesSnap] = await Promise.all([
-        db.collection('users').select('approxCountry', 'lastActiveAt', 'joinedAt', 'referredBy').get(),
+        db.collection('users').select('approxCountry', 'lastActiveAt', 'joinedAt', 'referredBy', 'platform').get(),
         db.collection('groups').select('createdBy', 'createdAt').get(),
         db.collection('expenses').select('addedBy', 'amount', 'createdAt').get(),
       ]);
@@ -5048,11 +5048,18 @@ async function startServer() {
         return countryStats.get(country)!;
       };
 
+      // Which device each person last used (users/{uid}.platform: 'android' | 'ios' | 'web', written by the app on sign-in and on every foreground). People
+      // who have not opened the updated app yet have no value and are counted as "unknown", so android + ios + web + unknown always equals the total.
+      const uidPlatform = new Map<string, 'android' | 'ios' | 'web'>();
+      const platformTotals = { android: 0, ios: 0, web: 0, unknown: 0 };
       usersSnap.docs.forEach((d) => {
         const data = d.data();
         const country = data.approxCountry || 'Unknown';
         uidToCountry.set(d.id, country);
         if (data.referredBy) referredUids.add(d.id);
+        const plat = data.platform === 'android' || data.platform === 'ios' || data.platform === 'web' ? (data.platform as 'android' | 'ios' | 'web') : null;
+        if (plat) uidPlatform.set(d.id, plat);
+        platformTotals[plat || 'unknown'] += 1;
         const bucket = getBucket(country);
         bucket.users += 1;
 
@@ -5066,9 +5073,16 @@ async function startServer() {
       });
       // New users come from when each sign-in account was created, not from a user record's joinedAt: about half of the recent accounts have no joinedAt, so
       // counting that field under-reports new users.
+      // New accounts per day on each device, from the same creation times (an account with no platform recorded yet is not in either line).
+      const platformTrend = { android: zeros(), ios: zeros() };
       try {
         const created = await accountCreationTimes();
         created.forEach((iso) => { bump(grew.users, iso); const p = trendPos(iso); if (p >= 0) trend.users[p] += 1; });
+        (await accountRecords()).forEach((r) => {
+          const plat = uidPlatform.get(r.uid);
+          const p = trendPos(r.ms);
+          if ((plat === 'android' || plat === 'ios') && p >= 0) platformTrend[plat][p] += 1;
+        });
       } catch (err) {
         console.error('overview: could not read account creation times:', err);
       }
@@ -5159,6 +5173,12 @@ async function startServer() {
         trend: { users: trend.users, groups: trend.groups, expenses: trend.expenses, spend: trend.spend, active: activeSeries, activeWeek: activeWeekSeries, days: Array.from({ length: TREND_DAYS }, (_, i) => new Date((todayIdx - TREND_DAYS + 1 + i) * DAY).toISOString().slice(0, 10)) },
         newUsers,
         totalUsers: usersSnap.size,
+        platforms: {
+          android: { total: platformTotals.android, trend: platformTrend.android },
+          ios: { total: platformTotals.ios, trend: platformTrend.ios },
+          web: platformTotals.web,
+          unknown: platformTotals.unknown,
+        },
         totalGroups: groupsSnap.size,
         totalExpenses: expensesSnap.size,
         totalSpendAllTime: totalSpend,
