@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -848,14 +848,51 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   // Scoped to the current calendar month — this section used to show up to the last 20 entries
   // regardless of date, which could reach weeks or months back once a group had enough history.
   // "Latest Spend" is renamed below to make that month-scoping explicit rather than implicit.
+  // An Event's list covers the whole event, not one month: it opens on one month and loads the next
+  // earlier month each time the person scrolls to the bottom (eventMonthsLoaded). The sentinel at the
+  // bottom of the list also keeps loading while the list is too short to scroll, so a quiet current
+  // month never hides the earlier ones.
+  const isEventList = group?.groupType === 'event';
+  const [eventMonthsLoaded, setEventMonthsLoaded] = useState(1);
+  const oldestExpenseMonthKey = useMemo(() => {
+    let oldest = '';
+    for (const e of expenses as any[]) {
+      if (typeof e.date !== 'string' || e.date.length < 7) continue;
+      const k = e.date.slice(0, 7);
+      if (!oldest || k < oldest) oldest = k;
+    }
+    return oldest;
+  }, [expenses]);
+  const eventOldestLoadedKey = useMemo(() => {
+    const [y, m] = monthKey.split('-').map(Number);
+    const d = new Date(y, m - eventMonthsLoaded, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }, [monthKey, eventMonthsLoaded]);
+  const eventHasMoreMonths = isEventList && !!oldestExpenseMonthKey && oldestExpenseMonthKey < eventOldestLoadedKey;
+  const spendListRef = useRef<HTMLDivElement | null>(null);
+  const spendSentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const root = spendListRef.current;
+    const target = spendSentinelRef.current;
+    if (!eventHasMoreMonths || !root || !target || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((en) => en.isIntersecting)) setEventMonthsLoaded((n) => n + 1);
+    }, { root, rootMargin: '0px 0px 60px 0px' });
+    io.observe(target);
+    return () => io.disconnect();
+  }, [eventHasMoreMonths, eventMonthsLoaded]);
   const latestSpendExpenses = useMemo(() => {
-    let filtered = expenses.filter((e: any) => typeof e.date === 'string' && e.date.startsWith(monthKey));
+    let filtered = expenses.filter((e: any) => typeof e.date === 'string' && (isEventList
+      ? e.date.slice(0, 7) >= eventOldestLoadedKey && e.date.slice(0, 7) <= monthKey
+      : e.date.startsWith(monthKey)));
     if (spendMemberFilter) filtered = filtered.filter((e: any) => e.paidBy === spendMemberFilter);
     if (spendClassificationFilter) {
       filtered = filtered.filter((e: any) => e.type !== 'income' && getCategoryClassification(group, e.category) === spendClassificationFilter);
     }
+    // Newest first by the entry's own date (the base list is by when it was added), so month headings stay in order.
+    if (isEventList) filtered = [...filtered].sort((a: any, b: any) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     return filtered;
-  }, [expenses, monthKey, spendMemberFilter, spendClassificationFilter, group]);
+  }, [expenses, monthKey, spendMemberFilter, spendClassificationFilter, group, isEventList, eventOldestLoadedKey]);
   const previousMonthKey = useMemo(() => {
     const [y, m] = monthKey.split('-').map(Number);
     const d = new Date(y, m - 2, 1); // m is 1-indexed; m-2 goes back one month from month index m-1
@@ -1304,9 +1341,13 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             {/* Scrolls internally (rather than letting the tile itself grow further) once there
                 are enough entries to need it — every expense for the month, not capped, without
                 pushing every other group tile below it down the page. */}
-            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+            <div ref={spendListRef} className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
               {latestSpendExpenses.length > 0 ? (
                 latestSpendExpenses.map((expense: any, idx: number) => {
+                  // Events list several months, so a small month heading marks where each one starts.
+                  const rowMonth = typeof expense.date === 'string' ? expense.date.slice(0, 7) : '';
+                  const prevMonth = idx > 0 && typeof latestSpendExpenses[idx - 1].date === 'string' ? latestSpendExpenses[idx - 1].date.slice(0, 7) : '';
+                  const showMonthHeading = isEventList && rowMonth.length === 7 && rowMonth !== prevMonth;
                   const payer = members.find((m: any) => m.userId === expense.paidBy);
                   const isIncomeRow = expense.type === 'income';
                   const icon = (isIncomeRow ? INCOME_CATEGORIES : CATEGORIES).find(c => c.id === expense.category)?.icon || '🧾';
@@ -1318,8 +1359,13 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                   const isHighlighted = showHighlight && highlightedIds.has(expense.id);
 
                   return (
+                    <React.Fragment key={idx}>
+                    {showMonthHeading && (
+                      <p className="text-[10px] font-black uppercase tracking-wider text-text-muted pt-1 px-1">
+                        {new Date(Number(rowMonth.slice(0, 4)), Number(rowMonth.slice(5, 7)) - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                      </p>
+                    )}
                     <div
-                      key={idx}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -1358,10 +1404,14 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                         {isIncomeRow && '+'}{currencySymbol}{formatAmountCompact(expense.amount, group?.currency, profile?.numberSystem)}
                       </span>
                     </div>
+                    </React.Fragment>
                   );
                 })
               ) : (
                 <p className="text-sm text-text-muted italic">{t('dashboard.noExpensesYet')}</p>
+              )}
+              {eventHasMoreMonths && (
+                <div ref={spendSentinelRef} className="py-2 text-center text-[10px] font-bold text-text-muted">Loading earlier month…</div>
               )}
             </div>
           </div>
