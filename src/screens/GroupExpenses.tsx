@@ -12,6 +12,7 @@ import Comments from '../components/Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { parseLocalDate, currentLocalMonthKey } from '../lib/dateUtils';
 import ImageAttachments from '../components/ImageAttachments';
+import { GroupPicker, KindBadge } from '../components/GroupPicker';
 import ExpenseQuickView from '../components/ExpenseQuickView';
 import PayerPicker from '../components/PayerPicker';
 import FrequencyPicker from '../components/FrequencyPicker';
@@ -1464,21 +1465,17 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
                     <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.group')} <span className="text-error">*</span></label>
                     <div className="relative">
                       {editingExpense.splitInfo ? (
-                        <div className="w-full h-12 bg-surface-container px-4 rounded-xl border border-border-subtle flex items-center font-bold text-primary opacity-70">
-                          {allGroups.find(g => g.id === editingExpense.groupId)?.name || groupData?.name || 'Unknown Group'}
+                        <div className="w-full h-12 bg-surface-container px-4 rounded-xl border border-border-subtle flex items-center gap-2 font-bold text-primary opacity-70">
+                          <KindBadge group={allGroups.find(g => g.id === editingExpense.groupId) || groupData} />
+                          <span className="truncate">{allGroups.find(g => g.id === editingExpense.groupId)?.name || groupData?.name || 'Unknown Group'}</span>
                         </div>
                       ) : (
                         <>
-                          <select
+                          <GroupPicker
+                            groups={allGroups}
                             value={editingExpense.groupId}
-                            onChange={e => setEditingExpense({...editingExpense, groupId: e.target.value})}
-                            className="w-full h-12 bg-surface pl-3 pr-8 rounded-xl border border-border-subtle font-bold text-primary appearance-none outline-none cursor-pointer"
-                          >
-                            {allGroups.map((g: any) => (
-                              <option key={g.id} value={g.id}>{g.name}</option>
-                            ))}
-                          </select>
-                          <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-lg pointer-events-none">expand_more</span>
+                            onChange={(id) => setEditingExpense({...editingExpense, groupId: id})}
+                          />
                         </>
                       )}
                     </div>
