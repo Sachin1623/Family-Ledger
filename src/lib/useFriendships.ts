@@ -20,7 +20,7 @@ export function useFriendships(myUid: string | undefined) {
   if (friendshipsError) console.error('useFriendships query failed:', friendshipsError);
 
   const { accepted, incomingPending, outgoingPending, allOtherUids } = useMemo(() => {
-    const accepted: { friendUid: string }[] = [];
+    const accepted: { friendUid: string; since: string }[] = [];
     const incomingPending: { friendUid: string }[] = [];
     // `lastSentAt` only exists once a request has been resent at least once — falls back to
     // `createdAt` (the original send) so "last sent" always has a value to show.
@@ -31,10 +31,12 @@ export function useFriendships(myUid: string | undefined) {
       const otherUid = (data.participants || []).find((u: string) => u !== myUid);
       if (!otherUid) continue;
       allOtherUids.push(otherUid);
-      if (data.status === 'accepted') accepted.push({ friendUid: otherUid });
+      if (data.status === 'accepted') accepted.push({ friendUid: otherUid, since: data.respondedAt || data.createdAt || '' });
       else if (data.requestedBy === myUid) outgoingPending.push({ friendUid: otherUid, lastSentAt: data.lastSentAt || data.createdAt });
       else incomingPending.push({ friendUid: otherUid });
     }
+    // newest friends first (the order the database hands them over is just by id, which means nothing to a person)
+    accepted.sort((a, b) => (b.since > a.since ? 1 : b.since < a.since ? -1 : 0));
     return { accepted, incomingPending, outgoingPending, allOtherUids };
   }, [friendshipsValue, myUid]);
 

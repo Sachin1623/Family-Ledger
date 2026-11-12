@@ -123,11 +123,6 @@ const emailFrom = process.env.EMAIL_FROM || smtpUser || 'noreply@familyledger.ap
 // loads from (capacitor.config.ts server.url), so the link works identically whether opened on
 // web, Android, or iOS.
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || 'https://familyledger.thirteenapps.com';
-const INVITE_PLAY_URL = 'https://play.google.com/store/apps/details?id=com.familyledger.app';
-const INVITE_APP_STORE_URL = 'https://apps.apple.com/in/app/familyledger-family-finance/id6804777430';
-// Added to every invite email: where to get the app if the person does not have it yet
-const installEmailText = `\n\nNew to FamilyLedger? Get the app:\nAndroid: ${INVITE_PLAY_URL}\niPhone: ${INVITE_APP_STORE_URL}\nThen open the link above again.`;
-const installEmailHtml = `<p style="color:#555;font-size:13px;">New to FamilyLedger? Get the app: <a href="${INVITE_PLAY_URL}">Android</a> · <a href="${INVITE_APP_STORE_URL}">iPhone</a>. Then open the link above again.</p>`;
 const debugOtpDelivery =
   process.env.NODE_ENV !== 'production' ||
   process.env.DEV_SHOW_OTP === 'true';
@@ -16986,13 +16981,12 @@ async function startServer() {
                 from: emailFrom,
                 to: email,
                 subject: `${inviterName} invited you to join "${groupName}" on FamilyLedger`,
-                text: `${inviterName} invited you to join the group "${groupName}" on FamilyLedger, a shared expense tracker.\n\nJoin here: ${joinLink}\n\nIf you weren't expecting this, you can ignore this email.${installEmailText}`,
+                text: `${inviterName} invited you to join the group "${groupName}" on FamilyLedger, a shared expense tracker.\n\nJoin here: ${joinLink}\n\nIf you weren't expecting this, you can ignore this email.`,
                 html: `
                   <p>${escapeHtml(inviterName)} invited you to join the group <strong>${escapeHtml(groupName)}</strong> on FamilyLedger, a shared expense tracker.</p>
                   <p><a href="${joinLink}" style="display:inline-block;padding:12px 24px;background:#4F46E5;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Join ${escapeHtml(groupName)}</a></p>
                   <p>Or copy this link: ${joinLink}</p>
-                  ${installEmailHtml}
-                  <p>If you weren't expecting this, you can ignore this email.</p>
+                          <p>If you weren't expecting this, you can ignore this email.</p>
                 `,
               });
               await pendingDoc?.ref.update({ lastEmailAt: new Date().toISOString() }).catch(() => {});
@@ -17012,12 +17006,11 @@ async function startServer() {
         from: emailFrom,
         to: email,
         subject: `${inviterName} invited you to join "${groupName}" on FamilyLedger`,
-        text: `${inviterName} invited you to join the group "${groupName}" on FamilyLedger, a shared expense tracker.\n\nJoin here: ${joinLink}\n\nIf you weren't expecting this, you can ignore this email.${installEmailText}`,
+        text: `${inviterName} invited you to join the group "${groupName}" on FamilyLedger, a shared expense tracker.\n\nJoin here: ${joinLink}\n\nIf you weren't expecting this, you can ignore this email.`,
         html: `
           <p>${inviterName} invited you to join the group <strong>${groupName}</strong> on FamilyLedger, a shared expense tracker.</p>
           <p><a href="${joinLink}" style="display:inline-block;padding:12px 24px;background:#4F46E5;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Join ${groupName}</a></p>
           <p>Or copy this link: ${joinLink}</p>
-          ${installEmailHtml}
           <p>If you weren't expecting this, you can ignore this email.</p>
         `,
       });
@@ -17182,12 +17175,11 @@ async function startServer() {
         from: emailFrom,
         to: target.email,
         subject: `${params.requesterName} wants to be your friend on FamilyLedger`,
-        text: `${params.requesterName} sent you a friend request on FamilyLedger, the app for tracking and splitting family expenses.\n\nAccept it here: ${link}\n\nIf you were not expecting this, you can ignore this email.${installEmailText}`,
+        text: `${params.requesterName} sent you a friend request on FamilyLedger, the app for tracking and splitting family expenses.\n\nAccept it here: ${link}\n\nIf you were not expecting this, you can ignore this email.`,
         html: `
           <p><strong>${who}</strong> sent you a friend request on FamilyLedger, the app for tracking and splitting family expenses.</p>
           <p><a href="${link}" style="display:inline-block;padding:12px 24px;background:#12b89a;color:#06222f;text-decoration:none;border-radius:8px;font-weight:bold;">Open the request</a></p>
           <p>Or copy this link: ${link}</p>
-          ${installEmailHtml}
           <p>If you were not expecting this, you can ignore this email.</p>
         `,
       });

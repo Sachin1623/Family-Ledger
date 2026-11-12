@@ -71,6 +71,9 @@ export default function PeopleStrip({ quiet = false }: { quiet?: boolean }) {
           </div>
           <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar py-1 px-1">
             {accepted.slice(0, 5).map((f, i) => avatar(f.friendUid, i))}
+            {accepted.length > 5 && (
+              <button type="button" onClick={() => navigate('/friends')} aria-label={`${accepted.length - 5} more friends`} className="w-11 h-11 rounded-full bg-surface-container text-primary text-[13px] font-extrabold flex items-center justify-center shrink-0 active:scale-95">+{accepted.length - 5}</button>
+            )}
             <button type="button" onClick={() => navigate('/friends')} aria-label="Invite family or a friend" className="w-11 h-11 rounded-full flex items-center justify-center text-[#0b6b5a] border-2 border-dashed border-[#12b89a] shrink-0 active:scale-95">
               <span className="material-symbols-outlined text-[24px]">add</span>
             </button>

@@ -11,8 +11,3 @@ export function browserPlatform(): BrowserPlatform {
   if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
   return 'other';
 }
-
-// Added to the end of an invite message sent by WhatsApp, SMS or the share sheet.
-export function installHelpText(): string {
-  return `\n\nDon't have the app yet?\nAndroid: ${PLAY_STORE_URL}\niPhone: ${APP_STORE_URL}\nInstall it, then tap the link above again.`;
-}

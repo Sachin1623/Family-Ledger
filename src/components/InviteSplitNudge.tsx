@@ -1,5 +1,4 @@
 import React from 'react';
-import { installHelpText } from '../lib/installLinks';
 import { motion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import { inviteJoinLink } from '../lib/referral';
@@ -32,7 +31,7 @@ export default function InviteSplitNudge({ nudge, onDismiss }: { nudge: SplitNud
 
   const sendWhatsApp = () => {
     const link = inviteJoinLink(nudge.groupId, user?.uid, 'wa');
-    const text = `Hi! I added "${nudge.description}" on FamilyLedger${nudge.shareText ? ` (${nudge.shareText})` : ''}. Join the group to see it and settle up: ${link}${installHelpText()}`;
+    const text = `Hi! I added "${nudge.description}" on FamilyLedger${nudge.shareText ? ` (${nudge.shareText})` : ''}. Join the group to see it and settle up: ${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
     logGrowthEvent('invite_whatsapp', user?.uid);
     close();
