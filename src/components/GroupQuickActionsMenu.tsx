@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { installHelpText } from '../lib/installLinks';
 import CategoryBadge from './CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
@@ -242,7 +243,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     const link = inviteJoinLink(groupId!, user?.uid, 'wa');
     const inviterName = profile?.displayName || user?.displayName || 'A friend';
     const message = `Hi! ${inviterName} is inviting you to join the group "${group?.name}" on FamilyLedger. Join here: ${link}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+    window.open(`https://wa.me/?text=${encodeURIComponent(message + installHelpText())}`, '_blank');
     logGrowthEvent('invite_whatsapp', user?.uid);
   };
 
@@ -250,7 +251,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
   const joinMessage = () => {
     const link = inviteJoinLink(groupId!, user?.uid, 'wa');
     const inviterName = profile?.displayName || user?.displayName || 'A friend';
-    return { link, text: `Hi! ${inviterName} is inviting you to join the group "${group?.name}" on FamilyLedger. Join here: ${link}` };
+    return { link, text: `Hi! ${inviterName} is inviting you to join the group "${group?.name}" on FamilyLedger. Join here: ${link}${installHelpText()}` };
   };
   const handleCopyLink = async () => {
     try {

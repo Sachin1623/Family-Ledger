@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import GetTheAppBanner from '../components/GetTheAppBanner';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -13,35 +14,8 @@ import { placeholderRows } from '../lib/groupParticipants';
 import { pendingReferral } from '../lib/referral';
 
 const JOIN_AFTER_LOGIN_KEY = 'fl_join_after_login';
-const PLAY_STORE_URL ='https://play.google.com/store/apps/details?id=com.familyledger.app';
 
-// Android App Links (see AndroidManifest.xml's autoVerify intent-filter) already open this exact
-// URL directly in the installed app — this banner only ever renders in the fallback case: the
-// link was opened in a plain mobile browser because the app ISN'T installed (or verification
-// hasn't completed on that device yet). Per explicit choice: shown alongside the normal join flow
-// below, not instead of it — this app is a real website too, so joining works fine in-browser;
-// the banner is just steering someone who'd rather have the native app toward installing it.
-// Android-only for now — the iOS App Store listing isn't live yet (still in review as of this
-// build), so there's nowhere useful to send an iPhone user; add an `isIOS` branch with the App
-// Store URL once that clears.
-function GetTheAppBanner() {
-  if (Capacitor.isNativePlatform()) return null;
-  const isAndroid = /android/i.test(navigator.userAgent);
-  if (!isAndroid) return null;
-  return (
-    <a
-      href={PLAY_STORE_URL}
-      className="flex items-center gap-3 bg-primary text-white rounded-2xl p-4 shadow-lg active:scale-[0.98] transition-all"
-    >
-      <img src="/logo.svg" alt="" className="w-10 h-10 rounded-xl bg-white/15 p-1.5 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-bold leading-tight">Get the FamilyLedger app</p>
-        <p className="text-[11px] text-white/70 leading-tight">Faster, with reminders &amp; offline support</p>
-      </div>
-      <span className="material-symbols-outlined text-[20px] shrink-0">open_in_new</span>
-    </a>
-  );
-}
+// The "Get the app" banner (Android and iPhone) lives in components/GetTheAppBanner.tsx; it only appears when this link opened in a plain phone browser.
 
 export default function JoinGroup() {
   const { groupId } = useParams();

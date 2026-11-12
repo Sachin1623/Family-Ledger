@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { installHelpText } from '../lib/installLinks';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -84,7 +85,7 @@ export default function Friends() {
   const buildFriendInviteMessage = () => {
     const inviterName = profile?.displayName || user?.displayName || 'A friend';
     const link = `${window.location.origin}/add-friend/${myUid}`;
-    return t('friends.inviteMessage', { name: inviterName, link });
+    return t('friends.inviteMessage', { name: inviterName, link }) + installHelpText();
   };
 
   const handleShareFriendLink = async () => {

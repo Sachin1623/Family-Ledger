@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import GetTheAppBanner from '../components/GetTheAppBanner';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
@@ -116,6 +117,8 @@ export default function AddFriendInvite() {
             )}
           </div>
         )}
+
+        <GetTheAppBanner />
 
         <div className="space-y-3 pt-2">
           {!user ? (

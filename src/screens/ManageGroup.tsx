@@ -1,4 +1,5 @@
 import GroupTypePicker, { GroupKind } from '../components/GroupTypePicker';
+import { installHelpText } from '../lib/installLinks';
 import MemberAvatar from '../components/MemberAvatar';
 import React, { useState, useEffect, useRef } from 'react';
 import RecurringQuickEdit from '../components/RecurringQuickEdit';
@@ -287,7 +288,7 @@ export default function ManageGroup() {
       .filter((n): n is string => !!n);
     if (numbers.length === 0) return;
     const link = `${window.location.origin}/join/${groupId}`;
-    const message = `Hey I am using Family Ledger to track and organise my expenses lets manage our expenses together: ${link}`;
+    const message = `Hey I am using Family Ledger to track and organise my expenses lets manage our expenses together: ${link}${installHelpText()}`;
     window.location.href = `sms:${numbers.join(',')}?body=${encodeURIComponent(message)}`;
   };
 

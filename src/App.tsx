@@ -1,4 +1,5 @@
 import { rememberReferral } from './lib/referral';
+import GetTheAppBar from './components/GetTheAppBar';
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -369,6 +370,7 @@ export default function App() {
               scrolls" — see BabyVaccinations.tsx / HealthGlucose.tsx / LogVaccineVisit.tsx's own
               sticky headers, none of which could ever have worked before this fix.) */}
           <div className="h-dvh bg-surface font-sans text-on-surface flex flex-col overflow-hidden">
+            <GetTheAppBar />
             <Header />
             <FloatingCalculator />
             <div id="route-scroll" className="flex-1 min-h-0 overflow-y-auto">
