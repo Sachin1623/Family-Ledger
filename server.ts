@@ -101,6 +101,14 @@ const scrambleTargetWordsByLength: Record<number, string[]> = {};
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
+// Gmail ignores dots and "+tags" in the part before the @ (khushvikrajput@gmail.com and khushvik.rajput@gmail.com are one mailbox), but
+// Firebase Auth stores whichever spelling Google reports. Used only to match a typed address against the stored one.
+const canonicalEmail = (email: string) => {
+  const [local = '', domain = ''] = normalizeEmail(email).split('@');
+  if (domain === 'gmail.com' || domain === 'googlemail.com') return `${local.split('+')[0].replace(/\./g, '')}@gmail.com`;
+  return `${local}@${domain}`;
+};
+
 const hashCode = (code: string) => crypto.createHash('sha256').update(code).digest('hex');
 
 const smtpHost = process.env.SMTP_HOST;
@@ -4184,6 +4192,33 @@ async function startServer() {
   // recovered — see the big comment above the /api/account/* routes below for why this can't
   // just be a normal sign-in. 404s on anything that isn't actually a pending soft-delete, so it
   // can't be used to probe whether an arbitrary email has an account at all.
+  // The soft-deleted ("paused", still pending) account for a typed email, or null. Matches the exact address first; for Gmail it also
+  // matches the same mailbox spelled with different dots, because Google signs the person in under its own spelling (so Firebase said
+  // "disabled" while a plain lookup of what they typed found nothing).
+  async function findPausedAccount(email: string) {
+    if (!adminAuth || !adminDb) return null;
+    const check = async (uid: string) => {
+      const ref = adminDb!.collection('accountDeletions').doc(uid);
+      const snap = await ref.get();
+      return snap.exists && snap.data()?.status === 'pending' ? ref : null;
+    };
+    const exact = await adminAuth.getUserByEmail(email).catch(() => null);
+    if (exact?.disabled) {
+      const ref = await check(exact.uid);
+      if (ref) return { userRecord: exact, tombstoneRef: ref };
+    }
+    const canon = canonicalEmail(email);
+    const pending = await adminDb.collection('accountDeletions').where('status', '==', 'pending').limit(500).get();
+    for (const d of pending.docs) {
+      const stored = String(d.data()?.email || '');
+      if (stored && canonicalEmail(stored) === canon) {
+        const userRecord = await adminAuth.getUser(d.id).catch(() => null);
+        if (userRecord?.disabled) return { userRecord, tombstoneRef: d.ref };
+      }
+    }
+    return null;
+  }
+
   app.post('/api/send-recovery-otp', async (req, res) => {
     const email = normalizeEmail(String(req.body.email || ''));
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -4193,12 +4228,8 @@ async function startServer() {
       return res.status(500).json({ error: 'Account recovery is not available right now.' });
     }
     try {
-      const userRecord = await adminAuth.getUserByEmail(email).catch(() => null);
-      if (!userRecord || !userRecord.disabled) {
-        return res.status(404).json({ error: 'No paused account found for that email.' });
-      }
-      const tombstoneSnap = await adminDb.collection('accountDeletions').doc(userRecord.uid).get();
-      if (!tombstoneSnap.exists || tombstoneSnap.data()?.status !== 'pending') {
+      const paused = await findPausedAccount(email);
+      if (!paused) {
         return res.status(404).json({ error: 'No paused account found for that email.' });
       }
       return sendOtpEmail(res, email, 'recover');
@@ -4540,13 +4571,9 @@ async function startServer() {
     }
 
     try {
-      const userRecord = await adminAuth.getUserByEmail(email).catch(() => null);
-      if (!userRecord) return res.status(404).json({ error: 'No paused account found for that email.' });
-      const tombstoneRef = adminDb.collection('accountDeletions').doc(userRecord.uid);
-      const tombstoneSnap = await tombstoneRef.get();
-      if (!tombstoneSnap.exists || tombstoneSnap.data()?.status !== 'pending') {
-        return res.status(404).json({ error: 'No paused account found for that email.' });
-      }
+      const paused = await findPausedAccount(email);
+      if (!paused) return res.status(404).json({ error: 'No paused account found for that email.' });
+      const { userRecord, tombstoneRef } = paused;
 
       recoverTokenStore.delete(email);
 
@@ -5446,6 +5473,68 @@ async function startServer() {
     } catch (error) {
       console.error('admin/users/:uid/data error:', error);
       return res.status(500).json({ error: 'Unable to delete data.' });
+    }
+  });
+
+  // Accounts waiting to be deleted (paused for 30 days, or "delete everything now" waiting for the hourly job). Admin screen only.
+  app.get('/api/admin/pending-deletions', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminDb) return;
+    try {
+      const snap = await adminDb.collection('accountDeletions').where('status', '==', 'pending').get();
+      const items = snap.docs.map((d) => {
+        const x = d.data();
+        return { uid: d.id, email: x.email || '', displayName: x.displayName || '', deletedAt: x.deletedAt || null, purgeAt: x.purgeAt || null, mode: x.mode || 'soft' };
+      }).sort((a, b) => String(b.deletedAt || '').localeCompare(String(a.deletedAt || '')));
+      return res.json({ items });
+    } catch (error) {
+      console.error('admin/pending-deletions error:', error);
+      return res.status(500).json({ error: 'Unable to load pending deletions.' });
+    }
+  });
+
+  // Deletes ONE account right now, without waiting for the hourly job: the very same hardDeleteUserData the job runs, so the result is identical.
+  // Works on a paused account (pending tombstone) and on an active one (e.g. a person asked for immediate deletion through Feedback):
+  // an active account is first disabled and given a tombstone, exactly as the person's own "delete everything now" would. Never the primary admin,
+  // never the caller, never another admin (remove admin access first).
+  app.post('/api/admin/accounts/purge-now', async (req, res) => {
+    const decoded = await requireAdmin(req, res);
+    if (!decoded || !adminAuth || !adminDb) return;
+    const db = adminDb;
+    const uid = String(req.body?.uid || '').trim();
+    if (!uid) return res.status(400).json({ error: 'uid is required.' });
+    if (uid === decoded.uid) return res.status(400).json({ error: 'You cannot delete your own account from here.' });
+    if (PRIMARY_ADMIN_UIDS.includes(uid)) return res.status(403).json({ error: 'The primary admin account cannot be deleted from here.' });
+    try {
+      if ((await db.collection('admins').doc(uid).get()).exists) {
+        return res.status(400).json({ error: 'This person is an admin. Remove their admin access first.' });
+      }
+      const tombstoneRef = db.collection('accountDeletions').doc(uid);
+      const tombstone = await tombstoneRef.get();
+      let email: string | null = null;
+      let displayName: string | null = null;
+      if (tombstone.exists && tombstone.data()?.status === 'pending') {
+        email = tombstone.data()?.email || null;
+        displayName = tombstone.data()?.displayName || null;
+      } else {
+        const [authUser, userSnap] = await Promise.all([adminAuth.getUser(uid).catch(() => null), db.collection('users').doc(uid).get()]);
+        if (!authUser && !userSnap.exists) return res.status(404).json({ error: 'No account found for that id.' });
+        const u = userSnap.exists ? userSnap.data()! : {};
+        email = normalizeEmail(authUser?.email || u.email || '') || null;
+        displayName = u.displayName || authUser?.displayName || null;
+        if (authUser) {
+          await adminAuth.updateUser(uid, { disabled: true });
+          await adminAuth.revokeRefreshTokens(uid).catch((err) => console.error('revokeRefreshTokens failed:', err));
+        }
+        const now = new Date().toISOString();
+        await tombstoneRef.set({ email: email || '', displayName, photoURL: u.photoURL || null, deletedAt: now, purgeAt: now, mode: 'hard', status: 'pending', requestedByAdmin: decoded.uid });
+      }
+      await hardDeleteUserData(db, adminAuth, uid, email, displayName);
+      console.log(`admin purge-now: ${uid} (${email}) deleted by admin ${decoded.uid}`);
+      return res.json({ ok: true, uid, email });
+    } catch (error) {
+      console.error('admin/accounts/purge-now error:', error);
+      return res.status(500).json({ error: 'The deletion did not finish. It is still pending and the hourly job will retry it.' });
     }
   });
 

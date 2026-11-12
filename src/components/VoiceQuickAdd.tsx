@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import CategoryBadge from './CategoryBadge';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -212,7 +213,7 @@ export default function VoiceQuickAdd({ groupId, onDone, afterAdd }: { groupId?:
               )}
               {result?.ok && (
                 <div className="flex items-center gap-3">
-                  <span className="text-2xl shrink-0">{result.categoryIcon}</span>
+                  <CategoryBadge id={result.categoryId} icon={result.categoryIcon} size={34} />
                   <div className="flex-1 min-w-0">
                     <p className="font-black truncate">
                       {t(result.isIncome ? 'voiceExpense.addedIncome' : 'voiceExpense.added')} {result.currencySymbol}

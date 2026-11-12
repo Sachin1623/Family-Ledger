@@ -41,7 +41,8 @@ export default function BroadcastReactions({ broadcastId, preview = false, onPic
     return () => { cancelled = true; };
   }, [broadcastId, preview]);
 
-  const finish = () => { if (onPicked) setTimeout(onPicked, 1700); };
+  // closes a beat after the tap (enough to see the pick land), not after the server answers: the save carries on in the background
+  const finish = () => { if (onPicked) setTimeout(onPicked, 600); };
   const pick = async (key: string) => {
     if (busy || state?.mine === key) return;
     if (preview) { setState({ counts: {}, total: 0, mine: key }); finish(); return; }
@@ -49,9 +50,9 @@ export default function BroadcastReactions({ broadcastId, preview = false, onPic
     setFailed(false);
     // show the pick at once; the server's totals replace it when they arrive
     setState((s) => (s ? { ...s, mine: key } : { counts: {}, total: 0, mine: key }));
+    finish();
     try {
       setState(await call(broadcastId, 'POST', key));
-      finish();
     } catch {
       setFailed(true);
       call(broadcastId, 'GET').then(setState).catch(() => {});

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -1109,7 +1110,7 @@ export default function RecurringExpenses() {
                         <span className="w-11 h-11 rounded-xl flex items-center justify-center text-xl overflow-hidden" style={{ background: isIncome ? '#dcfce7' : ruleTint(rule.category) }} title={group?.name}>
                           {group?.photoURL ? <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : groupIconEmoji(group?.icon)}
                         </span>
-                        <span className={clsx('absolute -right-1 -bottom-1 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[11px]', isIncome ? 'bg-success/15' : 'bg-primary/10')}>{catInfo?.icon || '🔁'}</span>
+                        <span className={clsx('absolute -right-1 -bottom-1 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[11px]', isIncome ? 'bg-success/15' : 'bg-primary/10')}><CategoryBadge id={catInfo?.id} icon={catInfo?.icon || '🔁'} size={14} /></span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-black text-primary truncate flex items-center gap-1.5">
@@ -1167,7 +1168,7 @@ export default function RecurringExpenses() {
             </DetailField>
             <DetailField label={t('addExpense.description')}>{viewingRule.description || (catInfo ? t(`${viewingRule.type === 'income' ? 'income' : 'category'}.${catInfo.id}`) : '') || t('addExpense.untitled')}</DetailField>
             <DetailField label={t('common.amount')}>{viewingRule.type === 'income' ? '+' : ''}{getCurrencySymbol(group?.currency)}{viewingRule.amount.toFixed(2)}</DetailField>
-            <DetailField label={t('common.category')}>{catInfo?.icon} {catInfo ? t(`${viewingRule.type === 'income' ? 'income' : 'category'}.${catInfo.id}`) : viewingRule.category}</DetailField>
+            <DetailField label={t('common.category')}><span className="inline-flex items-center gap-1.5">{catInfo && <CategoryBadge id={catInfo.id} icon={catInfo.icon} size={20} />}{catInfo ? t(`${viewingRule.type === 'income' ? 'income' : 'category'}.${catInfo.id}`) : viewingRule.category}</span></DetailField>
             <DetailField label={t('common.group')}>{group?.name || t('search.unknownGroup')}</DetailField>
             <DetailField label={t('reminders.frequency')}>{describeFrequency(viewingRule)}</DetailField>
             <DetailField label={t('recurring.nextRun')}>{new Date(viewingRule.nextRunDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</DetailField>

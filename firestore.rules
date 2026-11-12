@@ -1421,7 +1421,10 @@ service cloud.firestore {
                (!data.keys().hasAll(['categoryAllocations']) || data.categoryAllocations is map);
       }
 
-      allow read: if isSignedIn() && canModifyGroup(resource.data.groupId);
+      // A budget that does not exist yet must be readable (it just comes back empty), or a live listener on it is refused (the rule cannot
+      // look inside a missing document) and never hears it being created. Budget ids are "<groupId>_<yyyy-mm>", so the group is known from the id;
+      // lists and queries still pass through the stored groupId.
+      allow read: if isSignedIn() && (canModifyGroup(budgetId.split('_')[0]) || canModifyGroup(resource.data.groupId));
       allow create: if isSignedIn() && canModifyGroup(incoming().groupId) && isValidBudget(incoming());
       allow update: if isSignedIn() && canModifyGroup(existing().groupId) && isValidBudget(incoming());
       allow delete: if isSignedIn() && canModifyGroup(existing().groupId);

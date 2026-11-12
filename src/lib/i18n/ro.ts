@@ -291,7 +291,7 @@ const ro = {
   'category.education': 'Educație',
   'category.kids': 'Copii',
   'category.ent': 'Divertisment și timp liber',
-  'category.finance': 'Finanțe și investiții',
+  'category.finance': 'Investiții',
   'category.shopping': 'Îmbrăcăminte',
   'category.household': 'Gospodărie',
   'category.gifts': 'Cadouri',

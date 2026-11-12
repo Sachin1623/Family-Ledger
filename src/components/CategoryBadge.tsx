@@ -33,6 +33,16 @@ export const CATEGORY_STYLE: Record<string, { symbol: string; color: string; bg:
   other_income: { symbol: 'payments', color: '#58677a', bg: '#e3e8ee' },
 };
 
+// The 3D artwork for each default category (src/assets/category/<id>.png), loaded as plain file addresses so the app's
+// first screen does not carry the pictures; each one is fetched only when it is first shown.
+const ART_URLS = import.meta.glob('../assets/category/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const CATEGORY_ART: Record<string, string> = {};
+Object.entries(ART_URLS).forEach(([path, url]) => {
+  const id = path.split('/').pop()!.replace('.png', '');
+  CATEGORY_ART[id] = url;
+});
+export const categoryArt = (id?: string): string | undefined => (id ? CATEGORY_ART[id] : undefined);
+
 const DEFAULT_EMOJI: Record<string, string> = {};
 [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].forEach((c) => {
   DEFAULT_EMOJI[c.id] = c.icon;
@@ -54,6 +64,23 @@ export default function CategoryBadge({
   const isDefaultIcon = !icon || (id && DEFAULT_EMOJI[id] === icon);
   const box = { width: size, height: size };
 
+  const art = categoryArt(id);
+  if (art && isDefaultIcon) {
+    // free-standing artwork: the picture itself is the icon, with a soft shadow, no circle behind it
+    return (
+      <img
+        src={art}
+        alt=""
+        width={size}
+        height={size}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        className={`inline-block shrink-0 select-none ${className}`}
+        style={{ ...box, objectFit: 'contain', filter: `drop-shadow(0 ${Math.max(1, Math.round(size / 14))}px ${Math.max(1, Math.round(size / 16))}px rgba(0,0,0,0.20))` }}
+      />
+    );
+  }
   if (style && isDefaultIcon) {
     return (
       <span className={`inline-flex items-center justify-center rounded-full shrink-0 ${className}`} style={{ ...box, background: style.bg }}>

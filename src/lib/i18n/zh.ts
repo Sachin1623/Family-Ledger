@@ -301,7 +301,7 @@ const zh = {
   'category.education': '教育',
   'category.kids': '儿童',
   'category.ent': '娱乐与休闲',
-  'category.finance': '财务与投资',
+  'category.finance': '投资',
   'category.shopping': '服饰',
   'category.household': '家居用品',
   'category.gifts': '礼物',

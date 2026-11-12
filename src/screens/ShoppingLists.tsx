@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -372,7 +373,7 @@ export default function ShoppingLists() {
   const cap = (label: string) => <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500 mt-4 mb-1.5 px-0.5">{label}</p>;
   const catTile = (c: { id: string; name: string; icon: string }) => (
     <button key={c.id} type="button" onClick={() => { setCategory(c.id); }} className={clsx('rounded-2xl py-2 px-1 text-center border-2 transition-all active:scale-95', chosenCategory.id === c.id ? 'border-[#22c1a5] bg-emerald-50 text-[#0b6b59]' : 'border-transparent bg-slate-50 text-slate-600')}>
-      <span className="block text-[20px] leading-tight">{c.icon}</span>
+      <span className="flex justify-center"><CategoryBadge id={c.id} icon={c.icon} size={28} /></span>
       <span className="block text-[10px] font-black truncate">{categoryName(c)}</span>
     </button>
   );

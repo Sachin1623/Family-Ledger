@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
+import WelcomeChecklist, { useIsNewUser, isWelcomeHidden } from '../components/WelcomeChecklist';
+import { startTour } from '../lib/tourRef';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
 import { useLiveCollection, useLiveDocument } from '../lib/liveCache';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -141,9 +143,12 @@ export default function Dashboard() {
     const data = d.data();
     return data.status !== 'archived' && !data.isCashHolding;
   });
-  // "Not now" hides the tile for 15 days. It is remembered on this phone and on the account (so another phone agrees), not only
+  // "Not now" hides the tile for 7 days. It is remembered on this phone and on the account (so another phone agrees), not only
   // for this visit: the old in-memory flag brought the tile back on every relaunch.
-  const SAVINGS_TILE_SNOOZE_MS = 15 * 24 * 60 * 60 * 1000;
+  const SAVINGS_TILE_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+  // A new account does not see it until it is 7 days old: the first week is about groups and expenses, not savings.
+  const accountCreatedAt = user?.metadata?.creationTime ? Date.parse(user.metadata.creationTime) : NaN;
+  const savingsTileTooEarly = Number.isFinite(accountCreatedAt) && Date.now() - accountCreatedAt < 7 * 24 * 60 * 60 * 1000;
   const savingsSnoozeKey = `fl_savings_tile_snoozed_${user?.uid || ''}`;
   const [accountsGoalsBannerDismissed, setAccountsGoalsBannerDismissed] = useState(false);
   const savingsTileSnoozed = (() => {
@@ -160,7 +165,7 @@ export default function Dashboard() {
   // deciding to show — otherwise every user would flash the banner for a moment on every load.
   const showAccountsGoalsBanner =
     !!user && financialAccountsValue !== undefined && goalsForBannerValue !== undefined
-    && !!profile && !hasAnyAccount && !hasAnyRealGoal && !accountsGoalsBannerDismissed && !savingsTileSnoozed;
+    && !!profile && !savingsTileTooEarly && !hasAnyAccount && !hasAnyRealGoal && !accountsGoalsBannerDismissed && !savingsTileSnoozed;
   const [showBannerAccountsExplainer, setShowBannerAccountsExplainer] = useState(false);
 
   const memberships = membershipsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() })) || [];
@@ -263,6 +268,11 @@ export default function Dashboard() {
     const g: any = d.data();
     return { id: d.id, name: g.name || '', icon: g.icon, photoURL: g.photoURL || null, archived: !!g.archived, currency: g.currency };
   });
+  // "Getting started" card for people who joined recently (WelcomeChecklist.tsx). While it is showing it takes the place of the lone empty-state card.
+  const isNewUser = useIsNewUser();
+  const [welcomeHidden, setWelcomeHidden] = useState(isWelcomeHidden);
+  const welcomeShowing = isNewUser && !welcomeHidden;
+  const hasOtherMembers = (groupsMetaValue?.docs || []).some((d) => Number((d.data() as any).memberCount || 0) > 1);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [showReorderModal, setShowReorderModal] = useState(false);
   const [dragOrder, setDragOrder] = useState<string[]>([]);
@@ -382,6 +392,14 @@ export default function Dashboard() {
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-44 md:pb-44">
       <StreaksPanel />
+      {welcomeShowing && !membershipsLoading && groupsMetaReady && (
+        <WelcomeChecklist
+          groupIds={activeMemberships.map((m: any) => m.groupId)}
+          hasOtherMembers={hasOtherMembers}
+          onHide={() => setWelcomeHidden(true)}
+          onTour={activeMemberships.length > 0 ? () => startTour('group-explore', { groupId: activeMemberships[0].groupId }) : undefined}
+        />
+      )}
       {showAccountsGoalsBanner && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
           <span className="text-2xl shrink-0">💰</span>
@@ -513,7 +531,7 @@ export default function Dashboard() {
             <div aria-hidden className="h-[150px] rounded-2xl bg-border-subtle/50 animate-pulse" />
             <div aria-hidden className="h-[150px] rounded-2xl bg-border-subtle/50 animate-pulse" />
           </>
-        ) : activeMemberships.length === 0 && archivedMemberships.length === 0 ? (
+        ) : activeMemberships.length === 0 && archivedMemberships.length === 0 && welcomeShowing ? null : activeMemberships.length === 0 && archivedMemberships.length === 0 ? (
           // Invite-flow spec's first step: a user with literally no group yet can't do anything
           // else in the app (no expenses to log, nobody to invite), so this replaces the empty
           // grid with an assertive, always-visible prompt rather than just leaving the "+ New
@@ -829,6 +847,8 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   // visits.
   const todayMonthKey = currentLocalMonthKey();
   const [selectedMonthKey, setSelectedMonthKey] = useState(todayMonthKey);
+  // the extra numbers (averages, bars, last month) sit behind "See details", so the tile opens with just the three that matter
+  const [showDetails, setShowDetails] = useState(false);
   const monthKey = selectedMonthKey;
   const isCurrentMonth = monthKey === todayMonthKey;
   const stepMonth = (delta: number) => {
@@ -1142,41 +1162,47 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             budget card below — 5 evenly-spaced, slightly larger icons instead of packing tighter
             to make room for a 6th thing on this row. Same 5 actions, same handlers/tooltips as
             before — purely a visual redesign, not a functional change. */}
-        <div className="flex items-center justify-between gap-1" data-tour={`dashboard-action-row-${groupId}`}>
-          {/* "Add" is one tile with two ways in — type it, or talk it — so it is clear that Talk is another way to add an expense. */}
-          <div className={clsx('flex items-stretch rounded-2xl bg-violet-50 border border-violet-100', speechAvailableHere() ? 'flex-[2]' : 'flex-1')}>
-            <button onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))} title={t('dashboard.addExpenseTooltip')} data-tour={`dashboard-action-add-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl hover:bg-violet-100/70 transition-colors">
-              <span className="w-11 h-11 rounded-2xl bg-violet-100 flex items-center justify-center text-lg">➕</span>
-              <span className="text-[10px] font-bold text-text-muted">{speechAvailableHere() ? t('voiceExpense.type') : t('dashboard.actionAdd')}</span>
+        <div className="space-y-2" data-tour={`dashboard-action-row-${groupId}`}>
+          {/* The main job first: adding an expense is the one big button, with talking it as its sidekick. */}
+          <div className="flex items-stretch gap-2.5">
+            <button
+              onClick={stopAnd(() => navigate(`/add-expense?groupId=${groupId}`))}
+              title={t('dashboard.addExpenseTooltip')}
+              data-tour={`dashboard-action-add-${groupId}`}
+              className="flex-[1.7] h-12 rounded-2xl bg-primary text-white text-[15px] font-extrabold flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition-transform"
+            >
+              <span className="material-symbols-outlined text-[22px]">add</span>
+              Add expense
             </button>
             {speechAvailableHere() && (
-              <>
-                <span className="self-center w-px h-9 bg-violet-200" aria-hidden="true" />
-                <button onClick={stopAnd(() => setShowVoice(true))} title="Talk to add an expense to this group" data-tour={`dashboard-action-talk-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl hover:bg-violet-100/70 transition-colors">
-                  <span className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-sm" style={{ background: 'linear-gradient(135deg,#4ADE80,#3B82F6)' }}><span className="material-symbols-outlined text-[22px]">mic</span></span>
-                  <span className="text-[10px] font-bold text-text-muted">{t('voiceExpense.talkShort')}</span>
-                </button>
-              </>
+              <button
+                onClick={stopAnd(() => setShowVoice(true))}
+                title="Talk to add an expense to this group"
+                data-tour={`dashboard-action-talk-${groupId}`}
+                className="flex-1 h-12 rounded-2xl text-[14px] font-extrabold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                style={{ background: kindStyle.tint, color: kindStyle.dark }}
+              >
+                <span className="material-symbols-outlined text-[20px]">mic</span>
+                Speak
+              </button>
             )}
           </div>
-          <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-            <span className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center text-lg">{poked ? '✅' : '✋'}</span>
-            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionPoke')}</span>
-          </button>
-          <span onClick={(e) => e.stopPropagation()} data-tour={`dashboard-action-chat-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5">
-            <span className="relative w-11 h-11 rounded-2xl bg-pink-100 flex items-center justify-center">
-              <ChatButton onClick={() => { setShowChat(true); markChatSeen(); }} hasUnseen={chatUnseen} className="!p-0 hover:bg-transparent" />
-            </span>
-            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionChat')}</span>
-          </span>
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} data-tour={`dashboard-action-trends-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-            <span className="w-11 h-11 rounded-2xl bg-blue-100 flex items-center justify-center text-lg">📊</span>
-            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionTrends')}</span>
-          </button>
-          <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} data-tour={`dashboard-action-report-${groupId}`} className="flex-1 flex flex-col items-center gap-1 py-0.5 rounded-xl hover:bg-surface-container/60 transition-colors">
-            <span className="w-11 h-11 rounded-2xl bg-teal-100 flex items-center justify-center text-lg">🧾</span>
-            <span className="text-[10px] font-bold text-text-muted">{t('dashboard.actionReport')}</span>
-          </button>
+          {/* Everything else is a plain, labelled link. "Poke" is now "Remind", which says what it does. */}
+          <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-0.5 text-[12.5px] font-bold text-text-muted">
+            <button onClick={stopAnd(() => { setShowChat(true); markChatSeen(); })} data-tour={`dashboard-action-chat-${groupId}`} className="relative inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-[18px]">chat_bubble</span>Chat
+              {chatUnseen && <span className="absolute top-1.5 -right-0.5 w-2 h-2 rounded-full bg-error" aria-label="New messages" />}
+            </button>
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} data-tour={`dashboard-action-trends-${groupId}`} className="inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-[18px]">bar_chart</span>Trends
+            </button>
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} data-tour={`dashboard-action-report-${groupId}`} className="inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-[18px]">receipt_long</span>Report
+            </button>
+            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors disabled:opacity-60">
+              <span className="material-symbols-outlined text-[18px]">{poked ? 'check_circle' : 'notifications_active'}</span>{poked ? 'Reminded' : 'Remind'}
+            </button>
+          </div>
         </div>
 
         {/* Budget card — label+amount and the percent now share one row (was a label above a bar
@@ -1423,10 +1449,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             top of that stacked into a visibly oversized gap between the budget card and this row.
             Only shown at tileState >= 2, same as the action row/budget card above. */}
         {tileState >= 2 && (
-        <div className="pt-2 border-t border-gray-50 space-y-2.5">
-          {isEventGroup && (
-            <p className="text-[11px] font-black uppercase tracking-wider text-center rounded-xl py-1.5" style={{ background: kindStyle.tint, color: kindStyle.dark }}>Whole event · everything spent so far</p>
-          )}
+        <div className="pt-3 border-t border-gray-50 space-y-3">
           <div className={clsx('flex bg-surface-container/60 rounded-xl p-0.5', isEventGroup && 'hidden')} onClick={(e) => e.stopPropagation()}>
             {([['month', 'Month'], ['all', 'All time']] as const).map(([id, label]) => (
               <button
@@ -1439,126 +1462,102 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
               </button>
             ))}
           </div>
-          {showAll ? (
-            <div className="space-y-2">
-              <p className="text-[10px] text-text-muted font-bold text-center">Since {allTime.sinceLabel} · {allTime.months} month{allTime.months === 1 ? '' : 's'}</p>
-              {group?.incomeEnabled ? (
-                <div className="grid grid-cols-3 gap-1.5">
-                  <div className="bg-[#0F7A38]/10 rounded-xl py-2 px-1 text-center">
-                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
-                    <p className="text-sm font-bold text-[#0F7A38] truncate">{currencySymbol}{formatAmountCompact(allTime.income, group?.currency, profile?.numberSystem)}</p>
-                  </div>
-                  <div className="bg-primary/5 rounded-xl py-2 px-1 text-center">
-                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
-                    <p className="text-sm font-bold text-primary truncate">{currencySymbol}{formatAmountCompact(allTime.expense, group?.currency, profile?.numberSystem)}</p>
-                  </div>
-                  <div className={clsx('rounded-xl py-2 px-1 text-center', allTime.income >= allTime.expense ? 'bg-success/10' : 'bg-error/10')}>
-                    <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{allTime.income >= allTime.expense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}</p>
-                    <p className={clsx('text-sm font-bold truncate', allTime.income >= allTime.expense ? 'text-success' : 'text-error')}>
-                      {currencySymbol}{formatAmountCompact(Math.abs(allTime.income - allTime.expense), group?.currency, profile?.numberSystem)}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-primary/5 rounded-xl px-3 py-2 text-center">
-                  <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">Total spent</p>
-                  <p className="text-lg font-bold text-primary">{currencySymbol}{allTime.expense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-1.5">
-                <div className="border border-border-subtle rounded-xl px-2 py-1.5">
-                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">Avg / month spend</p>
-                  <p className="text-xs font-black text-primary truncate">{currencySymbol}{formatAmountCompact(allTime.avgExpense, group?.currency, profile?.numberSystem)}</p>
-                </div>
+          {(() => {
+            const money = (n: number) => `${currencySymbol}${formatAmountCompact(n, group?.currency, profile?.numberSystem)}`;
+            const inc = showAll ? allTime.income : monthIncome;
+            const exp = showAll ? allTime.expense : (group?.incomeEnabled ? monthExpense : monthSpend);
+            const leftIsPositive = inc >= exp;
+            const tile = (label: string, value: string, cls: string, valueCls: string) => (
+              <div className={clsx('rounded-2xl py-3 px-1.5 text-center min-w-0', cls)}>
+                <p className="text-[11px] text-text-muted uppercase font-bold tracking-wider">{label}</p>
+                <p className={clsx('text-[19px] leading-tight font-extrabold truncate mt-0.5', valueCls)}>{value}</p>
+              </div>
+            );
+            return (
+              <>
                 {group?.incomeEnabled ? (
-                  <div className="border border-border-subtle rounded-xl px-2 py-1.5">
-                    <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">Avg / month income</p>
-                    <p className="text-xs font-black text-primary truncate">{currencySymbol}{formatAmountCompact(allTime.avgIncome, group?.currency, profile?.numberSystem)}</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {tile('In', money(inc), 'bg-[#0F7A38]/10', 'text-[#0F7A38]')}
+                    {tile('Spent', money(exp), 'bg-surface-container/60', 'text-primary')}
+                    {tile(leftIsPositive ? 'Left' : 'Over', money(Math.abs(inc - exp)), leftIsPositive ? 'bg-success/10' : 'bg-error/10', leftIsPositive ? 'text-success' : 'text-error')}
                   </div>
-                ) : <div />}
-                <div className="border border-border-subtle rounded-xl px-2 py-1.5">
-                  <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider">Biggest month</p>
-                  <p className="text-xs font-black text-primary truncate">
-                    {allTime.bestMonthKey ? `${new Date(Number(allTime.bestMonthKey.slice(0, 4)), Number(allTime.bestMonthKey.slice(5, 7)) - 1, 1).toLocaleDateString(undefined, { month: 'short' })} · ${currencySymbol}${formatAmountCompact(allTime.bestMonthValue, group?.currency, profile?.numberSystem)}` : '-'}
-                  </p>
-                </div>
-              </div>
-              {allTime.bars.length > 1 && (
-                <div>
-                  <div className="flex items-end gap-[3px] h-9">
-                    {allTime.bars.map((b) => (
-                      <button
-                        key={b.key}
-                        type="button"
-                        title={`${b.key}: ${currencySymbol}${formatAmountCompact(b.value, group?.currency, profile?.numberSystem)}`}
-                        onClick={stopAnd(() => { setSelectedMonthKey(b.key); setViewAll(false); })}
-                        className={clsx('flex-1 rounded-t-[3px] min-h-[2px] transition-opacity hover:opacity-80', b.value === allTime.barMax ? 'bg-primary' : 'bg-primary/30')}
-                        style={{ height: `${Math.max(4, (b.value / allTime.barMax) * 100)}%` }}
-                      />
-                    ))}
+                ) : (
+                  <div className="grid grid-cols-1">
+                    {tile('Spent', `${currencySymbol}${exp.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'bg-primary/5', 'text-primary')}
                   </div>
-                  <div className="flex justify-between text-[8px] text-text-muted font-bold mt-0.5">
-                    <span>{allTime.bars[0].key.slice(2).replace('-', '/')}</span>
-                    <span>Spend per month · tap a bar</span>
-                    <span>{allTime.bars[allTime.bars.length - 1].key.slice(2).replace('-', '/')}</span>
+                )}
+                <p className="text-xs text-text-muted text-center">
+                  {isEventGroup ? 'Whole event so far' : showAll ? `Since ${allTime.sinceLabel} · ${allTime.months} month${allTime.months === 1 ? '' : 's'}` : monthLabel}
+                  {' · '}
+                  <button type="button" onClick={stopAnd(() => setShowDetails((v) => !v))} className="font-extrabold text-primary" aria-expanded={showDetails}>
+                    {showDetails ? 'Hide details' : 'See details'} ›
+                  </button>
+                </p>
+
+                {showDetails && (showAll ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <div className="border border-border-subtle rounded-xl px-2 py-1.5">
+                        <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider leading-tight">Avg / month spend</p>
+                        <p className="text-sm font-black text-primary truncate">{money(allTime.avgExpense)}</p>
+                      </div>
+                      {group?.incomeEnabled ? (
+                        <div className="border border-border-subtle rounded-xl px-2 py-1.5">
+                          <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider leading-tight">Avg / month income</p>
+                          <p className="text-sm font-black text-primary truncate">{money(allTime.avgIncome)}</p>
+                        </div>
+                      ) : <div />}
+                      <div className="border border-border-subtle rounded-xl px-2 py-1.5">
+                        <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider leading-tight">Biggest month</p>
+                        <p className="text-sm font-black text-primary truncate">
+                          {allTime.bestMonthKey ? `${new Date(Number(allTime.bestMonthKey.slice(0, 4)), Number(allTime.bestMonthKey.slice(5, 7)) - 1, 1).toLocaleDateString(undefined, { month: 'short' })} · ${money(allTime.bestMonthValue)}` : '-'}
+                        </p>
+                      </div>
+                    </div>
+                    {allTime.bars.length > 1 && (
+                      <div>
+                        <div className="flex items-end gap-[3px] h-10">
+                          {allTime.bars.map((b) => (
+                            <button
+                              key={b.key}
+                              type="button"
+                              title={`${b.key}: ${money(b.value)}`}
+                              onClick={stopAnd(() => { setSelectedMonthKey(b.key); setViewAll(false); })}
+                              className={clsx('flex-1 rounded-t-[3px] min-h-[2px] transition-opacity hover:opacity-80', b.value === allTime.barMax ? 'bg-primary' : 'bg-primary/30')}
+                              style={{ height: `${Math.max(4, (b.value / allTime.barMax) * 100)}%` }}
+                            />
+                          ))}
+                        </div>
+                        <div className="flex justify-between text-[10px] text-text-muted font-bold mt-0.5">
+                          <span>{allTime.bars[0].key.slice(2).replace('-', '/')}</span>
+                          <span>Spend per month · tap a bar</span>
+                          <span>{allTime.bars[allTime.bars.length - 1].key.slice(2).replace('-', '/')}</span>
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-[11px] text-text-muted text-center">Not counting payments between members</p>
                   </div>
-                </div>
-              )}
-              <p className="text-[9px] text-text-muted text-center">Not counting payments between members</p>
-            </div>
-          ) : group?.incomeEnabled ? (
-            <>
-              {/* Tinted rounded tiles instead of a plain 3-column text grid — same numbers, more
-                  visually distinct at a glance. */}
-              <div className="grid grid-cols-3 gap-1.5">
-                <div className="bg-[#0F7A38]/10 rounded-xl py-2 px-1 text-center">
-                  <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.income')}</p>
-                  <p className="text-sm font-bold text-[#0F7A38] truncate">
-                    {currencySymbol}{formatAmountCompact(monthIncome, group?.currency, profile?.numberSystem)}
-                  </p>
-                </div>
-                <div className="bg-primary/5 rounded-xl py-2 px-1 text-center">
-                  <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">{t('common.expense')}</p>
-                  <p className="text-sm font-bold text-primary truncate">
-                    {currencySymbol}{formatAmountCompact(monthExpense, group?.currency, profile?.numberSystem)}
-                  </p>
-                </div>
-                <div className={clsx('rounded-xl py-2 px-1 text-center', monthIncome >= monthExpense ? 'bg-success/10' : 'bg-error/10')}>
-                  <p className="text-[8px] text-text-muted uppercase font-bold tracking-wider">
-                    {monthIncome >= monthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}
-                  </p>
-                  <p className={clsx('text-sm font-bold truncate', monthIncome >= monthExpense ? 'text-success' : 'text-error')}>
-                    {currencySymbol}{formatAmountCompact(Math.abs(monthIncome - monthExpense), group?.currency, profile?.numberSystem)}
-                  </p>
-                </div>
-              </div>
-              {/* Event groups (one-off trips/parties) don't have a meaningful "previous month" —
-                  there's no month-over-month cadence to compare against. Collapsed into one
-                  compact line (was its own 3-column grid) — same numbers, less vertical space. */}
-              {!isEventGroup && (
-                <p className="text-[9px] text-text-muted font-bold text-center leading-snug">
-                  Last Mo. {t('common.income')}: {currencySymbol}{formatAmountCompact(previousMonthIncome, group?.currency, profile?.numberSystem)}
-                  {' · '}{t('common.expense')}: {currencySymbol}{formatAmountCompact(previousMonthExpense, group?.currency, profile?.numberSystem)}
-                  {' · '}{previousMonthIncome >= previousMonthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}: {currencySymbol}
-                  {formatAmountCompact(Math.abs(previousMonthIncome - previousMonthExpense), group?.currency, profile?.numberSystem)}
-                </p>
-              )}
-            </>
-          ) : (
-            <div className="flex items-center justify-between gap-2">
-              {!isEventGroup ? (
-                <p className="text-[9px] text-text-muted font-bold uppercase tracking-wider truncate">
-                  {t('dashboard.lastMonth', { amount: `${currencySymbol}${formatAmountCompact(previousMonthSpend, group?.currency, profile?.numberSystem)}` })}
-                </p>
-              ) : <span />}
-              <div className="bg-primary/5 rounded-xl px-3 py-1.5 text-right shrink-0">
-                <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">This Month</p>
-                <p className="text-base font-bold text-primary">
-                  {currencySymbol}{monthSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </p>
-              </div>
-            </div>
-          )}
+                ) : (
+                  <div className="space-y-1 text-center">
+                    {group?.incomeEnabled ? (
+                      !isEventGroup && (
+                        <p className="text-[11px] text-text-muted font-bold leading-snug">
+                          Last month · {t('common.income')}: {money(previousMonthIncome)} · {t('common.expense')}: {money(previousMonthExpense)} · {previousMonthIncome >= previousMonthExpense ? t('common.netIncomeLabel') : t('common.netExpenseLabel')}: {money(Math.abs(previousMonthIncome - previousMonthExpense))}
+                        </p>
+                      )
+                    ) : (
+                      !isEventGroup && (
+                        <p className="text-[11px] text-text-muted font-bold">
+                          {t('dashboard.lastMonth', { amount: money(previousMonthSpend) })}
+                        </p>
+                      )
+                    )}
+                    <p className="text-[11px] text-text-muted">Tap "All time" above for averages and the monthly chart.</p>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
         )}
       </div>

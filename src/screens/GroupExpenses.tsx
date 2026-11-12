@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -1795,7 +1796,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
                           editingExpense.category === c.id ? "bg-primary border-primary text-white shadow-inner" : "bg-white border-border-subtle"
                         )}
                       >
-                        <span className="text-[15px] leading-none">{c.icon}</span>
+                        <CategoryBadge id={c.id} icon={c.icon} size={24} />
                         <span className="text-[9px] font-bold uppercase truncate w-full px-0.5 text-center leading-tight">
                           {getCategoryNameOverride(allGroups.find(g => g.id === editingExpense.groupId), c.id) || t(`${editingExpense.type === 'income' ? 'income' : 'category'}.${c.id}`)}
                         </span>

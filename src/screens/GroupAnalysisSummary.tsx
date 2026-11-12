@@ -1896,7 +1896,7 @@ export default function GroupAnalysisSummary() {
                           {rows.map((r) => (
                             <div key={r.id} className="space-y-1">
                               <div className="flex items-center justify-between gap-2 text-[11px]">
-                                <span className="font-bold text-primary truncate">{CATEGORIES_LIST.find((c0) => c0.id === r.id) ? `${categoryIconOf(r.id)} ${categoryLabel(r.id)}` : r.id}</span>
+                                <span className="font-bold text-primary truncate inline-flex items-center gap-1.5">{CATEGORIES_LIST.find((c0) => c0.id === r.id) ? <><CategoryBadge id={r.id} icon={categoryIconOf(r.id)} size={20} />{categoryLabel(r.id)}</> : r.id}</span>
                                 <span className="shrink-0 tabular-nums"><b className={clsx('font-black', r.status.textClass)}>{fm(r.spent)}</b> <span className="text-text-muted">of {fm(r.budget)}</span></span>
                               </div>
                               <div className="h-1.5 rounded-full bg-white overflow-hidden">

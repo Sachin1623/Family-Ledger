@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import CategoryBadge from './CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
@@ -327,7 +328,7 @@ export default function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onC
                     className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-container/40 text-left transition-colors"
                   >
                     <div className="w-9 h-9 rounded-xl bg-primary/5 flex items-center justify-center text-primary shrink-0">
-                      <span className="text-base">{catInfo?.icon || '🧾'}</span>
+                      <CategoryBadge id={catInfo?.id} icon={catInfo?.icon || '🧾'} size={24} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-bold text-on-surface truncate">{e.description || (catInfo ? t(`category.${catInfo.id}`) : t('search.expenseFallback'))}</p>

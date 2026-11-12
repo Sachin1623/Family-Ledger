@@ -5,17 +5,18 @@ import RecurringQuickEdit from '../components/RecurringQuickEdit';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { doc, collection, query, where, updateDoc, deleteDoc, addDoc, getDoc, getDocs, writeBatch, setDoc } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, deleteDoc, addDoc, getDoc, getDocs, writeBatch, setDoc, deleteField } from 'firebase/firestore';
 import { useDocument, useCollection } from 'react-firebase-hooks/firestore';
 import CategoryIconPicker from '../components/CategoryIconPicker';
 import { updateGlobalStats } from '../services/statsService';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import {
-  EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification,
+  EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCurrencySymbol, formatAmountCompact, getCategoryClassification, CategoryClassification, getGroupCategories,
   getAllGroupCategories, getCategoryNameOverride, getCategoryIcon, makeCustomCategoryId, CustomCategory,
 } from '../lib/constants';
 import CategoryBadge, { CATEGORY_STYLE } from '../components/CategoryBadge';
+import NeedWantSheet from '../components/NeedWantSheet';
 import { inviteToGroup, inviteUserToGroup, searchUsers, linkGroupParticipant, FoundUser } from '../lib/inviteApi';
 import { logGrowthEvent } from '../lib/growthEvents';
 import { inviteJoinLink, InviteVia } from '../lib/referral';
@@ -147,10 +148,14 @@ export default function ManageGroup() {
   // Tabbed layout — was one long flat page (icon/name/type/toggles/categories/budget/recurring/
   // invite/pending/leaderboard/members/danger zone all rendered at once); splitting it into
   // sections a visitor picks between keeps each screenful short and scannable.
-  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'invite' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'invite'>('overview');
+  // Group settings (description, type, splitting, income, delete/leave) live in a popup opened by the pencil on the header card
+  const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  const [showNeedWant, setShowNeedWant] = useState(false);
   // Invite is no longer a tab: it opens as a sheet over People. Links and guides that still ask for the 'invite' tab land here.
   const [showInviteSheet, setShowInviteSheet] = useState(false);
   const openTab = (tab: 'overview' | 'members' | 'invite' | 'settings') => {
+    if (tab === 'settings') { setShowSettingsSheet(true); return; }
     if (tab === 'invite') { setActiveTab('members'); setShowInviteSheet(true); } else setActiveTab(tab);
   };
   // An event has one budget for the whole event (group.eventBudget), edited here
@@ -297,10 +302,33 @@ export default function ManageGroup() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }, [monthKey]);
   const [budgetValue] = useDocument(doc(db, 'groupBudgets', budgetDocId));
-  const budget = budgetValue?.data();
+  // The live listener on a budget that does not exist yet is refused by the security rules (they cannot read `resource` of a missing
+  // document), so it never hears about the budget being created. A fetched copy, refreshed after every write here, covers that.
+  const [budgetLocal, setBudgetLocal] = useState<any>(undefined);
+  const budget = budgetValue?.data() ?? budgetLocal;
+  const refreshBudget = async () => {
+    try {
+      const snap = await getDoc(doc(db, 'groupBudgets', budgetDocId));
+      setBudgetLocal(snap.exists() ? snap.data() : undefined);
+    } catch (err) {
+      console.error('Could not refresh the budget:', err);
+    }
+  };
+  // what the new budget was split by when it was first saved, so the screen can say so and offer to change it
+  const [budgetMenuOpen, setBudgetMenuOpen] = useState(false);
+  const [autoSplitNote, setAutoSplitNote] = useState<null | 'default' | 'lastMonth' | 'recommended'>(null);
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
+  // "Save and split by category": the budget is saved first, then the category split opens as soon as it exists
+  const [splitAfterSave, setSplitAfterSave] = useState(false);
+  useEffect(() => {
+    if (splitAfterSave && budget) {
+      setSplitAfterSave(false);
+      openBudgetCategoryPanel();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitAfterSave, budget]);
 
   const [showGroupLeaderboard, setShowGroupLeaderboard] = useState(false);
   const [groupLeaderboard, setGroupLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -354,13 +382,32 @@ export default function ManageGroup() {
     if (!parsedBudget || parsedBudget <= 0 || !groupId || !user) return;
     setSavingBudget(true);
     try {
+      let startingSplit: Record<string, number> | null = null;
+      let splitFrom: 'default' | 'lastMonth' | 'recommended' | null = null;
+      if (!budget && kindOf(group) === 'regular') {
+        // first time this month gets a budget: it starts already split, and the person can change it
+        const groupDefault = (group as any)?.defaultCategoryAllocations as Record<string, number> | undefined;
+        if (groupDefault && Object.keys(groupDefault).length > 0) {
+          startingSplit = groupDefault; splitFrom = 'default';
+        } else {
+          try {
+            const prevSnap = await getDoc(doc(db, 'groupBudgets', `${groupId}_${previousMonthKey}`));
+            const prev = prevSnap.data()?.categoryAllocations as Record<string, number> | undefined;
+            if (prev && Object.keys(prev).length > 0) { startingSplit = prev; splitFrom = 'lastMonth'; }
+          } catch { /* fall through to the recommended split */ }
+          if (!startingSplit) { startingSplit = RECOMMENDED_SPLIT; splitFrom = 'recommended'; }
+        }
+      }
       await setDoc(doc(db, 'groupBudgets', budgetDocId), {
         groupId,
         month: monthKey,
         amount: parsedBudget,
         setBy: user.uid,
         createdAt: new Date().toISOString(),
+        ...(startingSplit ? { categoryAllocations: startingSplit } : {}),
       }, { merge: true });
+      await refreshBudget();
+      if (splitFrom) setAutoSplitNote(splitFrom);
       claimPoints('budget_set', { budgetDocId });
       const now = new Date();
       notifyGroupActivity({
@@ -384,23 +431,41 @@ export default function ManageGroup() {
   const categoryPctTotal: number = (Object.values(categoryPcts) as number[]).reduce((s: number, v: number) => s + (v || 0), 0);
 
   const [rolledOverFromLastMonth, setRolledOverFromLastMonth] = useState(false);
+  // 'default' = filled from the group's saved default split; 'saved' = this month's own split; null = nothing yet
+  const [splitSource, setSplitSource] = useState<'default' | 'saved' | null>(null);
+  const [makeSplitDefault, setMakeSplitDefault] = useState(false);
+  const [lastMonthSplit, setLastMonthSplit] = useState<Record<string, number> | null>(null);
   const openBudgetCategoryPanel = async () => {
     const thisMonthAllocations = budget?.categoryAllocations as Record<string, number> | undefined;
+    const groupDefault = (group as any)?.defaultCategoryAllocations as Record<string, number> | undefined;
     setCategoryInputMode('pct');
     setCategoryBudgetError(null);
     setRolledOverFromLastMonth(false);
+    setMakeSplitDefault(false);
+    setLastMonthSplit(null);
+    setSplitSource(null);
+    // last month's split is looked up either way, so it is offered as a one-tap choice
+    getDoc(doc(db, 'groupBudgets', `${groupId}_${previousMonthKey}`))
+      .then((snap) => {
+        const prev = snap.data()?.categoryAllocations as Record<string, number> | undefined;
+        if (prev && Object.keys(prev).length > 0) setLastMonthSplit(prev);
+      })
+      .catch(() => {});
     if (thisMonthAllocations && Object.keys(thisMonthAllocations).length > 0) {
-      // Already split for this month — edit what's actually saved, never silently overwrite it
-      // with last month's ratio.
+      // Already split for this month: edit what is actually saved, never silently overwrite it
       setCategoryPcts(thisMonthAllocations);
+      setSplitSource('saved');
       setShowBudgetCategoryPanel(true);
       return;
     }
-    // Nothing split yet this month — roll last month's split forward IN THE SAME RATIO (it's
-    // already stored as a % of budget, so the ratio carries over unchanged regardless of what
-    // this month's actual budget amount is). Pre-filled only, not auto-saved — Save still
-    // requires an explicit tap, so a deliberately-cleared month stays clearable.
+    // Nothing split yet this month: start from the group's default if it has one. Pre-filled only, not auto-saved.
     setShowBudgetCategoryPanel(true);
+    if (groupDefault && Object.keys(groupDefault).length > 0) {
+      setCategoryPcts(groupDefault);
+      setSplitSource('default');
+      return;
+    }
+    // no default: roll last month's split forward in the same ratio (stored as a % of budget, so it carries over unchanged)
     try {
       const prevSnap = await getDoc(doc(db, 'groupBudgets', `${groupId}_${previousMonthKey}`));
       const prevAllocations = prevSnap.data()?.categoryAllocations as Record<string, number> | undefined;
@@ -413,6 +478,45 @@ export default function ManageGroup() {
     } catch (err) {
       console.error('Failed to roll forward last month\'s category split:', err);
       setCategoryPcts({});
+    }
+  };
+
+  // One-tap starting points for the split. All of them only fill the fields; nothing is saved until Save.
+  const RECOMMENDED_SPLIT: Record<string, number> = {
+    housing: 21, groceries: 13, finance: 12, bills: 9, food: 7, travel: 7, education: 6, health: 5, ent: 4,
+    personal: 3, kids: 3, shopping: 3, household: 3, gifts: 2, misc: 2,
+  };
+  const applySplitPreset = (kind: 'recommended' | 'even' | 'last' | 'default' | 'clear') => {
+    setCategoryBudgetError(null);
+    if (kind === 'clear') { setCategoryPcts({}); return; }
+    if (kind === 'recommended') { setCategoryPcts({ ...RECOMMENDED_SPLIT }); return; }
+    if (kind === 'even') {
+      const each = 100 / EXPENSE_CATEGORIES.length;
+      const next: Record<string, number> = {};
+      EXPENSE_CATEGORIES.forEach((c) => { next[c.id] = each; });
+      setCategoryPcts(next);
+      return;
+    }
+    if (kind === 'last' && lastMonthSplit) { setCategoryPcts({ ...lastMonthSplit }); return; }
+    if (kind === 'default') {
+      const d = (group as any)?.defaultCategoryAllocations as Record<string, number> | undefined;
+      if (d) setCategoryPcts({ ...d });
+    }
+  };
+
+  const handleRemoveBudget = async () => {
+    if (!budget || !groupId) return;
+    if (!window.confirm('Remove this month\'s budget? Your expenses stay as they are.')) return;
+    try {
+      await deleteDoc(doc(db, 'groupBudgets', budgetDocId));
+      setBudgetLocal(undefined);
+      setAutoSplitNote(null);
+      setShowBudgetForm(false);
+      setShowBudgetCategoryPanel(false);
+      setBudgetInput('');
+    } catch (err) {
+      console.error('Failed to remove the budget:', err);
+      alert(t('manageGroup.failedToSaveBudget'));
     }
   };
 
@@ -438,6 +542,15 @@ export default function ManageGroup() {
         if (r > 0) rounded[catId] = r;
       });
       await setDoc(doc(db, 'groupBudgets', budgetDocId), { categoryAllocations: rounded }, { merge: true });
+      if (makeSplitDefault) {
+        try {
+          await updateDoc(doc(db, 'groups', groupId), { defaultCategoryAllocations: rounded });
+        } catch (err) {
+          console.error('Saved the split but could not save it as the default:', err);
+        }
+      }
+      await refreshBudget();
+      setAutoSplitNote(null);
       setShowBudgetCategoryPanel(false);
     } catch (err) {
       console.error('Failed to save category budget:', err);
@@ -1103,7 +1216,7 @@ export default function ManageGroup() {
     return (
       <div key={cat.id} className={clsx('flex items-center justify-between gap-2 py-1.5 border-b border-border-subtle/60 last:border-0', isHidden && 'opacity-50')}>
         <span className="text-xs font-bold text-on-surface flex items-center gap-1.5 min-w-0">
-          <span>{cat.icon}</span>
+          <CategoryBadge id={cat.id} icon={cat.icon} size={20} />
           <span className="truncate">{displayName}</span>
           {isHidden && (
             <span className="text-[9px] font-bold text-text-muted bg-surface-container px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">{t('manageGroup.categoryHidden')}</span>
@@ -1218,10 +1331,35 @@ export default function ManageGroup() {
           const fmt = (n: number) => `${symbol}${formatAmountCompact(n, group.currency, profile?.numberSystem)}`;
           return (
             <>
-              <section className="rounded-3xl p-4 text-white shadow-lg" style={{ background: gradients[gk] }} data-tour="manage-group-identity">
-                <div className="flex items-center gap-3">
+              <section
+                className="relative overflow-hidden rounded-[28px] p-5 text-white shadow-lg"
+                style={{ background: ks.hero, backgroundImage: `radial-gradient(circle at 88% 0%, ${ks.acc}40, transparent 55%)` }}
+                data-tour="manage-group-identity"
+              >
+                <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/')}
+                    aria-label="Go to Home"
+                    className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center active:scale-90 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">home</span>
+                  </button>
+                  {!!currentMember && (
+                    <button
+                      type="button"
+                      onClick={() => setShowSettingsSheet(true)}
+                      aria-label="Edit group"
+                      data-tour="manage-group-edit"
+                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center active:scale-90 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">edit</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3.5 pr-[88px]">
                   <div className="relative shrink-0">
-                    <div className="w-14 h-14 rounded-2xl bg-white/25 flex items-center justify-center overflow-hidden text-3xl">
+                    <div className="w-[60px] h-[60px] rounded-[18px] bg-white/12 ring-1 ring-white/20 flex items-center justify-center overflow-hidden text-[32px]">
                       {group.photoURL ? (
                         <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
@@ -1234,7 +1372,7 @@ export default function ManageGroup() {
                       )}
                     </div>
                     {isAdminOrOwner && (
-                      <label className="absolute -bottom-1.5 -right-1.5 w-6 h-6 bg-white rounded-full shadow-lg flex items-center justify-center text-primary active:scale-90 cursor-pointer">
+                      <label className="absolute -bottom-1.5 -left-1.5 w-6 h-6 bg-white rounded-full shadow-lg flex items-center justify-center text-primary active:scale-90 cursor-pointer">
                         <span className="material-symbols-outlined text-[14px]">photo_camera</span>
                         <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} disabled={uploadingPhoto} />
                       </label>
@@ -1254,39 +1392,53 @@ export default function ManageGroup() {
                       <input
                         type="text"
                         aria-label={t('createGroup.groupName')}
-                        className="w-full text-lg font-extrabold text-white bg-white/15 rounded-xl px-3 py-1 outline-none placeholder-white/60 focus:bg-white/25"
+                        className="w-full text-[19px] font-extrabold text-white bg-transparent border-b border-white/25 pb-0.5 outline-none placeholder-white/60 focus:border-white/60"
                         value={group.name}
                         onChange={async (e) => {
                           await updateDoc(doc(db, 'groups', groupId!), { name: e.target.value });
                         }}
                       />
                     ) : (
-                      <h2 className="text-lg font-extrabold truncate">{group.name}</h2>
+                      <h2 className="text-[19px] font-extrabold truncate">{group.name}</h2>
                     )}
-                    <p className="text-[11px] font-bold opacity-90 mt-1">
-                      {ks.label} · {t('manageGroup.createdMembers', { date: new Date(group.createdAt).toLocaleDateString(), count: members.length })}
+                    <p className="text-xs font-semibold text-[#9fc3d1] mt-1.5">
+                      {ks.label} · {members.length} {members.length === 1 ? 'member' : 'members'}
                     </p>
                   </div>
                 </div>
 
                 {big !== null && (
-                  <div className="mt-4">
-                    <p className="text-[32px] leading-none font-extrabold tracking-tight tabular-nums">{fmt(big)}</p>
-                    <p className="text-xs opacity-90 mt-1.5">
-                      {gk === 'regular' ? 'spent this month' : 'spent so far'}
-                      {prog ? ` · ${prog.label} ${fmt(prog.amount)}` : ''}
-                    </p>
-                    {prog && (
-                      <>
-                        <div className="h-2 rounded-full bg-white/30 overflow-hidden mt-2.5">
-                          <div className="h-full rounded-full bg-white transition-all" style={{ width: `${pct}%` }} />
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] font-bold mt-1.5">
-                          <span>{Math.round((prog.spent / prog.amount) * 100)}% used</span>
-                          <span>{prog.spent > prog.amount ? `${t('common.overBy')} ${fmt(prog.spent - prog.amount)}` : `${fmt(prog.amount - prog.spent)} ${t('common.remaining').toLowerCase()}`}</span>
-                        </div>
-                      </>
-                    )}
+                  <div className="mt-5 flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-[#9fc3d1]">{gk === 'regular' ? 'Spent this month' : 'Spent so far'}</p>
+                      <p className="text-[38px] leading-none font-extrabold tracking-tight tabular-nums mt-1">{fmt(big)}</p>
+                      {prog && (
+                        <p className="text-xs font-semibold text-[#9fc3d1] mt-2">
+                          {prog.spent > prog.amount ? `${t('common.overBy')} ${fmt(prog.spent - prog.amount)}` : `${fmt(prog.amount - prog.spent)} ${t('common.remaining').toLowerCase()}`} · {prog.label} {fmt(prog.amount)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="relative w-[88px] h-[88px] shrink-0" role="img" aria-label={prog ? `${Math.round((prog.spent / prog.amount) * 100)}% of the budget used` : 'No budget set'}>
+                      <svg viewBox="0 0 88 88" className="w-full h-full -rotate-90">
+                        <circle cx="44" cy="44" r="35" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="9" />
+                        {prog && (
+                          <circle cx="44" cy="44" r="35" fill="none" stroke={prog.spent > prog.amount ? '#fb7185' : ks.acc} strokeWidth="9" strokeLinecap="round" strokeDasharray={`${(pct / 100) * 2 * Math.PI * 35} ${2 * Math.PI * 35}`} />
+                        )}
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+                        {prog ? (
+                          <>
+                            <span className="text-lg font-extrabold tabular-nums">{Math.round((prog.spent / prog.amount) * 100)}%</span>
+                            <span className="text-[9px] font-bold uppercase tracking-wide text-[#9fc3d1] mt-0.5">used</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-[13px] font-extrabold">No</span>
+                            <span className="text-[10px] font-bold text-[#9fc3d1] mt-0.5">budget</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
               </section>
@@ -1327,38 +1479,88 @@ export default function ManageGroup() {
         })()}
 
         {/* Tabs — Overview, People (members, with Invite one tap away) and Settings */}
-        <div className="flex border-b border-border-subtle sticky top-[calc(0.5rem+env(safe-area-inset-top))] z-10 bg-surface">
-          {([
-            ['overview', 'manageGroup.tabOverview'],
-            ['members', 'manageGroup.tabMembers'],
-            ['settings', 'manageGroup.tabSettings'],
-          ] as const).map(([key, labelKey]) => (
-            <button
-              key={key}
-              type="button"
-              data-tour={`manage-group-tab-${key}`}
-              onClick={() => setActiveTab(key)}
-              className={clsx('flex-1 py-3 text-[13px] font-bold relative transition-colors', activeTab === key ? 'text-primary' : 'text-text-muted')}
-            >
-              {t(labelKey)}
-              {activeTab === key && <span className="absolute left-[22%] right-[22%] -bottom-px h-[3px] rounded-full" style={{ background: KIND_STYLE[kindOf(group)].acc }} />}
-            </button>
-          ))}
+        <div className="sticky top-[calc(0.5rem+env(safe-area-inset-top))] z-10 bg-surface py-1">
+          <div className="flex rounded-2xl bg-[#eaf0f3] p-1 text-center text-[13px] font-extrabold">
+            {([
+              ['overview', 'manageGroup.tabOverview'],
+              ['members', 'manageGroup.tabMembers'],
+            ] as const).map(([key, labelKey]) => (
+              <button
+                key={key}
+                type="button"
+                data-tour={`manage-group-tab-${key}`}
+                onClick={() => setActiveTab(key)}
+                className={clsx('flex-1 rounded-xl py-2.5 transition-all', activeTab === key ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
+              >
+                {t(labelKey)}
+              </button>
+            ))}
+          </div>
         </div>
 
         {activeTab === 'overview' && (
         <>
-        {/* Quick actions */}
-        <div className="flex gap-2">
-          {kindOf(group) === 'payments' ? (
-            <button type="button" onClick={() => navigate(`/groups/${groupId}`)} className="flex-1 rounded-2xl bg-white border border-border-subtle py-3 text-sm font-black text-primary active:scale-95">Open payments</button>
+        {/* Quick actions — while the group is just you, Invite members is the prime button (the next thing to do); afterwards Add expense takes over */}
+        {(() => {
+          const ks = KIND_STYLE[kindOf(group)];
+          const canInvite = !!currentMember;
+          const needMembers = canInvite && members.length <= 1;
+          const primaryCls = 'flex items-center justify-center gap-2 h-[52px] rounded-2xl text-[15px] font-extrabold shadow-md active:scale-[0.98] transition-transform';
+          const secondaryCls = 'flex items-center justify-center gap-2 h-[52px] rounded-2xl text-sm font-extrabold bg-white border-[1.5px] border-border-subtle text-primary active:scale-[0.98] transition-transform';
+          const accStyle = { background: `linear-gradient(135deg, ${ks.acc}, ${ks.light})`, color: ks.onAcc };
+          const addBtn = (primary: boolean) => kindOf(group) === 'payments' ? (
+            <button key="add" type="button" onClick={() => navigate(`/groups/${groupId}`)} className={clsx(primary ? primaryCls : secondaryCls, primary ? 'flex-[1.4]' : 'flex-1')} style={primary ? accStyle : undefined}>
+              <span className="material-symbols-outlined text-[22px]">receipt_long</span>Open payments
+            </button>
           ) : (
-            <button type="button" onClick={() => navigate(`/add-expense?groupId=${groupId}`)} className="flex-1 rounded-2xl bg-white border border-border-subtle py-3 text-sm font-black text-primary active:scale-95">＋ Add expense</button>
-          )}
-          {!!currentMember && (
-            <button type="button" onClick={() => setShowInviteSheet(true)} className="flex-1 rounded-2xl bg-white border border-border-subtle py-3 text-sm font-black text-primary active:scale-95">Invite people</button>
-          )}
-        </div>
+            <button key="add" type="button" onClick={() => navigate(`/add-expense?groupId=${groupId}`)} className={clsx(primary ? primaryCls : secondaryCls, primary ? 'flex-[1.4]' : 'flex-1')} style={primary ? accStyle : undefined}>
+              <span className="material-symbols-outlined text-[22px]">add</span>Add expense
+            </button>
+          );
+          const inviteBtn = (primary: boolean) => (
+            <button key="invite" type="button" onClick={() => setShowInviteSheet(true)} className={clsx(primary ? primaryCls : secondaryCls, primary ? 'flex-[1.4]' : 'flex-1')} style={primary ? accStyle : undefined}>
+              {/* a colourful family emoji in a white badge: says "people you love" at a glance, and gives the prime button some life */}
+              <span className="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center text-[20px] leading-none shrink-0">{primary ? '👨‍👩‍👧‍👦' : '🤝'}</span>
+              <span className="text-left leading-tight">
+                <span className="block">{primary ? 'Invite family / friends' : 'Invite more'}</span>
+              </span>
+            </button>
+          );
+          return (
+            <div className="space-y-1.5">
+              <div className="flex gap-3">
+                {needMembers ? <>{inviteBtn(true)}{addBtn(false)}</> : <>{addBtn(true)}{canInvite && inviteBtn(false)}</>}
+              </div>
+              {needMembers && <p className="text-xs text-text-muted text-center">It's just you for now. Invite the people you share expenses with.</p>}
+            </div>
+          );
+        })()}
+
+        {/* Needs and wants: one tidy button that opens the drag-and-sort popup */}
+        {kindOf(group) === 'regular' && isAdminOrOwner && (() => {
+          const cats = getGroupCategories(group as any, 'expense');
+          const needs = cats.filter((c) => getCategoryClassification(group as any, c.id) === 'essential').length;
+          const wants = cats.length - needs;
+          return (
+            <button
+              type="button"
+              onClick={() => setShowNeedWant(true)}
+              className="w-full flex items-center gap-3 rounded-2xl bg-white border border-border-subtle shadow-sm px-4 py-3 text-left active:scale-[0.99] transition-transform"
+            >
+              <span className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg,#effcf8,#fff7e6)' }}>
+                <span className="material-symbols-outlined text-[24px] text-[#0b6b5a]">swap_horiz</span>
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-extrabold text-primary">Sort needs and wants</span>
+                <span className="mt-1 flex items-center gap-1.5">
+                  <span className="rounded-full bg-[#effcf8] text-[#0b6b5a] text-[11px] font-extrabold px-2 py-0.5">{needs} need</span>
+                  <span className="rounded-full bg-[#fff7e6] text-[#a05a00] text-[11px] font-extrabold px-2 py-0.5">{wants} want</span>
+                </span>
+              </span>
+              <span className="shrink-0 rounded-full bg-primary text-white text-xs font-extrabold px-3.5 py-1.5">Sort</span>
+            </button>
+          );
+        })()}
 
         {/* Monthly Budget (Regular groups) */}
         {kindOf(group) === 'regular' && (
@@ -1367,20 +1569,17 @@ export default function ManageGroup() {
             <h3 className="text-sm font-bold text-primary">
               {t('manageGroup.budgetHeader', { month: new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) })}
             </h3>
-            {budget && (
-              <div className="flex items-center gap-3">
-                <button onClick={openBudgetCategoryPanel} className="text-[11px] font-bold text-primary underline">
-                  {t('manageGroup.budgetByCategory')}
-                </button>
-                <button
-                  onClick={() => { setBudgetInput(String(budget.amount)); setShowBudgetForm(true); }}
-                  className="text-[11px] font-bold text-primary underline"
-                >
-                  {t('common.edit')}
-                </button>
-              </div>
-            )}
           </div>
+
+          {autoSplitNote && !!budget && (
+            <div className="flex items-center gap-2 rounded-xl bg-[#effcf8] px-3 py-2 text-xs">
+              <span className="material-symbols-outlined text-[16px] text-[#0b6b5a]">check_circle</span>
+              <span className="flex-1 min-w-0 font-bold text-[#0b6b5a]">
+                Budget saved, split {autoSplitNote === 'recommended' ? 'the recommended way' : autoSplitNote === 'default' ? 'by your default' : 'like last month'}.
+              </span>
+              <button type="button" onClick={() => { setAutoSplitNote(null); openBudgetCategoryPanel(); }} className="shrink-0 font-extrabold text-primary underline">Change</button>
+            </div>
+          )}
 
           {!showBudgetForm && budget && (() => {
             const remaining = budget.amount - monthSpend;
@@ -1419,35 +1618,45 @@ export default function ManageGroup() {
                   const allocatedPct = Object.values(budget.categoryAllocations as Record<string, number>).reduce((s, v) => s + (v || 0), 0);
                   return (
                     <div className="pt-1.5 border-t border-border-subtle space-y-1">
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(budget.categoryAllocations as Record<string, number>).map(([catId, catPct]) => {
+                      <button type="button" onClick={openBudgetCategoryPanel} aria-label="Edit the category split" className="w-full text-left flex flex-wrap gap-1 active:opacity-70">
+                        {Object.entries(budget.categoryAllocations as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([catId, catPct]) => {
                           const cat = EXPENSE_CATEGORIES.find((c) => c.id === catId);
                           return (
-                            <span key={catId} className="text-[10px] font-bold text-text-muted bg-surface rounded-full px-2 py-0.5">
-                              {cat?.icon} {Math.round(catPct)}%
+                            <span key={catId} className="inline-flex items-center gap-1 text-[11px] font-bold text-text-muted bg-surface rounded-full pl-1 pr-2 py-0.5">
+                              <CategoryBadge id={catId} icon={cat?.icon} size={18} /> {Math.round(catPct)}%
                             </span>
                           );
                         })}
-                      </div>
+                      </button>
                       <p className="text-[10px] text-text-muted">{t('manageGroup.budgetUnallocatedPct', { pct: Math.max(0, 100 - Math.round(allocatedPct)) })}</p>
                     </div>
                   );
                 })()}
+                <div className="grid grid-cols-2 gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setBudgetInput(String(budget.amount)); setShowBudgetForm(true); }}
+                    className="h-11 rounded-xl bg-primary text-white text-[13px] font-extrabold flex items-center justify-center gap-2 shadow-sm active:scale-[0.97] transition-transform"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                    Edit budget
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveBudget}
+                    className="h-11 rounded-xl bg-white border-[1.5px] border-error/30 text-error text-[13px] font-extrabold flex items-center justify-center gap-2 active:scale-[0.97] hover:bg-error/5 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                    Remove
+                  </button>
+                </div>
               </div>
             );
           })()}
 
-          {!showBudgetForm && !budget && (
-            <button
-              onClick={() => setShowBudgetForm(true)}
-              className="w-full py-2.5 bg-primary/5 border border-primary/20 text-primary font-bold rounded-xl text-xs"
-            >
-              {t('manageGroup.setBudget')}
-            </button>
-          )}
-
-          {showBudgetForm && (
-            <form onSubmit={handleSaveBudget} className="space-y-1">
+          {/* With no budget yet the box is simply there, ready to type in; editing an existing one opens it the same way */}
+          {(showBudgetForm || !budget) && (
+            <form onSubmit={handleSaveBudget} className="space-y-1.5">
             <div className="flex items-center gap-2">
               <div className="flex-1 flex items-center gap-1 bg-surface px-3 rounded-xl border border-border-subtle">
                 <span className="text-sm font-bold text-primary">{getCurrencySymbol(group.currency)}</span>
@@ -1456,8 +1665,8 @@ export default function ManageGroup() {
                   inputMode="decimal"
                   value={budgetInput}
                   onChange={(e) => setBudgetInput(e.target.value)}
-                  placeholder="0.00"
-                  autoFocus
+                  placeholder={budget ? '0.00' : 'Set a monthly budget, e.g. 20000'}
+                  autoFocus={!!budget}
                   className="flex-1 h-10 bg-transparent text-sm outline-none"
                 />
               </div>
@@ -1468,6 +1677,7 @@ export default function ManageGroup() {
               >
                 {savingBudget ? t('common.saving') : t('common.save')}
               </button>
+              {!!budget && (
               <button
                 type="button"
                 onClick={() => setShowBudgetForm(false)}
@@ -1475,9 +1685,21 @@ export default function ManageGroup() {
               >
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
+              )}
             </div>
             {hasAmountSumOperator(budgetInput) && evaluateAmountSum(budgetInput) !== null && (
               <p className="text-xs font-bold text-success px-1">= {getCurrencySymbol(group.currency)}{evaluateAmountSum(budgetInput)!.toFixed(2)}</p>
+            )}
+            {!budget && (
+              <button
+                type="button"
+                disabled={savingBudget || !(evaluateAmountSum(budgetInput) && (evaluateAmountSum(budgetInput) as number) > 0)}
+                onClick={() => { setSplitAfterSave(true); handleSaveBudget({ preventDefault() {} } as React.FormEvent); }}
+                className="flex items-center gap-1.5 px-1 pt-1 text-xs font-extrabold text-primary underline-offset-2 hover:underline disabled:opacity-40 disabled:no-underline"
+              >
+                <span className="material-symbols-outlined text-[16px]">pie_chart</span>
+                Save and customise the split
+              </button>
             )}
             </form>
           )}
@@ -1506,6 +1728,9 @@ export default function ManageGroup() {
                     <input type="text" inputMode="decimal" value={eventBudgetInput} onChange={(e) => setEventBudgetInput(e.target.value)} placeholder="Budget for the whole event" autoFocus className="flex-1 h-10 bg-transparent text-sm outline-none" />
                   </div>
                   <button type="submit" disabled={!eventBudgetInput} className="px-4 h-10 bg-primary text-white rounded-xl text-xs font-bold disabled:opacity-50">{t('common.save')}</button>
+                  {Number(group.eventBudget) > 0 && (
+                    <button type="button" onClick={async () => { if (!window.confirm('Remove the event budget? Your expenses stay as they are.')) return; try { await updateDoc(doc(db, 'groups', groupId!), { eventBudget: 0 }); setEditingEventBudget(false); } catch (err) { console.error('Could not remove the event budget:', err); } }} className="px-3 h-10 rounded-xl text-error text-xs font-bold">Remove</button>
+                  )}
                   <button type="button" onClick={() => setEditingEventBudget(false)} className="w-10 h-10 rounded-xl text-text-muted flex items-center justify-center"><span className="material-symbols-outlined text-[18px]">close</span></button>
                 </div>
                 {hasAmountSumOperator(eventBudgetInput) && evaluateAmountSum(eventBudgetInput) !== null && (
@@ -1670,11 +1895,11 @@ export default function ManageGroup() {
             type="button"
             onClick={() => setShowInviteSheet(true)}
             data-tour="manage-group-tab-invite"
-            className="w-full rounded-2xl py-3 text-sm font-black text-white shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
-            style={{ background: KIND_STYLE[kindOf(group)].acc, color: KIND_STYLE[kindOf(group)].onAcc }}
+            className="w-full h-[52px] rounded-2xl text-[15px] font-extrabold shadow-md active:scale-[0.98] transition-transform flex items-center justify-center gap-2.5"
+            style={{ background: `linear-gradient(135deg, ${KIND_STYLE[kindOf(group)].acc}, ${KIND_STYLE[kindOf(group)].light})`, color: KIND_STYLE[kindOf(group)].onAcc }}
           >
-            <span className="material-symbols-outlined text-[20px]">person_add</span>
-            Invite people
+            <span className="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center text-[20px] leading-none shrink-0">{members.length <= 1 ? '👨‍👩‍👧‍👦' : '🤝'}</span>
+            {members.length <= 1 ? 'Invite family / friends' : 'Invite more'}
           </button>
         )}
         {/* Group leaderboard — friends-scoped ranking lives on My Progress; this is the same idea
@@ -1964,8 +2189,16 @@ export default function ManageGroup() {
         </>
         )}
 
-        {activeTab === 'settings' && (
-        <>
+        {showSettingsSheet && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center sm:p-4 bg-black/45" onClick={() => setShowSettingsSheet(false)}>
+        <div className="bg-surface w-full max-w-lg rounded-t-[28px] sm:rounded-3xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-5 pt-4 pb-3 bg-white border-b border-border-subtle shrink-0">
+            <h3 className="text-lg font-extrabold text-primary">Edit group</h3>
+            <button type="button" onClick={() => setShowSettingsSheet(false)} aria-label="Close" className="w-9 h-9 rounded-full bg-surface-container flex items-center justify-center text-text-muted">
+              <span className="material-symbols-outlined text-[19px]">close</span>
+            </button>
+          </div>
+          <div className="overflow-y-auto p-4 space-y-4" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         {isAdminOrOwner && (
           <section className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm space-y-1">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('manageGroup.groupDescription')}</label>
@@ -1984,48 +2217,52 @@ export default function ManageGroup() {
         {kindOf(group) === 'payments' && !!currentMember && <PaymentTrackingDefaults groupId={groupId!} member={currentMember} />}
         {isAdminOrOwner && (
           <section className="space-y-2">
-            {kindOf(group) !== 'payments' && (
-            <>
-            <button
-              type="button"
-              onClick={() => { setGroupTypeStep(1); setShowGroupTypeFlow(true); }}
-              data-tour="manage-group-settings-type"
-              className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-[20px]">tune</span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-primary truncate">{t('manageGroup.groupTypeAndFeatures')}</p>
-                  <p className="text-[11px] text-text-muted truncate">
-                    {t((group.groupType || 'regular') === 'event' ? 'createGroup.oneOffEvent' : 'createGroup.regularMonthly')}
-                    {' · '}{t('createGroup.expenseSplitting')} {group.splitEnabled ? t('common.on') : t('common.off')}
-                    {' · '}{t('createGroup.trackIncome')} {group.incomeEnabled ? t('common.on') : t('common.off')}
-                  </p>
-                </div>
-              </div>
-              <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
-            </button>
+            {kindOf(group) !== 'payments' && (() => {
+              const gk = kindOf(group);
+              const ks = KIND_STYLE[gk];
+              const isEvent = gk === 'event';
+              const toggleRow = (icon: string, title: string, desc: string, on: boolean, onFor: string, offFor: string, onToggle: () => void) => (
+                <button type="button" role="switch" aria-checked={on} onClick={onToggle} className={clsx('w-full flex items-center gap-3 rounded-2xl border-[1.5px] px-4 py-3.5 text-left transition-all active:scale-[0.99] bg-white', on ? '' : 'border-border-subtle')} style={on ? { borderColor: ks.acc, background: `linear-gradient(0deg, ${ks.tint}, #fff)` } : undefined}>
+                  <span className={clsx('w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors', on ? '' : 'bg-surface-container text-primary')} style={on ? { background: ks.acc, color: ks.onAcc } : undefined}>
+                    <span className="material-symbols-outlined text-[22px]">{icon}</span>
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-extrabold text-primary">{title}</span>
+                    <span className="block text-xs text-text-muted mt-0.5 leading-snug">{desc}</span>
+                    <span className="block text-[11.5px] text-[#3f5565] mt-1.5 leading-snug"><b className="text-[#0b6b5a]">Turn on:</b> {onFor}</span>
+                    <span className="block text-[11.5px] text-[#3f5565] mt-0.5 leading-snug"><b className="text-[#8a5a00]">Keep off:</b> {offFor}</span>
+                  </span>
+                  <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', on ? '' : 'bg-[#cbd7df]')} style={on ? { background: ks.acc } : undefined}>
+                    <span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', on ? 'left-6' : 'left-1')} />
+                  </span>
+                </button>
+              );
+              return (
+                <>
+                  {/* the group's type, with a way to change it */}
+                  <div data-tour="manage-group-settings-type" className="bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center gap-3">
+                    <span className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: ks.tint, color: ks.dark }}>
+                      <span className="material-symbols-outlined text-[26px]">{isEvent ? 'flight_takeoff' : 'home'}</span>
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-text-muted">Group type</p>
+                      <p className="text-[15px] font-extrabold text-primary">{isEvent ? 'One-time event' : 'Monthly group'}</p>
+                      <p className="text-[11.5px] text-text-muted truncate">{isEvent ? 'A trip, festival, party or home project.' : 'Your month-to-month expenses.'}</p>
+                    </div>
+                    <button type="button" onClick={() => { setGroupTypeStep(1); setShowGroupTypeFlow(true); }} className="shrink-0 px-4 h-9 rounded-full text-xs font-extrabold border-[1.5px] active:scale-95 transition-transform" style={{ borderColor: ks.acc, color: ks.dark }}>
+                      Change
+                    </button>
+                  </div>
 
-            <button
-              type="button"
-              onClick={() => setShowCategoryPanel(true)}
-              className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-[20px]">category</span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-primary truncate">{t('manageGroup.spendCategories')}</p>
-                  <p className="text-[11px] text-text-muted truncate">{t('manageGroup.customizeCategories')}</p>
-                </div>
-              </div>
-              <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
-            </button>
-            </>
-            )}
+                  {toggleRow('call_split', t('createGroup.expenseSplitting'), 'Track who paid and who owes whom.', !!group.splitEnabled,
+                    isEvent ? 'Friends on a trip, or a gift everyone pays for.' : 'Flatmates, or a couple who both chip in.',
+                    isEvent ? 'One person hosts and pays for everything.' : 'One person earns and pays for the family. No need to settle up.', handleToggleSplit)}
+                  {toggleRow('add_card', t('createGroup.trackIncome'), 'Record money coming in, not just spending.', !!group.incomeEnabled,
+                    isEvent ? 'Everyone chips in, or you receive gifts.' : 'Salary, rent you receive, side income.',
+                    isEvent ? 'You only want to track spending.' : 'You only want to see what you spend.', handleToggleIncome)}
+                </>
+              );
+            })()}
             {kindOf(group) === 'payments' && (
             <button
               type="button"
@@ -2097,7 +2334,9 @@ export default function ManageGroup() {
             </div>
           </section>
         )}
-        </>
+          </div>
+        </div>
+        </div>
         )}
       </main>
 
@@ -2114,7 +2353,7 @@ export default function ManageGroup() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('manageGroup.stepOf', { current: groupTypeStep, total: 2 })}</p>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Group type</p>
                 <button type="button" onClick={() => setShowGroupTypeFlow(false)} className="text-text-muted">
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
@@ -2131,10 +2370,10 @@ export default function ManageGroup() {
                   />
                   <button
                     type="button"
-                    onClick={() => setGroupTypeStep(2)}
+                    onClick={() => setShowGroupTypeFlow(false)}
                     className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm"
                   >
-                    {t('common.next')}
+                    Done
                   </button>
                 </>
               ) : (
@@ -2314,97 +2553,107 @@ export default function ManageGroup() {
           only changes how each row is typed into — categoryPcts (the actual saved value) is
           always a percentage regardless of which mode was used to arrive at it. */}
       <AnimatePresence>
-        {showBudgetCategoryPanel && budget && (
-          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-black/40" onClick={() => setShowBudgetCategoryPanel(false)}>
+        {showBudgetCategoryPanel && budget && (() => {
+          const sym = getCurrencySymbol(group.currency);
+          const money = (n: number) => `${sym}${Math.round(n).toLocaleString()}`;
+          const allocatedAmt = (budget.amount * categoryPctTotal) / 100;
+          const leftAmt = (budget.amount * Math.max(0, 100 - categoryPctTotal)) / 100;
+          const over = categoryPctTotal > 100.5;
+          const hasDefault = !!(group as any)?.defaultCategoryAllocations && Object.keys((group as any).defaultCategoryAllocations).length > 0;
+          const segs = EXPENSE_CATEGORIES.filter((c) => (categoryPcts[c.id] || 0) > 0);
+          const chip = 'shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-white px-3 py-1.5 text-xs font-extrabold text-primary active:scale-95 transition-transform';
+          return (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-black/45" onClick={() => setShowBudgetCategoryPanel(false)}>
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-md rounded-2xl max-h-[85vh] flex flex-col overflow-hidden"
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 40 }}
+              className="bg-white w-full max-w-md rounded-t-[28px] sm:rounded-3xl max-h-[92vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Fixed header — title, description, %/amount toggle, and the running
-                  allocated/remaining stat all stay in view while the category list below scrolls. */}
-              <div className="p-5 pb-3 space-y-3 shrink-0 border-b border-border-subtle">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-bold text-primary">{t('manageGroup.budgetByCategory')}</h3>
-                  <button type="button" onClick={() => setShowBudgetCategoryPanel(false)} className="text-text-muted">
-                    <span className="material-symbols-outlined text-[18px]">close</span>
+              {/* Header: what is being split, how much is placed, how much is left, and the quick starting points */}
+              <div className="px-5 pt-4 pb-3 space-y-3 shrink-0">
+                <div className="w-10 h-1.5 rounded-full bg-border-subtle mx-auto sm:hidden" />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-extrabold text-primary">Split by category</h3>
+                    <p className="text-xs text-text-muted mt-0.5">Decide how much of {money(budget.amount)} each kind of spending gets. Leaving some unplaced is fine.</p>
+                  </div>
+                  <button type="button" onClick={() => setShowBudgetCategoryPanel(false)} aria-label="Close" className="w-9 h-9 shrink-0 rounded-full bg-surface-container flex items-center justify-center text-text-muted">
+                    <span className="material-symbols-outlined text-[19px]">close</span>
                   </button>
                 </div>
-                <p className="text-[11px] text-text-muted">{t('manageGroup.budgetByCategoryDesc')}</p>
-                {rolledOverFromLastMonth && (
-                  <p className="text-[11px] font-bold text-primary bg-primary/5 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[14px] shrink-0">history</span>
-                    {t('manageGroup.categoryBudgetRolledOver')}
+
+                {/* the whole budget as one bar, coloured by category */}
+                <div>
+                  <div className="h-3 rounded-full bg-surface-container overflow-hidden flex">
+                    {segs.map((c) => (
+                      <div key={c.id} style={{ width: `${Math.min(100, categoryPctTotal > 100 ? ((categoryPcts[c.id] || 0) / categoryPctTotal) * 100 : (categoryPcts[c.id] || 0))}%`, background: CATEGORY_STYLE[c.id]?.color || '#64748b' }} />
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5 text-xs">
+                    <span className="font-bold text-text-muted">Placed <b className="text-primary">{money(allocatedAmt)}</b> · {Math.round(categoryPctTotal)}%</span>
+                    <span className={clsx('font-extrabold', over ? 'text-error' : 'text-[#0b6b5a]')}>{over ? `${money(-leftAmt + (budget.amount * (categoryPctTotal - 100)) / 100)} over` : `${money(leftAmt)} left`}</span>
+                  </div>
+                </div>
+
+                {/* quick starting points */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-5 px-5 pb-0.5">
+                  <button type="button" onClick={() => applySplitPreset('recommended')} className={chip}><span className="material-symbols-outlined text-[16px] text-[#12b89a]">auto_awesome</span>Recommended</button>
+                  <button type="button" onClick={() => applySplitPreset('even')} className={chip}><span className="material-symbols-outlined text-[16px] text-[#12b89a]">equalizer</span>Even split</button>
+                  {lastMonthSplit && <button type="button" onClick={() => applySplitPreset('last')} className={chip}><span className="material-symbols-outlined text-[16px] text-[#12b89a]">history</span>Last month</button>}
+                  {hasDefault && <button type="button" onClick={() => applySplitPreset('default')} className={chip}><span className="material-symbols-outlined text-[16px] text-[#12b89a]">bookmark</span>My default</button>}
+                  <button type="button" onClick={() => applySplitPreset('clear')} className={clsx(chip, 'text-text-muted')}>Clear</button>
+                </div>
+                {(rolledOverFromLastMonth || splitSource === 'default') && (
+                  <p className="text-[11px] font-bold text-[#0b6b5a] bg-[#effcf8] rounded-xl px-3 py-1.5 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[14px] shrink-0">{splitSource === 'default' ? 'bookmark' : 'history'}</span>
+                    {splitSource === 'default' ? 'Filled in from your default split. Change anything, then Save.' : t('manageGroup.categoryBudgetRolledOver')}
                   </p>
                 )}
 
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 w-fit shrink-0">
+                {/* % or amount */}
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-text-muted">Enter as</span>
+                  <div className="flex items-center bg-surface-container rounded-xl p-0.5">
                     {(['pct', 'amount'] as const).map((mode) => (
                       <button
                         key={mode}
                         type="button"
                         onClick={() => setCategoryInputMode(mode)}
-                        className={clsx(
-                          'px-3 py-1 rounded-md text-[10px] font-bold transition-all',
-                          categoryInputMode === mode ? 'bg-white text-primary shadow-sm' : 'text-text-muted',
-                        )}
+                        className={clsx('px-4 py-1.5 rounded-[10px] text-xs font-extrabold transition-all', categoryInputMode === mode ? 'bg-white text-primary shadow-sm' : 'text-text-muted')}
                       >
-                        {mode === 'pct' ? '%' : getCurrencySymbol(group.currency)}
+                        {mode === 'pct' ? 'Percent' : `Amount (${sym})`}
                       </button>
                     ))}
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-[10px] font-bold text-text-muted">
-                      {t('manageGroup.categoryBudgetAllocated', { amount: `${getCurrencySymbol(group.currency)}${Math.round((budget.amount * categoryPctTotal) / 100).toLocaleString()}` })}
-                    </p>
-                    <p className={clsx('text-xs font-black', categoryPctTotal > 100.5 ? 'text-error' : 'text-primary')}>
-                      {t('manageGroup.categoryBudgetRemaining', { amount: `${getCurrencySymbol(group.currency)}${Math.round((budget.amount * Math.max(0, 100 - categoryPctTotal)) / 100).toLocaleString()}` })}
-                    </p>
                   </div>
                 </div>
               </div>
 
-              {/* Scrollable category list — the only part of this panel that scrolls. */}
-              <div className="flex-1 overflow-y-auto p-5 py-3 space-y-3">
+              {/* Categories: each one a card with its icon, the amount it gets, and a slider in its own colour */}
+              <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2 border-t border-border-subtle bg-[#f6f9fb]">
                 {EXPENSE_CATEGORIES.map((cat) => {
                   const pct = categoryPcts[cat.id] || 0;
-                  // Each category can grow up to whatever's currently unallocated PLUS its own
-                  // current share — so dragging its slider (or typing a bigger number) can never
-                  // push the overall total past 100%, without needing to touch any other
-                  // category's value first.
                   const maxForThis = Math.max(0, Math.min(100, 100 - (categoryPctTotal - pct)));
-                  const displayValue =
-                    pct <= 0 ? '' : categoryInputMode === 'pct' ? String(Math.round(pct)) : String(Math.round((budget.amount * pct) / 100));
+                  const displayValue = pct <= 0 ? '' : categoryInputMode === 'pct' ? String(Math.round(pct)) : String(Math.round((budget.amount * pct) / 100));
                   const setPct = (nextPct: number) => {
                     setCategoryPcts((prev) => ({ ...prev, [cat.id]: Math.max(0, Math.min(maxForThis, nextPct)) }));
                     setCategoryBudgetError(null);
                   };
-                  // The slider always operates in whichever unit is currently on screen — % mode
-                  // drags in whole percentage points, amount mode drags in whole rupees (paise-
-                  // level precision would be pointless for a real budget). Locking the slider to
-                  // percent-only regardless of mode was the actual bug: dragging in ₹ mode could
-                  // only ever land on a whole-percent amount (e.g. ₹67,500 or ₹69,000 on a
-                  // ₹150,000 budget), never the ₹68,000 actually wanted, which the text field to
-                  // its right can still enter exactly.
                   const sliderMax = categoryInputMode === 'pct' ? 100 : Math.round((budget.amount * maxForThis) / 100);
                   const sliderValue = categoryInputMode === 'pct' ? Math.round(Math.min(pct, maxForThis)) : Math.round((budget.amount * Math.min(pct, maxForThis)) / 100);
-                  const handleSliderChange = (raw: number) => {
-                    setPct(categoryInputMode === 'pct' ? raw : budget.amount > 0 ? (raw / budget.amount) * 100 : 0);
-                  };
+                  const handleSliderChange = (raw: number) => setPct(categoryInputMode === 'pct' ? raw : budget.amount > 0 ? (raw / budget.amount) * 100 : 0);
+                  const color = CATEGORY_STYLE[cat.id]?.color || '#64748b';
                   return (
-                    <div key={cat.id} className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="flex-1 min-w-0 text-xs font-bold text-on-surface flex items-center gap-1.5">
-                          <span>{cat.icon}</span>
-                          <span className="truncate">{t(`category.${cat.id}`)}</span>
-                        </span>
-                        <div className="relative shrink-0 w-24">
-                          {categoryInputMode === 'amount' && (
-                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">{getCurrencySymbol(group.currency)}</span>
-                          )}
+                    <div key={cat.id} className={clsx('rounded-2xl bg-white border p-3 space-y-1.5 transition-colors', pct > 0 ? 'border-transparent shadow-sm' : 'border-border-subtle opacity-80')} style={pct > 0 ? { boxShadow: `inset 3px 0 0 ${color}, 0 1px 2px rgba(0,0,0,0.05)` } : undefined}>
+                      <div className="flex items-center gap-2.5">
+                        <CategoryBadge id={cat.id} icon={cat.icon} size={34} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-extrabold text-primary truncate">{t(`category.${cat.id}`)}</p>
+                          <p className="text-[11px] text-text-muted">{pct > 0 ? (categoryInputMode === 'pct' ? money((budget.amount * pct) / 100) : `${Math.round(pct)}% of budget`) : 'Not set'}</p>
+                        </div>
+                        <div className="relative shrink-0 w-[92px]">
+                          {categoryInputMode === 'amount' && <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">{sym}</span>}
                           <input
                             type="text"
                             inputMode="decimal"
@@ -2414,14 +2663,9 @@ export default function ManageGroup() {
                               setPct(categoryInputMode === 'pct' ? raw : budget.amount > 0 ? (raw / budget.amount) * 100 : 0);
                             }}
                             placeholder="0"
-                            className={clsx(
-                              'w-full h-9 bg-surface border border-border-subtle rounded-lg text-xs font-bold text-primary outline-none text-right',
-                              categoryInputMode === 'amount' ? 'pl-6 pr-2' : 'pr-6 pl-2',
-                            )}
+                            className={clsx('w-full h-10 bg-surface border border-border-subtle rounded-xl text-sm font-extrabold text-primary outline-none text-right focus:border-[#12b89a]', categoryInputMode === 'amount' ? 'pl-6 pr-2.5' : 'pr-7 pl-2.5')}
                           />
-                          {categoryInputMode === 'pct' && (
-                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">%</span>
-                          )}
+                          {categoryInputMode === 'pct' && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">%</span>}
                         </div>
                       </div>
                       <input
@@ -2431,7 +2675,8 @@ export default function ManageGroup() {
                         step={1}
                         value={sliderValue}
                         onChange={(e) => handleSliderChange(Number(e.target.value))}
-                        className="w-full accent-primary h-1.5"
+                        className="w-full h-1.5"
+                        style={{ accentColor: color }}
                         aria-label={t('manageGroup.categoryBudgetSliderLabel', { category: t(`category.${cat.id}`) })}
                       />
                     </div>
@@ -2439,25 +2684,44 @@ export default function ManageGroup() {
                 })}
               </div>
 
-              {/* Fixed footer — always reachable without scrolling past every category. */}
-              <div className="p-5 pt-3 space-y-2 shrink-0 border-t border-border-subtle">
-                <p className={clsx('text-xs font-bold text-center', categoryPctTotal > 100.5 ? 'text-error' : 'text-text-muted')}>
-                  {t('manageGroup.categoryBudgetTotal', { pct: Math.round(categoryPctTotal) })}
-                </p>
+              {/* Footer: make it the default, then Save */}
+              <div className="px-5 pt-3 pb-4 space-y-3 shrink-0 border-t border-border-subtle bg-white" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
+                <button type="button" role="switch" aria-checked={makeSplitDefault} onClick={() => setMakeSplitDefault((v) => !v)} className="w-full flex items-center gap-3 text-left">
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-extrabold text-primary">Use this split every month</span>
+                    <span className="block text-[11px] text-text-muted">{hasDefault ? 'Replaces your saved default' : 'New months start with it. You can still change any month.'}</span>
+                  </span>
+                  <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', makeSplitDefault ? 'bg-[#12b89a]' : 'bg-[#cbd7df]')}>
+                    <span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', makeSplitDefault ? 'left-6' : 'left-1')} />
+                  </span>
+                </button>
+                {hasDefault && (
+                  <button
+                    type="button"
+                    onClick={async () => { try { await updateDoc(doc(db, 'groups', groupId!), { defaultCategoryAllocations: deleteField() }); } catch (err) { console.error('Could not remove the default split:', err); } }}
+                    className="text-[11px] font-bold text-text-muted underline"
+                  >
+                    Remove my saved default
+                  </button>
+                )}
                 {categoryBudgetError && <p className="text-xs text-error font-bold text-center">{categoryBudgetError}</p>}
+                {over && <p className="text-xs text-error font-bold text-center">The total is over 100%. Lower one of the categories to save.</p>}
                 <button
                   type="button"
                   onClick={handleSaveCategoryBudget}
-                  disabled={savingCategoryBudget}
-                  className="w-full py-3 bg-primary text-white font-bold rounded-xl text-sm disabled:opacity-50"
+                  disabled={savingCategoryBudget || over}
+                  className="w-full h-12 bg-primary text-white font-extrabold rounded-2xl text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
                 >
-                  {savingCategoryBudget ? t('common.saving') : t('common.save')}
+                  {savingCategoryBudget ? t('common.saving') : makeSplitDefault ? 'Save and use every month' : t('common.save')}
                 </button>
               </div>
             </motion.div>
           </div>
-        )}
+          );
+        })()}
       </AnimatePresence>
+
+      {showNeedWant && groupId && <NeedWantSheet groupId={groupId} group={group} onClose={() => setShowNeedWant(false)} />}
 
       {/* Recurring Expenses — floating panel, opened from the Overview tab summary card. */}
       <AnimatePresence>
@@ -2550,7 +2814,7 @@ export default function ManageGroup() {
                       )}
                     >
                       <div className={clsx('w-9 h-9 rounded-full flex items-center justify-center shrink-0', isIncome ? 'bg-success/10 text-success' : 'bg-primary/5 text-primary')}>
-                        <span className="text-lg">{catInfo?.icon || '🔁'}</span>
+                        <CategoryBadge id={catInfo?.id} icon={catInfo?.icon || '🔁'} size={28} />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-bold text-primary truncate flex items-center gap-1.5">
@@ -2941,7 +3205,7 @@ export default function ManageGroup() {
             // offer the group tour right now instead of waiting for an invite guide that isn't
             // going to run this time.
             if (newGroupOnboardingActive && !inviteChosenRef.current) {
-              setShowGroupTourOffer(true);
+              // The "Want a quick tour?" popup is no longer shown here; the tour stays available from the Guides menu and the Home checklist.
               setNewGroupOnboardingActive(false);
             }
           }}

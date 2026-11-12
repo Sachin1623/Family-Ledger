@@ -301,7 +301,7 @@ const ja = {
   'category.education': '教育費',
   'category.kids': '子供',
   'category.ent': '娯楽・レジャー',
-  'category.finance': '金融・投資',
+  'category.finance': '投資',
   'category.shopping': '衣料品',
   'category.household': '家庭用品',
   'category.gifts': '贈り物',

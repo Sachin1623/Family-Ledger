@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -741,10 +742,10 @@ export default function ShoppingListDetail() {
                 <div className="flex-1 min-w-0 flex items-center gap-1.5">
                   <p className="min-w-0 truncate text-sm font-black" style={{ color: col.ink }}>{st ? `🏪 ${st}` : 'No store yet'}<span className="ml-1 text-[10px] font-black opacity-60">· {rows.length}</span></p>
                   {list.completed ? (
-                    catInfo && <span className={pill} style={{ color: col.ink }}>{catInfo.icon} {categoryLabel(catInfo)}</span>
+                    catInfo && <span className={clsx(pill, 'inline-flex items-center gap-1')} style={{ color: col.ink }}><CategoryBadge id={catInfo.id} icon={catInfo.icon} size={16} />{categoryLabel(catInfo)}</span>
                   ) : (
                     <button type="button" onClick={() => openCategory(st)} className={clsx(pill, 'truncate max-w-[45%]')} style={{ color: col.ink }}>
-                      {catInfo ? `${catInfo.icon} ${categoryLabel(catInfo)}` : '+ Category'}
+                      {catInfo ? <span className="inline-flex items-center gap-1"><CategoryBadge id={catInfo.id} icon={catInfo.icon} size={16} />{categoryLabel(catInfo)}</span> : '+ Category'}
                     </button>
                   )}
                 </div>
@@ -1105,7 +1106,7 @@ export default function ShoppingListDetail() {
               <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto">
                 {spendCategories.map((c) => (
                   <button key={c.id} type="button" onClick={() => setSpendCat(c.id)} className={clsx('rounded-xl border-2 py-2 flex flex-col items-center gap-0.5 active:scale-95', spendCat === c.id ? 'border-[#0f7a8f] bg-teal-50' : 'border-transparent bg-slate-50')}>
-                    <span className="text-xl leading-none">{c.icon}</span>
+                    <CategoryBadge id={c.id} icon={c.icon} size={28} />
                     <span className="text-[10px] font-black text-slate-600 truncate w-full px-1">{categoryLabel(c)}</span>
                   </button>
                 ))}

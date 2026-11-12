@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
@@ -532,7 +533,7 @@ export default function ExpenseReminders() {
             )}
             <DetailField label={t('todo.status')}>{viewingReminder.active ? t('reminders.active') : t('reminders.paused')}</DetailField>
             {group && <DetailField label={t('reminders.presetGroup')}>{group.name}</DetailField>}
-            {catInfo && <DetailField label={t('reminders.presetCategory')}>{catInfo.icon} {t(`category.${catInfo.id}`)}</DetailField>}
+            {catInfo && <DetailField label={t('reminders.presetCategory')}><span className="inline-flex items-center gap-1.5"><CategoryBadge id={catInfo.id} icon={catInfo.icon} size={20} />{t(`category.${catInfo.id}`)}</span></DetailField>}
             {viewingReminder.presetAmount != null && (
               <DetailField label={t('reminders.presetAmount')}>{getCurrencySymbol(group?.currency)}{viewingReminder.presetAmount.toFixed(2)}</DetailField>
             )}

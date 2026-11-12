@@ -301,7 +301,7 @@ const ru = {
   'category.education': 'Образование',
   'category.kids': 'Дети',
   'category.ent': 'Развлечения и досуг',
-  'category.finance': 'Финансы и инвестиции',
+  'category.finance': 'Инвестиции',
   'category.shopping': 'Одежда',
   'category.household': 'Хозяйственные товары',
   'category.gifts': 'Подарки',

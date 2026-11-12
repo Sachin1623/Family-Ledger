@@ -34,6 +34,27 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('Uncaught render error:', error, info.componentStack);
+    // "INTERNAL ASSERTION FAILED: Unexpected state" is the Firestore SDK's own state getting out of step with the server
+    // (seen when listeners start and stop in quick succession, or when the saved offline copy in the browser is stale). It does not
+    // fix itself and a plain reload can hit it again, so once per session the saved copy is cleared before reloading: the data is
+    // simply read again from the server. A second occurrence in the same session falls through to the normal error screen.
+    if (String(error?.message || '').includes('INTERNAL ASSERTION FAILED')) {
+      let alreadyTried = false;
+      try { alreadyTried = sessionStorage.getItem('fl:firestoreCacheReset') === '1'; sessionStorage.setItem('fl:firestoreCacheReset', '1'); } catch { /* storage unavailable */ }
+      if (!alreadyTried) {
+        (async () => {
+          try {
+            const [{ db }, { terminate, clearIndexedDbPersistence }] = await Promise.all([import('../lib/firebase'), import('firebase/firestore')]);
+            await terminate(db);
+            await clearIndexedDbPersistence(db);
+          } catch (err) {
+            console.error('Could not clear the saved Firestore copy:', err);
+          } finally {
+            window.location.reload();
+          }
+        })();
+      }
+    }
   }
 
   render() {

@@ -144,7 +144,7 @@ export const EXPENSE_CATEGORIES = [
   { id: 'education', name: 'Education', icon: '🎓' },
   { id: 'kids', name: 'Kids', icon: '🧒' },
   { id: 'ent', name: 'Fun', icon: '🎬' },
-  { id: 'finance', name: 'Finance', icon: '💳' },
+  { id: 'finance', name: 'Invest', icon: '💳' },
   { id: 'shopping', name: 'Apparel', icon: '👕' },
   { id: 'household', name: 'Household', icon: '🧹' },
   { id: 'gifts', name: 'Gifts', icon: '🎁' },

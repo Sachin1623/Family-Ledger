@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import CategoryBadge from './CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import { useCollection } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import WhatsAppIcon from './WhatsAppIcon';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { inviteToGroup, inviteUserToGroup, searchUsers, FoundUser } from '../lib/inviteApi';
@@ -194,17 +196,17 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
   const existingMemberUidSet = React.useMemo(() => new Set(members.map((m: any) => m.userId)), [members]);
 
   const knownPeople = React.useMemo(() => {
-    const map = new Map<string, FoundUser>();
+    const map = new Map<string, FoundUser & { note?: string }>();
     acceptedFriends.forEach(({ friendUid }) => {
       const u = friendUsersByUid.get(friendUid);
-      if (u) map.set(friendUid, { uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, shortId: null });
+      if (u) map.set(friendUid, { uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, shortId: null, note: 'Friend' });
     });
     Array.from(membersByFamilyId.values()).flat().forEach((row: any) => {
       if (row.userId === user?.uid) return;
-      map.set(row.userId, { uid: row.userId, displayName: row.displayName, photoURL: row.photoURL, shortId: null });
+      map.set(row.userId, { uid: row.userId, displayName: row.displayName, photoURL: row.photoURL, shortId: null, note: 'Family' });
     });
     coGroupMembers.forEach((m: any) => {
-      if (!map.has(m.userId)) map.set(m.userId, { uid: m.userId, displayName: m.displayName || 'Someone', photoURL: m.photoURL || '', shortId: null });
+      if (!map.has(m.userId)) map.set(m.userId, { uid: m.userId, displayName: m.displayName || 'Someone', photoURL: m.photoURL || '', shortId: null, note: 'In your other groups' });
     });
     return Array.from(map.values())
       .filter((u) => !existingMemberUidSet.has(u.uid))
@@ -244,6 +246,38 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     logGrowthEvent('invite_whatsapp', user?.uid);
   };
 
+  // The other quick ways to share the same join link
+  const joinMessage = () => {
+    const link = inviteJoinLink(groupId!, user?.uid, 'wa');
+    const inviterName = profile?.displayName || user?.displayName || 'A friend';
+    return { link, text: `Hi! ${inviterName} is inviting you to join the group "${group?.name}" on FamilyLedger. Join here: ${link}` };
+  };
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(joinMessage().link);
+      setInviteFeedback({ type: 'success', text: 'Invite link copied.' });
+    } catch {
+      setInviteFeedback({ type: 'error', text: 'Could not copy. Use WhatsApp or More instead.' });
+    }
+  };
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const handleQr = async () => {
+    try {
+      const QRCode = (await import('qrcode')).default;
+      setQrUrl(await QRCode.toDataURL(joinMessage().link, { margin: 1, width: 480, color: { dark: '#06222f', light: '#ffffff' } }));
+    } catch {
+      setInviteFeedback({ type: 'error', text: 'Could not make the QR code.' });
+    }
+  };
+  const handleSmsShare = () => { window.open(`sms:?&body=${encodeURIComponent(joinMessage().text)}`, '_self'); };
+  const handleMoreShare = async () => {
+    const { link, text } = joinMessage();
+    try {
+      if (navigator.share) await navigator.share({ text, url: link });
+      else await handleCopyLink();
+    } catch { /* closed without sharing */ }
+  };
+
   // Adding someone does not invite them yet: they go into the "To invite" list at the bottom, which shows at once who has been
   // added, and one Send button invites everybody together.
   type Staged = { key: string; kind: 'user' | 'email'; uid?: string; email?: string; name: string; photoURL?: string; paymentRole?: PaymentRole | '' };
@@ -269,6 +303,15 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
     setInviteFeedback(null);
     setStaged((prev) => (prev.some((x) => x.key === `e:${email}`) ? prev : [...prev, { key: `e:${email}`, kind: 'email', email, name: email }]));
     setInviteEmail('');
+  };
+
+  const typedIsEmail = /^\S+@\S+\.\S+$/.test(userSearchQuery.trim());
+  const stageTypedEmail = () => {
+    const email = userSearchQuery.trim().toLowerCase();
+    if (!typedIsEmail) return;
+    setInviteFeedback(null);
+    setStaged((prev) => (prev.some((x) => x.key === `e:${email}`) ? prev : [...prev, { key: `e:${email}`, kind: 'email', email, name: email }]));
+    setUserSearchQuery('');
   };
 
   const handleSendAll = async () => {
@@ -492,7 +535,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
   };
 
   const title =
-    subPanel === 'addMembers' ? 'Add Members' :
+    subPanel === 'addMembers' ? 'Invite members' :
     subPanel === 'budget' ? (budget ? 'Edit Budget' : 'Set Budget') :
     subPanel === 'budgetCategory' ? t('manageGroup.budgetByCategory') :
     subPanel === 'exitDelete' ? (isCreator ? 'Delete Group' : 'Exit Group') :
@@ -528,6 +571,8 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
               </button>
             </div>
           </div>
+        ) : (subPanel === 'addMembers' && initialPanel === 'addMembers') ? (
+          <div className="pt-2.5 pb-0.5"><div className="w-10 h-1.5 rounded-full bg-border-subtle mx-auto" /></div>
         ) : (
         <div className="flex items-center justify-between px-2 py-2 border-b border-border-subtle sticky top-0 bg-white z-10">
           {subPanel ? (
@@ -611,12 +656,47 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
 
           {subPanel === 'addMembers' && (
             <div className="p-2 space-y-4">
+              {/* who this is for */}
+              <div className="flex items-center gap-3 px-1">
+                <div className="w-11 h-11 rounded-2xl bg-primary/10 overflow-hidden flex items-center justify-center text-[24px] shrink-0">
+                  {group?.photoURL ? <img src={group.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span>{groupIconEmoji(group?.icon)}</span>}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[15px] font-extrabold text-primary truncate">Invite to {group?.name || 'this group'}</p>
+                  <p className="text-[11.5px] text-text-muted">{members.length} member{members.length === 1 ? '' : 's'} so far</p>
+                </div>
+                {initialPanel === 'addMembers' && (
+                  <button onClick={onClose} aria-label="Close" className="ml-auto w-9 h-9 rounded-full bg-border-subtle/50 flex items-center justify-center text-text-muted shrink-0">
+                    <span className="material-symbols-outlined text-[19px] block">close</span>
+                  </button>
+                )}
+              </div>
+
+              {/* the quickest way first */}
+              <button
+                onClick={handleWhatsAppShare}
+                className="w-full h-[60px] rounded-2xl bg-gradient-to-b from-[#2fe076] to-[#1fb85a] text-white font-black text-[16.5px] flex items-center justify-center gap-3 shadow-md shadow-[#25d366]/30 active:scale-[0.98] transition-transform"
+              >
+                <span className="w-10 h-10 rounded-full bg-white text-[#25d366] flex items-center justify-center shadow-sm"><WhatsAppIcon className="w-[26px] h-[26px]" /></span>
+                Invite on WhatsApp
+              </button>
+              <div className="grid grid-cols-4 gap-2.5">
+                {([
+                  { icon: 'link', label: 'Copy link', onClick: handleCopyLink },
+                  { icon: 'sms', label: 'SMS', onClick: handleSmsShare },
+                  { icon: 'qr_code_2', label: 'QR code', onClick: handleQr },
+                  { icon: 'ios_share', label: 'More', onClick: handleMoreShare },
+                ] as const).map((o) => (
+                  <button key={o.label} type="button" onClick={o.onClick} className="flex flex-col items-center gap-1.5 active:scale-95 transition-transform">
+                    <span className="w-12 h-12 rounded-2xl bg-white border border-border-subtle flex items-center justify-center text-primary"><span className="material-symbols-outlined text-[22px]">{o.icon}</span></span>
+                    <span className="text-[11.5px] font-bold text-on-surface">{o.label}</span>
+                  </button>
+                ))}
+              </div>
+
               {knownPeople.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[14px]">group</span>
-                    People You Know
-                  </label>
+                <div className="space-y-1">
+                  <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-text-muted px-1">People you know</p>
                   {knownPeople.length > 5 && (
                     <input
                       type="text"
@@ -629,94 +709,71 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                   {filteredKnownPeople.length === 0 && (
                     <p className="text-[11px] text-text-muted px-1">No one matches "{knownPeopleFilter}".</p>
                   )}
-                  <div className="space-y-1.5 max-h-52 overflow-y-auto">
-                    {filteredKnownPeople.map((u) => (
-                      <div key={u.uid} className="flex items-center gap-2 p-2 rounded-xl bg-surface-container/50">
-                        <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center">
-                          {u.photoURL ? (
-                            <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span className="text-xs font-bold text-primary">{u.displayName?.slice(0, 1)}</span>
-                          )}
+                  <div className="h-[184px] overflow-y-auto rounded-2xl border border-border-subtle bg-white px-2 overscroll-contain">
+                    {filteredKnownPeople.map((u: FoundUser & { note?: string }) => {
+                      const colors = ['#e07a5f', '#3d85c6', '#8e7cc3', '#f0a04b', '#2fa38a', '#c2578f'];
+                      const bg = colors[(u.displayName || '?').charCodeAt(0) % colors.length];
+                      return (
+                        <div key={u.uid} className="flex items-center gap-3 py-2 px-1">
+                          <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 flex items-center justify-center text-white font-extrabold text-[15px]" style={{ background: u.photoURL ? undefined : bg }}>
+                            {u.photoURL ? <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (u.displayName || '?').slice(0, 1).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-primary truncate">{u.displayName}</p>
+                            {u.note && <p className="text-[11.5px] text-text-muted truncate">{u.note}</p>}
+                          </div>
+                          <button
+                            onClick={() => toggleStagedUser(u)}
+                            disabled={invitedUids.has(u.uid)}
+                            className={clsx('text-[12.5px] font-extrabold px-4 py-1.5 rounded-full disabled:opacity-50 shrink-0 transition-colors', stagedUids.has(u.uid) ? 'bg-[#12b89a] text-[#06222f]' : 'bg-primary text-white')}
+                          >
+                            {invitedUids.has(u.uid) ? 'Invited' : stagedUids.has(u.uid) ? 'Added ✓' : 'Add'}
+                          </button>
                         </div>
-                        <span className="text-sm font-bold text-on-surface truncate flex-1">{u.displayName}</span>
-                        <button
-                          onClick={() => toggleStagedUser(u)}
-                          disabled={invitedUids.has(u.uid)}
-                          className={clsx('text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-50 shrink-0', stagedUids.has(u.uid) ? 'bg-primary text-white' : 'text-primary bg-primary/10')}
-                        >
-                          {invitedUids.has(u.uid) ? 'Invited' : stagedUids.has(u.uid) ? 'Added ✓' : 'Add'}
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                  <div className="h-px bg-border-subtle my-1" />
                 </div>
               )}
 
-              <button
-                onClick={handleWhatsAppShare}
-                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border border-border-subtle hover:bg-surface-container transition-colors text-left"
-              >
-                <span className="text-[22px] leading-none shrink-0">💬</span>
-                <span className="font-bold text-sm text-on-surface">Share via WhatsApp</span>
-              </button>
-
-              <form onSubmit={stageEmail} className="space-y-2">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1 flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[14px]">mail</span>
-                  Invite by Email
-                </label>
+              {/* one box for email, name or FamilyLedger ID */}
+              <div className="space-y-2">
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-text-muted px-1">Someone else?</p>
                 <div className="flex gap-2">
                   <input
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="email@example.com"
-                    className="flex-1 bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                    type="text"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && typedIsEmail) { e.preventDefault(); stageTypedEmail(); } }}
+                    placeholder="Email or FamilyLedger ID"
+                    className="flex-1 min-w-0 h-12 bg-surface px-4 rounded-2xl border-[1.5px] border-border-subtle text-sm outline-none focus:border-[#12b89a]"
                   />
-                  <button
-                    type="submit"
-                    disabled={!inviteEmail.trim()}
-                    className="px-4 bg-primary text-white font-bold rounded-xl disabled:opacity-50 shrink-0"
-                  >
-                    Add
-                  </button>
+                  {typedIsEmail && (
+                    <button type="button" onClick={stageTypedEmail} className="shrink-0 px-4 h-12 rounded-2xl bg-primary text-white font-extrabold text-sm active:scale-95">Add email</button>
+                  )}
                 </div>
-              </form>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1 flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[14px]">person_search</span>
-                  {t('manageGroup.searchUsersLabel')}
-                </label>
-                <input
-                  type="text"
-                  value={userSearchQuery}
-                  onChange={(e) => setUserSearchQuery(e.target.value)}
-                  placeholder={t('manageGroup.searchUsersPlaceholder')}
-                  className="w-full bg-surface p-3 rounded-xl border border-border-subtle text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                />
                 {searchingUsers && <p className="text-xs text-text-muted px-1">Searching…</p>}
-                {!searchingUsers && userSearchQuery.trim().length >= 2 && userSearchResults.length === 0 && (
+                {!searchingUsers && !typedIsEmail && userSearchQuery.trim().length >= 2 && userSearchResults.length === 0 && (
                   <p className="text-[11px] text-text-muted px-1">{t('manageGroup.noMatchingUsers')}</p>
                 )}
                 {userSearchResults.length > 0 && (
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  <div className="max-h-48 overflow-y-auto">
                     {userSearchResults.map((u) => (
-                      <div key={u.uid} className="flex items-center gap-2 p-2 rounded-xl bg-surface-container/50">
-                        <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center">
+                      <div key={u.uid} className="flex items-center gap-3 py-2 px-1">
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-primary/10 shrink-0 flex items-center justify-center">
                           {u.photoURL ? (
                             <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           ) : (
-                            <span className="text-xs font-bold text-primary">{u.displayName?.slice(0, 1)}</span>
+                            <span className="text-sm font-bold text-primary">{u.displayName?.slice(0, 1)}</span>
                           )}
                         </div>
-                        <span className="text-sm font-bold text-on-surface truncate flex-1">{u.displayName}</span>
+                        <span className="text-sm font-bold text-primary truncate flex-1">{u.displayName}</span>
                         <button
                           onClick={() => toggleStagedUser(u)}
                           disabled={invitedUids.has(u.uid)}
-                          className={clsx('text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-50 shrink-0', stagedUids.has(u.uid) ? 'bg-primary text-white' : 'text-primary bg-primary/10')}
+                          className={clsx('text-[12.5px] font-extrabold px-4 py-1.5 rounded-full disabled:opacity-50 shrink-0', stagedUids.has(u.uid) ? 'bg-[#12b89a] text-[#06222f]' : 'bg-primary text-white')}
                         >
                           {invitedUids.has(u.uid) ? 'Invited' : stagedUids.has(u.uid) ? 'Added ✓' : 'Add'}
                         </button>
@@ -725,6 +782,17 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                   </div>
                 )}
               </div>
+
+              {qrUrl && (
+                <div className="fixed inset-0 z-[400] bg-black/60 flex items-center justify-center p-6" onClick={() => setQrUrl(null)}>
+                  <div className="bg-white rounded-3xl p-5 w-full max-w-xs text-center space-y-3" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-base font-extrabold text-primary">Scan to join {group?.name || 'the group'}</p>
+                    <img src={qrUrl} alt="QR code to join the group" className="w-full aspect-square rounded-2xl border border-border-subtle" />
+                    <p className="text-xs text-text-muted">Ask them to open their phone camera and point it here.</p>
+                    <button type="button" onClick={() => setQrUrl(null)} className="w-full h-11 rounded-2xl bg-primary text-white font-extrabold text-sm">Done</button>
+                  </div>
+                </div>
+              )}
 
               {inviteFeedback && (
                 <div className={clsx(
@@ -869,7 +937,7 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
                     <div key={cat.id} className="space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex-1 min-w-0 text-xs font-bold text-on-surface flex items-center gap-1.5">
-                          <span>{cat.icon}</span>
+                          <CategoryBadge id={cat.id} icon={cat.icon} size={20} />
                           <span className="truncate">{t(`category.${cat.id}`)}</span>
                         </span>
                         <div className="relative shrink-0 w-24">

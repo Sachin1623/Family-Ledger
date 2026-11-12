@@ -1,4 +1,5 @@
 import GroupTypePicker from '../components/GroupTypePicker';
+import CategoryBadge from '../components/CategoryBadge';
 import { kindVars } from '../lib/groupKindStyle';
 import React, { useState } from 'react';
 import { trackFunnel } from '../lib/funnel';
@@ -90,6 +91,7 @@ export default function CreateGroup() {
   // Profile) — same currencyForCountry lookup Settlements.tsx already uses for a similar guess.
   const [currency, setCurrency] = useState(() => currencyForCountry(profile?.country) || 'INR');
   const [icon, setIcon] = useState('🏠');
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [photoURL, setPhotoURL] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -290,6 +292,38 @@ export default function CreateGroup() {
 
   const typeLabel = groupType === 'regular' ? 'Regular' : groupType === 'event' ? 'Event' : 'Payments';
 
+  // Each kind of group reads and offers different things while it is being made, so it feels like what the person chose.
+  const KIND_COPY = {
+    regular: {
+      eyebrow: 'New monthly group', chip: 'Monthly', namePlaceholder: 'e.g. Home expenses', nameAsk: 'Give your group a name to continue', cta: 'Create group',
+      descPlaceholder: 'e.g. Groceries, bills and everyday costs',
+      splitDesc: 'Track who paid and who owes whom.', incomeDesc: 'Record money coming in, not just spending.',
+      splitOn: 'Flatmates, or a couple who both chip in.', splitOff: 'One person earns and pays for the family. No need to settle up.',
+      incomeOn: 'Salary, rent you receive, side income.', incomeOff: 'You only want to see what you spend.',
+      icons: GROUP_ICONS,
+    },
+    event: {
+      eyebrow: 'New one-time event', chip: 'Event', namePlaceholder: 'e.g. Goa trip, Diwali, Home renovation', nameAsk: 'Give your event a name to continue', cta: 'Create event',
+      descPlaceholder: 'e.g. Who is going, or what it is for',
+      splitDesc: 'Split the costs and see who owes whom.', incomeDesc: 'Record money coming in, not just spending.',
+      splitOn: 'Friends on a trip, or a gift everyone pays for.', splitOff: 'One person hosts and pays for everything.',
+      incomeOn: 'Everyone chips in, or you receive gifts.', incomeOff: 'You only want to track spending.',
+      icons: [
+        { id: 'trip', icon: '✈️' }, { id: 'festival', icon: '🪔' }, { id: 'party', icon: '🎉' }, { id: 'wedding', icon: '💍' }, { id: 'birthday', icon: '🎂' },
+        { id: 'renovation', icon: '🛠️' }, { id: 'camping', icon: '🏕️' }, { id: 'gift', icon: '🎁' }, { id: 'beach', icon: '🏖️' }, { id: 'food', icon: '🍽️' }, { id: 'car', icon: '🚗' },
+      ],
+    },
+    payments: {
+      eyebrow: 'New payments group', chip: 'Payments', namePlaceholder: 'e.g. Home rent, Shop rent, Salary', nameAsk: 'Give it a name to continue', cta: 'Create payments group',
+      descPlaceholder: 'e.g. Monthly rent to landlord',
+      splitDesc: '', incomeDesc: '', splitOn: '', splitOff: '', incomeOn: '', incomeOff: '',
+      icons: [
+        { id: 'home-rent', icon: '🏠' }, { id: 'shop', icon: '🏪' }, { id: 'salary', icon: '💼' }, { id: 'cash', icon: '💸' }, { id: 'bills', icon: '🧾' },
+        { id: 'school', icon: '🎓' }, { id: 'loan', icon: '🏦' }, { id: 'vehicle', icon: '🚗' }, { id: 'maid', icon: '🧹' }, { id: 'phone', icon: '📱' },
+      ],
+    },
+  }[groupType];
+
   // Everyone but the guided tour gets the simple layout: what matters first, the rest one tap away
   if (!guide) {
     const isPayments = groupType === 'payments';
@@ -299,7 +333,7 @@ export default function CreateGroup() {
       clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[12px] font-bold transition-all', hidden ? 'bg-transparent text-[#98a8b3] border-[#e4ebf0] line-through' : 'bg-white text-[#06222f] border-[#d5e0e6]');
     const customChip = (cat: CustomCategory) => (
       <div key={cat.id} className="flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full border border-[color:var(--acc)]/50 bg-[color:var(--acc-tint)] text-[12px] font-bold text-[color:var(--acc-dark)]">
-        <span>{cat.icon}</span>{cat.name}
+        <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{cat.name}
         <button type="button" onClick={() => removeCustomCategory(cat.id)} aria-label={`Remove ${cat.name}`} className="w-4 h-4 flex items-center justify-center text-[color:var(--acc-dark)]/70">
           <span className="material-symbols-outlined text-[14px]">close</span>
         </button>
@@ -321,75 +355,76 @@ export default function CreateGroup() {
     return (
       <div className="flex flex-col min-h-screen bg-[color:var(--hero)]" style={kindVars(groupType)}>
         <div className="max-w-2xl w-full mx-auto px-6 pt-4 pb-6 text-white">
-          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[color:var(--acc-light)]">New {typeLabel.toLowerCase()} group</p>
+          <p className="text-xs font-bold tracking-[0.12em] uppercase text-[color:var(--acc-light)]">{KIND_COPY.eyebrow}</p>
           <div className="flex items-center gap-4 mt-3">
-            <label className="relative w-[68px] h-[68px] rounded-[22px] bg-white/10 border border-white/20 flex items-center justify-center text-[34px] shrink-0 cursor-pointer">
+            <div className="relative w-[68px] h-[68px] rounded-[22px] bg-white/10 border border-white/20 flex items-center justify-center text-[34px] shrink-0">
               <span className="w-full h-full rounded-[22px] overflow-hidden flex items-center justify-center">
                 {photoURL ? <img src={photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span>{icon}</span>}
               </span>
-              <span className="absolute -right-1.5 -bottom-1.5 w-[26px] h-[26px] rounded-full bg-[color:var(--acc)] text-[color:var(--on-acc)] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[15px]">photo_camera</span>
-              </span>
-              <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
-            </label>
+              {/* pencil, top right: choose an icon */}
+              <button type="button" onClick={() => setIconPickerOpen(true)} aria-label="Choose an icon" className="absolute -right-2 -top-2 w-[28px] h-[28px] rounded-full bg-white text-[#06222f] shadow flex items-center justify-center active:scale-90">
+                <span className="material-symbols-outlined text-[16px]">edit</span>
+              </button>
+              {/* camera, bottom left: use a picture from the phone */}
+              <label aria-label="Use a photo" className="absolute -left-2 -bottom-2 w-[28px] h-[28px] rounded-full bg-[color:var(--acc)] text-[color:var(--on-acc)] shadow flex items-center justify-center cursor-pointer active:scale-90">
+                <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+                <input type="file" className="hidden" accept="image/*" onChange={handlePhotoChange} />
+              </label>
+            </div>
             <input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="min-w-0 flex-1 bg-transparent text-[22px] font-extrabold text-white placeholder-white/40 border-b-2 border-[color:var(--acc)] pb-1 outline-none"
-              placeholder={t('createGroup.groupNamePlaceholder')}
+              placeholder={KIND_COPY.namePlaceholder}
               type="text"
               autoFocus
             />
           </div>
           {photoError && <p className="text-xs text-red-300 font-bold mt-2">{photoError}</p>}
-          <button type="button" onClick={() => setTypeChosen(false)} className="inline-flex items-center gap-1.5 mt-3 rounded-full bg-[color:var(--acc)]/20 text-[color:var(--acc-light)] pl-3 pr-2 py-1 text-xs font-bold active:scale-95">
-            {typeLabel} · {currency}
-            <span className="underline underline-offset-2 opacity-80">Change type</span>
-          </button>
+          <div className="flex items-center justify-between gap-3 mt-3">
+            <button type="button" onClick={() => setTypeChosen(false)} className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--acc)]/20 text-[color:var(--acc-light)] pl-3 pr-2 py-1 text-xs font-bold active:scale-95">
+              {KIND_COPY.chip}
+              <span className="underline underline-offset-2 opacity-80">Change type</span>
+            </button>
+            {/* currency: INR (or the person's own country's) by default, the rest one tap away */}
+            <label className="relative inline-flex items-center shrink-0">
+              <span className="sr-only">Currency</span>
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className="appearance-none rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold pl-3 pr-7 py-1.5 outline-none focus:border-[color:var(--acc)] cursor-pointer"
+              >
+                {CURRENCIES.map((curr) => (
+                  <option key={curr} value={curr} className="text-[#06222f]">{getCurrencySymbol(curr)} {curr}</option>
+                ))}
+              </select>
+              <span className="material-symbols-outlined absolute right-1.5 pointer-events-none text-[16px] text-white/80">expand_more</span>
+            </label>
+          </div>
         </div>
 
         <main className="flex-1 bg-[#f6f9fb] rounded-t-[32px] px-5 pt-6 pb-60">
           <div className="max-w-2xl mx-auto space-y-6">
-            <section>
-              <span className={eyebrow}>{photoURL ? 'Group picture' : 'Icon'}</span>
-              {photoURL ? (
-                <div className="flex items-center justify-between rounded-2xl bg-white border border-[#e4ebf0] px-4 py-3">
-                  <span className="text-sm text-[#587080]">Using your photo as the group picture</span>
-                  <button type="button" onClick={() => setPhotoURL(null)} className="text-xs font-bold text-[color:var(--acc-dark)]">Use an icon</button>
+            {groupType === 'event' && (
+              <section>
+                <span className={eyebrow}>Budget for the event (optional)</span>
+                <div className="flex items-center gap-2">
+                  <span className="w-10 h-11 rounded-xl bg-[#eef2f5] text-sm font-bold text-[#06222f] flex items-center justify-center shrink-0">{getCurrencySymbol(currency)}</span>
+                  <input
+                    value={budgetInput}
+                    onChange={(e) => setBudgetInput(e.target.value)}
+                    inputMode="decimal"
+                    className="flex-1 h-11 px-4 rounded-xl border border-[#e4ebf0] bg-white text-sm outline-none focus:border-[color:var(--acc)]"
+                    placeholder="e.g. 50000"
+                  />
                 </div>
-              ) : (
-                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
-                  {ICONS.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setIcon(item.icon)}
-                      aria-label={item.id}
-                      className={clsx('w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center text-[22px] border-[1.5px] transition-all active:scale-95', icon === item.icon ? 'border-[color:var(--acc)] bg-[color:var(--acc-tint)] shadow-[0_4px_12px_rgba(18,184,154,0.2)]' : 'border-[#e4ebf0] bg-white')}
-                    >
-                      {item.icon}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section>
-              <span className={eyebrow}>Currency</span>
-              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
-                {CURRENCIES.map((curr) => (
-                  <button
-                    key={curr}
-                    type="button"
-                    onClick={() => setCurrency(curr)}
-                    className={clsx('shrink-0 px-4 h-10 rounded-full text-[13px] font-bold border-[1.5px] transition-all active:scale-95', currency === curr ? 'bg-[color:var(--hero)] text-white border-[color:var(--hero)]' : 'bg-white text-[#06222f] border-[#e4ebf0]')}
-                  >
-                    {getCurrencySymbol(curr)} {curr}
-                  </button>
-                ))}
-              </div>
-            </section>
+                {hasAmountSumOperator(budgetInput) && evaluateAmountSum(budgetInput) !== null && (
+                  <p className="text-xs font-bold text-[color:var(--acc-dark)] px-1 mt-1.5">= {getCurrencySymbol(currency)}{evaluateAmountSum(budgetInput)!.toFixed(2)}</p>
+                )}
+                <p className="text-xs text-[#587080] px-1 mt-1.5">One budget for the whole event. We show how much is used.</p>
+              </section>
+            )}
 
             {isPayments ? (
               <>
@@ -400,7 +435,7 @@ export default function CreateGroup() {
                     onChange={(e) => setDescription(e.target.value)}
                     rows={2}
                     className="w-full p-3 rounded-2xl border border-[#e4ebf0] bg-white text-sm outline-none focus:border-[color:var(--acc)] resize-none"
-                    placeholder="e.g. Monthly rent to landlord"
+                    placeholder={KIND_COPY.descPlaceholder}
                   />
                 </section>
                 <div className="flex gap-2.5 px-1 text-[13px] text-[#587080] leading-relaxed">
@@ -412,8 +447,8 @@ export default function CreateGroup() {
               <>
                 <section className="space-y-2.5">
                   <span className={eyebrow}>How this group works</span>
-                  <ToggleCard icon="call_split" title={t('createGroup.expenseSplitting')} desc="Share bills between members and see who owes whom" on={splitEnabled} onToggle={() => setSplitEnabled(!splitEnabled)} />
-                  <ToggleCard icon="add_card" title={t('createGroup.trackIncome')} desc="Log money coming in too, not just spending" on={incomeEnabled} onToggle={() => setIncomeEnabled(!incomeEnabled)} />
+                  <ToggleCard icon="call_split" title={t('createGroup.expenseSplitting')} desc={KIND_COPY.splitDesc} onFor={KIND_COPY.splitOn} offFor={KIND_COPY.splitOff} on={splitEnabled} onToggle={() => setSplitEnabled(!splitEnabled)} />
+                  <ToggleCard icon="add_card" title={t('createGroup.trackIncome')} desc={KIND_COPY.incomeDesc} onFor={KIND_COPY.incomeOn} offFor={KIND_COPY.incomeOff} on={incomeEnabled} onToggle={() => setIncomeEnabled(!incomeEnabled)} />
                 </section>
 
                 <section>
@@ -426,7 +461,7 @@ export default function CreateGroup() {
                     <span className="w-10 h-10 rounded-xl bg-[#eef2f5] text-[#06222f] flex items-center justify-center shrink-0"><span className="material-symbols-outlined text-[22px]">tune</span></span>
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm font-extrabold text-[#06222f]">More options</span>
-                      <span className="block text-xs text-[#587080] mt-0.5">{groupType === 'event' ? 'Description, event budget, categories' : 'Description, monthly budget, categories'}</span>
+                      <span className="block text-xs text-[#587080] mt-0.5">{groupType === 'event' ? 'Description, categories' : 'Description, monthly budget, categories'}</span>
                     </span>
                     <span className="material-symbols-outlined text-[#587080] transition-transform" style={{ transform: moreOpen ? 'rotate(180deg)' : 'none' }}>expand_more</span>
                   </button>
@@ -440,10 +475,11 @@ export default function CreateGroup() {
                           onChange={(e) => setDescription(e.target.value)}
                           rows={2}
                           className="w-full p-3 rounded-xl border border-[#e4ebf0] bg-[#f6f9fb] text-sm outline-none focus:border-[color:var(--acc)] resize-none"
-                          placeholder={t('createGroup.descriptionPlaceholder')}
+                          placeholder={KIND_COPY.descPlaceholder}
                         />
                       </div>
 
+                      {groupType !== 'event' && (
                       <div>
                         <span className={eyebrow}>{groupType === 'event' ? 'Budget for the whole event (optional)' : 'Monthly budget (optional)'}</span>
                         <div className="flex items-center gap-2">
@@ -462,13 +498,15 @@ export default function CreateGroup() {
                         <p className="text-xs text-[#587080] px-1 mt-1.5">{groupType === 'event' ? 'One budget for the whole event, not a monthly one. You can see how much of it is used as spending is added.' : 'You get a heads-up as spending nears this each month. Easy to change later.'}</p>
                       </div>
 
+                      )}
+
                       <div>
                         <span className={eyebrow}>{t('createGroup.categoriesTitle')}</span>
                         <p className="text-xs text-[#587080] px-1 mb-2.5">Tap one to hide it from this group, or add your own below.</p>
                         <div className="flex flex-wrap gap-2">
                           {EXPENSE_CATEGORIES.map((cat) => (
                             <button key={cat.id} type="button" onClick={() => toggleHiddenCategory(cat.id)} className={chipCls(hiddenCategories.includes(cat.id))}>
-                              <span>{cat.icon}</span>{t(`category.${cat.id}`)}
+                              <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{t(`category.${cat.id}`)}
                             </button>
                           ))}
                           {customCategories.filter((c) => c.type === 'expense').map(customChip)}
@@ -482,7 +520,7 @@ export default function CreateGroup() {
                           <div className="flex flex-wrap gap-2">
                             {INCOME_CATEGORIES.map((cat) => (
                               <button key={cat.id} type="button" onClick={() => toggleHiddenCategory(cat.id)} className={chipCls(hiddenCategories.includes(cat.id))}>
-                                <span>{cat.icon}</span>{t(`income.${cat.id}`)}
+                                <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{t(`income.${cat.id}`)}
                               </button>
                             ))}
                             {customCategories.filter((c) => c.type === 'income').map(customChip)}
@@ -498,16 +536,43 @@ export default function CreateGroup() {
           </div>
         </main>
 
+        {iconPickerOpen && (
+          <div className="fixed inset-0 z-[400] bg-black/50 flex items-end sm:items-center justify-center" onClick={() => setIconPickerOpen(false)}>
+            <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl px-5 pt-4 pb-8" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-extrabold text-[#06222f]">Choose an icon</p>
+                <button type="button" onClick={() => setIconPickerOpen(false)} aria-label="Close" className="w-8 h-8 rounded-full bg-[#eef2f5] flex items-center justify-center"><span className="material-symbols-outlined text-[18px]">close</span></button>
+              </div>
+              <div className="grid grid-cols-5 gap-2.5">
+                {KIND_COPY.icons.map((item: { id: string; icon: string }) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => { setIcon(item.icon); setPhotoURL(null); setIconPickerOpen(false); }}
+                    aria-label={item.id}
+                    className={clsx('aspect-square rounded-2xl flex items-center justify-center text-[28px] border-[1.5px] active:scale-95', !photoURL && icon === item.icon ? 'border-[color:var(--acc)] bg-[color:var(--acc-tint)]' : 'border-[#e4ebf0] bg-white')}
+                  >
+                    {item.icon}
+                  </button>
+                ))}
+              </div>
+              {photoURL && (
+                <button type="button" onClick={() => { setPhotoURL(null); setIconPickerOpen(false); }} className="mt-4 w-full text-center text-sm font-bold text-[color:var(--acc-dark)]">Remove photo, use an icon</button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="fixed left-0 right-0 z-20 px-5 py-3 bg-gradient-to-t from-[#f6f9fb] via-[#f6f9fb] to-transparent" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom))' }}>
           <div className="max-w-2xl mx-auto">
-            {!name.trim() && <p className="text-center text-xs font-bold text-[#587080] mb-2">Give your group a name to continue</p>}
+            {!name.trim() && <p className="text-center text-xs font-bold text-[#587080] mb-2">{KIND_COPY.nameAsk}</p>}
             <button
               type="button"
               onClick={handleSubmit}
               disabled={!canCreate}
               className="w-full h-14 rounded-[18px] bg-[color:var(--acc)] text-[color:var(--on-acc)] font-extrabold text-base flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-45"
             >
-              {loading ? t('createGroup.creating') : (<><span className="material-symbols-outlined text-[22px]">group_add</span>{t('createGroup.create')}</>)}
+              {loading ? t('createGroup.creating') : (<><span className="material-symbols-outlined text-[22px]">group_add</span>{groupType === 'regular' ? t('createGroup.create') : KIND_COPY.cta}</>)}
             </button>
           </div>
         </div>
@@ -763,13 +828,13 @@ export default function CreateGroup() {
                             hidden ? 'bg-surface-container/40 text-text-muted border-border-subtle line-through opacity-60' : 'bg-white text-on-surface border-border-subtle',
                           )}
                         >
-                          <span>{cat.icon}</span>{t(`category.${cat.id}`)}
+                          <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{t(`category.${cat.id}`)}
                         </button>
                       );
                     })}
                     {customCategories.filter((c) => c.type === 'expense').map((cat) => (
                       <div key={cat.id} className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-[11px] font-bold text-primary">
-                        <span>{cat.icon}</span>{cat.name}
+                        <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{cat.name}
                         <button type="button" onClick={() => removeCustomCategory(cat.id)} className="w-4 h-4 flex items-center justify-center text-primary/60 hover:text-primary">
                           <span className="material-symbols-outlined text-[13px]">close</span>
                         </button>
@@ -806,13 +871,13 @@ export default function CreateGroup() {
                                 hidden ? 'bg-surface-container/40 text-text-muted border-border-subtle line-through opacity-60' : 'bg-white text-on-surface border-border-subtle',
                               )}
                             >
-                              <span>{cat.icon}</span>{t(`income.${cat.id}`)}
+                              <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{t(`income.${cat.id}`)}
                             </button>
                           );
                         })}
                         {customCategories.filter((c) => c.type === 'income').map((cat) => (
                           <div key={cat.id} className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-[11px] font-bold text-primary">
-                            <span>{cat.icon}</span>{cat.name}
+                            <CategoryBadge id={cat.id} icon={cat.icon} size={20} />{cat.name}
                             <button type="button" onClick={() => removeCustomCategory(cat.id)} className="w-4 h-4 flex items-center justify-center text-primary/60 hover:text-primary">
                               <span className="material-symbols-outlined text-[13px]">close</span>
                             </button>
@@ -958,7 +1023,7 @@ export default function CreateGroup() {
 }
 
 // One switch with its meaning spelled out, as a tappable card
-function ToggleCard({ icon, title, desc, on, onToggle }: { icon: string; title: string; desc: string; on: boolean; onToggle: () => void }) {
+function ToggleCard({ icon, title, desc, onFor, offFor, on, onToggle }: { icon: string; title: string; desc: string; onFor?: string; offFor?: string; on: boolean; onToggle: () => void }) {
   return (
     <button
       type="button"
@@ -973,6 +1038,8 @@ function ToggleCard({ icon, title, desc, on, onToggle }: { icon: string; title: 
       <span className="flex-1 min-w-0">
         <span className="block text-sm font-extrabold text-[#06222f]">{title}</span>
         <span className="block text-xs text-[#587080] mt-0.5 leading-snug">{desc}</span>
+        {onFor && <span className="block text-[11.5px] text-[#3f5565] mt-1.5 leading-snug"><b className="text-[#0b6b5a]">Turn on:</b> {onFor}</span>}
+        {offFor && <span className="block text-[11.5px] text-[#3f5565] mt-0.5 leading-snug"><b className="text-[#8a5a00]">Keep off:</b> {offFor}</span>}
       </span>
       <span className={clsx('w-11 h-6 rounded-full relative shrink-0 transition-colors', on ? 'bg-[color:var(--acc)]' : 'bg-[#cbd7df]')}>
         <span className={clsx('absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all', on ? 'left-6' : 'left-1')} />

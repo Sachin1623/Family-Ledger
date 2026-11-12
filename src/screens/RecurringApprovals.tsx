@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -145,7 +146,7 @@ export default function RecurringApprovals() {
               <div key={item.id} className="bg-white rounded-2xl border border-border-subtle p-4 space-y-3">
                 <div className="flex items-center gap-3">
                   <div className={clsx('w-10 h-10 rounded-full flex items-center justify-center shrink-0', isIncome ? 'bg-success/10 text-success' : 'bg-primary/5 text-primary')}>
-                    <span className="text-lg">{catInfo?.icon || '🔁'}</span>
+                    <CategoryBadge id={catInfo?.id} icon={catInfo?.icon || '🔁'} size={28} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="font-bold text-primary text-sm truncate">{item.description}</p>

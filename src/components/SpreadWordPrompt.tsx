@@ -1,61 +1,54 @@
 import React from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
-import { useDocument } from 'react-firebase-hooks/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { buildShareMessages, shareAppPlain, ShareTarget } from '../lib/spreadTheWord';
-import { logGrowthEvent } from '../lib/growthEvents';
 import SpreadTheWordShare from './SpreadTheWordShare';
 
-// Global "Spread the Word" popup, driven by a single `app_config/spreadWordPrompt` doc an admin
-// writes via AdminBroadcast.tsx's "Send Now" button — same mechanism as BroadcastBanner.tsx/
-// `app_config/broadcast`: whoever's already in the app sees this the instant the listener below
-// fires, no push needed; anyone else gets the push (`spread_word_broadcast`, see
-// pushNotifications.ts) and sees this the next time they open the app, since the listener
-// re-fires on mount. Mounted at the app root (see App.tsx), so it can show over ANY screen, not
-// just Profile — the admin's whole point is a single tap reaching everyone right where they are.
+// Global "Spread the Word" popup. It is a gentle reminder on a fixed rhythm, not tied to signing in: it first appears 14 days after the person's
+// first login, then at most once every 14 days.
 //
-// Text-only sharing (via shareAppPlain) — deliberately skips Profile.tsx's image-banner capture
-// (shareViaOsSheetWithBanner), which needs an off-screen <ShareBanner> mounted; doing that
-// globally on every screen would be real weight for a feature only Profile.tsx's own card needs.
+// When it was last shown is kept on the person's own user doc (`spreadWordShownAt`), so every phone agrees. People who joined before this rule
+// existed have nothing saved, so their clock starts quietly the first time they open the app after it goes live (they are not greeted by it that
+// day). The saved moment is read fresh before showing, because right after sign-in the profile can be half-loaded.
 //
-// "Seen" (`users/{uid}.lastSeenSpreadWordPromptId`) follows BroadcastBanner's same reasoning:
-// recorded only on an explicit dismiss/share action, never merely on display, so a background
-// snapshot-listener firing can't silently mark it read before a human ever saw it.
+// (The admin's "Send Now" for Spread the Word still sends its push; the popup itself follows the 14-day rhythm instead of appearing at once.)
+const EVERY_MS = 14 * 24 * 60 * 60 * 1000;
+const RULE_STARTED_AT = Date.parse('2026-11-12T00:00:00Z');
+
 export default function SpreadWordPrompt() {
   const { user, profile } = useAuth();
-  const [dismissed, setDismissed] = React.useState(false);
-  const [promptDoc] = useDocument(doc(db, 'app_config', 'spreadWordPrompt'));
-  const prompt = promptDoc?.data() as { id?: string; createdAt?: string } | undefined;
+  const [open, setOpen] = React.useState(false);
+  const [visible, setVisible] = React.useState(() => document.visibilityState === 'visible');
+  const checkedUid = React.useRef<string | null>(null);
 
-  const shouldShow =
-    !!prompt?.id && !!profile && profile.lastSeenSpreadWordPromptId !== prompt.id && !dismissed;
+  React.useEffect(() => {
+    const on = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', on);
+    return () => document.removeEventListener('visibilitychange', on);
+  }, []);
 
-  const markSeen = () => {
-    setDismissed(true);
-    if (user && prompt?.id) {
-      updateDoc(doc(db, 'users', user.uid), { lastSeenSpreadWordPromptId: prompt.id }).catch((err) =>
-        console.error('Failed to record spread-word prompt as seen:', err),
-      );
-    }
-  };
+  React.useEffect(() => {
+    if (!user || !profile || !visible || open || checkedUid.current === user.uid) return;
+    checkedUid.current = user.uid;
+    const uid = user.uid;
+    const created = user.metadata?.creationTime ? Date.parse(user.metadata.creationTime) : NaN;
+    const stamp = () => updateDoc(doc(db, 'users', uid), { spreadWordShownAt: new Date().toISOString() }).catch((err) => console.error('Could not save the Spread the Word time:', err));
+    getDoc(doc(db, 'users', uid)).then((snap) => {
+      if (!snap.exists()) { checkedUid.current = null; return; }
+      const savedAt = snap.data()?.spreadWordShownAt ? Date.parse(snap.data()!.spreadWordShownAt) : NaN;
+      // the clock: when it was last shown; for a person who joined after this rule, their first login
+      const since = Number.isFinite(savedAt) ? savedAt : (Number.isFinite(created) && created >= RULE_STARTED_AT ? created : NaN);
+      if (!Number.isFinite(since)) { void stamp(); return; } // joined before this rule and nothing saved: start the clock quietly now
+      if (Date.now() - since >= EVERY_MS) { setOpen(true); void stamp(); }
+    }).catch(() => { checkedUid.current = null; });
+  }, [user, profile, visible, open]);
 
-  const handleShare = (target: ShareTarget) => {
-    shareAppPlain(target, user?.uid);
-    markSeen();
-  };
-
-  const handleLinkOnly = () => {
-    const { message } = buildShareMessages();
-    navigator.clipboard?.writeText(message).catch(() => {});
-    logGrowthEvent('share_link_only', user?.uid);
-    markSeen();
-  };
+  const close = () => setOpen(false);
 
   return (
     <AnimatePresence>
-      {shouldShow && (
+      {open && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -81,12 +74,12 @@ export default function SpreadWordPrompt() {
                 Share it with family or friends who split expenses, track budgets, or save toward
                 goals — a quick share goes a long way.
               </p>
-              <SpreadTheWordShare onShared={markSeen} />
+              <SpreadTheWordShare onShared={close} />
             </div>
 
             <div className="p-5 pt-4 shrink-0">
               <button
-                onClick={markSeen}
+                onClick={close}
                 className="w-full py-3.5 border-2 border-border-subtle text-text-muted rounded-2xl font-bold active:scale-[0.98] transition-all"
               >
                 Maybe Later

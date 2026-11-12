@@ -404,15 +404,10 @@ export const TOURS: TourDef[] = [
         description: "You've already seen this one — it's always here if you want to invite more people later.",
       },
       {
-        selector: 'manage-group-tab-settings',
-        title: 'Settings tab',
-        description: "Group type, expense splitting, and income tracking all live here — the group's own on/off switches.",
-      },
-      {
-        selector: 'manage-group-settings-type',
-        title: 'Group type & features',
-        description: 'Switch between a regular ongoing group and a one-off event, and turn expense splitting or income tracking on or off.',
-        onEnter: () => setManageGroupTab('settings'),
+        selector: 'manage-group-edit',
+        title: 'Edit group',
+        description: "Tap the pencil to change the group's name, type, and the expense splitting and income tracking switches.",
+        onEnter: () => setManageGroupTab('overview'),
       },
       {
         selector: (ctx) => `dashboard-tile-expand-${ctx.groupId}`,

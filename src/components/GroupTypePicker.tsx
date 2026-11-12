@@ -9,24 +9,24 @@ export type { GroupKind };
 const KINDS: Record<GroupKind, { icon: string; title: string; what: string; how: string; examples: string[] }> = {
   regular: {
     icon: 'home',
-    title: 'Regular / Monthly',
-    what: 'Everyday shared spending, tracked month by month.',
-    how: 'The budget rolls over every month, and each month’s spending is compared with the one before.',
-    examples: ['Household', 'Flatmates', 'Family'],
+    title: 'Monthly group',
+    what: 'Your month-to-month expenses.',
+    how: 'See this month against last.',
+    examples: ['Groceries', 'Wi-Fi', 'Electricity'],
   },
   event: {
     icon: 'flight_takeoff',
-    title: 'One-off Event',
-    what: 'One trip, wedding or party, tracked as a whole.',
-    how: 'All spending is counted together, with no monthly comparison. A budget, if you set one, is for the whole event.',
-    examples: ['Goa trip', 'Wedding', 'Birthday'],
+    title: 'One-time event',
+    what: 'A trip, festival, party or home project.',
+    how: 'Shows the total for the whole event.',
+    examples: ['Goa trip', 'Diwali', 'Home renovation', 'Wedding'],
   },
   payments: {
     icon: 'currency_rupee',
     title: 'Payments',
-    what: 'Money one person pays another, such as rent, maintenance, salary or EMI.',
-    how: 'No budget. A record with receipts: the payer keeps it as an expense in their own group, and the receiver as income in theirs.',
-    examples: ['Rent', 'Maid salary', 'Tuition fees'],
+    what: 'Money you pay to, or get from, one person.',
+    how: 'Keeps receipts. It is an expense for the payer and income for the receiver.',
+    examples: ['Home rent', 'Shop rent', 'Salary'],
   },
 };
 
@@ -68,7 +68,8 @@ export default function GroupTypePicker({
                 <span className="block text-[15px] font-extrabold text-[#06222f]">{info.title}</span>
                 <span className="block text-[12.5px] text-[#3f5565] leading-snug mt-0.5">{info.what}</span>
                 <span className="block text-[11.5px] text-[#587080] leading-snug mt-1">{info.how}</span>
-                <span className="flex flex-wrap gap-1.5 mt-2">
+                <span className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className="text-[10.5px] font-bold text-[#587080]">e.g.</span>
                   {info.examples.map((e) => (
                     <span key={e} className="text-[10.5px] font-bold rounded-full bg-[color:var(--acc-tint)] text-[color:var(--acc-dark)] px-2 py-0.5">{e}</span>
                   ))}
@@ -109,7 +110,8 @@ export default function GroupTypePicker({
               <span className="block text-sm font-black text-primary">{info.title}</span>
               <span className="block text-[12.5px] text-on-surface leading-snug mt-0.5">{info.what}</span>
               <span className="block text-[11.5px] text-text-muted leading-snug mt-1">{info.how}</span>
-              <span className="flex flex-wrap gap-1.5 mt-2">
+              <span className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className="text-[10.5px] font-bold text-[#587080]">e.g.</span>
                 {info.examples.map((e) => (
                   <span key={e} className="text-[10.5px] font-bold rounded-full bg-surface text-text-muted px-2 py-0.5">{e}</span>
                 ))}

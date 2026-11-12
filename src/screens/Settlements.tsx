@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import CategoryBadge from '../components/CategoryBadge';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -669,7 +670,7 @@ export default function Settlements() {
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="w-8 h-8 rounded-full bg-primary/5 flex items-center justify-center text-primary shrink-0">
                         <span className="text-lg">
-                          {EXPENSE_CATEGORIES.find(c => c.id === expense.category)?.icon || '🧾'}
+                          <CategoryBadge id={expense.category} icon={EXPENSE_CATEGORIES.find(c => c.id === expense.category)?.icon || '🧾'} size={22} />
                         </span>
                       </div>
                       <div className="min-w-0">

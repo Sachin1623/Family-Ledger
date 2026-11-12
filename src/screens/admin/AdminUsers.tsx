@@ -146,6 +146,12 @@ export default function AdminUsers() {
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [wipeEmail, setWipeEmail] = useState<string | null>(null);
   const [wipeConfirmText, setWipeConfirmText] = useState('');
+  // "Delete now": removes one account immediately (same routine as the hourly deletion job), for a paused account or an active one.
+  const [purgeTarget, setPurgeTarget] = useState<{ uid: string; email: string; name: string } | null>(null);
+  const [purgeConfirmText, setPurgeConfirmText] = useState('');
+  const [purging, setPurging] = useState(false);
+  const [pending, setPending] = useState<{ uid: string; email: string; displayName: string; deletedAt: string | null; purgeAt: string | null; mode: string }[]>([]);
+  const loadPending = () => { adminGet('/api/admin/pending-deletions').then((d) => setPending(d.items || [])).catch(() => {}); };
   const [sortKey, setSortKey] = useState<SortKey>('joinedAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [hasMore, setHasMore] = useState(false);
@@ -169,6 +175,7 @@ export default function AdminUsers() {
 
   useEffect(() => {
     load();
+    loadPending();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -206,6 +213,24 @@ export default function AdminUsers() {
     }
   };
 
+  const handlePurgeConfirmed = async () => {
+    if (!purgeTarget) return;
+    setPurging(true);
+    try {
+      await adminPost('/api/admin/accounts/purge-now', { uid: purgeTarget.uid });
+      alert(`Deleted ${purgeTarget.email || purgeTarget.uid}. The person gets a confirmation email.`);
+      setPurgeTarget(null);
+      setPurgeConfirmText('');
+      load(search);
+      loadPending();
+    } catch (err: any) {
+      alert(err.message);
+      loadPending();
+    } finally {
+      setPurging(false);
+    }
+  };
+
   const handleWipeConfirmed = async () => {
     if (!wipeEmail) return;
     setBusyUid(wipeEmail);
@@ -232,6 +257,22 @@ export default function AdminUsers() {
       </p>
 
       <SignupTrend />
+
+      {pending.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+          <p className="text-sm font-black text-amber-900">Waiting to be deleted ({pending.length})</p>
+          <p className="text-xs text-amber-800">Paused accounts, and "delete everything now" requests waiting for the hourly job. "Delete now" skips the wait for that one account.</p>
+          {pending.map((p) => (
+            <div key={p.uid} className="flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-primary truncate">{p.displayName || '(no name)'} <span className="font-normal text-text-muted">· {p.email}</span></p>
+                <p className="text-[11px] text-text-muted">{p.mode === 'hard' ? 'Delete-everything request' : 'Paused'} · asked {p.deletedAt ? fmtDateTime(p.deletedAt) : '—'} · due {p.purgeAt ? fmtDateTime(p.purgeAt) : '—'}</p>
+              </div>
+              <button onClick={() => { setPurgeTarget({ uid: p.uid, email: p.email, name: p.displayName }); setPurgeConfirmText(''); }} className="shrink-0 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold">Delete now</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <form onSubmit={handleSearch} className="flex gap-2">
         <input
@@ -348,6 +389,35 @@ export default function AdminUsers() {
           >
             {loadingMore ? 'Loading…' : `Load Next ${PAGE_SIZE}`}
           </button>
+        </div>
+      )}
+
+      {purgeTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 max-h-[85vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-red-600">Delete {purgeTarget.name || purgeTarget.email} right now?</h3>
+            <p className="text-sm text-text-muted">
+              This signs them out, then permanently deletes their account and private data straight away, using the same routine as the hourly job. Shared records
+              (a group expense, a game seat) stay and show "DeletedUser". They get a confirmation email. This cannot be undone.
+            </p>
+            <p className="text-sm font-bold">Type their email to confirm: <span className="font-mono text-xs">{purgeTarget.email}</span></p>
+            <input
+              value={purgeConfirmText}
+              onChange={(e) => setPurgeConfirmText(e.target.value)}
+              autoCapitalize="none"
+              className="w-full rounded-xl border border-border-subtle px-4 py-2 text-sm"
+            />
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setPurgeTarget(null); setPurgeConfirmText(''); }} disabled={purging} className="px-4 py-2 rounded-xl bg-surface-container text-sm font-bold text-primary">Cancel</button>
+              <button
+                onClick={handlePurgeConfirmed}
+                disabled={purging || purgeConfirmText.trim().toLowerCase() !== purgeTarget.email.trim().toLowerCase()}
+                className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold disabled:opacity-40"
+              >
+                {purging ? 'Deleting…' : 'Delete now'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

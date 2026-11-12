@@ -291,7 +291,7 @@ const ar = {
   'category.education': 'التعليم',
   'category.kids': 'الأطفال',
   'category.ent': 'الترفيه والتسلية',
-  'category.finance': 'المالية والاستثمارات',
+  'category.finance': 'الاستثمار',
   'category.shopping': 'الملابس',
   'category.household': 'مستلزمات المنزل',
   'category.gifts': 'الهدايا',

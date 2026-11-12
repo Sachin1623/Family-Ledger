@@ -291,7 +291,7 @@ const fr = {
   'category.education': 'Éducation',
   'category.kids': 'Enfants',
   'category.ent': 'Divertissement et loisirs',
-  'category.finance': 'Finance et investissements',
+  'category.finance': 'Investissements',
   'category.shopping': 'Habillement',
   'category.household': 'Entretien de la maison',
   'category.gifts': 'Cadeaux',

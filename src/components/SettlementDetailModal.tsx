@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import CategoryBadge from './CategoryBadge';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
@@ -207,7 +208,7 @@ export default function SettlementDetailModal({
                     className="w-full flex items-center justify-between bg-surface p-3 rounded-2xl border border-border-subtle hover:bg-surface-container/60 transition-colors text-left"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="text-lg shrink-0">{icon}</span>
+                      <CategoryBadge id={expense.category} icon={icon} size={28} />
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-on-surface truncate">{expense.description}</p>
                         <p className="text-[10px] text-text-muted">

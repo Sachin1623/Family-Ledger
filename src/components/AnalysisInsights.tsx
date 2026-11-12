@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import CategoryBadge from './CategoryBadge';
 import { clsx } from 'clsx';
 import {
   InsightExpense,
@@ -76,12 +77,12 @@ export function OverviewTab({
 
   // Plain-language highlights, strongest first. Each one is only added when the data really supports it.
   const insights = useMemo(() => {
-    const out: { icon: string; tone: string; text: React.ReactNode }[] = [];
+    const out: { icon: React.ReactNode; tone: string; text: React.ReactNode }[] = [];
     const up = movers.find((m) => m.delta > 0 && m.ratio !== null && m.ratio >= 1.5 && m.delta >= cur.spent * 0.05);
     if (up) {
       const share = cur.spent > 0 ? Math.round((up.thisMonth / cur.spent) * 100) : 0;
       out.push({
-        icon: categoryIcon(up.category),
+        icon: <CategoryBadge id={up.category} icon={categoryIcon(up.category)} size={26} />,
         tone: 'bg-error/10',
         text: (
           <>
@@ -93,7 +94,7 @@ export function OverviewTab({
       const newCat = movers.find((m) => m.lastMonth === 0 && m.thisMonth >= cur.spent * 0.1);
       if (newCat) {
         out.push({
-          icon: categoryIcon(newCat.category),
+          icon: <CategoryBadge id={newCat.category} icon={categoryIcon(newCat.category)} size={26} />,
           tone: 'bg-warning/10',
           text: (
             <>
@@ -106,7 +107,7 @@ export function OverviewTab({
     const down = movers.find((m) => m.delta < 0 && m.ratio !== null && m.ratio <= 0.7 && -m.delta >= prev.spent * 0.04);
     if (down) {
       out.push({
-        icon: categoryIcon(down.category),
+        icon: <CategoryBadge id={down.category} icon={categoryIcon(down.category)} size={26} />,
         tone: 'bg-success/10',
         text: (
           <>
@@ -333,7 +334,7 @@ export function MoversCard({ expenses, monthKey, fmt, categoryLabel, categoryIco
       <div className="space-y-3">
         {rows.map((r) => (
           <div key={r.category} className="flex items-center gap-3">
-            <span className="w-8 h-8 rounded-xl bg-surface-container flex items-center justify-center text-base shrink-0">{categoryIcon(r.category)}</span>
+            <span className="w-8 h-8 flex items-center justify-center shrink-0"><CategoryBadge id={r.category} icon={categoryIcon(r.category)} size={30} /></span>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold truncate">{categoryLabel(r.category)}</p>
               <div className="h-1.5 rounded-full bg-surface-container mt-1 overflow-hidden">

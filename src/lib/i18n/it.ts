@@ -301,7 +301,7 @@ const it = {
   'category.education': 'Istruzione',
   'category.kids': 'Bambini',
   'category.ent': 'Intrattenimento e tempo libero',
-  'category.finance': 'Finanza e investimenti',
+  'category.finance': 'Investimenti',
   'category.shopping': 'Abbigliamento',
   'category.household': 'Casa e manutenzione',
   'category.gifts': 'Regali',

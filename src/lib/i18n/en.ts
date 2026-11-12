@@ -456,7 +456,7 @@ const en = {
   'category.education': 'Education',
   'category.kids': 'Kids',
   'category.ent': 'Fun',
-  'category.finance': 'Finance',
+  'category.finance': 'Invest',
   'category.shopping': 'Apparel',
   'category.household': 'Household',
   'category.gifts': 'Gifts',

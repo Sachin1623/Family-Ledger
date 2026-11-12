@@ -1,5 +1,5 @@
 import React from 'react';
-import { deleteField, doc, updateDoc } from 'firebase/firestore';
+import { deleteField, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { auth } from '../lib/firebase';
 import BroadcastCard, { OWN_HOST } from './BroadcastCard';
 import { targetOf, trackBroadcast, type BroadcastVia } from '../lib/broadcastTrack';
+import { isFirstTimeAccount } from '../lib/newUser';
 
 // Full-screen announcement modal, driven by a single `app_config/broadcast` doc an admin writes
 // via AdminBroadcast.tsx. Whichever user is already in the app when it's sent sees this the
@@ -45,9 +46,39 @@ export default function BroadcastBanner() {
     return () => { cancelled = true; };
   }, [testId, user?.uid]);
 
-  const shouldShow =
-    !!broadcast?.id && !!profile && profile.lastSeenBroadcastId !== broadcast.id && !dismissed;
   const showTest = !!testBroadcast && testBroadcast.id === testId;
+
+  // Shown once, then only on request (the Header's replay). A first-time person never gets it automatically: the current broadcast is
+  // quietly marked seen for them, so it does not turn up on day four either. Once it has been shown it is marked seen straight away
+  // (while the app is on screen), so closing the app without tapping Close does not bring it back; `shownId` keeps it up for this session.
+  // Right after sign-in `profile` can be half-loaded (the private part arrives before the public part, so lastSeenBroadcastId looks empty),
+  // so before showing anything the person's saved "seen" marker is read fresh; only if that confirms it is unseen does the popup appear.
+  const firstTime = isFirstTimeAccount(user);
+  const [shownId, setShownId] = React.useState<string | null>(null);
+  const [visible, setVisible] = React.useState(() => document.visibilityState === 'visible');
+  React.useEffect(() => {
+    const on = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', on);
+    return () => document.removeEventListener('visibilitychange', on);
+  }, []);
+  const checkedRef = React.useRef<string | null>(null);
+  const unseen = !!broadcast?.id && !!profile && profile.lastSeenBroadcastId !== broadcast.id;
+  const shouldShow = !!broadcast?.id && !!profile && !dismissed && shownId === broadcast.id;
+  React.useEffect(() => {
+    if (!user || !broadcast?.id || !unseen) return;
+    const id = broadcast.id;
+    if (firstTime) {
+      updateDoc(doc(db, 'users', user.uid), { lastSeenBroadcastId: id }).catch(() => {});
+      return;
+    }
+    if (!visible || shownId === id || checkedRef.current === id) return;
+    checkedRef.current = id;
+    getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      if (snap.exists() && snap.data()?.lastSeenBroadcastId === id) return; // already seen: the profile just had not caught up
+      setShownId(id);
+      updateDoc(doc(db, 'users', user.uid), { lastSeenBroadcastId: id }).catch(() => {});
+    }).catch(() => { checkedRef.current = null; });
+  }, [user?.uid, broadcast?.id, unseen, firstTime, shownId, visible]);
 
   // reported once per broadcast and phone: it was shown
   const viewedRef = React.useRef<string | null>(null);

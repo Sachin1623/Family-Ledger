@@ -291,7 +291,7 @@ const hi = {
   'category.education': 'शिक्षा',
   'category.kids': 'बच्चे',
   'category.ent': 'मनोरंजन और अवकाश',
-  'category.finance': 'वित्त और निवेश',
+  'category.finance': 'निवेश',
   'category.shopping': 'परिधान',
   'category.household': 'घरेलू सामान',
   'category.gifts': 'उपहार',
