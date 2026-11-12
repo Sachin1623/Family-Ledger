@@ -4,12 +4,12 @@ import TodoFab from './TodoFab';
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import VoiceQuickAdd from './VoiceQuickAdd';
 import QuestFab from './QuestFab';
+import { DialItem, useDialSlot, useFabDial, setDialOpen } from './FabDial';
 import { speechAvailableHere } from '../lib/speech';
 import { clsx } from 'clsx';
 import { useShopMode } from '../context/ShopModeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { useDmChats } from '../lib/useDmChats';
 import { useFabAction } from '../context/FabActionContext';
 
 // Pilot for the app-wide "vibrant, colorful icons" pass — native emoji instead of monochrome
@@ -27,16 +27,13 @@ import { useFabAction } from '../context/FabActionContext';
 // applyAccountChange() — Post Month's Savings only ever credits Cash Savings — so re-enabled here
 // for good on 2026-09-04.
 const PERSONAL_LINKS = [
-  { to: '/', icon: '👥', labelKey: 'nav.groups' },
-  // Renamed from "Balances"/💰 — icon deliberately the real `call_split` Material Symbol (the
-  // same one GroupCard's "Split Enabled" badge uses), not an emoji substitute, so it reads as the
-  // exact same "split" concept elsewhere in the app. The one exception to this file's own emoji
-  // pilot (see header comment) — a per-request deviation, not a reversal of that direction.
-  { to: '/settlements', materialIcon: 'call_split', labelKey: 'nav.balances', tour: 'nav-settlements' },
-  { to: '/analysis', icon: '📊', labelKey: 'nav.analysis', tour: 'nav-analysis' },
-  { to: '/chat', icon: '💬', labelKey: 'nav.chat' },
+  { to: '/', icon: '🏠', labelKey: 'nav.home' },
+  // the real `call_split` Material Symbol, the same one the group card's "Split Enabled" badge uses, so it reads as the same "split" idea
+  { to: '/settlements', materialIcon: 'call_split', labelKey: 'nav.settleUp', tour: 'nav-settlements' },
+  { to: '/analysis', icon: '📊', labelKey: 'nav.insights', tour: 'nav-analysis' },
   { to: '/goals', icon: '🎯', labelKey: 'nav.goals' },
-  { to: '/tools', icon: '🛠️', labelKey: 'nav.tools', tour: 'nav-tools' },
+  // Tools became "More": everything else, searchable. Chat moved up into the header, next to the bell.
+  { to: '/tools', icon: '⋯', labelKey: 'nav.more', tour: 'nav-tools' },
 ];
 
 // Pages where "Add Expense" has no meaning at all — no floating action button shown, rather than
@@ -103,10 +100,27 @@ export default function Navigation() {
   // Count of distinct DM chats with unread messages for me — not a total message count, per
   // spec (a badge showing "37" for one very chatty conversation would be more noise than signal
   // on a small bottom-nav icon).
-  const { unreadChatCount } = useDmChats(shopMode ? undefined : user?.uid);
   const { fabAction } = useFabAction();
   const navigate = useNavigate();
   const [showVoice, setShowVoice] = React.useState(false);
+  const dial = useFabDial();
+  const [menuDot, setMenuDot] = React.useState<boolean>(() => !!(window as any).flMenuDot);
+  React.useEffect(() => {
+    const on = () => setMenuDot(!!(window as any).flMenuDot);
+    window.addEventListener('fl-menu-dot', on);
+    return () => window.removeEventListener('fl-menu-dot', on);
+  }, []);
+  // the shortcuts fold away whenever the person moves to another screen or presses Escape
+  React.useEffect(() => { setDialOpen(false); }, [location.pathname]);
+  React.useEffect(() => {
+    if (!dial.open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDialOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dial.open]);
+  // a long press on Add Expense opens the shortcuts too (the tap still adds an expense)
+  const pressTimer = React.useRef<number | null>(null);
+  const longPressed = React.useRef(false);
   const links = shopMode ? SHOP_LINKS : PERSONAL_LINKS;
 
   // The floating action button is "Add Expense" everywhere by default, but that action has no
@@ -145,6 +159,7 @@ export default function Navigation() {
 
   // A mic beside the Add Expense button: say the expense, then land on Add Expense already filled in. Only where Add Expense itself is the button.
   const showMic = !!fab && fab.to === '/add-expense' && speechAvailableHere();
+  const talkSlot = useDialSlot('talk', showMic);
 
   return (
     <>
@@ -157,23 +172,36 @@ export default function Navigation() {
           afterAdd={() => { if (location.pathname !== '/') navigate('/'); }}
         />
       )}
+      {dial.open && <div className="fixed inset-0 z-[39] bg-[#06222f]/45 backdrop-blur-[1px]" onClick={() => setDialOpen(false)} aria-hidden="true" />}
+      {showMic && (
+        <DialItem slot={talkSlot} label="Talk an expense" ariaLabel={t('voiceExpense.talk')} onClick={() => setShowVoice(true)}>
+          <span className="material-symbols-outlined text-[26px] text-[#06222f]">mic</span>
+        </DialItem>
+      )}
       {fab && (fab.to ? (
         <div className="fixed right-4 z-40 flex items-center gap-2" style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)' }}>
-          {showMic && (
+          {dial.count > 0 && (
             <button
               type="button"
-              onClick={() => setShowVoice(true)}
-              aria-label={t('voiceExpense.talk')}
-              title={t('voiceExpense.talk')}
-              className="w-12 h-12 rounded-full bg-white text-primary border-2 border-primary shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+              onClick={() => setDialOpen(!dial.open)}
+              aria-label={dial.open ? 'Close shortcuts' : dial.pendingCount > 0 ? `More shortcuts, ${dial.pendingCount} waiting` : 'More shortcuts'}
+              aria-expanded={dial.open}
+              className="relative w-12 h-12 rounded-full bg-white text-[#06222f] border-2 border-[#06222f] shadow-lg flex items-center justify-center active:scale-95 transition-all"
             >
-              <span className="material-symbols-outlined text-[24px]">mic</span>
+              <span className="material-symbols-outlined text-[26px] transition-transform duration-200" style={{ transform: dial.open ? 'rotate(45deg)' : 'none' }}>{dial.open ? 'add' : 'apps'}</span>
+              {!dial.open && dial.pendingCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-error text-white text-[11px] font-black flex items-center justify-center shadow ring-2 ring-white">{dial.pendingCount}</span>
+              )}
             </button>
           )}
           <NavLink
             key={fab.to}
             to={fab.to}
             data-tour={fab.tour}
+            onPointerDown={() => { longPressed.current = false; pressTimer.current = window.setTimeout(() => { longPressed.current = true; if (dial.count > 0) setDialOpen(true); }, 450); }}
+            onPointerUp={() => { if (pressTimer.current) window.clearTimeout(pressTimer.current); }}
+            onPointerLeave={() => { if (pressTimer.current) window.clearTimeout(pressTimer.current); }}
+            onClick={(e) => { if (longPressed.current && dial.count > 0) { e.preventDefault(); longPressed.current = false; } else setDialOpen(false); }}
             className="flex items-center gap-2 pl-4 pr-5 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform"
           >
             <span className="text-lg leading-none">{fab.icon}</span>
@@ -231,10 +259,8 @@ export default function Navigation() {
                         <span className="material-symbols-outlined text-[22px] block">{(link as any).materialIcon}</span>
                       ) : link.icon}
                     </div>
-                    {link.to === '/chat' && unreadChatCount > 0 && (
-                      <span className="absolute -top-0.5 -end-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-error text-white text-[9px] font-bold flex items-center justify-center border-2 border-white">
-                        {unreadChatCount > 9 ? '9+' : unreadChatCount}
-                      </span>
+                    {link.to === '/tools' && menuDot && !shopMode && (
+                      <span className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-error border-2 border-white" aria-label="Something is waiting in the menu" />
                     )}
                   </div>
                   <span className="text-[11px] font-bold">{t(link.labelKey)}</span>

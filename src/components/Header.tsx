@@ -1,4 +1,6 @@
 import React from 'react';
+import { useFriendRequestCount } from '../lib/useFriendRequestCount';
+import { useDmChats } from '../lib/useDmChats';
 import AnimatedIcon from './AnimatedIcon';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, doc, limit, orderBy, query, where } from 'firebase/firestore';
@@ -31,6 +33,14 @@ export default function Header() {
   const { hasShopAccess, shopMode, setShopMode } = useShopMode();
   const { t } = useLanguage();
   const isHome = location.pathname === '/';
+  React.useEffect(() => {
+    const open = () => setMenuOpen(true);
+    window.addEventListener('fl-open-menu', open);
+    return () => window.removeEventListener('fl-open-menu', open);
+  }, []);
+  const { unreadChatCount } = useDmChats(shopMode ? undefined : user?.uid);
+  const friendRequestCount = useFriendRequestCount(shopMode ? undefined : user?.uid);
+  const peopleBadge = unreadChatCount + friendRequestCount;
   const isLogin = location.pathname === '/login';
 
   const toggleShopMode = () => {
@@ -207,6 +217,11 @@ export default function Header() {
   // this list too, rather than introducing a second, separate aggregate.
   // (only a missing notifications permission lights it: the others are asked for where they are needed, so they are not an alert on their own)
   const anyMenuRedDot = missingPermissions.includes('notifications') || pendingRecurringCount > 0 || pendingActionsCount > 0;
+  // the menu now opens from the More tab, so its "something is waiting" dot is shared with the tab bar and the More screen
+  React.useEffect(() => {
+    (window as any).flMenuDot = anyMenuRedDot;
+    window.dispatchEvent(new Event('fl-menu-dot'));
+  }, [anyMenuRedDot]);
 
   // Lets other components (a group card's Feed button, say) open this SAME slide-over — see
   // feedPanelRef.ts. Mirrors NavigationBridge's setNavigateFn registration pattern in App.tsx.
@@ -304,18 +319,19 @@ export default function Header() {
             <span className="material-symbols-outlined">search</span>
           </button>
         )}
-        {user && !shopMode && isHome && (
+        {user && !shopMode && (
           <button
-            onClick={openReplay}
-            className={clsx(
-              'relative w-9 h-9 rounded-full flex items-center justify-center transition-colors',
-              replayIsNew ? 'bg-primary text-white animate-pulse' : 'hover:bg-surface text-text-muted',
-            )}
-            title="Watch again"
-            aria-label="Watch the latest updates again"
+            onClick={() => navigate(unreadChatCount === 0 && friendRequestCount > 0 ? '/friends' : '/chat')}
+            className="relative w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+            title="Chats and friends"
+            aria-label={peopleBadge > 0 ? `Chats and friends, ${peopleBadge} waiting` : 'Chats and friends'}
           >
-            <span className="material-symbols-outlined">play_circle</span>
-            {replayIsNew && <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-error border-2 border-white" />}
+            <span className="material-symbols-outlined">chat_bubble</span>
+            {peopleBadge > 0 && (
+              <span className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-error text-white text-[9px] font-bold flex items-center justify-center">
+                {peopleBadge > 9 ? '9+' : peopleBadge}
+              </span>
+            )}
           </button>
         )}
         {user && (
@@ -340,7 +356,7 @@ export default function Header() {
           <div className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}
-              className="relative w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors"
+              className={clsx('relative w-9 h-9 rounded-full hover:bg-surface flex items-center justify-center text-text-muted transition-colors', !shopMode && 'hidden')}
               title="Menu"
             >
               <span className="material-symbols-outlined">menu</span>

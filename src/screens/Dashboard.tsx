@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
+import PeopleStrip from '../components/PeopleStrip';
 import WelcomeChecklist, { useIsNewUser, isWelcomeHidden } from '../components/WelcomeChecklist';
 import { startTour } from '../lib/tourRef';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
@@ -400,6 +401,7 @@ export default function Dashboard() {
           onTour={activeMemberships.length > 0 ? () => startTour('group-explore', { groupId: activeMemberships[0].groupId }) : undefined}
         />
       )}
+      <PeopleStrip quiet={welcomeShowing} />
       {showAccountsGoalsBanner && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
           <span className="text-2xl shrink-0">💰</span>

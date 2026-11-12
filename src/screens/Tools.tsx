@@ -127,6 +127,12 @@ export default function Tools() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [gameFilter, setGameFilter] = useState<'all' | GameKind>('all');
+  const [menuDot, setMenuDot] = useState<boolean>(() => !!(window as any).flMenuDot);
+  useEffect(() => {
+    const on = () => setMenuDot(!!(window as any).flMenuDot);
+    window.addEventListener('fl-menu-dot', on);
+    return () => window.removeEventListener('fl-menu-dot', on);
+  }, []);
   // Deep-link from the header menu's category shortcuts (?category=games, etc.) — keyed on the
   // live searchParams object, not mount-only, since navigating here again while already on /tools
   // (clicking a different header-menu shortcut) doesn't remount this component. See
@@ -261,6 +267,7 @@ export default function Tools() {
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24 md:pb-24">
         {!activeCat ? (
           <>
+            <h1 className="text-2xl font-black text-slate-900 px-1">More</h1>
             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl px-3.5 py-2.5 shadow-sm">
               <span className="material-symbols-outlined text-slate-400 text-[20px]">search</span>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tools…" className="flex-1 min-w-0 bg-transparent outline-none text-sm font-semibold text-slate-800 placeholder:text-slate-400" />
@@ -274,20 +281,46 @@ export default function Tools() {
               </div>
             ) : (
               <>
-                {card('health', 'full')}
-                {card('games', 'full')}
-                <div className="grid grid-cols-2 gap-3">
-                  {card('finance', 'half')}
-                  {card('productivity', 'half')}
-                </div>
-                {card('social', 'slim')}
-
                 {favoriteTools.length > 0 && (
-                  <section className="space-y-2 pt-1">
+                  <section className="space-y-2">
                     <h2 className="text-[10px] font-black tracking-[0.14em] text-slate-500 px-1">⭐ FAVOURITES</h2>
                     <div className="space-y-2">{favoriteTools.map((tool) => row(tool))}</div>
                   </section>
                 )}
+
+                {/* the everyday things first, then the extras */}
+                {([['finance', 'MONEY'], ['productivity', 'DAILY LIFE'], ['social', 'WITH FAMILY & FRIENDS']] as const).map(([key, label]) => {
+                  const cat = TOOL_CATEGORIES.find((c) => c.key === key);
+                  if (!cat) return null;
+                  return (
+                    <section key={key} className="space-y-2">
+                      <h2 className="text-[10px] font-black tracking-[0.14em] text-slate-500 px-1">{label}</h2>
+                      <div className="space-y-2">{cat.tools.map((tool) => row(tool))}</div>
+                    </section>
+                  );
+                })}
+
+                <section className="space-y-2">
+                  <h2 className="text-[10px] font-black tracking-[0.14em] text-slate-500 px-1">FOR FUN &amp; HEALTH</h2>
+                  <div className="grid grid-cols-2 gap-3">
+                    {card('games', 'half')}
+                    {card('health', 'half')}
+                  </div>
+                </section>
+
+                {/* the account menu (guides, permissions, pending actions, watch updates again) used to be the hamburger in the top bar */}
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new Event('fl-open-menu'))}
+                  className="w-full flex items-center gap-3 rounded-2xl bg-white border border-slate-200 px-3 py-3 shadow-sm text-left active:scale-[0.99] transition-transform"
+                >
+                  <span className="relative w-11 h-11 rounded-2xl bg-slate-100 flex items-center justify-center shrink-0"><span className="material-symbols-outlined text-slate-700">menu</span>{menuDot && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-error border-2 border-white" />}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13.5px] font-black text-slate-900">Menu and guides</span>
+                    <span className="block text-[11px] font-semibold text-slate-500">Guides, pending actions, permissions, watch updates again</span>
+                  </span>
+                  <span className="material-symbols-outlined text-slate-300 text-[20px]">chevron_right</span>
+                </button>
               </>
             )}
           </>

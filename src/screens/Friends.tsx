@@ -17,6 +17,8 @@ import {
 import { fireWrite } from '../lib/offlineWrite';
 import { formatRelativeTimeAgo } from '../lib/dateUtils';
 import { getLeaderboard, LeaderboardEntry } from '../lib/pointsApi';
+import PeopleTabs from '../components/PeopleTabs';
+import WhatsAppIcon from '../components/WhatsAppIcon';
 
 type Feedback = { type: 'success' | 'error'; text: string } | null;
 
@@ -31,7 +33,7 @@ export default function Friends() {
   const { t } = useLanguage();
   const myUid = user?.uid;
 
-  const [tab, setTab] = useState<'friends' | 'requests' | 'family' | 'suggestions'>('friends');
+  const [tab, setTab] = useState<'people' | 'family'>('people');
 
   const { accepted, incomingPending, outgoingPending, usersByUid, acceptedUids, pendingUids } = useFriendships(myUid);
 
@@ -96,6 +98,24 @@ export default function Friends() {
     }
   };
 
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const handleShowQr = async () => {
+    try {
+      const QRCode = (await import('qrcode')).default;
+      setQrUrl(await QRCode.toDataURL(`${window.location.origin}/add-friend/${myUid}`, { margin: 1, width: 480, color: { dark: '#06222f', light: '#ffffff' } }));
+    } catch {
+      setAddFeedback({ type: 'error', text: 'Could not make the QR code.' });
+    }
+  };
+  const handleCopyFriendLink = async () => {
+    try {
+      await navigator.clipboard.writeText(buildFriendInviteMessage());
+      setAddFeedback({ type: 'success', text: t('friends.linkCopied') });
+    } catch {
+      setAddFeedback({ type: 'error', text: 'Could not copy. Use WhatsApp or the QR code instead.' });
+    }
+  };
+
   const handleWhatsAppFriendInvite = () => {
     window.open(`https://wa.me/?text=${encodeURIComponent(buildFriendInviteMessage())}`, '_blank');
   };
@@ -127,7 +147,7 @@ export default function Friends() {
   const [suggestions, setSuggestions] = useState<FriendSuggestion[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   useEffect(() => {
-    if (tab !== 'suggestions' || !myUid) return;
+    if (tab !== 'people' || !myUid) return;
     setLoadingSuggestions(true);
     getFriendSuggestions()
       .then(setSuggestions)
@@ -286,281 +306,194 @@ export default function Friends() {
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-4 pb-24 md:pb-24">
-        <div>
-          <h1 className="text-2xl font-black text-primary">{t('friends.title')}</h1>
-          <p className="text-sm text-text-muted mt-1">{t('friends.subtitle')}</p>
-        </div>
-
-        <div className="flex bg-white rounded-2xl border border-border-subtle shadow-sm p-1 gap-1 overflow-x-auto">
-          {TABS.map((tabDef) => (
+        <PeopleTabs active="friends" />
+        <div className="flex gap-2">
+          {([['people', 'People', accepted.length], ['family', 'Families', families.length]] as const).map(([key, label, count]) => (
             <button
-              key={tabDef.key}
-              onClick={() => setTab(tabDef.key)}
-              className={clsx(
-                'flex-1 min-w-0 py-2 px-1 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 transition-colors',
-                tab === tabDef.key ? 'bg-primary text-white' : 'text-text-muted hover:bg-surface',
-              )}
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={clsx('px-4 py-1.5 rounded-full text-xs font-extrabold border-[1.5px] transition-colors', tab === key ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
             >
-              <span className="truncate">{t(tabDef.labelKey)}</span>
-              {!!tabDef.count && (
-                <span className={clsx(
-                  'min-w-[16px] h-[16px] px-1 rounded-full text-[9px] flex items-center justify-center font-bold',
-                  tab === tabDef.key ? 'bg-white/25 text-white' : 'bg-primary/10 text-primary',
-                )}>
-                  {tabDef.count}
-                </span>
-              )}
+              {label}{count > 0 ? ` · ${count}` : ''}
             </button>
           ))}
         </div>
 
-        {tab === 'friends' && (
-          <>
-            <section className="bg-white rounded-2xl border border-border-subtle shadow-sm p-4 space-y-3">
-              <button
-                onClick={() => setShowAdd((v) => !v)}
-                className="w-full flex items-center justify-between text-sm font-bold text-primary"
-              >
-                <span className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[18px]">person_add</span>
-                  {t('friends.addFriend')}
-                </span>
-                <span className="material-symbols-outlined text-[18px] text-text-muted">{showAdd ? 'expand_less' : 'expand_more'}</span>
-              </button>
+        {tab === 'people' && (() => {
+          // everyone worth suggesting: friends of friends first, then people from my groups, each once
+          const seen = new Set<string>();
+          const suggestionRows: { uid: string; name: string; photoURL?: string; note: string }[] = [];
+          suggestions.forEach((x) => { if (!seen.has(x.uid) && !acceptedUids.has(x.uid) && !pendingUids.has(x.uid)) { seen.add(x.uid); suggestionRows.push({ uid: x.uid, name: x.displayName, photoURL: x.photoURL, note: t('friends.mutualFriends', { count: String(x.mutualCount) }) }); } });
+          addableCoMembers.forEach((m: any) => { if (!seen.has(m.userId)) { seen.add(m.userId); suggestionRows.push({ uid: m.userId, name: m.displayName || t('common.someone'), photoURL: m.photoURL, note: 'In your groups' }); } });
+          const sectionTitle = (text: string, count?: number) => (
+            <div className="flex items-center gap-2 px-1 pt-1">
+              <h2 className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-text-muted">{text}</h2>
+              {!!count && <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-error text-white text-[10px] font-black flex items-center justify-center">{count}</span>}
+            </div>
+          );
+          const listCard = 'bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden';
+          return (
+            <div className="space-y-4">
+              {/* the invite card: the quickest ways to bring someone in */}
+              <section className="rounded-3xl p-4 text-white shadow-md" style={{ background: 'linear-gradient(135deg,#06222f,#0f4a5c)' }}>
+                <p className="text-[11px] font-bold tracking-[0.1em] text-[#9fc3d1]">GROW YOUR CIRCLE</p>
+                <h2 className="text-lg font-extrabold mt-0.5">Invite family and friends</h2>
+                <p className="text-xs text-[#b8d2dc] mt-1 leading-snug">They join with your link and you become friends straight away.</p>
+                <button onClick={handleWhatsAppFriendInvite} className="mt-3 w-full h-12 rounded-2xl bg-[#25d366] text-[#073b1a] font-extrabold text-[15px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-transform">
+                  <span className="w-7 h-7 rounded-full bg-white text-[#25d366] flex items-center justify-center"><WhatsAppIcon className="w-[17px] h-[17px]" /></span>
+                  Invite on WhatsApp
+                </button>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  <button onClick={handleCopyFriendLink} className="h-10 rounded-xl bg-white/12 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95"><span className="material-symbols-outlined text-[17px]">link</span>Copy link</button>
+                  <button onClick={handleShowQr} className="h-10 rounded-xl bg-white/12 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95"><span className="material-symbols-outlined text-[17px]">qr_code_2</span>My QR</button>
+                  <button onClick={handleEmailFriendInvite} className="h-10 rounded-xl bg-white/12 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95"><span className="material-symbols-outlined text-[17px]">mail</span>Email</button>
+                </div>
+                {addFeedback && (
+                  <p className={clsx('text-[12px] font-bold mt-2.5', addFeedback.type === 'success' ? 'text-[#5fe0c4]' : 'text-[#fda4af]')}>{addFeedback.text}</p>
+                )}
+              </section>
 
-              {showAdd && (
-                <div className="space-y-3 pt-1">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder={t('friends.searchPlaceholder')}
-                      className="w-full px-3 py-2.5 text-xs rounded-xl border border-border-subtle focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none transition-all bg-surface/30"
-                    />
-                    {searching && (
-                      <span className="material-symbols-outlined animate-spin text-[16px] text-text-muted absolute right-3 top-1/2 -translate-y-1/2">sync</span>
+              {/* find someone who is already on the app */}
+              <section className="bg-white rounded-2xl border border-border-subtle shadow-sm p-3 space-y-2">
+                <div className="relative">
+                  <span className="material-symbols-outlined text-[20px] text-text-muted absolute left-3 top-1/2 -translate-y-1/2">search</span>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Find by email or FamilyLedger ID"
+                    className="w-full pl-10 pr-3 h-11 text-sm rounded-xl border-[1.5px] border-border-subtle focus:border-[#12b89a] outline-none transition-all bg-surface/30"
+                  />
+                  {searching && <span className="material-symbols-outlined animate-spin text-[16px] text-text-muted absolute right-3 top-1/2 -translate-y-1/2">sync</span>}
+                </div>
+                {searchResults.map((u) => (
+                  <div key={u.uid} className="flex items-center gap-3 py-1">
+                    <Avatar photoURL={u.photoURL} name={u.displayName} size={10} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-primary truncate">{u.displayName}</p>
+                      {u.shortId && <p className="text-[11px] text-text-muted truncate">ID: {u.shortId}</p>}
+                    </div>
+                    <button onClick={() => handleSendRequest(u.uid)} disabled={actingUid === u.uid} className="px-4 py-1.5 bg-primary text-white rounded-full text-xs font-extrabold disabled:opacity-50 shrink-0">{actingUid === u.uid ? '…' : t('friends.add')}</button>
+                  </div>
+                ))}
+                {!searching && searchQuery.trim().length >= 2 && searchResults.length === 0 && (
+                  <p className="text-xs text-text-muted px-1">No one found. Send them your invite link above instead.</p>
+                )}
+              </section>
+
+              {/* 1. requests that need an answer */}
+              {incomingPending.length > 0 && (
+                <section className="space-y-2">
+                  {sectionTitle('Requests for you', incomingPending.length)}
+                  <div className={listCard}>
+                    {incomingPending.map(({ friendUid }) => {
+                      const u = usersByUid.get(friendUid);
+                      return (
+                        <div key={friendUid} className="p-3.5 flex items-center gap-3">
+                          <Avatar photoURL={u?.photoURL} name={u?.displayName} size={10} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-primary truncate">{u?.displayName || '…'}</p>
+                            <p className="text-[11px] text-text-muted">wants to be your friend</p>
+                          </div>
+                          <button onClick={() => handleAccept(friendUid)} disabled={actingUid === friendUid} className="px-4 py-1.5 bg-[#12b89a] text-[#06222f] rounded-full text-xs font-extrabold disabled:opacity-50">{t('friends.accept')}</button>
+                          <button onClick={() => handleDeclineOrCancel(friendUid)} disabled={actingUid === friendUid} aria-label={t('friends.decline')} className="w-8 h-8 rounded-full text-text-muted flex items-center justify-center disabled:opacity-50"><span className="material-symbols-outlined text-[20px]">close</span></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* 2. people you may know */}
+              {(loadingSuggestions || suggestionRows.length > 0) && (
+                <section className="space-y-2">
+                  {sectionTitle('People you may know')}
+                  <div className={listCard}>
+                    {loadingSuggestions && suggestionRows.length === 0 && <p className="p-5 text-sm text-text-muted italic text-center">{t('common.loading')}</p>}
+                    {suggestionRows.slice(0, 6).map((r) => (
+                      <div key={r.uid} className="p-3.5 flex items-center gap-3">
+                        <Avatar photoURL={r.photoURL} name={r.name} size={10} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-primary truncate">{r.name}</p>
+                          <p className="text-[11px] text-text-muted truncate">{r.note}</p>
+                        </div>
+                        <button onClick={() => handleSendRequest(r.uid)} disabled={actingUid === r.uid} className="px-4 py-1.5 bg-primary text-white rounded-full text-xs font-extrabold disabled:opacity-50 shrink-0">{actingUid === r.uid ? '…' : t('friends.add')}</button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* 3. requests I sent that are still waiting */}
+              {outgoingPending.length > 0 && (
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    {sectionTitle('Sent · waiting')}
+                    {outgoingPending.length > 1 && (
+                      <button onClick={handleResendAll} disabled={resendingAll} className="text-[11px] font-extrabold text-primary flex items-center gap-1 disabled:opacity-50">
+                        <span className={clsx('material-symbols-outlined text-[14px]', resendingAll && 'animate-spin')}>refresh</span>{t('friends.resendAll')}
+                      </button>
                     )}
                   </div>
-
-                  {searchResults.length > 0 && (
-                    <div className="space-y-1.5">
-                      {searchResults.map((u) => (
-                        <div key={u.uid} className="flex items-center gap-2.5 p-2 rounded-xl bg-surface/40">
-                          <Avatar photoURL={u.photoURL} name={u.displayName} />
+                  {resendFeedback && (
+                    <p className={clsx('text-[11px] font-medium px-1', resendFeedback.type === 'success' ? 'text-success' : 'text-error')}>{resendFeedback.text}</p>
+                  )}
+                  <div className={listCard}>
+                    {outgoingPending.map(({ friendUid, lastSentAt }) => {
+                      const u = usersByUid.get(friendUid);
+                      return (
+                        <div key={friendUid} className="p-3.5 flex items-center gap-3">
+                          <Avatar photoURL={u?.photoURL} name={u?.displayName} size={10} />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-on-surface truncate">{u.displayName}</p>
-                            {u.email && <p className="text-[10px] text-text-muted truncate">{u.email}</p>}
-                            {u.shortId && <p className="text-[10px] text-text-muted truncate">ID: {u.shortId}</p>}
+                            <p className="text-sm font-bold text-primary truncate">{u?.displayName || '…'}</p>
+                            {lastSentAt && <p className="text-[11px] text-text-muted">{t('friends.sentTime', { time: formatRelativeTimeAgo(lastSentAt) })}</p>}
                           </div>
-                          <button
-                            onClick={() => handleSendRequest(u.uid)}
-                            disabled={actingUid === u.uid}
-                            className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold disabled:opacity-50 shrink-0"
-                          >
-                            {actingUid === u.uid ? '…' : t('friends.add')}
-                          </button>
+                          <button onClick={() => handleResend(friendUid)} disabled={actingUid === friendUid} className="px-3.5 py-1.5 rounded-full border-[1.5px] border-border-subtle text-primary text-xs font-extrabold disabled:opacity-50 shrink-0">Remind</button>
+                          <button onClick={() => handleDeclineOrCancel(friendUid)} disabled={actingUid === friendUid} aria-label={t('friends.cancel')} className="w-8 h-8 rounded-full text-text-muted flex items-center justify-center disabled:opacity-50"><span className="material-symbols-outlined text-[20px]">close</span></button>
                         </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {addableCoMembers.length > 0 && (
-                    <div className="pt-2 border-t border-border-subtle/50 space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('friends.fromYourGroups')}</label>
-                      <div className="flex flex-wrap gap-2">
-                        {addableCoMembers.map((m: any) => (
-                          <button
-                            key={m.userId}
-                            onClick={() => handleSendRequest(m.userId)}
-                            disabled={actingUid === m.userId}
-                            className="px-3 py-1.5 rounded-full text-xs font-bold border border-border-subtle bg-white text-text-muted flex items-center gap-1 disabled:opacity-50"
-                          >
-                            <span className="material-symbols-outlined text-[14px]">add</span>
-                            {m.displayName}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="pt-2 border-t border-border-subtle/50 space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">
-                      {t('friends.inviteByLink')}
-                    </label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleShareFriendLink}
-                        className="flex-1 bg-primary/5 text-primary py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-primary/10 active:scale-[0.98] transition-all border border-primary/10"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">{typeof navigator !== 'undefined' && navigator.share ? 'share' : 'content_copy'}</span>
-                        <span>{typeof navigator !== 'undefined' && navigator.share ? t('friends.shareLink') : t('friends.copyLink')}</span>
-                      </button>
-                      <button
-                        onClick={handleWhatsAppFriendInvite}
-                        className="w-11 h-11 bg-[#25D366]/10 text-[#128C4A] rounded-xl flex items-center justify-center border border-[#25D366]/20 active:scale-95 transition-all"
-                        title="WhatsApp"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">chat</span>
-                      </button>
-                      <button
-                        onClick={handleEmailFriendInvite}
-                        className="w-11 h-11 bg-surface border border-border-subtle rounded-xl flex items-center justify-center text-primary active:scale-95 transition-all"
-                        title="Email"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">mail</span>
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-text-muted px-1">{t('friends.inviteByLinkHelp')}</p>
+                      );
+                    })}
                   </div>
+                </section>
+              )}
 
-                  {addFeedback && (
-                    <p className={clsx('text-[11px] font-medium px-1', addFeedback.type === 'success' ? 'text-success' : 'text-error')}>
-                      {addFeedback.text}
-                    </p>
-                  )}
+              {/* 4. my friends */}
+              <section className="space-y-2">
+                {sectionTitle(`Your friends${accepted.length ? ` · ${accepted.length}` : ''}`)}
+                <div className={listCard}>
+                  {accepted.length === 0 && <p className="p-6 text-sm text-text-muted italic text-center">No friends yet. Invite someone with the card above.</p>}
+                  {accepted.map(({ friendUid }) => {
+                    const u = usersByUid.get(friendUid);
+                    const fp = friendPoints.get(friendUid);
+                    return (
+                      <div key={friendUid} className="p-3.5 flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={() => navigate(`/u/${friendUid}`)}>
+                          <Avatar photoURL={u?.photoURL} name={u?.displayName} size={10} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-primary truncate">{u?.displayName || '…'}</p>
+                            {fp && (
+                              <p className="text-[11px] text-text-muted font-bold flex items-center gap-1.5">
+                                <span>{t('progress.level', { level: String(fp.level) })}</span>
+                                <span className="flex items-center gap-0.5">🪙 {fp.coins}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <button onClick={() => openChat(friendUid)} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0" title={t('friends.chat')}>
+                          <span className="material-symbols-outlined text-[18px]">chat</span>
+                        </button>
+                        <button onClick={() => handleRemoveFriend(friendUid)} className="w-9 h-9 rounded-full bg-surface text-text-muted flex items-center justify-center shrink-0" title={t('friends.remove')}>
+                          <span className="material-symbols-outlined text-[18px]">person_remove</span>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-            </section>
-
-            <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden">
-              {accepted.length === 0 && (
-                <p className="p-6 text-sm text-text-muted italic text-center">{t('friends.noFriendsYet')}</p>
-              )}
-              {accepted.map(({ friendUid }) => {
-                const u = usersByUid.get(friendUid);
-                const fp = friendPoints.get(friendUid);
-                return (
-                  <div key={friendUid} className="p-4 flex items-center gap-3">
-                    <div
-                      className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
-                      onClick={() => navigate(`/u/${friendUid}`)}
-                    >
-                      <Avatar photoURL={u?.photoURL} name={u?.displayName} size={10} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-on-surface truncate">{u?.displayName || '…'}</p>
-                        {fp && (
-                          <p className="text-[10px] text-text-muted font-bold flex items-center gap-1.5">
-                            <span>{t('progress.level', { level: String(fp.level) })}</span>
-                            <span className="flex items-center gap-0.5">🪙 {fp.coins}</span>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => openChat(friendUid)}
-                      className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0"
-                      title={t('friends.chat')}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">chat</span>
-                    </button>
-                    <button
-                      onClick={() => handleRemoveFriend(friendUid)}
-                      className="w-9 h-9 rounded-full bg-surface text-text-muted flex items-center justify-center shrink-0"
-                      title={t('friends.remove')}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">person_remove</span>
-                    </button>
-                  </div>
-                );
-              })}
+              </section>
             </div>
-          </>
-        )}
-
-        {tab === 'requests' && (
-          <div className="space-y-4">
-            <section className="space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider px-1">{t('friends.incoming')}</label>
-              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden">
-                {incomingPending.length === 0 && (
-                  <p className="p-6 text-sm text-text-muted italic text-center">{t('friends.noIncomingRequests')}</p>
-                )}
-                {incomingPending.map(({ friendUid }) => {
-                  const u = usersByUid.get(friendUid);
-                  return (
-                    <div key={friendUid} className="p-4 flex items-center gap-3">
-                      <Avatar photoURL={u?.photoURL} name={u?.displayName} size={10} />
-                      <p className="flex-1 min-w-0 text-sm font-bold text-on-surface truncate">{u?.displayName || '…'}</p>
-                      <button
-                        onClick={() => handleAccept(friendUid)}
-                        disabled={actingUid === friendUid}
-                        className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold disabled:opacity-50"
-                      >
-                        {t('friends.accept')}
-                      </button>
-                      <button
-                        onClick={() => handleDeclineOrCancel(friendUid)}
-                        disabled={actingUid === friendUid}
-                        className="px-3 py-1.5 bg-surface text-text-muted rounded-lg text-[11px] font-bold disabled:opacity-50"
-                      >
-                        {t('friends.decline')}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{t('friends.outgoing')}</label>
-                {outgoingPending.length > 1 && (
-                  <button
-                    onClick={handleResendAll}
-                    disabled={resendingAll}
-                    className="text-[11px] font-bold text-primary flex items-center gap-1 disabled:opacity-50"
-                  >
-                    <span className={clsx('material-symbols-outlined text-[14px]', resendingAll && 'animate-spin')}>refresh</span>
-                    {t('friends.resendAll')}
-                  </button>
-                )}
-              </div>
-              {resendFeedback && (
-                <p className={clsx('text-[11px] font-medium px-1', resendFeedback.type === 'success' ? 'text-success' : 'text-error')}>
-                  {resendFeedback.text}
-                </p>
-              )}
-              <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden">
-                {outgoingPending.length === 0 && (
-                  <p className="p-6 text-sm text-text-muted italic text-center">{t('friends.noOutgoingRequests')}</p>
-                )}
-                {outgoingPending.map(({ friendUid, lastSentAt }) => {
-                  const u = usersByUid.get(friendUid);
-                  return (
-                    <div key={friendUid} className="p-4 flex items-center gap-3">
-                      <Avatar photoURL={u?.photoURL} name={u?.displayName} size={10} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-on-surface truncate">{u?.displayName || '…'}</p>
-                        {lastSentAt && (
-                          <p className="text-[10px] text-text-muted font-bold">
-                            {t('friends.sentTime', { time: formatRelativeTimeAgo(lastSentAt) })}
-                          </p>
-                        )}
-                      </div>
-                      <span className="text-[10px] font-bold text-text-muted uppercase">{t('friends.pending')}</span>
-                      <button
-                        onClick={() => handleResend(friendUid)}
-                        disabled={actingUid === friendUid}
-                        className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center disabled:opacity-50 shrink-0"
-                        title={t('friends.resend')}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">refresh</span>
-                      </button>
-                      <button
-                        onClick={() => handleDeclineOrCancel(friendUid)}
-                        disabled={actingUid === friendUid}
-                        className="px-3 py-1.5 bg-surface text-text-muted rounded-lg text-[11px] font-bold disabled:opacity-50"
-                      >
-                        {t('friends.cancel')}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          </div>
-        )}
+          );
+        })()}
 
         {tab === 'family' && (
           <div className="space-y-3">
@@ -722,35 +655,18 @@ export default function Friends() {
           </div>
         )}
 
-        {tab === 'suggestions' && (
-          <div className="bg-white rounded-2xl border border-border-subtle shadow-sm divide-y divide-border-subtle overflow-hidden">
-            {loadingSuggestions && (
-              <p className="p-6 text-sm text-text-muted italic text-center">{t('common.loading')}</p>
-            )}
-            {!loadingSuggestions && suggestions.length === 0 && (
-              <p className="p-6 text-sm text-text-muted italic text-center">{t('friends.noSuggestions')}</p>
-            )}
-            {suggestions.map((s) => (
-              <div key={s.uid} className="p-4 flex items-center gap-3">
-                <Avatar photoURL={s.photoURL} name={s.displayName} size={10} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-on-surface truncate">{s.displayName}</p>
-                  <p className="text-[10px] text-text-muted font-bold">
-                    {t('friends.mutualFriends', { count: String(s.mutualCount) })}
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleSendRequest(s.uid)}
-                  disabled={actingUid === s.uid}
-                  className="px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold disabled:opacity-50 shrink-0"
-                >
-                  {actingUid === s.uid ? '…' : t('friends.add')}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </main>
+
+      {qrUrl && (
+        <div className="fixed inset-0 z-[300] bg-black/60 flex items-center justify-center p-6" onClick={() => setQrUrl(null)}>
+          <div className="bg-white rounded-3xl p-5 w-full max-w-xs text-center space-y-3" onClick={(e) => e.stopPropagation()}>
+            <p className="text-base font-extrabold text-primary">Scan to be my friend</p>
+            <img src={qrUrl} alt="QR code of my friend link" className="w-full aspect-square rounded-2xl border border-border-subtle" />
+            <p className="text-xs text-text-muted">Ask them to point their phone camera here.</p>
+            <button type="button" onClick={() => setQrUrl(null)} className="w-full h-11 rounded-2xl bg-primary text-white font-extrabold text-sm">Done</button>
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {requestModalOpen && (

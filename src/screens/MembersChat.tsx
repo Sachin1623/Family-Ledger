@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import PeopleTabs from '../components/PeopleTabs';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { collection, documentId, query, where } from 'firebase/firestore';
@@ -144,6 +145,7 @@ export default function MembersChat() {
   return (
     <div className="flex flex-col min-h-screen bg-surface">
       <main className="flex-1 p-4 md:p-8 max-w-xl mx-auto w-full space-y-3 pb-24 md:pb-24">
+        <PeopleTabs active="chats" />
         <div>
           <h1 className="text-2xl font-black text-primary">{t('chat.title')}</h1>
           <p className="text-sm text-text-muted mt-0.5">{t('chat.subtitle')}</p>

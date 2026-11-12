@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { Capacitor } from '@capacitor/core';
 import { claimQuest, fetchCheerPeople, fetchQuestBoard, questEvent, sendCheer, type CheerPerson, type Quest, type QuestBoard } from '../lib/questsApi';
 import Fireworks from './Fireworks';
-import { useEdgeDock } from '../lib/useEdgeDock';
+import { DialItem, useDialSlot } from './FabDial';
 
 // The floating quest icon and the quest board it opens. A ring around the icon fills as today's quests get done, a red dot counts rewards waiting
 // to be collected, and the board is laid out like a game: progress bars that fill, rewards to collect, a daily sweep bonus, weekly and monthly goals
@@ -135,7 +135,6 @@ export default function QuestFab() {
   const [error, setError] = useState<string | null>(null);
   const loadedAt = useRef(0);
   const tabChosen = useRef(false);
-  const dock = useEdgeDock(60);
 
   const enabled = !!user && profile?.questsEnabled !== false;
   const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname) || location.pathname.startsWith('/shopping-lists/'); // a shopping list has its own add-item bar
@@ -244,9 +243,10 @@ export default function QuestFab() {
     return Math.max(0, Math.round((end - today) / 86400e3) + 1);
   }, [board]);
 
+  const slot = useDialSlot('quest', enabled && !hidden, claimable > 0 || (summary?.pending ?? 0) > 0);
   if (!enabled || hidden) return null;
 
-  const size = 60;
+  const size = 52;
   const rg = ring(fraction, size, 5);
   const tabs: { id: Tab; label: string; badge: number }[] = [
     ...(board && !board.onboardingFinished ? [{ id: 'start' as Tab, label: 'Start', badge: board.onboarding.filter((q) => q.claimable).length }] : []),
@@ -257,27 +257,27 @@ export default function QuestFab() {
 
   return (
     <>
-      <button
-        type="button"
+      <DialItem
+        slot={slot}
+        label={claimable > 0 ? `Quests · ${claimable} new` : 'Quests'}
+        ariaLabel="Open quests"
+        size={size}
+        buttonClassName=""
         onClick={() => { setOpen(true); refresh(); }}
-        aria-label="Open quests"
-        {...dock.handlers}
-        className="fixed left-4 z-40"
-        style={{ ...dock.style, bottom: 'calc(4rem + env(safe-area-inset-bottom) + 12px)', width: size, height: size }}
       >
         <svg width={size} height={size} className="absolute inset-0 -rotate-90">
           <circle cx={size / 2} cy={size / 2} r={rg.r} fill="white" stroke="#e2e8f0" strokeWidth={5} />
           <circle cx={size / 2} cy={size / 2} r={rg.r} fill="none" stroke={fraction >= 1 ? '#10b981' : '#6366f1'} strokeWidth={5} strokeLinecap="round" strokeDasharray={rg.c} strokeDashoffset={rg.offset} style={{ transition: 'stroke-dashoffset .8s ease' }} />
         </svg>
         <span className={clsx('absolute inset-0 flex items-center justify-center', claimable > 0 && 'animate-bounce')}>
-          <span className="material-symbols-outlined text-[28px] text-indigo-600" style={{ fontVariationSettings: "'FILL' 1" }}>emoji_events</span>
+          <span className="material-symbols-outlined text-[26px] text-indigo-600" style={{ fontVariationSettings: "'FILL' 1" }}>emoji_events</span>
         </span>
         {claimable > 0 ? (
           <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center shadow ring-2 ring-white animate-pulse">{claimable}</span>
         ) : summary && summary.pending > 0 ? (
           <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-indigo-600 text-white text-[11px] font-black flex items-center justify-center shadow ring-2 ring-white">{summary.pending > 99 ? '99+' : summary.pending}</span>
         ) : null}
-      </button>
+      </DialItem>
 
       {createPortal(
         <AnimatePresence>

@@ -21,6 +21,7 @@ import { getParentPath } from '../lib/navigationParents';
 import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
 import { markExpenseAdded } from '../lib/recentlyAddedExpenses';
 import AddFamilyMemberPrompt from '../components/AddFamilyMemberPrompt';
+import GroupQuickActionsMenu from '../components/GroupQuickActionsMenu';
 import PayerPicker from '../components/PayerPicker';
 
 import ReceiptBanner, { type ReceiptInfo } from '../components/ReceiptBanner';
@@ -232,6 +233,8 @@ export default function AddExpense() {
 
 
   const selectedGroup = groups.find(g => g.id === groupId);
+  // "Add a friend or family member" under who paid, opening the same invite sheet as the group page, without leaving this expense
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
   // Blank (not a "$" default) until a group is actually selected, since there's no currency
   // to show yet — getCurrencySymbol()'s own "$" fallback is meant for contexts that always
   // have a group, which isn't true here before the user's picked one.
@@ -1208,6 +1211,19 @@ export default function AddExpense() {
               payerAmounts={payerAmounts}
               setPayerAmounts={setPayerAmounts}
             />
+            {!!groupId && selectedGroup && (
+              <button
+                type="button"
+                onClick={() => setShowInviteSheet(true)}
+                className="w-full flex items-center gap-3 rounded-2xl border-[1.5px] border-dashed border-[#12b89a]/60 bg-[#effcf8]/60 px-3 py-2.5 text-left active:scale-[0.99] transition-transform"
+              >
+                <span className="w-9 h-9 rounded-full flex items-center justify-center text-[#0b6b5a] border-2 border-dashed border-[#12b89a] shrink-0"><span className="material-symbols-outlined text-[20px]">add</span></span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-extrabold text-[#0b6b5a]">Add a friend or family member</span>
+                  <span className="block text-[11px] text-text-muted">They get the invite on WhatsApp</span>
+                </span>
+              </button>
+            )}
 
             <section className="space-y-2">
               <div className="flex items-center justify-between px-1">
@@ -1488,6 +1504,10 @@ export default function AddExpense() {
             if (closeAfterInvitePrompt) handleClose();
           }}
         />
+      )}
+
+      {showInviteSheet && !!groupId && selectedGroup && (
+        <GroupQuickActionsMenu groupId={groupId} group={selectedGroup} members={groupMembersReal} budget={undefined} initialPanel="addMembers" onClose={() => setShowInviteSheet(false)} />
       )}
 
       {invitePromptGroupId && (

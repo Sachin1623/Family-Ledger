@@ -101,6 +101,8 @@ const scrambleTargetWordsByLength: Record<number, string[]> = {};
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
+const escapeHtml = (v: string) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
 // Gmail ignores dots and "+tags" in the part before the @ (khushvikrajput@gmail.com and khushvik.rajput@gmail.com are one mailbox), but
 // Firebase Auth stores whichever spelling Google reports. Used only to match a typed address against the stored one.
 const canonicalEmail = (email: string) => {
@@ -16968,6 +16970,31 @@ async function startServer() {
           { type: 'group_invite', groupId, groupName },
         );
         await createInviteNotice(db, targetUid, 'group', `Invitation to join ${groupName}`, `${inviterName} invited you to join "${groupName}"`, `/join/${groupId}`);
+
+        // The email goes too (a push only reaches someone with the app installed and notifications on). At most one per hour per invite.
+        try {
+          if (transporter) {
+            const pendingDoc = (await invitesRef.where('email', '==', email).where('status', '==', 'pending').limit(1).get()).docs[0];
+            const last = pendingDoc?.data()?.lastEmailAt;
+            if (!(last && Date.now() - Date.parse(last) < 60 * 60 * 1000)) {
+              await transporter.sendMail({
+                from: emailFrom,
+                to: email,
+                subject: `${inviterName} invited you to join "${groupName}" on FamilyLedger`,
+                text: `${inviterName} invited you to join the group "${groupName}" on FamilyLedger, a shared expense tracker.\n\nJoin here: ${joinLink}\n\nIf you weren't expecting this, you can ignore this email.`,
+                html: `
+                  <p>${escapeHtml(inviterName)} invited you to join the group <strong>${escapeHtml(groupName)}</strong> on FamilyLedger, a shared expense tracker.</p>
+                  <p><a href="${joinLink}" style="display:inline-block;padding:12px 24px;background:#4F46E5;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Join ${escapeHtml(groupName)}</a></p>
+                  <p>Or copy this link: ${joinLink}</p>
+                  <p>If you weren't expecting this, you can ignore this email.</p>
+                `,
+              });
+              await pendingDoc?.ref.update({ lastEmailAt: new Date().toISOString() }).catch(() => {});
+            }
+          }
+        } catch (mailErr) {
+          console.error('invite-to-group: email to an existing account failed:', mailErr);
+        }
         return res.json({ method: 'push', sent });
       }
 
@@ -17131,6 +17158,35 @@ async function startServer() {
     const tokens = await collectPushTokens(db, [params.targetUid], 'notificationsEnabled');
     await sendPush(tokens, 'New friend request', `${params.requesterName} wants to add you as a friend.`, { type: 'friend_request', uid: params.requesterUid });
     await createInviteNotice(db, params.targetUid, 'friend', 'New friend request', `${params.requesterName} wants to add you as a friend`, `/friends?request=${params.requesterUid}`);
+
+    // And an email, because a push only reaches someone who still has the app installed with notifications on. At most one email per
+    // hour for the same request, so tapping Remind repeatedly cannot turn into a stream of mail.
+    try {
+      if (!transporter || !adminAuth) return;
+      const friendId = params.requesterUid < params.targetUid ? `${params.requesterUid}_${params.targetUid}` : `${params.targetUid}_${params.requesterUid}`;
+      const friendRef = db.collection('friendships').doc(friendId);
+      const last = (await friendRef.get()).data()?.lastEmailAt;
+      if (last && Date.now() - Date.parse(last) < 60 * 60 * 1000) return;
+      const target = await adminAuth.getUser(params.targetUid).catch(() => null);
+      if (!target?.email || target.disabled) return;
+      const link = `${PUBLIC_APP_URL}/friends?request=${params.requesterUid}`;
+      const who = escapeHtml(params.requesterName);
+      await transporter.sendMail({
+        from: emailFrom,
+        to: target.email,
+        subject: `${params.requesterName} wants to be your friend on FamilyLedger`,
+        text: `${params.requesterName} sent you a friend request on FamilyLedger, the app for tracking and splitting family expenses.\n\nAccept it here: ${link}\n\nIf you were not expecting this, you can ignore this email.`,
+        html: `
+          <p><strong>${who}</strong> sent you a friend request on FamilyLedger, the app for tracking and splitting family expenses.</p>
+          <p><a href="${link}" style="display:inline-block;padding:12px 24px;background:#12b89a;color:#06222f;text-decoration:none;border-radius:8px;font-weight:bold;">Open the request</a></p>
+          <p>Or copy this link: ${link}</p>
+          <p>If you were not expecting this, you can ignore this email.</p>
+        `,
+      });
+      await friendRef.update({ lastEmailAt: new Date().toISOString() }).catch(() => {});
+    } catch (err) {
+      console.error('notifyFriendRequest: email failed:', err);
+    }
   }
 
   // Friend requests are server-mediated (unlike group `invites`, which the client writes

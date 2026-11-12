@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { useEdgeDock } from '../lib/useEdgeDock';
+import { DialItem, useDialSlot } from './FabDial';
 
 // The shopping-list icon on the home page, above the to-do icon (which is above the quest trophy). It shows how many items are still left to buy across
 // your active lists, turns green when everything on them is bought, and is a quiet dashed "+" when you have no list yet. It opens the lists.
@@ -21,7 +21,6 @@ export default function ShoppingFab() {
   const [shared, setShared] = useState<ListLite[]>([]);
   const [fromFriends, setFromFriends] = useState<ListLite[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const dock = useEdgeDock(52);
 
   useEffect(() => {
     if (!user || !onHome) return;
@@ -44,7 +43,14 @@ export default function ShoppingFab() {
     return () => unsubs.forEach((u) => u());
   }, [user?.uid, onHome]);
 
-  if (!user || !onHome || !loaded) return null;
+  const shownNow = !!user && onHome && loaded;
+  const itemsLeftEarly = (() => {
+    const m = new Map<string, ListLite>();
+    [...mine, ...shared, ...fromFriends].forEach((l) => m.set(l.id, l));
+    return Array.from(m.values()).filter((l) => !l.completed).reduce((sum, l) => sum + (l.itemCount === null ? 0 : Math.max(0, l.itemCount - l.doneCount)), 0);
+  })();
+  const slot = useDialSlot('shopping', shownNow, itemsLeftEarly > 0);
+  if (!shownNow) return null;
 
   const byId = new Map<string, ListLite>();
   [...mine, ...shared, ...fromFriends].forEach((l) => byId.set(l.id, l));
@@ -64,18 +70,13 @@ export default function ShoppingFab() {
     none: { border: '#cbd5e1', icon: 'add_shopping_cart', color: '#64748b', fill: 0, label: 'Start a shopping list' },
   }[state];
 
-  // above the to-do icon (52px + gap), which is above the quest trophy (60px + gap) when that is showing
-  const lift = (profile?.questsEnabled !== false ? 72 : 0) + 64;
-
   return (
-    <button
-      type="button"
+    <DialItem
+      slot={slot}
+      label={state === 'left' ? `Shopping list · ${itemsLeft}` : 'Shopping list'}
+      ariaLabel={look.label}
       onClick={() => navigate(state === 'none' ? '/shopping-lists?new=1' : '/shopping-lists')}
-      aria-label={look.label}
-      title={look.label}
-      {...dock.handlers}
-      className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center"
-      style={{ ...dock.style, bottom: `calc(4rem + env(safe-area-inset-bottom) + 12px + ${lift}px)`, border: `3px ${state === 'none' ? 'dashed' : 'solid'} ${look.border}` }}
+      buttonStyle={{ border: `3px ${state === 'none' ? 'dashed' : 'solid'} ${look.border}` }}
     >
       <span className="material-symbols-outlined text-[26px]" style={{ color: look.color, fontVariationSettings: `'FILL' ${look.fill}` }}>{look.icon}</span>
       {state === 'left' && (
@@ -86,6 +87,6 @@ export default function ShoppingFab() {
           <span className="material-symbols-outlined text-white text-[14px]" style={{ fontVariationSettings: "'wght' 700" }}>check</span>
         </span>
       )}
-    </button>
+    </DialItem>
   );
 }

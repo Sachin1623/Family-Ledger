@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { useEdgeDock } from '../lib/useEdgeDock';
+import { DialItem, useDialSlot } from './FabDial';
 
 // A floating icon, always there above the quest trophy, that opens the To-Do list and looks different for each situation:
 //   overdue            red ring, red count of what is due today or late
@@ -28,7 +28,6 @@ export default function TodoFab() {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [today, setToday] = useState(() => toDateOnly(new Date()));
-  const dock = useEdgeDock(52);
 
   useEffect(() => {
     if (!user) {
@@ -50,7 +49,10 @@ export default function TodoFab() {
   }, []);
 
   const hidden = HIDE_PREFIXES.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) || /^\/groups\/[^/]+\/manage$/.test(location.pathname) || location.pathname.startsWith('/shopping-lists/'); // a shopping list has its own add-item bar
-  if (!user || hidden || tasks === null) return null;
+  const shownNow = !!user && !hidden && tasks !== null;
+  const dueNowEarly = tasks ? tasks.filter((t) => !t.done && t.dueDate && t.dueDate <= today).length : 0;
+  const slot = useDialSlot('todo', shownNow, dueNowEarly > 0);
+  if (!shownNow || tasks === null) return null;
 
   const open = tasks.filter((t) => !t.done);
   const overdue = open.filter((t) => t.dueDate && t.dueDate < today).length;
@@ -72,18 +74,13 @@ export default function TodoFab() {
     empty: { border: '#cbd5e1', icon: 'add_task', color: '#64748b', count: 0, badge: '', label: 'Add a to-do' },
   }[state];
 
-  // sits above the quest trophy when that is showing (it is 60px tall), otherwise in its place
-  const lift = profile?.questsEnabled !== false ? 72 : 0;
-
   return (
-    <button
-      type="button"
+    <DialItem
+      slot={slot}
+      label={look.count > 0 ? `To-dos · ${look.count}` : 'To-dos'}
+      ariaLabel={look.label}
       onClick={() => navigate('/todo')}
-      aria-label={look.label}
-      title={look.label}
-      {...dock.handlers}
-      className="fixed left-4 z-40 w-[52px] h-[52px] rounded-full bg-white shadow-lg flex items-center justify-center"
-      style={{ ...dock.style, bottom: `calc(4rem + env(safe-area-inset-bottom) + 12px + ${lift}px)`, border: `3px ${state === 'empty' ? 'dashed' : 'solid'} ${look.border}` }}
+      buttonStyle={{ border: `3px ${state === 'empty' ? 'dashed' : 'solid'} ${look.border}` }}
     >
       <span className="material-symbols-outlined text-[26px]" style={{ color: look.color, fontVariationSettings: `'FILL' ${state === 'empty' ? 0 : 1}` }}>{look.icon}</span>
       {look.count > 0 && (
@@ -94,6 +91,6 @@ export default function TodoFab() {
           <span className="material-symbols-outlined text-white text-[14px]" style={{ fontVariationSettings: "'wght' 700" }}>check</span>
         </span>
       )}
-    </button>
+    </DialItem>
   );
 }
