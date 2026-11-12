@@ -115,6 +115,7 @@ export default function PublicProfile() {
           <div className="mt-3 flex gap-2">
             {p.relation === 'member' && <button type="button" onClick={() => navigate(`/add-friend/${p.header.uid}`)} className="px-4 py-2 rounded-2xl bg-orange-500 text-white text-xs font-black active:scale-95">Add friend</button>}
             {p.relation === 'friend' && <button type="button" disabled={busy} onClick={startStreak} className="px-4 py-2 rounded-2xl bg-orange-500 text-white text-xs font-black active:scale-95 disabled:opacity-60">🔥 Start a streak</button>}
+            {p.relation === 'friend' && <button type="button" onClick={() => navigate(`/?dm=${p.header.uid}`)} className="px-4 py-2 rounded-2xl bg-[#12b89a] text-[#06222f] text-xs font-black active:scale-95 inline-flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">chat</span>Start chat</button>}
           </div>
         )}
         {note && <p className="mt-2 text-xs font-bold text-primary">{note}</p>}

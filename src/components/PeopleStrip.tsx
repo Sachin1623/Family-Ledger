@@ -39,9 +39,9 @@ export default function PeopleStrip({ quiet = false }: { quiet?: boolean }) {
     const u = usersByUid.get(uid);
     const name = u?.displayName || '?';
     return (
-      <span key={uid} className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-white font-extrabold text-[15px] shrink-0" style={{ background: u?.photoURL ? undefined : colors[(name.charCodeAt(0) + i) % colors.length], boxShadow: '0 0 0 2.5px #fff, 0 0 0 4.5px #12b89a' }}>
+      <button type="button" key={uid} onClick={() => navigate(`/u/${uid}`)} aria-label={`Open ${name}'s profile`} className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-white font-extrabold text-[15px] shrink-0 active:scale-95 transition-transform" style={{ background: u?.photoURL ? undefined : colors[(name.charCodeAt(0) + i) % colors.length], boxShadow: '0 0 0 2.5px #fff, 0 0 0 4.5px #12b89a' }}>
         {u?.photoURL ? <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : name.slice(0, 1).toUpperCase()}
-      </span>
+      </button>
     );
   };
 
