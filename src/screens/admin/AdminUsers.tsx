@@ -4,6 +4,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGri
 import { adminGet, adminPost } from '../../lib/adminApi';
 import { fmtDateTime, fmtDate } from '../../lib/adminTime';
 import { inNum } from '../../lib/adminNumbers';
+import { PlatformLogo } from '../../components/admin/PlatformLogo';
 
 interface AdminUser {
   uid: string;
@@ -19,7 +20,10 @@ interface AdminUser {
   hasPassword: boolean;
   isAdmin: boolean;
   isPrimaryAdmin: boolean;
+  platform?: 'android' | 'ios' | 'web' | 'unknown';
 }
+
+type PlatformFilter = 'all' | 'android' | 'ios' | 'web' | 'unknown';
 
 type SortKey = 'joinedAt' | 'lastActiveAt' | 'expenseCount' | 'groupCount' | 'totalSpend';
 
@@ -155,19 +159,22 @@ export default function AdminUsers() {
   const [sortKey, setSortKey] = useState<SortKey>('joinedAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [hasMore, setHasMore] = useState(false);
+  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
+  const [platformCounts, setPlatformCounts] = useState<{ android: number; ios: number; web: number; unknown: number } | null>(null);
 
   // `append: true` is used by "Load next 20" to grow the list instead of replacing it; a fresh
   // search, sort change, or initial load always starts a new page-0 list. Sorting is done
   // server-side (see /api/admin/users) — it has to rank the FULL matched set before paging, since
   // client-side re-sorting can only ever reorder whatever page happens to already be loaded.
-  const load = (searchTerm = '', offset = 0, append = false, key: SortKey = sortKey, dir: 'asc' | 'desc' = sortDir) => {
+  const load = (searchTerm = '', offset = 0, append = false, key: SortKey = sortKey, dir: 'asc' | 'desc' = sortDir, platform: PlatformFilter = platformFilter) => {
     (append ? setLoadingMore : setLoading)(true);
     adminGet(
-      `/api/admin/users?limit=${PAGE_SIZE}&offset=${offset}&sortKey=${key}&sortDir=${dir}${searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : ''}`,
+      `/api/admin/users?limit=${PAGE_SIZE}&offset=${offset}&sortKey=${key}&sortDir=${dir}${platform !== 'all' ? `&platform=${platform}` : ''}${searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : ''}`,
     )
       .then((data) => {
         setUsers((prev) => (append ? [...prev, ...data.users] : data.users));
         setHasMore(!!data.hasMore);
+        if (data.platformCounts) setPlatformCounts(data.platformCounts);
       })
       .catch((err) => setError(err.message))
       .finally(() => (append ? setLoadingMore(false) : setLoading(false)));
@@ -186,6 +193,11 @@ export default function AdminUsers() {
 
   const handleLoadMore = () => {
     load(search, users.length, true);
+  };
+
+  const handlePlatformChange = (p: PlatformFilter) => {
+    setPlatformFilter(p);
+    load(search, 0, false, sortKey, sortDir, p);
   };
 
   const handleSortKeyChange = (key: SortKey) => {
@@ -284,6 +296,27 @@ export default function AdminUsers() {
         <button type="submit" className="px-6 py-3 bg-primary text-white rounded-2xl font-bold text-sm">Search</button>
       </form>
 
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <span className="text-xs font-bold text-text-muted uppercase tracking-wider shrink-0">Platform</span>
+        {([
+          ['all', 'All', null, platformCounts ? platformCounts.android + platformCounts.ios + platformCounts.web + platformCounts.unknown : null],
+          ['android', 'Android', 'android', platformCounts?.android ?? null],
+          ['ios', 'iPhone', 'ios', platformCounts?.ios ?? null],
+          ['web', 'Web', null, platformCounts?.web ?? null],
+          ['unknown', 'Not recorded', null, platformCounts?.unknown ?? null],
+        ] as const).map(([id, label, logo, count]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => handlePlatformChange(id)}
+            className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${platformFilter === id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`}
+          >
+            {logo && <PlatformLogo kind={logo} size={14} color={platformFilter === id ? '#ffffff' : undefined} />}
+            {label}{count !== null ? ` · ${count}` : ''}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center gap-2">
         <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Sort by</span>
         <div className="relative">
@@ -318,6 +351,7 @@ export default function AdminUsers() {
           <thead>
             <tr className="text-left text-text-muted border-b border-border-subtle">
               <th className="p-3">User</th>
+              <th className="p-3">Platform</th>
               <th className="p-3">Joined</th>
               <th className="p-3">Last Active</th>
               <th className="p-3">Groups</th>
@@ -335,6 +369,18 @@ export default function AdminUsers() {
                     {u.displayName || '(no name)'}
                   </Link>
                   <p className="text-xs text-text-muted">{u.email}</p>
+                </td>
+                <td className="p-3">
+                  {u.platform === 'android' || u.platform === 'ios' ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-text-muted" title={u.platform === 'android' ? 'Android app' : 'iPhone app'}>
+                      <PlatformLogo kind={u.platform} size={18} />
+                      {u.platform === 'android' ? 'Android' : 'iPhone'}
+                    </span>
+                  ) : u.platform === 'web' ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-text-muted" title="Used the website"><span className="material-symbols-outlined text-[18px]">language</span>Web</span>
+                  ) : (
+                    <span className="text-xs text-text-muted" title="No platform recorded yet. It is saved the next time they open the app.">—</span>
+                  )}
                 </td>
                 <td className="p-3 text-xs text-text-muted">{u.joinedAt ? fmtDate(u.joinedAt) : '—'}</td>
                 <td className="p-3 text-xs text-text-muted">{u.lastActiveAt ? fmtDateTime(u.lastActiveAt) : '—'}</td>

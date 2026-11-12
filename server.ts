@@ -5271,6 +5271,9 @@ async function startServer() {
       const offset = Math.max(parseInt(String(req.query.offset || '0'), 10) || 0, 0);
       const sortKey = String(req.query.sortKey || 'joinedAt');
       const sortDir = req.query.sortDir === 'asc' ? 'asc' : 'desc';
+      // 'android' | 'ios' | 'web' | 'unknown' (nothing recorded yet); anything else means everyone
+      const platformFilter = ['android', 'ios', 'web', 'unknown'].includes(String(req.query.platform)) ? String(req.query.platform) : '';
+      const platformOf = (u: any): 'android' | 'ios' | 'web' | 'unknown' => (u.platform === 'android' || u.platform === 'ios' || u.platform === 'web' ? u.platform : 'unknown');
       const usersSnap = await db.collection('users').orderBy('joinedAt', 'desc').limit(500).get();
       const adminsSnap = await db.collection('admins').get();
       const adminUids = new Set(adminsSnap.docs.map((d) => d.id));
@@ -5281,6 +5284,10 @@ async function startServer() {
           (u) => (u.email || '').toLowerCase().includes(search) || (u.displayName || '').toLowerCase().includes(search),
         );
       }
+      // how many of the searched users are on each platform (counted before the platform filter, so the filter buttons can show them)
+      const platformCounts = { android: 0, ios: 0, web: 0, unknown: 0 };
+      allUsers.forEach((u) => { platformCounts[platformOf(u)] += 1; });
+      if (platformFilter) allUsers = allUsers.filter((u) => platformOf(u) === platformFilter);
       const totalMatched = allUsers.length;
       // Aggregated (group/expense/spend) for EVERY matched user, not just whatever page is about
       // to be sliced out below — sorting by one of those aggregate columns needs the full matched
@@ -5359,12 +5366,13 @@ async function startServer() {
         groupCount: groupCountByUid.get(u.uid) || 0,
         expenseCount: spendByUid.get(u.uid)?.count || 0,
         totalSpend: spendByUid.get(u.uid)?.total || 0,
+        platform: platformOf(u),
         hasPassword: hasPasswordByUid.get(u.uid) || false,
         isAdmin: adminUids.has(u.uid) || PRIMARY_ADMIN_UIDS.includes(u.uid) || PRIMARY_ADMIN_EMAILS.includes(normalizeEmail(u.email || '')),
         isPrimaryAdmin: PRIMARY_ADMIN_UIDS.includes(u.uid) || PRIMARY_ADMIN_EMAILS.includes(normalizeEmail(u.email || '')),
       }));
 
-      return res.json({ users: enriched, total: totalMatched, offset, limit, hasMore: offset + limit < totalMatched });
+      return res.json({ users: enriched, total: totalMatched, offset, limit, hasMore: offset + limit < totalMatched, platformCounts });
     } catch (error) {
       console.error('admin/users error:', error);
       return res.status(500).json({ error: 'Unable to load users.' });
