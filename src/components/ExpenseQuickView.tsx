@@ -31,7 +31,10 @@ export default function ExpenseQuickView({
   onClose,
   returnTo,
   editOnGroupPage,
+  intent,
 }: {
+  // Opened from a row's swipe buttons: skip the read-only view and go straight to the edit window, which then moves the expense or deletes it.
+  intent?: 'edit' | 'move' | 'delete';
   expense: any;
   groupId: string;
   currencySymbol: string;
@@ -49,7 +52,7 @@ export default function ExpenseQuickView({
   // Everywhere else, Edit opens the edit window right here, floating over the current screen.
   editOnGroupPage?: boolean;
 }) {
-  const [editingHere, setEditingHere] = React.useState(false);
+  const [editingHere, setEditingHere] = React.useState(!!intent);
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
@@ -70,7 +73,7 @@ export default function ExpenseQuickView({
   if (editingHere) {
     return (
       <Suspense fallback={<div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center"><span className="material-symbols-outlined text-white text-4xl animate-spin">progress_activity</span></div>}>
-        <GroupExpensesEditor embedded={{ expenseId: expense.id, groupId, onClose }} />
+        <GroupExpensesEditor embedded={{ expenseId: expense.id, groupId, onClose, intent: intent === 'edit' ? undefined : intent }} />
       </Suspense>
     );
   }

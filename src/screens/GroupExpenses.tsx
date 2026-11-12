@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import CategoryBadge from '../components/CategoryBadge';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -34,7 +34,7 @@ const totalsField = (type: string | undefined): 'totalIncome' | 'totalSpending' 
 
 // `embedded` opens ONLY the edit window for one expense, over whatever screen the person is on (the Dashboard, Settlements ...), instead of
 // navigating to this page. Everything below (loading, the form, saving, deleting) is the same code the page itself uses.
-export default function GroupExpenses({ embedded }: { embedded?: { expenseId: string; groupId: string; onClose: () => void } } = {}) {
+export default function GroupExpenses({ embedded }: { embedded?: { expenseId: string; groupId: string; onClose: () => void; intent?: 'move' | 'delete' } } = {}) {
   const routeParams = useParams();
   const groupId = embedded?.groupId ?? routeParams.groupId;
   const navigate = useNavigate();
@@ -290,6 +290,26 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
       }
     }
   }, [location.state, searchParams, allExpenses, navigate, location.pathname, setSearchParams, embedded?.expenseId]);
+
+  // Opened from a row's swipe buttons: "Delete" asks straight away, "Move" brings the group choice into view (the normal Save then does the move,
+  // with all the group-total and activity bookkeeping it already does). Runs once per opened expense.
+  const intentDone = useRef<string | null>(null);
+  const moveBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!embedded?.intent || !editingExpense || intentDone.current === editingExpense.id) return;
+    intentDone.current = editingExpense.id;
+    if (embedded.intent === 'delete') {
+      // if the person says no to "Delete this expense?" the edit window simply stays open
+      setTimeout(() => { handleDeleteExpense().catch(() => undefined); }, 60);
+    } else if (embedded.intent === 'move') {
+      if (editingExpense.splitInfo) {
+        alert('This expense is shared between members, so it stays in its group. You can edit it, or delete it and add it again in the other group.');
+      } else {
+        setTimeout(() => moveBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 250);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded?.intent, editingExpense?.id]);
 
   // Carries over every filter that was active on GroupAnalysisSummary.tsx when the user tapped a
   // "view transactions" link there (see its buildExpensesLink) — so switching screens doesn't
@@ -1464,7 +1484,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
                 <div className="flex items-start gap-2 relative z-[20]">
                   <div className="flex-1 min-w-0 space-y-1">
                     <label className="text-[10px] font-bold text-text-muted px-1 uppercase">{t('addExpense.group')} <span className="text-error">*</span></label>
-                    <div className="relative">
+                    <div className={clsx('relative rounded-xl', embedded?.intent === 'move' && !editingExpense.splitInfo && 'ring-2 ring-[#f0a04b]')} ref={moveBoxRef}>
                       {editingExpense.splitInfo ? (
                         <div className="w-full h-12 bg-surface-container px-4 rounded-xl border border-border-subtle flex items-center gap-2 font-bold text-primary opacity-70">
                           <KindBadge group={allGroups.find(g => g.id === editingExpense.groupId) || groupData} />

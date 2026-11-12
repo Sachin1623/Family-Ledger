@@ -11,6 +11,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, Reorder, useDragControls } from 'motion/react';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, formatAmountCompact, getCategoryClassification } from '../lib/constants';
 import ExpenseQuickView from '../components/ExpenseQuickView';
+import SwipeRow from '../components/SwipeRow';
 import { buildRoster } from '../lib/groupParticipants';
 import { ChatButton, ChatPanel, useGameChat } from '../components/GameChat';
 import { FAVORITABLE_BY_KEY } from '../lib/favorites';
@@ -746,6 +747,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
   const { user, profile } = useAuth();
   const { t } = useLanguage();
   const [quickViewExpense, setQuickViewExpense] = useState<any>(null);
+  const [quickViewIntent, setQuickViewIntent] = useState<'edit' | 'move' | 'delete' | undefined>(undefined);
   const [showQuickActions, setShowQuickActions] = useState(false);
   // Filters the "Latest Spend" list below to just this member's own entries — tapping the same
   // avatar again clears it. Local to this card (not persisted), same lifecycle as `tileState`.
@@ -1393,15 +1395,15 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                         {new Date(Number(rowMonth.slice(0, 4)), Number(rowMonth.slice(5, 7)) - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
                       </p>
                     )}
-                    <div
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setQuickViewExpense(expense);
-                      }}
+                    <SwipeRow
+                      id={expense.id || String(idx)}
+                      onTap={() => { setQuickViewIntent(undefined); setQuickViewExpense(expense); }}
+                      onEdit={() => { setQuickViewIntent('edit'); setQuickViewExpense(expense); }}
+                      onMove={() => { setQuickViewIntent('move'); setQuickViewExpense(expense); }}
+                      onDelete={() => { setQuickViewIntent('delete'); setQuickViewExpense(expense); }}
                       className={clsx(
-                        'flex items-center justify-between p-2 rounded-xl transition-colors cursor-pointer',
-                        isHighlighted ? 'bg-success/15 ring-1 ring-success/50 hover:bg-success/20' : 'bg-surface-container/30 hover:bg-surface-container/60',
+                        'flex items-center justify-between p-2 rounded-xl cursor-pointer',
+                        isHighlighted ? 'bg-[#e4f5ec] ring-1 ring-success/50' : 'bg-[#f3f5f7]',
                       )}
                     >
                       <div className="flex items-center gap-2 truncate">
@@ -1431,7 +1433,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
                       <span className={clsx("text-sm font-bold flex-none ml-2", isIncomeRow ? "text-[#0F7A38]" : "text-primary")}>
                         {isIncomeRow && '+'}{currencySymbol}{formatAmountCompact(expense.amount, group?.currency, profile?.numberSystem)}
                       </span>
-                    </div>
+                    </SwipeRow>
                     </React.Fragment>
                   );
                 })
@@ -1600,8 +1602,9 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
         payerName={qvPayer?.userId === user?.uid ? 'Me' : (qvPayer?.displayName || 'Unknown')}
         payerPhoto={qvPayer?.photoURL}
         members={roster}
-        onClose={() => setQuickViewExpense(null)}
+        onClose={() => { setQuickViewExpense(null); setQuickViewIntent(undefined); }}
         returnTo="/"
+        intent={quickViewIntent}
       />
       );
     })()}
