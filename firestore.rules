@@ -391,9 +391,17 @@ service cloud.firestore {
       );
 
       // a member of the group (has a membership record), or its creator
+      // ...or a name-only person on the group's `participants` roster who has not been linked to an account yet (the same placeholder
+      // people the split groups use); linking rewrites their id to the real uid on every payment, server-side
       function isGroupPerson(uid, groupId) {
         return exists(/databases/$(database)/documents/members/$(uid + '_' + groupId)) ||
-               get(/databases/$(database)/documents/groups/$(groupId)).data.createdBy == uid;
+               get(/databases/$(database)/documents/groups/$(groupId)).data.createdBy == uid ||
+               isUnlinkedPlaceholder(uid, groupId);
+      }
+
+      function isUnlinkedPlaceholder(uid, groupId) {
+        let roster = get(/databases/$(database)/documents/groups/$(groupId)).data.get('participants', {});
+        return roster.get(uid, null) != null && roster[uid].get('linkedUserId', null) == null;
       }
 
       function isValidGroupPayment(data) {

@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { getCurrencySymbol } from '../lib/constants';
 import { formatRelativeTimeAgo, parseLocalDate } from '../lib/dateUtils';
 import { ownPhoto, useIdentities } from '../lib/userIdentity';
+import { placeholderRows, isPlaceholderId } from '../lib/groupParticipants';
 import MemberAvatar from '../components/MemberAvatar';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
@@ -64,14 +65,22 @@ export default function GroupPayments() {
     return list.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   }, [paymentsSnap]);
 
-  const resolve = useIdentities([...members.map((m) => m.userId), ...payments.flatMap((p) => [p.fromUid, p.toUid, p.addedBy])]);
+  // People added by name who are not on the app yet (the same name-only people the split groups use). Their id is used directly as a
+  // payment's fromUid / toUid; when the real person joins and is linked, the server swaps the id for their account on every payment.
+  const placeholders = useMemo(() => placeholderRows(group), [group]);
+  const roster = useMemo(() => [...members, ...placeholders.map((p) => ({ userId: p.userId, displayName: p.displayName, photoURL: '', isPlaceholder: true }))], [members, placeholders]);
+  const isPlaceholder = (uid: string) => isPlaceholderId(uid, group);
+  const resolve = useIdentities([...members.map((m) => m.userId), ...payments.flatMap((p) => [p.fromUid, p.toUid, p.addedBy])].filter((id) => !isPlaceholderId(id, group)));
   const nameOf = (uid: string) => {
     if (uid === user?.uid) return 'You';
+    const ph = group?.participants?.[uid];
+    if (ph && typeof ph.name === 'string') return ph.name;
     const m = members.find((x) => x.userId === uid);
     return resolve(uid, m?.displayName).name || 'Member';
   };
 
   const photoOf = (uid: string) => {
+    if (isPlaceholderId(uid, group)) return '';
     const m = members.find((x) => x.userId === uid);
     return resolve(uid, m?.displayName, m?.photoURL).photo || (uid === user?.uid ? ownPhoto(user) : '');
   };
@@ -119,9 +128,20 @@ export default function GroupPayments() {
   const paidThisMonth = ordinary.filter((p) => (p.date || '').startsWith(monthKey)).reduce((s, p) => s + (p.amount || 0), 0);
   const depositsHeld = deposits.reduce((s, p) => s + depositBalance(p), 0);
   // receivers first, so the people you most likely pay are at the front
-  const others = members.filter((m) => m.userId !== user?.uid).sort((a, b) => Number(canReceive(b.paymentRole)) - Number(canReceive(a.paymentRole)));
+  const others = roster.filter((m) => m.userId !== user?.uid).sort((a, b) => Number(canReceive((b as any).paymentRole)) - Number(canReceive((a as any).paymentRole)));
   const myMember = members.find((m) => m.userId === user?.uid);
   const myRole = myMember?.paymentRole;
+
+  // adds a name-only person to the group (any member may; see the groups rule for `participants`) and returns their id
+  const addPerson = async (name: string): Promise<string> => {
+    const clean = name.trim().slice(0, 60);
+    if (!clean || !groupId || !user) throw new Error('A name is required.');
+    const id = doc(collection(db, 'groups')).id;
+    await updateDoc(doc(db, 'groups', groupId), {
+      [`participants.${id}`]: { name: clean, addedBy: user.uid, linkedUserId: null, createdAt: new Date().toISOString() },
+    });
+    return id;
+  };
 
   // the usual reminder types, then the group's own payment categories, then Other
   const ownCategories = visiblePaymentCategories(group).filter((c) => !/^other$/i.test(c.name));
@@ -163,12 +183,11 @@ export default function GroupPayments() {
         <button
           type="button"
           onClick={() => setShowForm(true)}
-          disabled={others.length === 0}
-          className="mt-3 w-full rounded-xl bg-white text-[#4338ca] py-2.5 text-sm font-black active:scale-95 disabled:opacity-50"
+          className="mt-3 w-full rounded-xl bg-white text-[#4338ca] py-2.5 text-sm font-black active:scale-95"
         >
           ＋ Add a payment
         </button>
-        {others.length === 0 && <p className="mt-2 text-[11px] font-bold text-white/85">Invite the person you pay (or who pays you) to this group first.</p>}
+        {others.length === 0 && <p className="mt-2 text-[11px] font-bold text-white/85">The other person not on the app yet? Add them by name in the form. When they join, link them from Members and every payment moves to their account.</p>}
         <button
           type="button"
           onClick={() => setShowReminders(true)}
@@ -284,7 +303,7 @@ export default function GroupPayments() {
                     Receipt missing · Add
                   </button>
                 )}
-                {images.length === 0 && !mine && (
+                {images.length === 0 && !mine && !isPlaceholder(p.fromUid) && (
                   nudgedRecently ? (
                     <span className="text-[11px] font-bold rounded-full bg-surface text-text-muted px-3 py-1.5">{payerFirst} reminded {formatRelativeTimeAgo(p.receiptNudgedAt)}</span>
                   ) : (
@@ -320,14 +339,14 @@ export default function GroupPayments() {
         })}
       </div>
 
-      {/* a reminder can open the form before there is anyone to pay: the "Invite the person you pay" note above says what to do first */}
-      {((showForm && others.length > 0) || editFor) && user && groupId && (
+      {(showForm || editFor) && user && groupId && (
         <PaymentForm
           editing={editFor}
           groupId={groupId}
           uid={user.uid}
           symbol={symbol}
-          members={members}
+          members={roster}
+          onAddPerson={addPerson}
           myRole={myRole}
           categories={visiblePaymentCategories(group)}
           initialLabel={searchParams.get('label') || ''}
@@ -378,7 +397,7 @@ export default function GroupPayments() {
 }
 
 function PaymentForm({
-  groupId, uid, symbol, members, editing, myRole, categories, initialLabel, defaultTrackExpenseGroupId, defaultTrackIncomeGroupId, nameOf, photoOf, onClose, onSaved,
+  groupId, uid, symbol, members, onAddPerson, editing, myRole, categories, initialLabel, defaultTrackExpenseGroupId, defaultTrackIncomeGroupId, nameOf, photoOf, onClose, onSaved,
 }: {
   photoOf: (uid: string) => string;
   initialLabel?: string; // what a payment reminder was for, so the form opens on it
@@ -386,6 +405,7 @@ function PaymentForm({
   uid: string;
   symbol: string;
   members: any[];
+  onAddPerson: (name: string) => Promise<string>;
   editing?: any;
   myRole?: string;
   categories: PaymentCategory[];
@@ -514,6 +534,46 @@ function PaymentForm({
     }
   };
 
+  // "Not on the app yet": a name added here becomes a name-only person in the group, picked straight away for that side of the payment
+  const [addingFor, setAddingFor] = useState<'from' | 'to' | null>(null);
+  const [newName, setNewName] = useState('');
+  const [addingBusy, setAddingBusy] = useState(false);
+  const addNamed = async () => {
+    const name = newName.trim();
+    if (!name || !addingFor || addingBusy) return;
+    setAddingBusy(true);
+    setError('');
+    try {
+      const id = await onAddPerson(name);
+      if (addingFor === 'from') pickPayer(id);
+      else setToUid(id);
+      setNewName('');
+      setAddingFor(null);
+    } catch (err) {
+      console.error('Could not add that person:', err);
+      setError('Could not add that name. Check your connection and try again.');
+    } finally {
+      setAddingBusy(false);
+    }
+  };
+  const AddByName = ({ side }: { side: 'from' | 'to' }) => (editing && side === 'from' ? null : addingFor === side ? (
+    <div className="w-full flex gap-2">
+      <input
+        autoFocus
+        value={newName}
+        maxLength={60}
+        onChange={(e) => setNewName(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') void addNamed(); }}
+        placeholder={side === 'from' ? 'Who paid? Their name' : 'Who is paid? Their name'}
+        className="flex-1 min-w-0 rounded-xl border border-border-subtle px-3 py-2 text-xs font-bold bg-transparent"
+      />
+      <button type="button" onClick={() => void addNamed()} disabled={addingBusy || !newName.trim()} className="px-3 rounded-xl bg-primary text-white text-xs font-black disabled:opacity-50">{addingBusy ? '…' : 'Add'}</button>
+      <button type="button" onClick={() => { setAddingFor(null); setNewName(''); }} className="px-2 text-xs font-bold text-text-muted">Cancel</button>
+    </div>
+  ) : (
+    <button type="button" onClick={() => { setAddingFor(side); setNewName(''); }} className="px-3 py-2 rounded-xl text-xs font-bold border border-dashed border-border-subtle text-primary">＋ Not on the app yet</button>
+  ));
+
   const Person: React.FC<{ m: any; selected: boolean; onPick: () => void; disabled?: boolean }> = ({ m, selected, onPick, disabled }) => (
     <button
       type="button"
@@ -521,7 +581,7 @@ function PaymentForm({
       onClick={onPick}
       className={clsx('px-3 py-2 rounded-xl text-xs font-bold border disabled:opacity-100', selected ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle')}
     >
-      <MemberAvatar name={nameOf(m.userId)} photo={photoOf(m.userId)} size={22} className="mr-2 inline-flex align-middle" />{nameOf(m.userId)}{isPaymentRole(m.paymentRole) && <span className="ml-1.5 opacity-75 font-semibold">· {PAYMENT_ROLE_LABEL[m.paymentRole]}</span>}
+      <MemberAvatar name={nameOf(m.userId)} photo={photoOf(m.userId)} size={22} className="mr-2 inline-flex align-middle" />{nameOf(m.userId)}{m.isPlaceholder && <span className="ml-1.5 opacity-75 font-semibold">· not on app yet</span>}{isPaymentRole(m.paymentRole) && <span className="ml-1.5 opacity-75 font-semibold">· {PAYMENT_ROLE_LABEL[m.paymentRole]}</span>}
     </button>
   );
   // me first, then the rest
@@ -543,13 +603,18 @@ function PaymentForm({
           <label className="text-[11px] font-bold text-text-muted px-1">Paid by</label>
           <div className="flex flex-wrap gap-2">
             {ordered.map((m) => <Person key={m.userId} m={m} selected={fromUid === m.userId} onPick={() => pickPayer(m.userId)} disabled={!!editing} />)}
+            {AddByName({ side: 'from' })}
           </div>
         </div>
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-text-muted px-1">Paid to</label>
           <div className="flex flex-wrap gap-2">
             {ordered.filter((m) => m.userId !== fromUid).map((m) => <Person key={m.userId} m={m} selected={toUid === m.userId} onPick={() => setToUid(m.userId)} />)}
+            {AddByName({ side: 'to' })}
           </div>
+          {(members.find((m) => m.userId === fromUid)?.isPlaceholder || members.find((m) => m.userId === toUid)?.isPlaceholder) && (
+            <p className="text-[11px] text-text-muted px-1">Not on the app yet, so they will not be notified. When they join the group, link their name in Members and this payment moves to their account.</p>
+          )}
           {fromUid !== uid && toUid !== uid && !editing && <p className="text-[11px] text-text-muted px-1">You are recording this for two other people. They will both be told.</p>}
         </div>
 

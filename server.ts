@@ -16241,7 +16241,9 @@ async function startServer() {
         // the newest settlement is the one just recorded; the payer is told how much came back and what was kept
         const list: any[] = Array.isArray(p.depositSettlements) ? p.depositSettlements : [];
         const last = list[list.length - 1];
-        if (last && p.fromUid && p.fromUid !== decoded.uid) {
+        const phRoster: Record<string, any> = (groupSnap.exists ? groupSnap.data()?.participants : null) || {};
+        const payerIsNameOnly = !!(phRoster[p.fromUid] && !phRoster[p.fromUid].linkedUserId);
+        if (last && p.fromUid && p.fromUid !== decoded.uid && !payerIsNameOnly) {
           const returned = Number(last.returned) || 0;
           const kept = Number(last.kept) || 0;
           const why = String(last.reason || 'damage or repairs').slice(0, 80);
@@ -16251,8 +16253,10 @@ async function startServer() {
       } else if (event !== 'receipt') {
         const changedAmount = Number.isFinite(oldAmount) && oldAmount !== p.amount;
         const noReceipt = !(Array.isArray(p.images) && p.images.length > 0);
+        const roster: Record<string, any> = (groupSnap.exists ? groupSnap.data()?.participants : null) || {};
         for (const uid of [p.fromUid, p.toUid]) {
           if (!uid || uid === decoded.uid) continue;
+          if (roster[uid] && !roster[uid].linkedUserId) continue; // a name-only person has no account to notify
           const toPayer = uid === p.fromUid;
           let body: string;
           if (event === 'created') {
@@ -16295,6 +16299,8 @@ async function startServer() {
       const isInGroup = callerMember.exists || (groupSnap.exists && groupSnap.data()?.createdBy === decoded.uid);
       if (!isInGroup) return res.status(403).json({ error: 'You are not in this group.' });
       if (p.fromUid === decoded.uid) return res.status(400).json({ error: 'You made this payment, so you can add the receipt yourself.' });
+      const payerEntry = groupSnap.exists ? groupSnap.data()?.participants?.[p.fromUid] : null;
+      if (payerEntry && !payerEntry.linkedUserId) return res.status(400).json({ error: 'The payer is not on the app yet, so there is nobody to ask.' });
       if (Array.isArray(p.images) && p.images.length > 0) return res.json({ ok: true, alreadyHasReceipt: true });
 
       const COOLDOWN_MS = 6 * 60 * 60 * 1000;
@@ -17103,6 +17109,20 @@ async function startServer() {
         if (Object.keys(update).length > 0) ops.push((batch) => batch.update(d.ref, update));
       });
 
+      // payments in a Payments group (rent, salary...) that name the roster participant as payer or receiver
+      const groupPaySnap = await db.collection('groupPayments').where('groupId', '==', groupId).get();
+      let paymentsUpdated = 0;
+      groupPaySnap.docs.forEach((d) => {
+        const data = d.data();
+        const update: Record<string, any> = {};
+        if (data.fromUid === participantId) update.fromUid = targetUid;
+        if (data.toUid === participantId) update.toUid = targetUid;
+        if (Object.keys(update).length > 0) {
+          ops.push((batch) => batch.update(d.ref, update));
+          paymentsUpdated += 1;
+        }
+      });
+
       const recSnap = await db.collection('recurringExpenses').where('groupId', '==', groupId).get();
       let recurringUpdated = 0;
       recSnap.docs.forEach((d) => {
@@ -17142,7 +17162,7 @@ async function startServer() {
         console.error('link-participant: activity log failed:', e);
       }
 
-      return res.json({ ok: true, expensesUpdated, recurringUpdated });
+      return res.json({ ok: true, expensesUpdated, recurringUpdated, paymentsUpdated });
     } catch (error) {
       console.error('link-participant error:', error);
       return res.status(500).json({ error: 'Unable to link that name. Please try again.' });

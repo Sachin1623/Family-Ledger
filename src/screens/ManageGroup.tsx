@@ -359,6 +359,10 @@ export default function ManageGroup() {
   const [groupExpensesValue] = useCollection(
     query(collection(db, 'expenses'), where('groupId', '==', groupId!))
   );
+  // a Payments group's payments can name a not-on-the-app person too, so they count as "in use" before that name can be removed
+  const [groupPaymentsValue] = useCollection(
+    group?.groupType === 'payments' ? query(collection(db, 'groupPayments'), where('groupId', '==', groupId!)) : null
+  );
 
   // Group-wide recurring expenses — visible to every member (with who set each one up),
   // but only the creator can pause/edit/delete their own rule (enforced by firestore.rules).
@@ -638,7 +642,11 @@ export default function ManageGroup() {
 
   // Placeholder (name-only) participants still awaiting a real account.
   const placeholders = placeholderRows(group);
-  const groupExpensesForCheck = (groupExpensesValue?.docs || []).map((d) => ({ id: d.id, ...(d.data() as any) }));
+  const groupExpensesForCheck = [
+    ...(groupExpensesValue?.docs || []).map((d) => ({ id: d.id, ...(d.data() as any) })),
+    // each payment looks like an expense paid by one person and shared with the other, which is all the in-use check reads
+    ...(groupPaymentsValue?.docs || []).map((d) => { const x: any = d.data(); return { id: d.id, paidBy: x.fromUid, splitInfo: { splits: [{ userId: x.toUid }] } }; }),
+  ];
 
   const handleAddParticipant = async () => {
     const name = newParticipantName.trim();
