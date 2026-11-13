@@ -5127,6 +5127,9 @@ async function startServer() {
       let totalSpend = 0;
       expensesSnap.docs.forEach((d) => {
         const data = d.data();
+        // income entries live in the same collection but are not spend: counting them made this tile read about 7.6M higher than the
+        // public About page, which has always left them out
+        if (data.type === 'income') return;
         const amount = data.amount || 0;
         totalSpend += amount;
         const country = uidToCountry.get(data.addedBy) || 'Unknown';
@@ -5209,7 +5212,7 @@ async function startServer() {
           unknown: platformTotals.unknown,
         },
         totalGroups: groupsSnap.size,
-        totalExpenses: expensesSnap.size,
+        totalExpenses: expensesSnap.docs.filter((d) => d.data().type !== 'income').length,
         totalSpendAllTime: totalSpend,
         activeUsersToday,
         activeUsersThisWeek,
