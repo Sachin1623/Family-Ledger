@@ -18,6 +18,20 @@
 }
 
 @layer base {
+  /* Same layout on every phone: Tailwind sizes (text, padding, gaps, widths) are all in rem, so
+     scaling the root font size with the screen width scales the whole UI proportionally. 390px is
+     the reference design width (= the normal 16px). Clamped to 0.9x–1.15x so small phones stay
+     readable and big ones don't balloon. From 600px up (tablets, desktop web) it stays at the
+     plain 16px so wide layouts are untouched. */
+  html {
+    font-size: clamp(14.4px, 4.1026vw, 18.4px);
+  }
+  @media (min-width: 600px) {
+    html {
+      font-size: 16px;
+    }
+  }
+
   .material-symbols-outlined {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   }

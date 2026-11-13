@@ -1309,7 +1309,7 @@ export default function ManageGroup() {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 p-4 pb-16 max-w-4xl mx-auto w-full space-y-4">
+      <main className="flex-1 p-4 pb-[calc(7.5rem+env(safe-area-inset-bottom))] max-w-4xl mx-auto w-full space-y-4">
         {/* Group hero — the group at a glance, in its own colour: who it is, what has been spent and how that stands against the budget */}
         {(() => {
           const gk = kindOf(group);
