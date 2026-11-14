@@ -12,7 +12,6 @@ import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { fireWrite } from '../lib/offlineWrite';
 import { recordSettlement } from '../lib/recordSettlement';
 import { claimPoints } from '../lib/pointsApi';
-import AmountKeypad from '../components/AmountKeypad';
 import ImageAttachments from '../components/ImageAttachments';
 import FrequencyPicker from '../components/FrequencyPicker';
 import { FrequencyConfig, nextOccurrenceAfter, sanitizeFrequencyConfig } from '../lib/frequency';
@@ -82,7 +81,6 @@ export default function AddExpense() {
   const [invitePromptGroupId, setInvitePromptGroupId] = useState<string | null>(null);
   const [closeAfterInvitePrompt, setCloseAfterInvitePrompt] = useState(false);
   const [splitNudge, setSplitNudge] = useState<SplitNudge | null>(null);
-  const [showKeypad, setShowKeypad] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [voiceHeard, setVoiceHeard] = useState<string | null>(null);
 
@@ -795,15 +793,7 @@ export default function AddExpense() {
         </button>
       </header>
 
-      <div
-        className="flex-1 overflow-y-auto px-4 py-4"
-        onFocusCapture={(e) => {
-          // Any other field getting focus (Description, category, split inputs, ...) should
-          // bring up its own native keyboard — and since that's a real text field, this closes
-          // the custom AmountKeypad so the two don't end up stacked on screen at once.
-          if (!(e.target as HTMLElement).closest('[data-amount-field]')) setShowKeypad(false);
-        }}
-      >
+      <div className="flex-1 overflow-y-auto px-4 py-4">
         {receiptInfo && <ReceiptBanner info={receiptInfo} amount={amount} onPickAmount={setAmount} />}
         <main className="max-w-md mx-auto w-full space-y-4 pb-4">
           {selectedGroup?.incomeEnabled && (
@@ -877,23 +867,26 @@ export default function AddExpense() {
               {groupId && <span className="text-xl font-bold text-primary">{currencySymbol}</span>}
               <input
                 type="text"
-                inputMode="none"
-                readOnly
+                inputMode="decimal"
                 value={amount}
-                onFocus={(e) => {
-                  // `readOnly` + `inputMode="none"` normally keep the native keyboard from
-                  // opening for this field, but some Android WebView/keyboard combos still leave
-                  // a *previous* field's keyboard open when focus moves here instead of hiding
-                  // it. Immediately blurring right after focus forces no element to be focused
-                  // at all, which reliably tells Android to dismiss it — the custom AmountKeypad
-                  // below stays open independently via `showKeypad` state, not DOM focus.
-                  e.currentTarget.blur();
-                  setShowKeypad(true);
+                onChange={(e) => {
+                  // only digits, a decimal point and the +/- used for sums like "20+30-5"
+                  setAmount(e.target.value.replace(/[^0-9.+-]/g, ''));
+                  if (formErrors.amount) setFormErrors((prev) => ({ ...prev, amount: '' }));
                 }}
-                onClick={() => setShowKeypad(true)}
                 placeholder={t('addExpense.amountPlaceholder')}
-                className="text-xl font-bold text-primary bg-transparent border-none focus:ring-0 p-0 w-32 text-center placeholder:opacity-20 placeholder:text-sm cursor-pointer"
+                className="text-xl font-bold text-primary bg-transparent border-none focus:ring-0 p-0 w-32 text-center placeholder:opacity-20 placeholder:text-sm"
               />
+              {/* the phone's number keyboard has no plus key, so adding several amounts together needs its own button */}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setAmount((v) => (v && !/[+-]$/.test(v) ? `${v}+` : v))}
+                aria-label="Add another amount"
+                className="shrink-0 w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center active:scale-90"
+              >
+                <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'wght' 700" }}>add</span>
+              </button>
             </div>
             {hasAmountSumOperator(amount) && evaluatedAmount !== null && (
               <span className="text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-lg whitespace-nowrap">
@@ -1446,7 +1439,6 @@ export default function AddExpense() {
       {guideDone && (
       <div
         className="shrink-0 bg-white border-t border-border-subtle px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center gap-2.5"
-        style={{ marginBottom: showKeypad ? '16rem' : 0 }}
       >
         <button
           onClick={() => handleSave(true)}
@@ -1487,13 +1479,6 @@ export default function AddExpense() {
         </div>
       )}
 
-      {showKeypad && (
-        <AmountKeypad
-          value={amount}
-          onChange={(v) => { setAmount(v); if (formErrors.amount) setFormErrors((prev) => ({ ...prev, amount: '' })); }}
-          onDone={() => setShowKeypad(false)}
-        />
-      )}
       </div>
 
       {splitNudge && (
