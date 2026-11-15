@@ -1340,7 +1340,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
 
           {/* Pagination — 50 rows per page over the already-filtered/sorted array. */}
           {filteredExpenses.length > 0 && (
-            <div className="px-6 py-4 flex flex-col items-center gap-4 border-t border-border-subtle bg-surface-container-low">
+            <div className="px-6 pt-4 pb-28 flex flex-col items-center gap-4 border-t border-border-subtle bg-surface-container-low">
               <p className="text-xs text-text-muted font-bold uppercase tracking-widest">
                 {t('groupExpenses.showing')}{' '}
                 <span className="text-primary">
