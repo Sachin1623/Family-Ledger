@@ -377,8 +377,11 @@ export default function ExpenseQuickView({
                         onKeyDown={(e) => { if (e.key === 'Enter') saveAmount(); }}
                         className="flex-1 min-w-0 bg-transparent text-2xl font-black text-primary outline-none"
                       />
-                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setAmountInput((v) => (v && !/[+-]$/.test(v) ? `${v}+` : v))} aria-label="Add another amount" className="shrink-0 w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center active:scale-90">
-                        <span className="material-symbols-outlined text-[22px]">add</span>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setAmountInput((v) => (v ? v.replace(/[+-]$/, '') + '+' : v))} aria-label="Add another amount" className="shrink-0 w-10 h-10 rounded-xl bg-success/10 text-success text-2xl font-black leading-none flex items-center justify-center active:scale-90">
+                        +
+                      </button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setAmountInput((v) => (v ? v.replace(/[+-]$/, '') + '-' : v))} aria-label="Subtract an amount" className="shrink-0 w-10 h-10 rounded-xl bg-error/10 text-error text-2xl font-black leading-none flex items-center justify-center active:scale-90">
+                        −
                       </button>
                     </div>
                     {hasAmountSumOperator(amountInput) && evaluateAmountSum(amountInput) !== null && (

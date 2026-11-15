@@ -1194,8 +1194,11 @@ export default function ShoppingListDetail() {
                     <span className="text-2xl font-black text-slate-400">{currencySymbol}</span>
                     <input type="text" inputMode="decimal" value={completeAmount} onChange={(e) => setCompleteAmount(e.target.value)} placeholder="0.00" autoFocus required className="flex-1 min-w-0 bg-transparent text-2xl font-black text-primary outline-none" />
                     {/* the phone's number keyboard has no plus key, so adding several bills together needs its own button */}
-                    <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setCompleteAmount((v) => (v && !/[+\-*/]$/.test(v) ? `${v}+` : v))} aria-label="Add another amount" className="shrink-0 w-10 h-10 rounded-xl bg-[#22c1a5]/15 text-[#0f7a8f] flex items-center justify-center active:scale-90">
-                      <span className="material-symbols-outlined text-[22px]" style={{ fontVariationSettings: "'wght' 700" }}>add</span>
+                    <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setCompleteAmount((v) => (v ? v.replace(/[+-]$/, '') + '+' : v))} aria-label="Add another amount" className="shrink-0 w-10 h-10 rounded-xl bg-success/10 text-success text-2xl font-black leading-none flex items-center justify-center active:scale-90">
+                      +
+                    </button>
+                    <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setCompleteAmount((v) => (v ? v.replace(/[+-]$/, '') + '-' : v))} aria-label="Subtract an amount" className="shrink-0 w-10 h-10 rounded-xl bg-error/10 text-error text-2xl font-black leading-none flex items-center justify-center active:scale-90">
+                      −
                     </button>
                   </div>
                   {hasAmountSumOperator(completeAmount) && evaluateAmountSum(completeAmount) !== null && (

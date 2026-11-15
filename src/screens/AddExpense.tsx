@@ -877,15 +877,24 @@ export default function AddExpense() {
                 placeholder={t('addExpense.amountPlaceholder')}
                 className="text-xl font-bold text-primary bg-transparent border-none focus:ring-0 p-0 w-32 text-center placeholder:opacity-20 placeholder:text-sm"
               />
-              {/* the phone's number keyboard has no plus key, so adding several amounts together needs its own button */}
+              {/* the phone's number keyboard has no plus or minus key, so sums like 500-50 or 20+30 need their own buttons (tapping the other one swaps the sign) */}
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setAmount((v) => (v && !/[+-]$/.test(v) ? `${v}+` : v))}
+                onClick={() => setAmount((v) => (v ? v.replace(/[+-]$/, '') + '+' : v))}
                 aria-label="Add another amount"
-                className="shrink-0 w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center active:scale-90"
+                className="shrink-0 w-9 h-9 rounded-xl bg-success/10 text-success text-2xl font-black leading-none flex items-center justify-center active:scale-90"
               >
-                <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'wght' 700" }}>add</span>
+                +
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setAmount((v) => (v ? v.replace(/[+-]$/, '') + '-' : v))}
+                aria-label="Subtract an amount"
+                className="shrink-0 w-9 h-9 rounded-xl bg-error/10 text-error text-2xl font-black leading-none flex items-center justify-center active:scale-90"
+              >
+                −
               </button>
             </div>
             {hasAmountSumOperator(amount) && evaluatedAmount !== null && (
