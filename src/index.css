@@ -87,3 +87,29 @@
 .reaction-float {
   animation: reaction-float 3s ease-out forwards;
 }
+
+/* App background (Profile > App Settings > Background). Only the page behind the cards changes. Screens that paint their own
+   full-page bg-surface are made see-through while a custom background is on, so the choice shows on every screen. */
+.fl-app-bg {
+  background-color: var(--fl-bg-color, var(--color-surface));
+  background-image: var(--fl-bg-image, none);
+  background-size: var(--fl-bg-size, auto);
+}
+html[data-fl-bg] #route-scroll .min-h-screen.bg-surface,
+html[data-fl-bg] #route-scroll .min-h-dvh.bg-surface {
+  background-color: transparent;
+}
+
+/* Cards, sheets, the header and the bottom bar take the chosen colour. Photos, avatars, inputs and anything marked
+   data-keep-white stay white. Fully round things (avatars, dots) are not touched, only rounded boxes and bars. */
+html[data-fl-cards] .bg-white:is(.rounded-lg, .rounded-xl, .rounded-2xl, .rounded-3xl, [class*="rounded-t-"], [class*="rounded-[2"], header, nav):not(input):not(textarea):not(select):not(img):not(canvas):not(svg):not([data-keep-white]):not([data-keep-white] *),
+html[data-fl-cards] :is(header, nav).bg-white:not([data-keep-white]) {
+  background-color: var(--fl-card);
+}
+html[data-fl-cards] nav[class*="bg-white/"] {
+  background-color: color-mix(in srgb, var(--fl-card) 95%, transparent);
+}
+/* glass: on the page itself the card is see-through so the pattern shows; pop-ups (fixed layers) stay solid */
+html[data-fl-cards="glass"] #route-scroll .bg-white:is(.rounded-xl, .rounded-2xl, .rounded-3xl):not(input):not(textarea):not(select):not(img):not([data-keep-white]):not([data-keep-white] *):not(.fixed *) {
+  background-color: var(--fl-card-glass);
+}

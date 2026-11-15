@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { auth, db, handleFirestoreError, OperationType, getAnalyticsConsent, setAnalyticsConsent } from '../lib/firebase';
 import { exportMyData } from '../lib/dataExport';
 import { updatePassword } from 'firebase/auth';
+import BackgroundSetting from '../components/BackgroundSetting';
 import { doc, updateDoc, deleteDoc, setDoc, collection, query, where, getDocs, writeBatch, arrayRemove } from 'firebase/firestore';
 import { useDocument } from 'react-firebase-hooks/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -1203,6 +1204,7 @@ export default function Profile() {
           <div className="space-y-1">
             <h3 className="px-2 text-[10px] font-bold text-text-muted uppercase tracking-[0.2em]">App Settings</h3>
             <div className="bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden divide-y divide-border-subtle">
+              <BackgroundSetting />
               <div>
                 <button
                   type="button"

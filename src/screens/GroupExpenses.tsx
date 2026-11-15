@@ -34,7 +34,7 @@ const totalsField = (type: string | undefined): 'totalIncome' | 'totalSpending' 
 
 // `embedded` opens ONLY the edit window for one expense, over whatever screen the person is on (the Dashboard, Settlements ...), instead of
 // navigating to this page. Everything below (loading, the form, saving, deleting) is the same code the page itself uses.
-export default function GroupExpenses({ embedded }: { embedded?: { expenseId: string; groupId: string; onClose: () => void; intent?: 'move' | 'delete' } } = {}) {
+export default function GroupExpenses({ embedded }: { embedded?: { expenseId: string; groupId: string; onClose: () => void; intent?: 'move' | 'delete' | 'amount' | 'category' } } = {}) {
   const routeParams = useParams();
   const groupId = embedded?.groupId ?? routeParams.groupId;
   const navigate = useNavigate();
@@ -301,6 +301,14 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
     if (embedded.intent === 'delete') {
       // if the person says no to "Delete this expense?" the edit window simply stays open
       setTimeout(() => { handleDeleteExpense().catch(() => undefined); }, 60);
+    } else if (embedded.intent === 'amount' || embedded.intent === 'category') {
+      // opened from a "tap to change" hint: bring that field into view and, for the amount, put the cursor in it
+      const which = embedded.intent;
+      setTimeout(() => {
+        const el = document.querySelector(`[data-focus="${which}"]`) as HTMLElement | null;
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (which === 'amount') (el?.querySelector('input') as HTMLInputElement | null)?.focus();
+      }, 300);
     } else if (embedded.intent === 'move') {
       if (editingExpense.splitInfo) {
         alert('This expense is shared between members, so it stays in its group. You can edit it, or delete it and add it again in the other group.');
@@ -1547,7 +1555,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
                   </div>
                 )}
 
-                <div className="space-y-1 relative z-[10]">
+                <div className={clsx('space-y-1 relative z-[10]', embedded?.intent === 'amount' && 'rounded-xl ring-2 ring-[#f0a04b] p-1')} data-focus="amount">
                   <div className="flex items-start justify-between gap-2 px-1">
                     <label className="text-[10px] font-bold text-text-muted uppercase">{t('addExpense.amountWithCurrency', { currency: allGroups.find(g => g.id === editingExpense.groupId)?.currency || groupData?.currency || 'USD' })} <span className="text-error">*</span></label>
                     {editBudget && (() => {
@@ -1791,7 +1799,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
                   </div>
                 )}
 
-                 <div className="space-y-1">
+                 <div className={clsx('space-y-1', embedded?.intent === 'category' && 'rounded-xl ring-2 ring-[#f0a04b] p-1')} data-focus="category">
                   <div className="flex items-center justify-between px-1">
                     <label className="text-[10px] font-bold text-text-muted uppercase">{t('addExpense.category')}</label>
                     {editingExpense.type !== 'income' && editingExpense.category && (

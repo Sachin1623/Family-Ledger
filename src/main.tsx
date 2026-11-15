@@ -4,6 +4,9 @@ import App from './App.tsx';
 import {ErrorBoundary} from './components/ErrorBoundary';
 import './index.css';
 import {keepAppFresh} from './lib/keepAppFresh';
+import {applyCachedBackground} from './lib/appBackground';
+
+applyCachedBackground();
 
 // Prevent benign background Vite HMR or WebSocket connection failures from causing unhandled rejections
 const isHmrError = (err: any): boolean => {

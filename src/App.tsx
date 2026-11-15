@@ -133,6 +133,7 @@ const AdminBroadcast = lazyScreen(() => import('./screens/admin/AdminBroadcast')
 const AdminChatReports = lazyScreen(() => import('./screens/admin/AdminChatReports'));
 const AdminVaccineMapping = lazyScreen(() => import('./screens/admin/AdminVaccineMapping'));
 import UpdatePrompt from './components/UpdatePrompt';
+import BackgroundSync from './components/BackgroundSync';
 import UpdateBanner from './components/UpdateBanner';
 import GlobalChatPopup from './components/GlobalChatPopup';
 import ReceiptShareBridge from './components/ReceiptShareBridge';
@@ -369,7 +370,8 @@ export default function App() {
               actually happens to be moving on screen. (Reported as "header not fixed, still
               scrolls" — see BabyVaccinations.tsx / HealthGlucose.tsx / LogVaccineVisit.tsx's own
               sticky headers, none of which could ever have worked before this fix.) */}
-          <div className="h-dvh bg-surface font-sans text-on-surface flex flex-col overflow-hidden">
+          <div className="h-dvh fl-app-bg font-sans text-on-surface flex flex-col overflow-hidden">
+            <BackgroundSync />
             <GetTheAppBar />
             <Header />
             <FloatingCalculator />
