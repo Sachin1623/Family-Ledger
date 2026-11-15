@@ -5,7 +5,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { useDocument } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryNameOverride, getCategoryIcon } from '../lib/constants';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, getCategoryNameOverride, getCategoryIcon, getGroupCategories } from '../lib/constants';
+import { evaluateAmountSum, hasAmountSumOperator } from '../lib/amountMath';
+import { KindBadge } from './GroupPicker';
+import { changeAmount, changeCategory, deleteExpense, loadMoveTargets, moveToGroup, NeedsEditor } from '../lib/expenseQuickEdit';
 import Comments from './Comments';
 import { notifyGroupActivity } from '../lib/notifyGroupActivity';
 import { useAuth } from '../context/AuthContext';
@@ -26,7 +29,7 @@ const CATEGORIES = EXPENSE_CATEGORIES;
 // whatever screen the user is on (e.g. the Dashboard), with no page navigation. Full
 // editing/deleting still happens via the "Edit in Group" link through to GroupExpenses.
 export default function ExpenseQuickView({
-  expense,
+  expense: expenseProp,
   groupId,
   currencySymbol,
   payerName,
@@ -63,6 +66,9 @@ export default function ExpenseQuickView({
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+  // the live copy of this expense, so a change made here shows at once (the caller's copy can be a stale snapshot)
+  const [liveExpense] = useDocument(doc(db, 'expenses', expenseProp.id));
+  const expense = liveExpense?.exists() ? { ...expenseProp, ...liveExpense.data(), id: expenseProp.id } : expenseProp;
   const isIncome = expense.type === 'income';
   const category = (isIncome ? INCOME_CATEGORIES : CATEGORIES).find((c) => c.id === expense.category);
   // A custom category (or a renamed built-in) only exists in its group's own settings — the
@@ -107,8 +113,55 @@ export default function ExpenseQuickView({
       setPhotoBusy(false);
     }
   };
-  const hint = (text: string) => <span className="text-[10px] font-bold text-[#0b6b5a] flex items-center gap-0.5"><span className="material-symbols-outlined text-[12px]">edit</span>{text}</span>;
+  const hint = () => <span className="text-[#0b6b5a] flex items-center" aria-label="Tap to change"><span className="material-symbols-outlined text-[16px]">edit</span></span>;
   const canMoveGroup = canEdit && !expense.splitInfo;
+
+  // Small one-field pop-ups: tap an option and it is saved right away, no edit window.
+  const [popup, setPopup] = React.useState<null | 'amount' | 'category' | 'group'>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [popupError, setPopupError] = React.useState<string | null>(null);
+  const [amountInput, setAmountInput] = React.useState('');
+  const [moveTargets, setMoveTargets] = React.useState<any[] | null>(null);
+  const actor = { uid: user?.uid || '', name: profile?.displayName || user?.displayName || 'Someone', photo: profile?.photoURL || user?.photoURL || '' };
+  const openPopup = (which: 'amount' | 'category' | 'group') => {
+    setPopupError(null);
+    if (which === 'amount') setAmountInput(String(expense.amount));
+    if (which === 'group' && !moveTargets && user) {
+      loadMoveTargets(user.uid, expense.groupId).then((g) => setMoveTargets(g.filter((x: any) => x.groupType !== 'payments'))).catch(() => setMoveTargets([]));
+    }
+    setPopup(which);
+  };
+  const run = async (job: () => Promise<void>, after?: () => void) => {
+    setBusy(true);
+    setPopupError(null);
+    try {
+      await job();
+      setPopup(null);
+      after?.();
+    } catch (err: any) {
+      if (err instanceof NeedsEditor) { setPopup(null); setEditIntent('amount'); setEditingHere(true); return; }
+      console.error('Quick change failed:', err);
+      setPopupError(err?.code === 'permission-denied' ? 'Only the person who added this expense or a group admin can change it.' : (err?.message || 'Could not save the change.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pickCategory = (id: string) => { if (id === expense.category) { setPopup(null); return; } run(() => changeCategory(expense, id, actor)); };
+  const saveAmount = () => {
+    const v = evaluateAmountSum(amountInput);
+    if (!v || v <= 0) { setPopupError('Enter an amount above zero.'); return; }
+    if (Math.abs(v - expense.amount) < 0.005) { setPopup(null); return; }
+    run(() => changeAmount(expense, v, actor));
+  };
+  const pickGroup = (target: any) => {
+    const cats = getGroupCategories(target, 'expense');
+    const keep = cats.some((c) => c.id === expense.category) ? expense.category : (cats.find((c) => c.id === 'misc')?.id || cats[0]?.id || expense.category);
+    run(() => moveToGroup(expense, target, keep, actor), onClose);
+  };
+  const removeExpense = () => {
+    if (!window.confirm('Delete this expense?')) return;
+    run(() => deleteExpense(expense, actor), onClose);
+  };
 
   if (editingHere) {
     return (
@@ -153,9 +206,9 @@ export default function ExpenseQuickView({
                 </p>
               </div>
               {canEdit ? (
-                <button type="button" onClick={() => openEditor('amount')} className="shrink-0 text-right active:scale-95 transition-transform">
+                <button type="button" onClick={() => openPopup('amount')} className="shrink-0 text-right active:scale-95 transition-transform">
                   <span className="block text-2xl font-black text-primary">{currencySymbol}{expense.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                  <span className="flex justify-end mt-0.5">{hint('Tap to change')}</span>
+                  <span className="flex justify-end mt-0.5">{hint()}</span>
                 </button>
               ) : (
                 <p className="text-2xl font-black text-primary shrink-0">
@@ -166,12 +219,12 @@ export default function ExpenseQuickView({
 
             {groupCategorySettings?.name && (
               canMoveGroup ? (
-                <button type="button" onClick={() => openEditor('move')} className="w-full flex items-center justify-between gap-2 bg-surface px-3 py-2.5 rounded-xl border border-border-subtle text-left active:scale-[0.98] transition-transform">
+                <button type="button" onClick={() => openPopup('group')} className="w-full flex items-center justify-between gap-2 bg-surface px-3 py-2.5 rounded-xl border border-border-subtle text-left active:scale-[0.98] transition-transform">
                   <span className="min-w-0">
                     <span className="block text-[10px] font-bold text-text-muted uppercase tracking-wider">Group</span>
                     <span className="block text-sm font-bold text-primary truncate">{groupCategorySettings.name}</span>
                   </span>
-                  {hint('Tap to change')}
+                  {hint()}
                 </button>
               ) : (
                 <div className="bg-surface px-3 py-2.5 rounded-xl border border-border-subtle">
@@ -204,7 +257,7 @@ export default function ExpenseQuickView({
             <div className="grid grid-cols-2 gap-3">
               <div
                 role={canEdit ? 'button' : undefined}
-                onClick={canEdit ? () => openEditor('category') : undefined}
+                onClick={canEdit ? () => openPopup('category') : undefined}
                 className={`bg-surface p-3 rounded-xl border border-border-subtle ${canEdit ? 'cursor-pointer active:scale-[0.98] transition-transform' : ''}`}
               >
                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('common.category')}</p>
@@ -212,7 +265,7 @@ export default function ExpenseQuickView({
                   <CategoryBadge id={expense.category} icon={categoryIcon === '❓' ? '🧾' : categoryIcon} size={28} />
                   <span className="text-sm font-bold text-primary break-words min-w-0">{categoryName}</span>
                 </div>
-                {canEdit && <div className="mt-1.5">{hint('Tap to change')}</div>}
+                {canEdit && <div className="mt-1.5">{hint()}</div>}
               </div>
               <div className="bg-surface p-3 rounded-xl border border-border-subtle">
                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">{t('addExpense.paidBy')}</p>
@@ -278,7 +331,7 @@ export default function ExpenseQuickView({
             />
           </div>
 
-          <div className="p-4 border-t border-border-subtle shrink-0">
+          <div className="p-4 border-t border-border-subtle shrink-0 space-y-2">
             <button
               onClick={() => (editOnGroupPage ? navigate(`/groups/${groupId}/expenses`, { state: { openExpenseId: expense.id, ...(returnTo ? { returnTo } : {}) } }) : setEditingHere(true))}
               className="w-full h-12 border-2 border-border-subtle text-primary font-bold rounded-xl active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
@@ -286,7 +339,95 @@ export default function ExpenseQuickView({
               <span className="material-symbols-outlined text-[18px]">edit</span>
               {t('groupExpenses.editOrDeleteInGroupExpenses')}
             </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={removeExpense}
+                disabled={busy}
+                className="w-full h-11 text-error font-bold rounded-xl active:scale-95 transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+                Delete expense
+              </button>
+            )}
           </div>
+
+          {popup && (
+            <div className="absolute inset-0 z-10 flex items-end justify-center bg-black/40" onClick={() => !busy && setPopup(null)}>
+              <div className="w-full bg-white rounded-t-3xl max-h-[80%] overflow-y-auto p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black uppercase tracking-wider text-text-muted">
+                    {popup === 'amount' ? 'Change amount' : popup === 'category' ? 'Choose category' : 'Move to group'}
+                  </p>
+                  <button type="button" onClick={() => setPopup(null)} disabled={busy} aria-label="Close" className="p-1 text-text-muted">
+                    <span className="material-symbols-outlined text-[20px]">close</span>
+                  </button>
+                </div>
+
+                {popup === 'amount' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 rounded-2xl border-2 border-primary/30 bg-surface px-3 py-2">
+                      <span className="text-xl font-black text-text-muted">{currencySymbol}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        autoFocus
+                        value={amountInput}
+                        onChange={(e) => setAmountInput(e.target.value.replace(/[^0-9.+-]/g, ''))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveAmount(); }}
+                        className="flex-1 min-w-0 bg-transparent text-2xl font-black text-primary outline-none"
+                      />
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setAmountInput((v) => (v && !/[+-]$/.test(v) ? `${v}+` : v))} aria-label="Add another amount" className="shrink-0 w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center active:scale-90">
+                        <span className="material-symbols-outlined text-[22px]">add</span>
+                      </button>
+                    </div>
+                    {hasAmountSumOperator(amountInput) && evaluateAmountSum(amountInput) !== null && (
+                      <p className="text-xs font-bold text-success px-1">= {currencySymbol}{evaluateAmountSum(amountInput)!.toFixed(2)}</p>
+                    )}
+                    {expense.splitInfo && <p className="text-[11px] text-text-muted px-1">The shares update to match the new amount.</p>}
+                    <button type="button" onClick={saveAmount} disabled={busy} className="w-full h-12 bg-primary text-white font-bold rounded-2xl text-sm disabled:opacity-50 active:scale-[0.98] transition-transform">
+                      {busy ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                )}
+
+                {popup === 'category' && (
+                  <div className="grid grid-cols-4 gap-2">
+                    {getGroupCategories(groupCategorySettings, isIncome ? 'income' : 'expense').map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => pickCategory(c.id)}
+                        className={`p-2 rounded-xl border flex flex-col items-center gap-1 active:scale-95 transition-transform disabled:opacity-50 ${expense.category === c.id ? 'bg-primary border-primary text-white' : 'bg-white border-border-subtle text-primary'}`}
+                      >
+                        <CategoryBadge id={c.id} icon={c.icon} size={30} />
+                        <span className="text-[10px] font-bold leading-tight text-center line-clamp-2 w-full">
+                          {getCategoryNameOverride(groupCategorySettings, c.id) || t(`${isIncome ? 'income' : 'category'}.${c.id}`)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {popup === 'group' && (
+                  <div className="-mx-5">
+                    {moveTargets === null && <p className="px-5 py-4 text-sm text-text-muted">Loading your groups…</p>}
+                    {moveTargets?.length === 0 && <p className="px-5 py-4 text-sm text-text-muted">You have no other group to move this to.</p>}
+                    {moveTargets?.map((g) => (
+                      <button key={g.id} type="button" disabled={busy} onClick={() => pickGroup(g)} className="w-full flex items-center gap-3 px-5 py-3.5 border-t border-border-subtle text-left active:bg-surface disabled:opacity-50">
+                        <KindBadge group={g} />
+                        <span className="flex-1 min-w-0 truncate text-base font-bold text-primary">{g.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {busy && popup !== 'amount' && <p className="text-xs font-bold text-text-muted text-center">Saving…</p>}
+                {popupError && <p className="text-xs font-bold text-error">{popupError}</p>}
+              </div>
+            </div>
+          )}
         </motion.div>
 
         {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
