@@ -1192,18 +1192,18 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             )}
           </div>
           {/* Everything else is a plain, labelled link. "Poke" is now "Remind", which says what it does. */}
-          <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-0.5 text-[12.5px] font-bold text-text-muted">
-            <button onClick={stopAnd(() => { setShowChat(true); markChatSeen(); })} data-tour={`dashboard-action-chat-${groupId}`} className="relative inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors">
+          <div className="flex items-center justify-between gap-1 px-1 text-[12px] font-bold text-text-muted whitespace-nowrap">
+            <button onClick={stopAnd(() => { setShowChat(true); markChatSeen(); })} data-tour={`dashboard-action-chat-${groupId}`} className="relative inline-flex items-center gap-1 py-1.5 hover:text-primary transition-colors">
               <span className="material-symbols-outlined text-[18px]">chat_bubble</span>Chat
               {chatUnseen && <span className="absolute top-1.5 -right-0.5 w-2 h-2 rounded-full bg-error" aria-label="New messages" />}
             </button>
-            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} data-tour={`dashboard-action-trends-${groupId}`} className="inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors">
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}`))} title={t('dashboard.groupAnalysisTooltip')} data-tour={`dashboard-action-trends-${groupId}`} className="inline-flex items-center gap-1 py-1.5 hover:text-primary transition-colors">
               <span className="material-symbols-outlined text-[18px]">bar_chart</span>Trends
             </button>
-            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} data-tour={`dashboard-action-report-${groupId}`} className="inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors">
+            <button onClick={stopAnd(() => navigate(`/groups/${groupId}/expenses?from=dashboard`))} title={t('dashboard.expenseReportTooltip')} data-tour={`dashboard-action-report-${groupId}`} className="inline-flex items-center gap-1 py-1.5 hover:text-primary transition-colors">
               <span className="material-symbols-outlined text-[18px]">receipt_long</span>Report
             </button>
-            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="inline-flex items-center gap-1 py-2 px-1 hover:text-primary transition-colors disabled:opacity-60">
+            <button onClick={handlePokeAll} disabled={poking} title={t('dashboard.pokeTooltip')} data-tour={`dashboard-action-poke-${groupId}`} className="inline-flex items-center gap-1 py-1.5 hover:text-primary transition-colors disabled:opacity-60">
               <span className="material-symbols-outlined text-[18px]">{poked ? 'check_circle' : 'notifications_active'}</span>{poked ? 'Reminded' : 'Remind'}
             </button>
           </div>
@@ -1216,7 +1216,7 @@ function GroupCard({ groupId, index, isFirst, tileState, onToggleCollapse, highl
             at 70% width with the month picker taking the remaining 30% alongside it; with no
             budget set, the month picker just gets its own row instead of an empty 70% slot next
             to it. */}
-        {budgetStatus ? (
+        {viewAll && !isEventGroup ? null : budgetStatus ? (
           <div className="flex items-stretch gap-2" data-tour={`dashboard-budget-${groupId}`}>
             <div className="w-[70%] bg-surface-container/40 rounded-2xl p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">

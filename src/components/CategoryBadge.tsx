@@ -18,6 +18,7 @@ export const CATEGORY_STYLE: Record<string, { symbol: string; color: string; bg:
   kids: { symbol: 'child_care', color: '#0f9a8d', bg: '#d7f3ef' },
   ent: { symbol: 'theaters', color: '#e0334f', bg: '#ffdfe5' },
   finance: { symbol: 'account_balance', color: '#0b7f86', bg: '#d6efee' },
+  invest: { symbol: 'trending_up', color: '#0e9f6e', bg: '#d5f3e6' },
   shopping: { symbol: 'checkroom', color: '#2f6fe0', bg: '#dde8fd' },
   household: { symbol: 'cleaning_services', color: '#9a6a1c', bg: '#f1e6d3' },
   gifts: { symbol: 'redeem', color: '#c332d1', bg: '#f8dffb' },

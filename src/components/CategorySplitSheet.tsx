@@ -11,7 +11,7 @@ import CategoryBadge, { CATEGORY_STYLE } from './CategoryBadge';
 // so the two can never look or behave differently again. The saved value is always a percentage of the month's
 // budget (0-100 per category, need not add up to 100); the Percent/Amount toggle only changes how a row is typed.
 export const RECOMMENDED_SPLIT: Record<string, number> = {
-  housing: 21, groceries: 13, finance: 12, bills: 9, food: 7, travel: 7, education: 6, health: 5, ent: 4,
+  housing: 21, groceries: 13, finance: 8, invest: 4, bills: 9, food: 7, travel: 7, education: 6, health: 5, ent: 4,
   personal: 3, kids: 3, shopping: 3, household: 3, gifts: 2, misc: 2,
 };
 

@@ -1059,6 +1059,7 @@ export default function GroupAnalysisSummary() {
     'education': '#06B6D4',
     'ent': '#3B82F6',
     'finance': '#6366F1',
+    'invest': '#10B981',
     'shopping': '#EC4899',
     'household': '#14B8A6',
     'misc': '#71787d'
