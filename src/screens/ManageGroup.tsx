@@ -2151,6 +2151,23 @@ export default function ManageGroup() {
                   {toggleRow('add_card', t('createGroup.trackIncome'), 'Record money coming in, not just spending.', !!group.incomeEnabled,
                     isEvent ? 'Everyone chips in, or you receive gifts.' : 'Salary, rent you receive, side income.',
                     isEvent ? 'You only want to track spending.' : 'You only want to see what you spend.', handleToggleIncome)}
+                  {/* custom categories: add, rename, hide (opens the Categories panel) */}
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryPanel(true)}
+                    className="w-full bg-white p-4 rounded-2xl border border-border-subtle shadow-sm flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-full bg-primary/5 text-primary flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">category</span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-primary truncate">{t('manageGroup.spendCategories')}</p>
+                        <p className="text-[11px] text-text-muted truncate">{t('manageGroup.customizeCategories')}</p>
+                      </div>
+                    </div>
+                    <span className="material-symbols-outlined text-text-muted shrink-0">chevron_right</span>
+                  </button>
                 </>
               );
             })()}
