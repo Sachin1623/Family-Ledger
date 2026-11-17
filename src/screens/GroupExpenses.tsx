@@ -1025,7 +1025,7 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
 
           {/* Row 2 — year dropdown (multi-select) + a fixed-width scrollable month strip, exactly
               like Analysis's. */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+          <div className="flex items-center gap-1.5 pb-0.5">
             <div className="relative shrink-0">
               <button
                 type="button"

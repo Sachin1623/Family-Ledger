@@ -1331,7 +1331,7 @@ export default function GroupAnalysisSummary() {
                   month strip fills whatever's left (flex-1) with a min-width floor so it can't
                   collapse to 0 either, and scrolls internally past that. overflow-x-auto on the
                   OUTER row is a fallback for a device too narrow to fit both even at these sizes. */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              <div className="flex items-center gap-1.5 pb-0.5">
                 <div className="relative shrink-0">
                   <button
                     type="button"
