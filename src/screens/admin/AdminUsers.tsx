@@ -21,7 +21,18 @@ interface AdminUser {
   isAdmin: boolean;
   isPrimaryAdmin: boolean;
   platform?: 'android' | 'ios' | 'web' | 'unknown';
+  joinedVia?: { kind: 'whatsapp' | 'sms' | 'link' | 'email' | 'own'; by: string };
 }
+
+// How a person got into the app, for the "How they joined" column. "own" covers the Play Store, App Store, search and ads: the app does not record
+// where an install came from, so those cannot be told apart yet.
+const JOINED_VIA: Record<string, { label: string; icon: string; tone: string; hint: string }> = {
+  whatsapp: { label: 'WhatsApp invite', icon: 'chat', tone: 'bg-emerald-50 text-emerald-700', hint: 'Joined through a WhatsApp join link' },
+  sms: { label: 'SMS invite', icon: 'sms', tone: 'bg-sky-50 text-sky-700', hint: 'Joined through an SMS join link' },
+  link: { label: 'Invite link', icon: 'link', tone: 'bg-violet-50 text-violet-700', hint: 'Joined through a join link' },
+  email: { label: 'Email invite', icon: 'mail', tone: 'bg-amber-50 text-amber-700', hint: 'Was sent an email invite before signing up' },
+  own: { label: 'On their own', icon: 'travel_explore', tone: 'bg-slate-100 text-slate-600', hint: 'Found the app themselves: Play Store, App Store, search or an ad. Google Ads cannot be separated out yet.' },
+};
 
 type PlatformFilter = 'all' | 'android' | 'ios' | 'web' | 'unknown';
 
@@ -352,6 +363,7 @@ export default function AdminUsers() {
             <tr className="text-left text-text-muted border-b border-border-subtle">
               <th className="p-3">User</th>
               <th className="p-3">Platform</th>
+              <th className="p-3">How they joined</th>
               <th className="p-3">Joined</th>
               <th className="p-3">Last Active</th>
               <th className="p-3">Groups</th>
@@ -381,6 +393,19 @@ export default function AdminUsers() {
                   ) : (
                     <span className="text-xs text-text-muted" title="No platform recorded yet. It is saved the next time they open the app.">—</span>
                   )}
+                </td>
+                <td className="p-3">
+                  {(() => {
+                    const j = JOINED_VIA[u.joinedVia?.kind || 'own'];
+                    return (
+                      <div title={j.hint}>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${j.tone}`}>
+                          <span className="material-symbols-outlined text-[14px]">{j.icon}</span>{j.label}
+                        </span>
+                        {u.joinedVia?.by ? <p className="text-[10px] text-text-muted mt-0.5">by {u.joinedVia.by}</p> : null}
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td className="p-3 text-xs text-text-muted">{u.joinedAt ? fmtDate(u.joinedAt) : '—'}</td>
                 <td className="p-3 text-xs text-text-muted">{u.lastActiveAt ? fmtDateTime(u.lastActiveAt) : '—'}</td>

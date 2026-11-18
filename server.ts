@@ -5259,6 +5259,30 @@ async function startServer() {
     }
   });
 
+  // The first email invite sent to each address before an account existed (who sent it, and when), for the Users tab's "How they joined" column. Kept
+  // for 10 minutes so paging and re-sorting the table does not read every invite again each time (read cost).
+  let emailInviteCache: { at: number; map: Map<string, { at: number; by: string }> } | null = null;
+  const firstEmailInvites = async (db: FirebaseFirestore.Firestore) => {
+    if (emailInviteCache && Date.now() - emailInviteCache.at < 10 * 60 * 1000) return emailInviteCache.map;
+    const map = new Map<string, { at: number; by: string }>();
+    try {
+      const snap = await db.collectionGroup('invites').select('email', 'createdAt', 'targetUid', 'invitedBy').get();
+      snap.docs.forEach((d) => {
+        const x = d.data() as any;
+        if (x.targetUid) return; // an in-app invite goes to someone who already has an account
+        const email = normalizeEmail(String(x.email || ''));
+        const at = Date.parse(x.createdAt);
+        if (!email || !Number.isFinite(at)) return;
+        const prev = map.get(email);
+        if (!prev || at < prev.at) map.set(email, { at, by: String(x.invitedBy || '') });
+      });
+    } catch (err) {
+      console.error('admin/users: invite lookup failed:', err);
+    }
+    emailInviteCache = { at: Date.now(), map };
+    return map;
+  };
+
   app.get('/api/admin/users', async (req, res) => {
     const decoded = await requireAdmin(req, res);
     if (!decoded || !adminDb) return;
@@ -5358,8 +5382,25 @@ async function startServer() {
         }
       }
 
+      // How each person got in. A WhatsApp/SMS join link that was claimed is recorded on the user (referredBy + referralChannel). An email invite is
+      // matched by address and date (invite sent before the account existed). Anyone else found the app on their own: Play Store, App Store, search or
+      // an ad. Google Ads cannot be told apart yet because the app does not record where an install came from.
+      const inviteTimes = await firstEmailInvites(db);
+      const nameByUid = new Map<string, string>(usersSnap.docs.map((d) => [d.id, String(d.data().displayName || '')]));
+      const joinedViaOf = (u: any): { kind: 'whatsapp' | 'sms' | 'link' | 'email' | 'own'; by: string } => {
+        if (u.referredBy) {
+          const by = nameByUid.get(u.referredBy) || '';
+          return { kind: u.referralChannel === 'wa' ? 'whatsapp' : u.referralChannel === 'sms' ? 'sms' : 'link', by };
+        }
+        const inv = u.email ? inviteTimes.get(normalizeEmail(u.email)) : undefined;
+        const joined = dateVal(u.joinedAt);
+        if (inv && joined && inv.at <= joined) return { kind: 'email', by: nameByUid.get(inv.by) || '' };
+        return { kind: 'own', by: '' };
+      };
+
       const enriched = users.map((u) => ({
         uid: u.uid,
+        joinedVia: joinedViaOf(u),
         email: u.email || '',
         displayName: u.displayName || '',
         photoURL: u.photoURL || '',
