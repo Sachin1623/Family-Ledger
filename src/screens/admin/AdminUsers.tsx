@@ -35,6 +35,36 @@ const JOINED_VIA: Record<string, { label: string; icon: string; tone: string; hi
 };
 
 type PlatformFilter = 'all' | 'android' | 'ios' | 'web' | 'unknown';
+type ViaFilter = 'all' | 'whatsapp' | 'sms' | 'link' | 'email' | 'own';
+type DatePreset = 'all' | 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom';
+const DATE_PRESETS: { id: DatePreset; label: string }[] = [
+  { id: 'all', label: 'All time' }, { id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' },
+  { id: 'thisWeek', label: 'This week' }, { id: 'lastWeek', label: 'Previous week' },
+  { id: 'thisMonth', label: 'This month' }, { id: 'lastMonth', label: 'Previous month' }, { id: 'custom', label: 'Date range' },
+];
+// Start (inclusive) and end (exclusive) of a preset, in the admin's own time zone. Weeks run Monday to Sunday.
+const presetRange = (p: DatePreset): { from: string; to: string } => {
+  const now = new Date();
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const add = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const mondayOffset = (day.getDay() + 6) % 7;
+  const weekStart = add(day, -mondayOffset);
+  let a: Date | null = null;
+  let b: Date | null = null;
+  if (p === 'today') { a = day; b = add(day, 1); }
+  else if (p === 'yesterday') { a = add(day, -1); b = day; }
+  else if (p === 'thisWeek') { a = weekStart; b = add(weekStart, 7); }
+  else if (p === 'lastWeek') { a = add(weekStart, -7); b = weekStart; }
+  else if (p === 'thisMonth') { a = new Date(now.getFullYear(), now.getMonth(), 1); b = new Date(now.getFullYear(), now.getMonth() + 1, 1); }
+  else if (p === 'lastMonth') { a = new Date(now.getFullYear(), now.getMonth() - 1, 1); b = new Date(now.getFullYear(), now.getMonth(), 1); }
+  return { from: a ? a.toISOString() : '', to: b ? b.toISOString() : '' };
+};
+// A picked calendar day (yyyy-mm-dd) as the start of that day in local time
+const dayStartIso = (v: string, plusDays = 0) => {
+  if (!v) return '';
+  const [y, m, d] = v.split('-').map(Number);
+  return new Date(y, m - 1, d + plusDays).toISOString();
+};
 
 type SortKey = 'joinedAt' | 'lastActiveAt' | 'expenseCount' | 'groupCount' | 'totalSpend';
 
@@ -171,21 +201,30 @@ export default function AdminUsers() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [hasMore, setHasMore] = useState(false);
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
+  const [viaFilter, setViaFilter] = useState<ViaFilter>('all');
+  const [viaCounts, setViaCounts] = useState<Record<string, number> | null>(null);
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [platformCounts, setPlatformCounts] = useState<{ android: number; ios: number; web: number; unknown: number } | null>(null);
 
   // `append: true` is used by "Load next 20" to grow the list instead of replacing it; a fresh
   // search, sort change, or initial load always starts a new page-0 list. Sorting is done
   // server-side (see /api/admin/users) — it has to rank the FULL matched set before paging, since
   // client-side re-sorting can only ever reorder whatever page happens to already be loaded.
-  const load = (searchTerm = '', offset = 0, append = false, key: SortKey = sortKey, dir: 'asc' | 'desc' = sortDir, platform: PlatformFilter = platformFilter) => {
+  const currentWindow = (preset: DatePreset = datePreset, f = customFrom, t = customTo): { from: string; to: string } =>
+    preset === 'custom' ? { from: dayStartIso(f), to: dayStartIso(t, 1) } : presetRange(preset);
+
+  const load = (searchTerm = '', offset = 0, append = false, key: SortKey = sortKey, dir: 'asc' | 'desc' = sortDir, platform: PlatformFilter = platformFilter, via: ViaFilter = viaFilter, win: { from: string; to: string } = currentWindow()) => {
     (append ? setLoadingMore : setLoading)(true);
     adminGet(
-      `/api/admin/users?limit=${PAGE_SIZE}&offset=${offset}&sortKey=${key}&sortDir=${dir}${platform !== 'all' ? `&platform=${platform}` : ''}${searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : ''}`,
+      `/api/admin/users?limit=${PAGE_SIZE}&offset=${offset}&sortKey=${key}&sortDir=${dir}${platform !== 'all' ? `&platform=${platform}` : ''}${via !== 'all' ? `&via=${via}` : ''}${win.from ? `&from=${encodeURIComponent(win.from)}` : ''}${win.to ? `&to=${encodeURIComponent(win.to)}` : ''}${searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : ''}`,
     )
       .then((data) => {
         setUsers((prev) => (append ? [...prev, ...data.users] : data.users));
         setHasMore(!!data.hasMore);
         if (data.platformCounts) setPlatformCounts(data.platformCounts);
+        if (data.viaCounts) setViaCounts(data.viaCounts);
       })
       .catch((err) => setError(err.message))
       .finally(() => (append ? setLoadingMore(false) : setLoading(false)));
@@ -209,6 +248,23 @@ export default function AdminUsers() {
   const handlePlatformChange = (p: PlatformFilter) => {
     setPlatformFilter(p);
     load(search, 0, false, sortKey, sortDir, p);
+  };
+
+  const handleViaChange = (v: ViaFilter) => {
+    setViaFilter(v);
+    load(search, 0, false, sortKey, sortDir, platformFilter, v);
+  };
+
+  const handleDatePreset = (p: DatePreset) => {
+    setDatePreset(p);
+    // "Date range" waits for the dates; every other choice loads at once
+    if (p !== 'custom' || customFrom || customTo) load(search, 0, false, sortKey, sortDir, platformFilter, viaFilter, currentWindow(p));
+  };
+
+  const handleCustomDate = (f: string, t: string) => {
+    setCustomFrom(f);
+    setCustomTo(t);
+    load(search, 0, false, sortKey, sortDir, platformFilter, viaFilter, currentWindow('custom', f, t));
   };
 
   const handleSortKeyChange = (key: SortKey) => {
@@ -323,6 +379,52 @@ export default function AdminUsers() {
             className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${platformFilter === id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`}
           >
             {logo && <PlatformLogo kind={logo} size={14} color={platformFilter === id ? '#ffffff' : undefined} />}
+            {label}{count !== null ? ` · ${count}` : ''}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <span className="text-xs font-bold text-text-muted uppercase tracking-wider shrink-0">Joined</span>
+        {DATE_PRESETS.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => handleDatePreset(d.id)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${datePreset === d.id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`}
+          >
+            {d.label}
+          </button>
+        ))}
+      </div>
+
+      {datePreset === 'custom' && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs font-bold text-text-muted">From
+            <input type="date" value={customFrom} max={customTo || undefined} onChange={(e) => handleCustomDate(e.target.value, customTo)} className="ml-2 rounded-xl border border-border-subtle px-3 py-2 text-sm" />
+          </label>
+          <label className="text-xs font-bold text-text-muted">To
+            <input type="date" value={customTo} min={customFrom || undefined} onChange={(e) => handleCustomDate(customFrom, e.target.value)} className="ml-2 rounded-xl border border-border-subtle px-3 py-2 text-sm" />
+          </label>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <span className="text-xs font-bold text-text-muted uppercase tracking-wider shrink-0">How they joined</span>
+        {([
+          ['all', 'All', viaCounts ? Object.values(viaCounts).reduce((a: number, b: number) => a + b, 0) : null],
+          ['whatsapp', 'WhatsApp', viaCounts?.whatsapp ?? null],
+          ['sms', 'SMS', viaCounts?.sms ?? null],
+          ['link', 'Invite link', viaCounts?.link ?? null],
+          ['email', 'Email invite', viaCounts?.email ?? null],
+          ['own', 'On their own', viaCounts?.own ?? null],
+        ] as const).map(([id, label, count]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => handleViaChange(id)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${viaFilter === id ? 'bg-primary text-white border-primary' : 'bg-white text-text-muted border-border-subtle'}`}
+          >
             {label}{count !== null ? ` · ${count}` : ''}
           </button>
         ))}

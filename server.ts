@@ -5311,10 +5311,42 @@ async function startServer() {
           (u) => (u.email || '').toLowerCase().includes(search) || (u.displayName || '').toLowerCase().includes(search),
         );
       }
+      const dateVal = (v: string | null | undefined) => (v ? new Date(v).getTime() : 0);
+      // Joined-date window (from/to are ISO instants the browser worked out in the admin's own time zone)
+      const fromMs = req.query.from ? new Date(String(req.query.from)).getTime() : NaN;
+      const toMs = req.query.to ? new Date(String(req.query.to)).getTime() : NaN;
+      if (!Number.isNaN(fromMs) || !Number.isNaN(toMs)) {
+        allUsers = allUsers.filter((u) => {
+          const j = dateVal(u.joinedAt);
+          if (!j) return false;
+          return (Number.isNaN(fromMs) || j >= fromMs) && (Number.isNaN(toMs) || j < toMs);
+        });
+      }
+      // How each person got in. A WhatsApp/SMS join link that was claimed is recorded on the user (referredBy + referralChannel). An email invite is
+      // matched by address and date (invite sent before the account existed). Anyone else found the app on their own: Play Store, App Store, search or
+      // an ad. Google Ads cannot be told apart yet because the app does not record where an install came from.
+      const inviteTimes = await firstEmailInvites(db);
+      const nameByUid = new Map<string, string>(usersSnap.docs.map((d) => [d.id, String(d.data().displayName || '')]));
+      const joinedViaOf = (u: any): { kind: 'whatsapp' | 'sms' | 'link' | 'email' | 'own'; by: string } => {
+        if (u.referredBy) {
+          const by = nameByUid.get(u.referredBy) || '';
+          return { kind: u.referralChannel === 'wa' ? 'whatsapp' : u.referralChannel === 'sms' ? 'sms' : 'link', by };
+        }
+        const inv = u.email ? inviteTimes.get(normalizeEmail(u.email)) : undefined;
+        const joined = dateVal(u.joinedAt);
+        if (inv && joined && inv.at <= joined) return { kind: 'email', by: nameByUid.get(inv.by) || '' };
+        return { kind: 'own', by: '' };
+      };
+
       // how many of the searched users are on each platform (counted before the platform filter, so the filter buttons can show them)
       const platformCounts = { android: 0, ios: 0, web: 0, unknown: 0 };
       allUsers.forEach((u) => { platformCounts[platformOf(u)] += 1; });
       if (platformFilter) allUsers = allUsers.filter((u) => platformOf(u) === platformFilter);
+      const viaOf = new Map<string, string>(allUsers.map((u) => [u.uid, joinedViaOf(u).kind]));
+      const viaCounts: Record<string, number> = { whatsapp: 0, sms: 0, link: 0, email: 0, own: 0 };
+      allUsers.forEach((u) => { viaCounts[viaOf.get(u.uid) || 'own'] += 1; });
+      const viaFilter = ['whatsapp', 'sms', 'link', 'email', 'own'].includes(String(req.query.via)) ? String(req.query.via) : '';
+      if (viaFilter) allUsers = allUsers.filter((u) => viaOf.get(u.uid) === viaFilter);
       const totalMatched = allUsers.length;
       // Aggregated (group/expense/spend) for EVERY matched user, not just whatever page is about
       // to be sliced out below — sorting by one of those aggregate columns needs the full matched
@@ -5348,7 +5380,6 @@ async function startServer() {
         spendByUid.set(data.addedBy, entry);
       });
 
-      const dateVal = (v: string | null | undefined) => (v ? new Date(v).getTime() : 0);
       const sortValue = (u: any): number => {
         switch (sortKey) {
           case 'lastActiveAt':
@@ -5382,22 +5413,6 @@ async function startServer() {
         }
       }
 
-      // How each person got in. A WhatsApp/SMS join link that was claimed is recorded on the user (referredBy + referralChannel). An email invite is
-      // matched by address and date (invite sent before the account existed). Anyone else found the app on their own: Play Store, App Store, search or
-      // an ad. Google Ads cannot be told apart yet because the app does not record where an install came from.
-      const inviteTimes = await firstEmailInvites(db);
-      const nameByUid = new Map<string, string>(usersSnap.docs.map((d) => [d.id, String(d.data().displayName || '')]));
-      const joinedViaOf = (u: any): { kind: 'whatsapp' | 'sms' | 'link' | 'email' | 'own'; by: string } => {
-        if (u.referredBy) {
-          const by = nameByUid.get(u.referredBy) || '';
-          return { kind: u.referralChannel === 'wa' ? 'whatsapp' : u.referralChannel === 'sms' ? 'sms' : 'link', by };
-        }
-        const inv = u.email ? inviteTimes.get(normalizeEmail(u.email)) : undefined;
-        const joined = dateVal(u.joinedAt);
-        if (inv && joined && inv.at <= joined) return { kind: 'email', by: nameByUid.get(inv.by) || '' };
-        return { kind: 'own', by: '' };
-      };
-
       const enriched = users.map((u) => ({
         uid: u.uid,
         joinedVia: joinedViaOf(u),
@@ -5416,7 +5431,7 @@ async function startServer() {
         isPrimaryAdmin: PRIMARY_ADMIN_UIDS.includes(u.uid) || PRIMARY_ADMIN_EMAILS.includes(normalizeEmail(u.email || '')),
       }));
 
-      return res.json({ users: enriched, total: totalMatched, offset, limit, hasMore: offset + limit < totalMatched, platformCounts });
+      return res.json({ users: enriched, total: totalMatched, offset, limit, hasMore: offset + limit < totalMatched, platformCounts, viaCounts });
     } catch (error) {
       console.error('admin/users error:', error);
       return res.status(500).json({ error: 'Unable to load users.' });
