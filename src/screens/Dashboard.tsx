@@ -45,7 +45,8 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   INR: '₹',
   CAD: 'C$',
   AUD: 'A$',
-  AED: 'AED'
+  AED: 'AED',
+  EGP: 'E£'
 };
 
 // Which groups are expanded is purely a per-device display preference — localStorage, not

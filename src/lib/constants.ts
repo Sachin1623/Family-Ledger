@@ -8,7 +8,8 @@ export const CURRENCY_SYMBOLS: Record<string, string> = {
   AED: 'AED',
   SAR: '﷼',
   JPY: '¥',
-  CNY: '¥'
+  CNY: '¥',
+  EGP: 'E£'
 };
 
 export const getCurrencySymbol = (currencyCode?: string) => {
@@ -44,6 +45,7 @@ const TIMEZONE_CURRENCY: Record<string, string> = {
   'Australia/Perth': 'AUD',
   'Asia/Dubai': 'AED',
   'Asia/Riyadh': 'SAR',
+  'Africa/Cairo': 'EGP',
   'Asia/Tokyo': 'JPY',
   'Asia/Shanghai': 'CNY',
   'Europe/Paris': 'EUR',
