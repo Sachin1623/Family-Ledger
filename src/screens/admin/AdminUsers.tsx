@@ -202,6 +202,7 @@ export default function AdminUsers() {
   const [hasMore, setHasMore] = useState(false);
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
   const [viaFilter, setViaFilter] = useState<ViaFilter>('all');
+  const [totals, setTotals] = useState<{ users: number; groups: number; expenses: number; spend: number } | null>(null);
   const [viaCounts, setViaCounts] = useState<Record<string, number> | null>(null);
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
   const [customFrom, setCustomFrom] = useState('');
@@ -225,6 +226,7 @@ export default function AdminUsers() {
         setHasMore(!!data.hasMore);
         if (data.platformCounts) setPlatformCounts(data.platformCounts);
         if (data.viaCounts) setViaCounts(data.viaCounts);
+        if (data.totals) setTotals(data.totals);
       })
       .catch((err) => setError(err.message))
       .finally(() => (append ? setLoadingMore(false) : setLoading(false)));
@@ -429,6 +431,17 @@ export default function AdminUsers() {
           </button>
         ))}
       </div>
+
+      {totals && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {([['Users', totals.users], ['Groups', totals.groups], ['Expenses', totals.expenses], ['Total spend', totals.spend]] as const).map(([label, val]) => (
+            <div key={label} className="rounded-2xl border border-border-subtle bg-white px-4 py-3">
+              <div className="text-[11px] font-bold text-text-muted uppercase tracking-wider">{label}</div>
+              <div className="text-xl font-extrabold text-text-main tabular-nums">{inNum(val)}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Sort by</span>

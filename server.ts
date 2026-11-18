@@ -5397,6 +5397,14 @@ async function startServer() {
       };
       allUsers.sort((a, b) => (sortDir === 'asc' ? sortValue(a) - sortValue(b) : sortValue(b) - sortValue(a)));
 
+      // Totals for everything the filters matched (not just this page), taken from the maps built above: no extra reads
+      const totals = { users: allUsers.length, groups: 0, expenses: 0, spend: 0 };
+      allUsers.forEach((u) => {
+        totals.groups += groupCountByUid.get(u.uid) || 0;
+        const sp = spendByUid.get(u.uid);
+        if (sp) { totals.expenses += sp.count; totals.spend += sp.total; }
+      });
+
       const users = allUsers.slice(offset, offset + limit);
 
       // Password-reset only makes sense for email/password accounts — look up each user's
@@ -5431,7 +5439,7 @@ async function startServer() {
         isPrimaryAdmin: PRIMARY_ADMIN_UIDS.includes(u.uid) || PRIMARY_ADMIN_EMAILS.includes(normalizeEmail(u.email || '')),
       }));
 
-      return res.json({ users: enriched, total: totalMatched, offset, limit, hasMore: offset + limit < totalMatched, platformCounts, viaCounts });
+      return res.json({ users: enriched, total: totalMatched, offset, limit, hasMore: offset + limit < totalMatched, platformCounts, viaCounts, totals });
     } catch (error) {
       console.error('admin/users error:', error);
       return res.status(500).json({ error: 'Unable to load users.' });
