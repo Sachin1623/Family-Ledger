@@ -101,8 +101,8 @@ export default function Friends() {
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const handleShowQr = async () => {
     try {
-      const QRCode = (await import('qrcode')).default;
-      setQrUrl(await QRCode.toDataURL(`${window.location.origin}/add-friend/${myUid}`, { margin: 1, width: 480, color: { dark: '#06222f', light: '#ffffff' } }));
+      const { makeBrandedQr } = await import('../lib/brandedQr');
+      setQrUrl(await makeBrandedQr(`${window.location.origin}/add-friend/${myUid}`));
     } catch {
       setAddFeedback({ type: 'error', text: 'Could not make the QR code.' });
     }
@@ -660,7 +660,10 @@ export default function Friends() {
       {qrUrl && (
         <div className="fixed inset-0 z-[300] bg-black/60 flex items-center justify-center p-6" onClick={() => setQrUrl(null)}>
           <div className="bg-white rounded-3xl p-5 w-full max-w-xs text-center space-y-3" onClick={(e) => e.stopPropagation()}>
-            <p className="text-base font-extrabold text-primary">Scan to be my friend</p>
+            <div>
+              <p className="text-xl font-extrabold text-primary leading-tight break-words">{profile?.displayName || user?.displayName || 'My'}</p>
+              <p className="text-sm font-bold text-text-muted mt-0.5">Scan to be my friend on FamilyLedger</p>
+            </div>
             <img src={qrUrl} alt="QR code of my friend link" className="w-full aspect-square rounded-2xl border border-border-subtle" />
             <p className="text-xs text-text-muted">Ask them to point their phone camera here.</p>
             <button type="button" onClick={() => setQrUrl(null)} className="w-full h-11 rounded-2xl bg-primary text-white font-extrabold text-sm">Done</button>

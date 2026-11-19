@@ -264,8 +264,8 @@ export default function GroupQuickActionsMenu({ groupId, group, members, budget,
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const handleQr = async () => {
     try {
-      const QRCode = (await import('qrcode')).default;
-      setQrUrl(await QRCode.toDataURL(joinMessage().link, { margin: 1, width: 480, color: { dark: '#06222f', light: '#ffffff' } }));
+      const { makeBrandedQr } = await import('../lib/brandedQr');
+      setQrUrl(await makeBrandedQr(joinMessage().link));
     } catch {
       setInviteFeedback({ type: 'error', text: 'Could not make the QR code.' });
     }
