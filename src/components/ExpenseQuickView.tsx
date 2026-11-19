@@ -15,7 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { parseLocalDate } from '../lib/dateUtils';
 import ImageLightbox from './ImageLightbox';
 import { useLanguage } from '../context/LanguageContext';
-import { resizeImageFile } from '../lib/imageUtils';
+import { resizeImageToBudget, photoBudgetChars } from '../lib/imageUtils';
 
 const MAX_PHOTOS = 3;
 const MAX_TOTAL_BYTES = 900_000; // same Firestore document-size margin ImageAttachments uses
@@ -98,7 +98,9 @@ export default function ExpenseQuickView({
     setPhotoError(null);
     setPhotoBusy(true);
     try {
-      const resized = await Promise.all(files.slice(0, room).map((f) => resizeImageFile(f, 900, 900, 0.5)));
+      const picked = files.slice(0, room);
+      const budget = photoBudgetChars(MAX_TOTAL_BYTES, photos.reduce((sum, x) => sum + x.length, 0), picked.length);
+      const resized = await Promise.all(picked.map((f) => resizeImageToBudget(f, budget)));
       const next = [...photos, ...resized];
       if (next.reduce((sum, x) => sum + x.length, 0) > MAX_TOTAL_BYTES) {
         setPhotoError('These photos are too large even after compression. Try fewer or smaller ones.');

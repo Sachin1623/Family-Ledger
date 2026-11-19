@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { pushModalBackHandler, popModalBackHandler } from '../lib/modalBackHandler';
+import { shareOrDownloadFile } from '../lib/fileShare';
 
 // Full-size image viewer — shared by every "attached photo" thumbnail in the app (Add Expense,
 // To-Do, Recurring Expenses, Scheduled reminders' ImageAttachments picker, the To-Do list row,
@@ -25,6 +26,26 @@ export default function ImageLightbox({ src, onClose }: { src: string; onClose: 
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState<Pt>({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Saves the picture: on a phone it opens the share sheet (Save to device / Gallery / Drive / WhatsApp), in a browser it downloads the file.
+  const handleDownload = async () => {
+    if (saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const blob = await (await fetch(src)).blob();
+      const type = blob.type || 'image/jpeg';
+      const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg';
+      await shareOrDownloadFile(blob, `familyledger-receipt-${new Date().toISOString().slice(0, 10)}.${ext}`, type);
+    } catch (err) {
+      console.error('Could not save the picture:', err);
+      setSaveError('Could not save this picture. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Live values for the pointer handlers (state would be stale inside them).
   const view = useRef({ scale: 1, x: 0, y: 0 });
@@ -122,6 +143,20 @@ export default function ImageLightbox({ src, onClose }: { src: string; onClose: 
       >
         <span className="material-symbols-outlined">close</span>
       </button>
+
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); handleDownload(); }}
+        disabled={saving}
+        className="absolute top-4 left-4 z-10 h-9 pl-3 pr-4 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-60 flex items-center gap-1.5 text-white text-xs font-bold"
+        aria-label="Download picture"
+      >
+        <span className="material-symbols-outlined text-[20px]">{saving ? 'hourglass_top' : 'download'}</span>
+        {saving ? 'Saving…' : 'Download'}
+      </button>
+      {saveError && (
+        <div className="absolute top-16 left-4 z-10 rounded-xl bg-red-600/90 px-3 py-2 text-xs font-bold text-white" onClick={(e) => e.stopPropagation()}>{saveError}</div>
+      )}
 
       <img
         src={src}

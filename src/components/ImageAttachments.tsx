@@ -1,6 +1,6 @@
 import React from 'react';
 import { Capacitor } from '@capacitor/core';
-import { resizeImageFile } from '../lib/imageUtils';
+import { resizeImageToBudget, photoBudgetChars } from '../lib/imageUtils';
 import ImageLightbox from './ImageLightbox';
 
 // Safety margin under Firestore's 1MB document cap, leaving room for every other field on the
@@ -36,7 +36,8 @@ export default function ImageAttachments({ images, onChange, maxImages = 3, labe
     if (toProcess.length === 0) return;
     setProcessing(true);
     try {
-      const resized = await Promise.all(toProcess.map((f) => resizeImageFile(f, 900, 900, 0.5)));
+      const budget = photoBudgetChars(MAX_TOTAL_BYTES, images.reduce((sum, s) => sum + s.length, 0), toProcess.length);
+      const resized = await Promise.all(toProcess.map((f) => resizeImageToBudget(f, budget)));
       const next = [...images, ...resized];
       if (next.reduce((sum, s) => sum + s.length, 0) > MAX_TOTAL_BYTES) {
         setError('These photos are too large even after compression — try fewer or smaller images.');
