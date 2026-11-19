@@ -67,7 +67,7 @@ const LEVEL_WORD: Record<Level, string> = { ok: 'good', warn: 'watch', bad: 'act
 function Tile({ label, value, sub, level, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; level?: Level; tone?: 'up' | 'down' | 'flat' }) {
   return (
     <div className="bg-white rounded-2xl border border-border-subtle p-3 min-w-0">
-      <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider truncate">{label}</p>
+      <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider leading-snug break-words">{label}</p>
       <p className="text-2xl font-black text-primary leading-tight">{value}</p>
       <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
         {level && level !== 'none' && <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${LEVEL_STYLE[level]}`}>{LEVEL_WORD[level]}</span>}
