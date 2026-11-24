@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteDoc, deleteField, doc, query, updateDoc, where } from 'firebase/firestore';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { clsx } from 'clsx';
@@ -10,6 +10,7 @@ import { formatRelativeTimeAgo, parseLocalDate } from '../lib/dateUtils';
 import { ownPhoto, useIdentities } from '../lib/userIdentity';
 import { placeholderRows, isPlaceholderId } from '../lib/groupParticipants';
 import MemberAvatar from '../components/MemberAvatar';
+import { ChatPanel, useGameChat } from '../components/GameChat';
 import ImageAttachments from '../components/ImageAttachments';
 import ImageLightbox from '../components/ImageLightbox';
 import TrackPaymentSheet, { useTrackInGroup } from '../components/TrackPaymentSheet';
@@ -48,8 +49,23 @@ const DOC_IMAGE_BUDGET = 900_000; // a payment lives in one Firestore document (
 
 export default function GroupPayments() {
   const { groupId } = useParams<{ groupId: string }>();
-  const [searchParams] = useSearchParams();
-  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { user, profile } = useAuth();
+  // Group chat. A Payments group opens this screen instead of the normal group page, which is where chat lives, so it needs its own.
+  const [showChat, setShowChat] = useState(false);
+  const { messages: chatMessages, loading: chatLoading, hasUnseen: chatUnseen, markSeen: markChatSeen } = useGameChat('groups', groupId);
+  // a tapped chat notification lands here as ?chat=1. This reacts to the param itself (not on mount only): the screen is often already open
+  useEffect(() => {
+    if (searchParams.get('chat') === '1') {
+      setShowChat(true);
+      markChatSeen();
+      const next = new URLSearchParams(searchParams);
+      next.delete('chat');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const [groupSnap] = useDocument(groupId ? doc(db, 'groups', groupId) : null);
   const group: any = groupSnap?.data();
   const [showReminders, setShowReminders] = useState(searchParams.get('reminders') === '1'); // the Dashboard card's "Manage" lands here
@@ -197,6 +213,50 @@ export default function GroupPayments() {
           Payment reminders{reminderCount > 0 ? ` · ${reminderCount} on` : ''}
         </button>
       </div>
+
+      <div className="rounded-2xl border border-border-subtle bg-white p-3 space-y-2">
+        <button
+          type="button"
+          onClick={() => { setShowChat(true); markChatSeen(); }}
+          className="relative w-full rounded-xl bg-primary/10 text-primary py-2.5 text-sm font-black active:scale-95 flex items-center justify-center gap-1.5"
+        >
+          <span className="material-symbols-outlined text-[18px]">chat_bubble</span>
+          Group chat
+          {chatUnseen && <span className="absolute top-2 right-3 w-2 h-2 rounded-full bg-error" aria-label="New messages" />}
+        </button>
+        {members.filter((m) => m.userId !== user?.uid && !isPlaceholderId(m.userId, group)).length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {members.filter((m) => m.userId !== user?.uid && !isPlaceholderId(m.userId, group)).map((m) => (
+              <button
+                key={m.userId}
+                type="button"
+                onClick={() => navigate(`/?dm=${m.userId}`)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle pl-1 pr-3 py-1 text-xs font-bold text-text-main active:scale-95"
+                title={`Message ${nameOf(m.userId)}`}
+              >
+                <MemberAvatar name={nameOf(m.userId)} photo={photoOf(m.userId)} size={22} />
+                {nameOf(m.userId).split(' ')[0]}
+                <span className="material-symbols-outlined text-[16px] text-primary">chat_bubble</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {showChat && user && groupId && (
+        <ChatPanel
+          collectionName="groups"
+          gameId={groupId}
+          messages={chatMessages}
+          loading={chatLoading}
+          myUid={user.uid}
+          myDisplayName={profile?.displayName || user.displayName || 'Someone'}
+          myPhotoURL={profile?.photoURL || user.photoURL || ''}
+          otherUids={members.filter((m) => m.userId !== user.uid).map((m) => m.userId)}
+          onClose={() => setShowChat(false)}
+          title="Group Chat"
+        />
+      )}
 
       {showReminders && groupId && (
         <PaymentRemindersSheet
