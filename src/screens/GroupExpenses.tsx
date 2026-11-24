@@ -206,11 +206,12 @@ export default function GroupExpenses({ embedded }: { embedded?: { expenseId: st
     if (groupId === 'all') {
       exps = exps.filter(exp => activeGroupIds.includes(exp.groupId));
     }
-    // Sorted by when it was actually ENTERED (createdAt), not the transaction date the user
-    // picked (date) — the two can differ a lot (e.g. backdating a purchase from last week), and
-    // the list should reflect "what did people just add" rather than reshuffling itself around
-    // whatever dates people happened to choose.
-    return exps.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    // Sorted by the transaction DATE the person picked (newest first), and by when it was entered only to order entries that share a date.
+    // It used to sort by entry time alone, so adding an old record (last month's bill) put it at the very top of the list instead of in
+    // its place in time.
+    return exps.sort((a, b) =>
+      String(b.date || '').localeCompare(String(a.date || ''))
+      || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [expensesValue, groupId, allGroups]);
 
   // Category filter dropdown's option list — group-aware (hides what a group's admin hid, includes
