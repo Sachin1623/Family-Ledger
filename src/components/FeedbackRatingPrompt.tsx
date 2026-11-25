@@ -73,6 +73,8 @@ export default function FeedbackRatingPrompt() {
         console.warn('requestReview unavailable, falling back to store listing:', err);
         if (Capacitor.getPlatform() === 'android') {
           window.open(PLAY_STORE_URL, '_blank');
+        } else if (Capacitor.getPlatform() === 'ios') {
+          window.open('https://apps.apple.com/in/app/familyledger-family-finance/id6804777430?action=write-review', '_blank');
         }
       }
       await recordShown({ hasRequestedAppReview: true });

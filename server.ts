@@ -3030,6 +3030,8 @@ async function processHabitReminders(db: Firestore, habitDocs: FirebaseFirestore
     const todo = d.data();
     if (todo.recurringActive === false) return false;
     if (!todo.reminderOffsetMinutes || !todo.nextRunDate || todo.habitReminderSent) return false;
+    // a personal habit set to "alarm" rings on the phone itself (ToDoList.tsx arms it), so it gets no push on top
+    if (todo.reminderStyle === 'alarm' && !todo.groupId) return false;
     const dueAt = new Date(todo.nextRunDate);
     if (dueAt <= now) return false; // already due — processRecurringTodos owns this occurrence now
     return new Date(dueAt.getTime() - todo.reminderOffsetMinutes * 60000) <= now;

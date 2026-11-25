@@ -20,6 +20,7 @@ import HabitTracker from '../components/HabitTracker';
 import FrequencyPicker from '../components/FrequencyPicker';
 import {
   FrequencyConfig,
+  nextOccurrenceAfter,
   firstOccurrenceOnOrAfter,
   describeFrequency,
   frequencyConfigFromFields,
@@ -246,6 +247,23 @@ export default function ToDoList() {
     const alarms: { id: string; text: string; reminderAt: string }[] = [];
     myTodosValue.docs.forEach((d) => {
       const todo = { id: d.id, ...d.data() } as any;
+      // A personal habit set to "alarm": it rings a set time before each occurrence. The next two weeks of occurrences are armed at once, so
+      // it keeps ringing even if the app is not opened (the server's habit push is skipped for these, see processHabitReminders).
+      const habitAlarm = todo.recurring && todo.recurringActive !== false && !todo.groupId && todo.reminderStyle === 'alarm'
+        && todo.reminderOffsetMinutes && todo.nextRunDate;
+      if (habitAlarm) {
+        cancelLocalTodoReminder(todo.id);
+        let occ = new Date(todo.nextRunDate);
+        for (let i = 0; i < 14; i++) {
+          if (!(i === 0 && todo.done)) { // this occurrence is already ticked off: no reminder for it
+            const at = new Date(occ.getTime() - todo.reminderOffsetMinutes * 60000).toISOString();
+            if (canRingTodoAlarm()) alarms.push({ id: `${todo.id}_h${i}`, text: todo.text, reminderAt: at });
+            else if (new Date(at).getTime() > Date.now()) { scheduleLocalTodoReminder({ id: todo.id, text: todo.text, reminderAt: at }); break; }
+          }
+          occ = nextOccurrenceAfter(todo as FrequencyConfig, occ);
+        }
+        return;
+      }
       const eligible = !todo.done && !todo.groupId && todo.reminderAt;
       if (eligible && todo.reminderStyle === 'alarm' && canRingTodoAlarm()) {
         alarms.push({ id: todo.id, text: todo.text, reminderAt: todo.reminderAt });
@@ -258,6 +276,32 @@ export default function ToDoList() {
     });
     syncTodoAlarms(alarms);
   }, [myTodosValue]);
+
+  // how a reminder arrives: a quiet notification or an alarm that rings. Used for a to-do's reminder and for a habit's "remind me before".
+  const renderStyleChooser = () => (
+  <div className="mt-3 rounded-2xl bg-slate-50 p-2.5">
+    <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500 mb-1.5 px-0.5">How should it remind you?</p>
+    {groupId ? (
+      <p className="text-[11.5px] text-slate-600 px-0.5">A shared to-do reminds everyone with a notification. Alarms are for tasks that are just yours.</p>
+    ) : (
+      <>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => setReminderStyle('notification')} className={clsx('rounded-xl border-2 px-3 py-2 text-left transition-all active:scale-95', reminderStyle === 'notification' ? 'border-[#22c1a5] bg-white' : 'border-transparent bg-white/60')}>
+            <span className="block text-sm font-black text-primary">🔔 Notification</span>
+            <span className="block text-[10.5px] text-slate-500 leading-snug">A quiet nudge on your phone</span>
+          </button>
+          <button type="button" onClick={() => setReminderStyle('alarm')} className={clsx('rounded-xl border-2 px-3 py-2 text-left transition-all active:scale-95', reminderStyle === 'alarm' ? 'border-orange-400 bg-orange-50' : 'border-transparent bg-white/60')}>
+            <span className="block text-sm font-black text-primary">⏰ Alarm</span>
+            <span className="block text-[10.5px] text-slate-500 leading-snug">Rings until you stop or snooze it</span>
+          </button>
+        </div>
+        {reminderStyle === 'alarm' && (
+          <p className="text-[11px] text-slate-600 mt-1.5 px-0.5">{canRingTodoAlarm() ? 'Rings like an alarm clock with Snooze and Dismiss, even when the phone is on silent.' : 'Alarms ring on Android phones. Here you will get a notification instead.'}</p>
+        )}
+      </>
+    )}
+  </div>
+  );
 
   const resetForm = () => {
     setEditingId(null);
@@ -340,7 +384,7 @@ export default function ToDoList() {
           dueDate,
           reminderSent: false,
           groupId: groupId || null,
-          reminderStyle: reminderAt && !groupId ? reminderStyle : null,
+          reminderStyle: (reminderAt || (recurring && reminderOffsetMinutes)) && !groupId ? reminderStyle : null,
           images,
           notes: trimmedNotes || null,
           ...recurringFields,
@@ -356,7 +400,7 @@ export default function ToDoList() {
           dueDate,
           reminderSent: false,
           groupId: groupId || null,
-          ...(reminderAt && !groupId ? { reminderStyle } : {}),
+          ...((reminderAt || (recurring && reminderOffsetMinutes)) && !groupId ? { reminderStyle } : {}),
           createdAt: new Date().toISOString(),
           ...(images.length > 0 ? { images } : {}),
           ...(trimmedNotes ? { notes: trimmedNotes } : {}),
@@ -780,28 +824,7 @@ export default function ToDoList() {
 
                       {/* how the reminder arrives */}
                       {remindKind !== 'none' && (
-                        <div className="mt-3 rounded-2xl bg-slate-50 p-2.5">
-                          <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500 mb-1.5 px-0.5">How should it remind you?</p>
-                          {groupId ? (
-                            <p className="text-[11.5px] text-slate-600 px-0.5">A shared to-do reminds everyone with a notification. Alarms are for tasks that are just yours.</p>
-                          ) : (
-                            <>
-                              <div className="grid grid-cols-2 gap-2">
-                                <button type="button" onClick={() => setReminderStyle('notification')} className={clsx('rounded-xl border-2 px-3 py-2 text-left transition-all active:scale-95', reminderStyle === 'notification' ? 'border-[#22c1a5] bg-white' : 'border-transparent bg-white/60')}>
-                                  <span className="block text-sm font-black text-primary">🔔 Notification</span>
-                                  <span className="block text-[10.5px] text-slate-500 leading-snug">A quiet nudge on your phone</span>
-                                </button>
-                                <button type="button" onClick={() => setReminderStyle('alarm')} className={clsx('rounded-xl border-2 px-3 py-2 text-left transition-all active:scale-95', reminderStyle === 'alarm' ? 'border-orange-400 bg-orange-50' : 'border-transparent bg-white/60')}>
-                                  <span className="block text-sm font-black text-primary">⏰ Alarm</span>
-                                  <span className="block text-[10.5px] text-slate-500 leading-snug">Rings until you stop or snooze it</span>
-                                </button>
-                              </div>
-                              {reminderStyle === 'alarm' && (
-                                <p className="text-[11px] text-slate-600 mt-1.5 px-0.5">{canRingTodoAlarm() ? 'Rings like an alarm clock with Snooze and Dismiss, even when the phone is on silent.' : 'Alarms ring on Android phones. Here you will get a notification instead.'}</p>
-                              )}
-                            </>
-                          )}
-                        </div>
+                        renderStyleChooser()
                       )}
                     </>
                   )}
@@ -854,6 +877,7 @@ export default function ToDoList() {
                               <option value="1440">{t('todo.remind1day')}</option>
                             </select>
                           </div>
+                          {reminderOffsetMinutes ? renderStyleChooser() : null}
                         </>
                       )}
                     </div>

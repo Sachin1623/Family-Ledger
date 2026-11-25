@@ -5,6 +5,8 @@ import BroadcastVideo from './BroadcastVideo';
 import BroadcastReactions from './BroadcastReactions';
 import BroadcastShare from './BroadcastShare';
 import type { BroadcastVia } from '../lib/broadcastTrack';
+import { isIosApp } from '../lib/platform';
+import { APP_STORE_URL } from '../lib/broadcastTemplates';
 
 // The broadcast window itself (title, message, video, pictures, follow buttons, Close). Shared by
 // BroadcastBanner (the automatic popup) and BroadcastReplay (watch again), so both look identical.
@@ -23,11 +25,11 @@ export type BroadcastContent = {
 const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
 const OWN_HOST = 'familyledger.thirteenapps.com';
 
-function friendlyLabel(url: string): string {
+function friendlyLabel(url: string, rating = false): string {
   if (url.includes('instagram.com')) return 'Instagram: @family.ledger';
   if (url.includes('facebook.com')) return 'Facebook: Family Ledger';
   if (url.includes('play.google.com')) return 'Rate us on Google Play';
-  if (url.includes('apps.apple.com')) return 'Get FamilyLedger on the App Store';
+  if (url.includes('apps.apple.com')) return rating ? 'Rate us on the App Store' : 'Get FamilyLedger on the App Store';
   if (url.includes(OWN_HOST) && url.includes('/feedback')) return 'Send us your feedback';
   return url.replace(/^https?:\/\/(www\.)?/, '');
 }
@@ -56,7 +58,7 @@ export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel
       return (
         <React.Fragment key={i}>
           <button type="button" onClick={() => openLink(url)} className="text-primary font-bold underline underline-offset-2 text-left break-all">
-            {friendlyLabel(url)}
+            {friendlyLabel(url, /rat(e|ing)/i.test(broadcast.title || ''))}
           </button>
           {trailing}
         </React.Fragment>
@@ -122,7 +124,9 @@ export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel
         {broadcast.images && broadcast.images.length > 0 && (
           <div className="space-y-3">
             {broadcast.images.map((src, idx) => {
-              const link = broadcast.imageLinks?.[idx];
+              let link = broadcast.imageLinks?.[idx];
+              // a picture that links to a store opens the store of the phone it is shown on
+              if (link && isIosApp() && link.includes('play.google.com')) link = APP_STORE_URL;
               const picture = <img src={src} alt="" className="w-full rounded-2xl border border-border-subtle object-cover" />;
               // a picture with a link opens it when tapped
               return link ? (

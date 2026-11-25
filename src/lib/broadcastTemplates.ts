@@ -162,11 +162,12 @@ Team FamilyLedger`,
     id: 'rate',
     label: 'Ask for a rating',
     emoji: '⭐',
-    hint: 'Asks for a 5-star rating on Google Play, and for feedback first if something is wrong. One picture.',
+    hint: 'Asks for a 5-star rating on the App Store or Google Play, and for feedback first if something is wrong. One picture with both store badges; tapping it opens the store of the phone.',
     title: 'Enjoying FamilyLedger? Rate us ⭐',
-    message: `A 5-star rating on Google Play helps other families find us.
+    message: `A 5-star rating helps other families find us.
 
-⭐ ${PLAY_URL}
+🍎 iPhone: ${APP_STORE_URL}
+🤖 Android: ${PLAY_URL}
 
 It takes about 10 seconds. If something isn't right, please tell us first and we'll fix it quickly: ${FEEDBACK_URL}
 
