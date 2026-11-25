@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { collection, documentId, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { isPresenceOnline } from '../lib/presence';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useFriendships } from '../lib/useFriendships';
@@ -15,12 +18,39 @@ export default function PeopleStrip({ quiet = false }: { quiet?: boolean }) {
   const { user } = useAuth();
   const { accepted, incomingPending, outgoingPending, usersByUid } = useFriendships(user?.uid);
   const [busy, setBusy] = useState(false);
+  // Which friends are online right now. Read in one batch when Home opens and again every 2 minutes while it is showing (not a live listener
+  // per friend: a heartbeat every 25 seconds per online friend would make that many reads), and paused while the app is in the background.
+  const [onlineUids, setOnlineUids] = useState<Set<string>>(new Set());
+  const friendKey = accepted.map((f) => f.friendUid).join(',');
+  useEffect(() => {
+    const uids = friendKey ? friendKey.split(',') : [];
+    if (uids.length === 0) { setOnlineUids(new Set()); return; }
+    let cancelled = false;
+    const load = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const chunks: string[][] = [];
+        for (let i = 0; i < uids.length; i += 30) chunks.push(uids.slice(i, i + 30));
+        const snaps = await Promise.all(chunks.map((c) => getDocs(query(collection(db, 'users'), where(documentId(), 'in', c)))));
+        if (cancelled) return;
+        const on = new Set<string>();
+        snaps.forEach((sn) => sn.docs.forEach((d) => { if (isPresenceOnline(d.data())) on.add(d.id); }));
+        setOnlineUids(on);
+      } catch (err) { console.error('Could not read who is online:', err); }
+    };
+    load();
+    const timer = setInterval(load, 120_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [friendKey]);
   const [hiddenUntil, setHiddenUntil] = useState<number>(() => { try { return Number(localStorage.getItem(HIDE_KEY)) || 0; } catch { return 0; } });
   if (!user) return null;
 
   const first = incomingPending[0];
   const firstUser = first ? usersByUid.get(first.friendUid) : undefined;
   const hasCircle = accepted.length > 0;
+  const onlineList = accepted.filter((f) => onlineUids.has(f.friendUid));
   const emptyHidden = quiet || Date.now() < hiddenUntil;
 
   const accept = async () => {
@@ -39,7 +69,7 @@ export default function PeopleStrip({ quiet = false }: { quiet?: boolean }) {
     const u = usersByUid.get(uid);
     const name = u?.displayName || '?';
     return (
-      <button type="button" key={uid} onClick={() => navigate(`/u/${uid}`)} aria-label={`Open ${name}'s profile`} className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center text-white font-extrabold text-[15px] shrink-0 active:scale-95 transition-transform" style={{ background: u?.photoURL ? undefined : colors[(name.charCodeAt(0) + i) % colors.length], boxShadow: '0 0 0 2.5px #fff, 0 0 0 4.5px #12b89a' }}>
+      <button type="button" key={uid} onClick={() => navigate(`/u/${uid}`)} aria-label={`Open ${name}'s profile`} className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center text-white font-extrabold text-[12px] shrink-0 active:scale-95 transition-transform" style={{ background: u?.photoURL ? undefined : colors[(name.charCodeAt(0) + i) % colors.length], boxShadow: '0 0 0 2px #fff, 0 0 0 3.5px #12b89a' }}>
         {u?.photoURL ? <img src={u.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : name.slice(0, 1).toUpperCase()}
       </button>
     );
@@ -50,40 +80,35 @@ export default function PeopleStrip({ quiet = false }: { quiet?: boolean }) {
 
   return (
     <section className="space-y-2.5" aria-label="Your people">
-      {first && (
+      {first ? (
+        // a friend request waiting is the most important thing: the one line becomes that, with Accept
         <div className="flex items-center gap-3 rounded-2xl bg-[#effcf8] border border-[#b9ece0] px-3.5 py-2.5">
-          <span className="w-9 h-9 rounded-full overflow-hidden bg-white flex items-center justify-center text-[#0b6b5a] font-extrabold shrink-0">
+          <span className="w-8 h-8 rounded-full overflow-hidden bg-white flex items-center justify-center text-[#0b6b5a] font-extrabold shrink-0">
             {firstUser?.photoURL ? <img src={firstUser.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (firstUser?.displayName || '?').slice(0, 1).toUpperCase()}
           </span>
           <button type="button" onClick={() => navigate('/friends')} className="flex-1 min-w-0 text-left">
-            <span className="block text-[13px] font-extrabold text-primary leading-tight truncate">{firstUser?.displayName || 'Someone'} wants to be your friend</span>
-            {incomingPending.length > 1 && <span className="block text-[11.5px] text-text-muted">+{incomingPending.length - 1} more {incomingPending.length - 1 === 1 ? 'request' : 'requests'}</span>}
+            <span className="block text-[13px] font-extrabold text-primary leading-tight truncate">
+              {firstUser?.displayName || 'Someone'} wants to be your friend{incomingPending.length > 1 ? ` · +${incomingPending.length - 1} more` : ''}
+            </span>
           </button>
-          <button type="button" onClick={accept} disabled={busy} className="px-4 h-9 rounded-full bg-[#12b89a] text-[#06222f] text-xs font-extrabold disabled:opacity-50 active:scale-95 shrink-0">{busy ? '…' : 'Accept'}</button>
+          <button type="button" onClick={accept} disabled={busy} className="px-4 h-8 rounded-full bg-[#12b89a] text-[#06222f] text-xs font-extrabold disabled:opacity-50 active:scale-95 shrink-0">{busy ? '…' : 'Accept'}</button>
         </div>
-      )}
-
-      {hasCircle ? (
-        <div className="rounded-2xl bg-white border border-border-subtle shadow-sm p-3.5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-extrabold text-primary">Your people</h3>
-            <button type="button" onClick={() => navigate('/friends')} className="text-xs font-extrabold text-[#0b6b5a]">See all ›</button>
+      ) : hasCircle ? (
+        // one line: who is online, and the counts that need a glance
+        <div className="flex items-center gap-2.5 rounded-2xl bg-white border border-border-subtle shadow-sm px-3.5 py-2">
+          <div className="flex items-center -space-x-2 shrink-0">
+            {onlineList.slice(0, 3).map((f, i) => avatar(f.friendUid, i))}
           </div>
-          <div className="flex items-center gap-3.5 overflow-x-auto no-scrollbar py-1 px-1">
-            {accepted.slice(0, 5).map((f, i) => avatar(f.friendUid, i))}
-            {accepted.length > 5 && (
-              <button type="button" onClick={() => navigate('/friends')} aria-label={`${accepted.length - 5} more friends`} className="w-11 h-11 rounded-full bg-surface-container text-primary text-[13px] font-extrabold flex items-center justify-center shrink-0 active:scale-95">+{accepted.length - 5}</button>
-            )}
-            <button type="button" onClick={() => navigate('/friends')} aria-label="Invite family or a friend" className="w-11 h-11 rounded-full flex items-center justify-center text-[#0b6b5a] border-2 border-dashed border-[#12b89a] shrink-0 active:scale-95">
-              <span className="material-symbols-outlined text-[24px]">add</span>
-            </button>
-          </div>
-          {(incomingPending.length > 0 || outgoingPending.length > 0) && (
-            <div className="flex flex-wrap gap-2 mt-3 text-[11.5px] font-bold">
-              {incomingPending.length > 0 && <span className="rounded-full bg-[#effcf8] text-[#0b6b5a] px-2.5 py-1">⏳ {incomingPending.length} waiting on you</span>}
-              {outgoingPending.length > 0 && <span className="rounded-full bg-surface-container text-text-muted px-2.5 py-1">{outgoingPending.length} sent, not answered yet</span>}
-            </div>
-          )}
+          <button type="button" onClick={() => navigate('/friends')} className="flex-1 min-w-0 flex items-center gap-2 text-left overflow-hidden">
+            <span className="text-sm font-extrabold text-primary whitespace-nowrap">{accepted.length} {accepted.length === 1 ? 'friend' : 'friends'}</span>
+            {onlineList.length > 0
+              ? <span className="text-[11px] font-extrabold rounded-full bg-[#e8faf5] text-[#0b6b5a] px-2.5 py-[3px] whitespace-nowrap shrink-0"><span className="inline-block w-2 h-2 rounded-full bg-[#12b89a] mr-1" />{onlineList.length} online{onlineList.length > 3 ? ` (+${onlineList.length - 3})` : ''}</span>
+              : <span className="text-[11px] font-extrabold rounded-full bg-surface-container text-text-muted px-2.5 py-[3px] whitespace-nowrap shrink-0">no one online</span>}
+            {outgoingPending.length > 0 && <span className="text-[11px] font-extrabold rounded-full bg-[#fff1d6] text-[#8a5a00] px-2.5 py-[3px] whitespace-nowrap shrink-0 ml-auto">{outgoingPending.length} sent</span>}
+          </button>
+          <button type="button" onClick={() => navigate('/friends')} aria-label="Invite family or a friend" className="w-8 h-8 rounded-full flex items-center justify-center text-[#0b6b5a] border-2 border-dashed border-[#12b89a] shrink-0 active:scale-95">
+            <span className="material-symbols-outlined text-[18px]">add</span>
+          </button>
         </div>
       ) : !emptyHidden && (
         <div className="rounded-2xl bg-white border border-border-subtle shadow-sm p-3.5 flex items-center gap-3">

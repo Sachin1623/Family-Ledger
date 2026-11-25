@@ -118,6 +118,20 @@ export function upcoming(r: PaymentReminder, count: number): Date[] {
   return out;
 }
 
+// The days (yyyy-mm-dd) this reminder fell due from `lookbackDays` ago up to today, leaving out the ones already marked paid ahead.
+export function dueDays(r: PaymentReminder, todayStr: string, lookbackDays = 7): string[] {
+  const from = toLocalDateString(new Date(parseDate(todayStr).getTime() - lookbackDays * 86400000));
+  const skipped = new Set(r.skipped || []);
+  const out: string[] = [];
+  for (let i = 0; i < 400; i++) {
+    const day = toLocalDateString(occurrence(r, i));
+    if (day > todayStr) break;
+    if (day >= from && !skipped.has(day)) out.push(day);
+    if (r.freq === 'once') break;
+  }
+  return out;
+}
+
 // A payment was just added: the next occurrence of a matching reminder (within a week) is already taken care of, so it should not ring.
 // A weekly reminder repeats on the phone itself and cannot skip one.
 export async function skipPaidOccurrences(reminders: PaymentReminder[], label: string, paidOn: string) {

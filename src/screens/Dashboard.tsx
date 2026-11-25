@@ -3,6 +3,7 @@ import CategoryBadge from '../components/CategoryBadge';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import PeopleStrip from '../components/PeopleStrip';
+import TodayTile from '../components/TodayTile';
 import WelcomeChecklist, { useIsNewUser, isWelcomeHidden } from '../components/WelcomeChecklist';
 import { startTour } from '../lib/tourRef';
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
@@ -404,6 +405,7 @@ export default function Dashboard() {
         />
       )}
       <PeopleStrip quiet={welcomeShowing} />
+      <TodayTile groupIds={activeMemberships.map((m: any) => m.groupId).slice(0, 30)} />
       {showAccountsGoalsBanner && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3">
           <span className="text-2xl shrink-0">💰</span>
