@@ -166,8 +166,11 @@ Team FamilyLedger`,
     title: 'Enjoying FamilyLedger? Rate us ⭐',
     message: `A 5-star rating helps other families find us.
 
-🍎 iPhone: ${APP_STORE_URL}
-🤖 Android: ${PLAY_URL}
+iPhone:
+${APP_STORE_URL}
+
+Android:
+${PLAY_URL}
 
 It takes about 10 seconds. If something isn't right, please tell us first and we'll fix it quickly: ${FEEDBACK_URL}
 

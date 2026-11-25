@@ -57,9 +57,16 @@ export default function BroadcastCard({ broadcast, onClose, openLink, closeLabel
       const trailing = part.slice(url.length);
       return (
         <React.Fragment key={i}>
-          <button type="button" onClick={() => openLink(url)} className="text-primary font-bold underline underline-offset-2 text-left break-all">
-            {friendlyLabel(url, /rat(e|ing)/i.test(broadcast.title || ''))}
-          </button>
+          {url.includes('apps.apple.com') || url.includes('play.google.com') ? (
+            // the official store badges, so the links look like the real thing
+            <button type="button" onClick={() => openLink(url)} className="block my-1 active:scale-95 transition-transform" aria-label={friendlyLabel(url, /rat(e|ing)/i.test(broadcast.title || ''))}>
+              <img src={url.includes('apps.apple.com') ? '/store/app-store-badge.svg' : '/store/google-play-badge.png'} alt="" className="h-10 w-auto" />
+            </button>
+          ) : (
+            <button type="button" onClick={() => openLink(url)} className="text-primary font-bold underline underline-offset-2 text-left break-all">
+              {friendlyLabel(url, /rat(e|ing)/i.test(broadcast.title || ''))}
+            </button>
+          )}
           {trailing}
         </React.Fragment>
       );
