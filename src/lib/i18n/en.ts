@@ -25,6 +25,7 @@ const en = {
   'nav.finance': 'Finance',
   'nav.social': 'Social',
   'nav.addExpense': 'Add Expense',
+  'nav.addShort': 'Add', // floating button: short label, a mic badge beside it says that holding it talks the expense
   'nav.addExpenseShort': 'Expense', // bottom-nav label under the + icon — kept short, tight row
   'nav.sales': 'Sales',
   'nav.customers': 'Customers',

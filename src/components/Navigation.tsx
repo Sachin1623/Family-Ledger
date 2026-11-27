@@ -154,12 +154,26 @@ export default function Navigation() {
   } else if (ACTION_FAB_PATHS.has(location.pathname) && fabAction) {
     fab = { onClick: fabAction.onClick, label: fabAction.label, icon: fabAction.icon };
   } else if (location.pathname !== '/add-expense') {
-    fab = { to: '/add-expense', label: t('nav.addExpense'), icon: '➕', tour: 'nav-add-expense' };
+    fab = { to: '/add-expense', label: t('nav.addShort'), icon: '➕', tour: 'nav-add-expense' };
   }
 
   // A mic beside the Add Expense button: say the expense, then land on Add Expense already filled in. Only where Add Expense itself is the button.
   const showMic = !!fab && fab.to === '/add-expense' && speechAvailableHere();
   const talkSlot = useDialSlot('talk', showMic);
+  // A first-time hint that holding the button talks the expense; gone after it is used or shown a few times.
+  const [holdHint, setHoldHint] = React.useState(false);
+  React.useEffect(() => {
+    if (!showMic) { setHoldHint(false); return; }
+    try {
+      const n = Number(localStorage.getItem('fl_hold_hint') || '0');
+      if (n >= 3) return;
+      localStorage.setItem('fl_hold_hint', String(n + 1));
+      setHoldHint(true);
+      const id = window.setTimeout(() => setHoldHint(false), 5000);
+      return () => window.clearTimeout(id);
+    } catch { /* hint is optional */ }
+  }, [showMic, location.pathname]);
+  const dismissHint = () => { setHoldHint(false); try { localStorage.setItem('fl_hold_hint', '9'); } catch { /* ignore */ } };
 
   return (
     <>
@@ -198,14 +212,26 @@ export default function Navigation() {
             key={fab.to}
             to={fab.to}
             data-tour={fab.tour}
-            onPointerDown={() => { longPressed.current = false; pressTimer.current = window.setTimeout(() => { longPressed.current = true; if (dial.count > 0) setDialOpen(true); }, 450); }}
+            onPointerDown={() => { longPressed.current = false; pressTimer.current = window.setTimeout(() => { longPressed.current = true; if (showMic) { dismissHint(); if (navigator.vibrate) navigator.vibrate(15); setShowVoice(true); } else if (dial.count > 0) setDialOpen(true); }, 450); }}
             onPointerUp={() => { if (pressTimer.current) window.clearTimeout(pressTimer.current); }}
             onPointerLeave={() => { if (pressTimer.current) window.clearTimeout(pressTimer.current); }}
-            onClick={(e) => { if (longPressed.current && dial.count > 0) { e.preventDefault(); longPressed.current = false; } else setDialOpen(false); }}
-            className="flex items-center gap-2 pl-4 pr-5 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform"
+            onClick={(e) => { if (longPressed.current && (showMic || dial.count > 0)) { e.preventDefault(); longPressed.current = false; } else setDialOpen(false); }}
+            className="relative flex items-center gap-2 pl-4 pr-4 h-12 rounded-full bg-primary text-white font-bold text-sm shadow-lg active:scale-95 transition-transform select-none"
+            style={{ WebkitTouchCallout: 'none' } as React.CSSProperties}
+            onContextMenu={(e) => { if (showMic) e.preventDefault(); }}
           >
             <span className="text-lg leading-none">{fab.icon}</span>
             {fab.label}
+            {showMic && (
+              <span className="ml-0.5 -mr-1 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center" aria-hidden="true">
+                <span className="material-symbols-outlined text-[16px]">mic</span>
+              </span>
+            )}
+            {holdHint && (
+              <span className="absolute right-0 bottom-full mb-2 whitespace-nowrap rounded-xl bg-[#06222f] text-white text-[12px] font-bold px-3 py-1.5 shadow-lg pointer-events-none">
+                Tap to add · Hold to talk 🎙️
+              </span>
+            )}
           </NavLink>
         </div>
       ) : (
